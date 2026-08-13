@@ -14,6 +14,7 @@ import com.sun.jna.Pointer;
 import com.sun.jna.Structure;
 import com.sun.jna.Union;
 
+import org.raku.nqp.jast2bc.BytecodeVersion;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -863,7 +864,7 @@ public final class NativeCallOps {
             String ifaceName = "__CallbackInterface__" + typeNo;
 
             // public interface $interfaceName extends com.sun.jna.Callback { ... }
-            ifaceWriter.visit(Opcodes.V1_7, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT | Opcodes.ACC_INTERFACE,
+            ifaceWriter.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT | Opcodes.ACC_INTERFACE,
                     ifaceName, null, "java/lang/Object", new String[] { Type.getInternalName(Callback.class) });
             // public $sig[0] callback($sig[1..*]);
             MethodVisitor ifaceMeth = ifaceWriter.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, "callback", sig, null, null);
@@ -877,7 +878,7 @@ public final class NativeCallOps {
             String className = "__CallbackHandler__" + typeNo;
 
             // public class $className extends CallbackHandler implements $ifaceName { ... }
-            classWriter.visit(Opcodes.V1_7, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, className, null,
+            classWriter.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, className, null,
                     handlerName, new String[] { Type.getInternalName(iface) });
 
             // public $className(GlobalContext gc, SixModelObject function) { super(gc, function); }
