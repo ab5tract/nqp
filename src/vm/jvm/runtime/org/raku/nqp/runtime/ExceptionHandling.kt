@@ -47,7 +47,7 @@ object ExceptionHandling {
             (t ?: Throwable(msg)).printStackTrace()
         }
         try {
-            val exType = tc.curFrame.codeRef.staticInfo.compUnit.hllConfig.exceptionType!!
+            val exType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig.exceptionType!!
             exObj = exType.st.REPR.allocate(tc, exType.st) as VMExceptionInstance
             exObj.message = msg
             exObj.category = EX_CAT_CATCH.toLong()
@@ -132,7 +132,7 @@ object ExceptionHandling {
 
         var f = tc.curFrame
         if (skipCaller) {
-            f = f.caller
+            f = f!!.caller
             while (f != null && (f.codeRef.staticInfo.isThunk || f.codeRef.isCompilerStub))
                 f = f.caller
         }
@@ -172,8 +172,8 @@ object ExceptionHandling {
         }
         if (handler != null)
             invokeHandler(tc, handler, category, f, false, exObj, null)
-        else if (tc.curFrame.codeRef.staticInfo.compUnit.hllConfig.lexicalHandlerNotFoundError != null) {
-            Ops.invokeDirect(tc, tc.curFrame.codeRef.staticInfo.compUnit.hllConfig.lexicalHandlerNotFoundError,
+        else if (tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig.lexicalHandlerNotFoundError != null) {
+            Ops.invokeDirect(tc, tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig.lexicalHandlerNotFoundError,
                 Ops.intIntCallSite, false, arrayOf<Any>(category, 0L))
         }
         else
@@ -238,11 +238,11 @@ object ExceptionHandling {
                             Ops.emptyCallSite, false, Ops.emptyArgList)
                 }
                 catch (e: ResumeException) {
-                    tc.curFrame.retType = (if (die_s_return) CallFrame.RET_STR else CallFrame.RET_OBJ).toByte()
+                    tc.curFrame!!.retType = (if (die_s_return) CallFrame.RET_STR else CallFrame.RET_OBJ).toByte()
                     if (die_s_return)
-                        tc.curFrame.sRet = exObj!!.message
+                        tc.curFrame!!.sRet = exObj!!.message
                     else
-                        tc.curFrame.oRet = exObj
+                        tc.curFrame!!.oRet = exObj
                     return
                 }
                 catch (sse: SaveStackException) {

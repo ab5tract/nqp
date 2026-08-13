@@ -40,15 +40,15 @@ class P6int : REPR() {
         ss.bits = 64
         ss.can_box = StorageSpec.CAN_BOX_INT
         st.REPRData = ss
-        return st.WHAT
+        return st.WHAT!!
     }
 
     override fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {
         val integerInfo = repr_info.at_key_boxed(tc, "integer")
         if (Ops.isnull(integerInfo) == 0L) {
-            val bits = integerInfo.at_key_boxed(tc, "bits")
+            val bits = integerInfo!!.at_key_boxed(tc, "bits")
             if (Ops.isnull(bits) == 0L) {
-                val bitwidth = bits.get_int(tc).toShort()
+                val bitwidth = bits!!.get_int(tc).toShort()
                 val ss = st.REPRData as StorageSpec
                 ss.bits = when (bitwidth.toInt()) {
                     P6INT_C_TYPE_CHAR.toInt() -> java.lang.Byte.SIZE.toShort()
@@ -67,7 +67,7 @@ class P6int : REPR() {
             val unsigned = integerInfo.at_key_boxed(tc, "unsigned")
             if (Ops.isnull(unsigned) == 0L) {
                 val ss = st.REPRData as StorageSpec
-                ss.is_unsigned = unsigned.get_int(tc).toShort()
+                ss.is_unsigned = unsigned!!.get_int(tc).toShort()
                 ss.boxed_primitive = if (ss.is_unsigned.toInt() == 0) StorageSpec.BP_INT else StorageSpec.BP_UINT
             }
         }
