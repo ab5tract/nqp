@@ -50,7 +50,7 @@ class KnowHOWREPR : REPR() {
     override fun serialize(tc: ThreadContext, writer: SerializationWriter, obj: SixModelObject) {
         val kh = obj as KnowHOWREPRInstance
         writer.writeStr(kh.name)
-        writer.writeList(kh.attributes)
-        writer.writeHash(kh.methods)
+        writer.writeList(kh.attributes!!)
+        writer.writeHash(kh.methods!!)
     }
 }
