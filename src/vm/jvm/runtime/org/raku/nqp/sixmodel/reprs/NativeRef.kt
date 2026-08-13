@@ -17,7 +17,7 @@ class NativeRef : REPR() {
         val obj = TypeObject()
         obj.st = st
         st.WHAT = obj
-        return st.WHAT
+        return st.WHAT!!
     }
 
     override fun allocate(tc: ThreadContext, st: STable): SixModelObject {
@@ -45,12 +45,12 @@ class NativeRef : REPR() {
     override fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {
         val info = repr_info.at_key_boxed(tc, "nativeref")
         if (Ops.isnull(info) == 0L) {
-            val type = info.at_key_boxed(tc, "type")
-            val prim = type.st.REPR.get_storage_spec(tc, type.st).boxed_primitive
+            val type = info!!.at_key_boxed(tc, "type")
+            val prim = type!!.st.REPR.get_storage_spec(tc, type.st).boxed_primitive
             if (prim != StorageSpec.BP_NONE) {
                 val refkind = info.at_key_boxed(tc, "refkind")
                 if (Ops.isnull(refkind) == 0L) {
-                    val refkindS = refkind.get_str(tc)
+                    val refkindS = refkind!!.get_str(tc)
                     val rd = NativeRefREPRData()
                     rd.ref_kind = when (refkindS) {
                         "lexical" -> NativeRefREPRData.REF_LEXICAL
