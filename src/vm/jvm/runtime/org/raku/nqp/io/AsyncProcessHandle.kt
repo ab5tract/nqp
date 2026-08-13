@@ -36,7 +36,7 @@ class AsyncProcessHandle(
     configObj: SixModelObject,
 ) : IIOClosable {
 
-    private val hllConfig = tc.curFrame.codeRef.staticInfo.compUnit.hllConfig
+    private val hllConfig = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig
     private val listType = hllConfig.listType!!
     private val intBoxType = hllConfig.intBoxType!!
     private val strBoxType = hllConfig.strBoxType!!
