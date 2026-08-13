@@ -63,9 +63,9 @@ bootclasspath ordering (lib dir precedes the jar).
   `gen/jvm/share/{runtime,lib}` layout. Point it at the Gradle output only
   after installing (`installJvm`, TBD) or copying `build/jvm/share` over
   `gen/jvm/share`.
-- Gradle itself needs a Java ≤24 JVM to run (Gradle 8.14 cannot run on
-  Java 25; see `org.gradle.java.home` in `gradle.properties`), but the
-  compile toolchain, stage launchers and runner all use JDK 25.
+- Gradle 9.7 runs directly on the default JDK 25 (the earlier
+  `org.gradle.java.home` pin to JDK 21, needed by Gradle 8.14, is gone);
+  the compile toolchain, stage launchers and runner also use JDK 25.
 - The Windows runner template (`nqp-j.bat`) has no Gradle equivalent yet.
 
 ## Modernization (2026-08)
