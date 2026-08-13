@@ -14,7 +14,7 @@ class KnowHOWREPR : REPR() {
         val obj = TypeObject()
         obj.st = st
         st.WHAT = obj
-        return st.WHAT
+        return st.WHAT!!
     }
 
     override fun allocate(tc: ThreadContext, st: STable): SixModelObject {
@@ -38,10 +38,10 @@ class KnowHOWREPR : REPR() {
         body.name = reader.readStr()
 
         val attributes = ArrayList<SixModelObject>()
-        val attrs = reader.readRef()
+        val attrs = reader.readRef()!!
         val elems = attrs.elems(tc)
         for (i in 0 until elems)
-            attributes.add(attrs.at_pos_boxed(tc, i))
+            attributes.add(attrs.at_pos_boxed(tc, i)!!)
         body.attributes = attributes
 
         body.methods = (reader.readRef() as VMHashInstance).storage
@@ -50,7 +50,7 @@ class KnowHOWREPR : REPR() {
     override fun serialize(tc: ThreadContext, writer: SerializationWriter, obj: SixModelObject) {
         val kh = obj as KnowHOWREPRInstance
         writer.writeStr(kh.name)
-        writer.writeList(kh.attributes)
-        writer.writeHash(kh.methods)
+        writer.writeList(kh.attributes!!)
+        writer.writeHash(kh.methods!!)
     }
 }
