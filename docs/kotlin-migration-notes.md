@@ -66,10 +66,9 @@ t/nqp + t/hll + t/qregex + t/qast + t/serialization: 122 files,
 
 7. **Kotlin/Gradle versions.** Kotlin 2.4.10 with `jvmTarget = JVM_25`
    matches `javac --release 25` (major 69; the backend was modernized off
-   its release-9/V1_7 pins — see gradle-jvm-build.md). Gradle 8.14 requires
-   a Java ≤ 24 JVM to run (pinned to 21 in gradle.properties); the Kotlin
-   plugin warns that Kotlin 2.4 deprecates Gradle < 9 support — a Gradle 9
-   upgrade should precede any large-scale conversion.
+   its release-9/V1_7 pins — see gradle-jvm-build.md). The build runs on
+   Gradle 9.7 with the daemon on the default JDK 25 (the 8.14-era JDK-21
+   pin is gone), clearing the way for large-scale conversion work.
 
 ## The ops-bag experiment (IOOps)
 
