@@ -182,10 +182,21 @@ remains the right default for anything ABI-facing, widely referenced, or
 thinly tested.
 
 Related discovery: `io/AsyncFileHandle` (299 lines), the originally planned
-target, is **dead code** — no constructor call anywhere in the runtime, no
-op mapping in `QAST/Compiler.nqp`, no test, no rakudo usage. Its async
-file-slurp/spurt/lines machinery lost its wiring at some point in history.
-Left in place for upstream to decide; do not bother converting it.
+target, had been **unreachable since 2020** — `openasync`/`spurtasync` were
+removed as unwired (48415030f, 818695a76), and the read side (`slurp`/
+`lines` via IIOAsyncReadable) never had ops at all. The ops were reinstated
+(plus new `slurpasync`/`linesasync` dispatchers) and `t/jvm/05-asyncfile.t`
+written against the Java implementation before converting the class —
+tests-before-port, the pattern the rest of the migration should follow for
+thinly covered classes.
+
+Writing that test surfaced a cross-thread closure gotcha worth knowing:
+**named file-scope subs cannot be called from callback threads.** A named
+sub compiles to a static-code-ref invocation whose outer frame chain is
+auto-vivified fresh on a foreign thread (new ThreadContext), so mainline
+lexicals read as null there — while a `->` block used as the callback
+captures the live frames and sees everything. Async tests must pre-box on
+the main thread and push only ready-made values from callbacks.
 
 ## Recommendation
 
