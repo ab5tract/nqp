@@ -101,7 +101,7 @@ val shareRuntimeDir = jvmDir.dir("share/runtime")
 val shareLibDir = jvmDir.dir("share/lib")
 val runtimeJarFile = File(projectDir, "nqp-runtime/build/libs/nqp-runtime.jar")
 
-val nqpThirdParty: Configuration by configurations.creating
+val nqpThirdParty: Configuration = configurations.create("nqpThirdParty")
 
 dependencies {
     NqpDeps.thirdParty.forEach { nqpThirdParty(it) }
