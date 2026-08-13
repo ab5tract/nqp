@@ -13,8 +13,8 @@ java {
 
 kotlin {
     compilerOptions {
-        // Matches javac --release 9 (class file major version 53).
-        jvmTarget = JvmTarget.JVM_9
+        // Matches javac --release 25 (class file major version 69).
+        jvmTarget = JvmTarget.JVM_25
     }
 }
 
@@ -36,9 +36,9 @@ sourceSets {
 }
 
 tasks.compileJava {
-    // Mirrors tools/templates/jvm/Makefile.in:
-    //   javac --release 9 -cp <3rdparty> -g:none -d bin -encoding UTF8
-    options.release = 9
+    // Flag set mirrors tools/templates/jvm/Makefile.in (which used
+    // --release 9); the release level was modernized to 25.
+    options.release = 25
     options.encoding = "UTF8"
     options.isDebug = false
 }

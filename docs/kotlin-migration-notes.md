@@ -64,9 +64,10 @@ t/nqp + t/hll + t/qregex + t/qast + t/serialization: 122 files,
    (~1.6 MB). `nqp-runtime.jar` grew 1,000,852 → 1,029,817 bytes (+2.9%)
    from Kotlin metadata annotations and `object` INSTANCE scaffolding.
 
-7. **Kotlin/Gradle versions.** Kotlin 2.4.10 with `jvmTarget = JVM_9`
-   matches `javac --release 9` (major 53). Gradle 8.14 requires a
-   Java ≤ 24 JVM to run (pinned to 21 in gradle.properties); the Kotlin
+7. **Kotlin/Gradle versions.** Kotlin 2.4.10 with `jvmTarget = JVM_25`
+   matches `javac --release 25` (major 69; the backend was modernized off
+   its release-9/V1_7 pins — see gradle-jvm-build.md). Gradle 8.14 requires
+   a Java ≤ 24 JVM to run (pinned to 21 in gradle.properties); the Kotlin
    plugin warns that Kotlin 2.4 deprecates Gradle < 9 support — a Gradle 9
    upgrade should precede any large-scale conversion.
 
@@ -82,9 +83,10 @@ t/nqp + t/hll + t/qregex + t/qast + t/serialization: 122 files,
 - `runtime/CompilationUnit.java` — reflective `@CodeRefAnnotation` scan;
   superclass of every generated class.
 - `jast2bc/AutosplitMethodWriter.java` — ASM tree surgery.
-- `sixmodel/reprs/P6OpaqueBaseInstance.java` — `sun.misc.Unsafe` CAS on
-  reflective field offsets. Port to `VarHandle` **in Java first** (the code
-  comment already suggests it), independent of any Kotlin work.
+- `sixmodel/reprs/P6OpaqueBaseInstance.java` — atomic attribute CAS on
+  reflectively-named fields; ported from `sun.misc.Unsafe` to `VarHandle`
+  during the 2026-08 modernization (in Java, as recommended). Still fiddly;
+  convert late.
 - `sixmodel/REPRRegistry.java` — order-sensitive static initializer; REPR
   ids are serialization indices.
 
