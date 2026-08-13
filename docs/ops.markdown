@@ -307,6 +307,10 @@ The opcodes are grouped into the following categories:
 [getstdin](#getstdin) |
 [getstdout](#getstdout) |
 [open](#open) |
+[openasync](#openasync-jvm) |
+[slurpasync](#slurpasync-jvm) |
+[spurtasync](#spurtasync-jvm) |
+[linesasync](#linesasync-jvm) |
 [print](#print) |
 [readfh](#readfh) |
 [say](#say) |
@@ -2026,6 +2030,40 @@ Return the filehandle for standard output.
 
 Open the specified file in the given mode. Valid modes include `r` for read,
 `w` for write, and `wa` for write with append. Returns a filehandle.
+
+## openasync `jvm`
+_Experimental_
+* `openasync(str $filename, str $mode)`
+
+Open the specified file in the given mode for async IO.
+See `open` for valid modes.
+
+## slurpasync `jvm`
+_Experimental_
+* `slurpasync($handle, $str_type, $done, $error)`
+
+Asynchronously read the whole file behind an `openasync` handle. On success
+the contents are boxed as $str_type and passed to the $done callback; on
+failure the error message is boxed and passed to the $error callback.
+Callbacks run on IO completion threads.
+
+## spurtasync `jvm`
+_Experimental_
+* `spurtasync($handle, $str_type, $data, $done, $error)`
+
+Asynchronously write the boxed string $data to an `openasync` handle,
+invoking $done with no arguments on success or $error with a boxed error
+message on failure.
+
+## linesasync `jvm`
+_Experimental_
+* `linesasync($handle, $str_type, int $chomp, $queue, $done, $error)`
+
+Asynchronously read lines from an `openasync` handle, pushing each line
+(boxed as $str_type, chomped if $chomp is non-zero) onto $queue, which must
+have the ConcBlockingQueue REPR. $done is invoked after the final line has
+been queued; $error receives a boxed error message on failure.
+See t/jvm/05-asyncfile.t for an example of use.
 
 ## print
 * `print(str $str)`
