@@ -1,10 +1,20 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     java
+    kotlin("jvm")
 }
 
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of((property("javaLanguageVersion") as String).toInt())
+    }
+}
+
+kotlin {
+    compilerOptions {
+        // Matches javac --release 25 (class file major version 69).
+        jvmTarget = JvmTarget.JVM_25
     }
 }
 
@@ -20,14 +30,15 @@ dependencies {
 sourceSets {
     main {
         java.setSrcDirs(listOf(rootProject.layout.projectDirectory.dir("src/vm/jvm/runtime")))
+        kotlin.setSrcDirs(listOf(rootProject.layout.projectDirectory.dir("src/vm/jvm/runtime")))
         resources.setSrcDirs(emptyList<Any>())
     }
 }
 
 tasks.compileJava {
-    // Mirrors tools/templates/jvm/Makefile.in:
-    //   javac --release 9 -cp <3rdparty> -g:none -d bin -encoding UTF8
-    options.release = 9
+    // Flag set mirrors tools/templates/jvm/Makefile.in (which used
+    // --release 9); the release level was modernized to 25.
+    options.release = 25
     options.encoding = "UTF8"
     options.isDebug = false
 }

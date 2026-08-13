@@ -13,6 +13,7 @@ import java.io.IOException;
 
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 
+import org.raku.nqp.jast2bc.BytecodeVersion;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -273,7 +274,7 @@ public class P6Opaque extends REPR {
         String className = "__P6opaque__" + typeId++;
 
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
-        cw.visit(Opcodes.V1_7, Opcodes.ACC_PUBLIC + Opcodes.ACC_SUPER, className, null,
+        cw.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC + Opcodes.ACC_SUPER, className, null,
                 "org/raku/nqp/sixmodel/reprs/P6OpaqueBaseInstance", null);
 
         Type tcType = Type.getType("Lorg/raku/nqp/runtime/ThreadContext;");

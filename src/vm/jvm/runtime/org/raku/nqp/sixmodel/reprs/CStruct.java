@@ -5,6 +5,7 @@ import java.util.ArrayList;
 
 import com.sun.jna.Structure;
 
+import org.raku.nqp.jast2bc.BytecodeVersion;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;
@@ -121,7 +122,7 @@ public class CStruct extends REPR {
         }
 
         // public $className extends com.sun.jna.Structure implements com.sun.jna.Structure.ByReference { ... }
-        cw.visit(Opcodes.V1_7, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, className, null, "com/sun/jna/Structure", null);
+        cw.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, className, null, "com/sun/jna/Structure", null);
 
         //     private static List<String> fieldOrder;
         FieldVisitor fv = cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "fieldOrder", "Ljava/util/List;",

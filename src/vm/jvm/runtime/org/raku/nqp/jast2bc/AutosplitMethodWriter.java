@@ -78,7 +78,7 @@ class AutosplitMethodWriter extends MethodNode {
     private final String tgtype;
 
     public AutosplitMethodWriter(ClassVisitor target, String tgtype, int access, String name, String desc, String sig, String[] exn) {
-        super(Opcodes.ASM4, access, name, desc, sig, exn);
+        super(Opcodes.ASM9, access, name, desc, sig, exn);
         this.target = target;
         this.tgtype = tgtype;
     }
