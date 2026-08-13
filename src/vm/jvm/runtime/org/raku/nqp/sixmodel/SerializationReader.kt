@@ -343,7 +343,7 @@ class SerializationReader(
             // Now go by object flags.
             orig.position(orig.position() + 4)
             val flags = orig.getInt()
-            val stubObj: SixModelObject
+            val stubObj: SixModelObject?
             if (flags == 0) {
                 // Type object.
                 stubObj = TypeObject()
@@ -354,7 +354,7 @@ class SerializationReader(
             }
 
             // Place object in SC root set.
-            stubObj.sc = sc
+            stubObj!!.sc = sc
             sc.addObject(stubObj, i)
         }
     }
@@ -397,16 +397,18 @@ class SerializationReader(
             val methodCache = readRef()
             if (Ops.isnull(methodCache) == 0L)
                 st.MethodCache = (methodCache as VMHashInstance).storage
-            st.VTable = arrayOfNulls(orig.getLong().toInt())
-            for (j in st.VTable.indices)
-                st.VTable[j] = readRef()
+            val vTable = arrayOfNulls<SixModelObject>(orig.getLong().toInt())
+            st.VTable = vTable
+            for (j in vTable.indices)
+                vTable[j] = readRef()
 
             /* Type check cache. */
             val tcCacheSize = orig.getLong().toInt()
             if (tcCacheSize > 0) {
-                st.TypeCheckCache = arrayOfNulls(tcCacheSize)
-                for (j in st.TypeCheckCache.indices)
-                    st.TypeCheckCache[j] = readRef()
+                val typeCheckCache = arrayOfNulls<SixModelObject>(tcCacheSize)
+                st.TypeCheckCache = typeCheckCache
+                for (j in typeCheckCache.indices)
+                    typeCheckCache[j] = readRef()
             }
 
             /* Mode flags. */
@@ -414,9 +416,10 @@ class SerializationReader(
 
             /* Boolification spec. */
             if (orig.getLong() != 0L) {
-                st.BoolificationSpec = BoolificationSpec()
-                st.BoolificationSpec.Mode = orig.getLong().toInt()
-                st.BoolificationSpec.Method = readRef()
+                val boolSpec = BoolificationSpec()
+                st.BoolificationSpec = boolSpec
+                boolSpec.Mode = orig.getLong().toInt()
+                boolSpec.Method = readRef()
             }
 
             /* Container spec. */
@@ -426,7 +429,7 @@ class SerializationReader(
                     val cc = tc.gc.contConfigs[ccName]
                         ?: throw RuntimeException("Unknown container config $ccName")
                     cc.setContainerSpec(tc, st)
-                    st.ContainerSpec.deserialize(tc, st, this)
+                    st.ContainerSpec!!.deserialize(tc, st, this)
                 } else {
                     throw RuntimeException("Unable to deserialize old container spec format")
                 }
@@ -435,11 +438,12 @@ class SerializationReader(
             /* Invocation spec. */
             if (version >= 5) {
                 if (orig.getLong() != 0L) {
-                    st.InvocationSpec = InvocationSpec()
-                    st.InvocationSpec.ClassHandle = readRef()
-                    st.InvocationSpec.AttrName = lookupString(orig.getInt())
-                    st.InvocationSpec.Hint = orig.getLong().toInt().toLong()
-                    st.InvocationSpec.InvocationHandler = readRef()
+                    val invSpec = InvocationSpec()
+                    st.InvocationSpec = invSpec
+                    invSpec.ClassHandle = readRef()
+                    invSpec.AttrName = lookupString(orig.getInt())
+                    invSpec.Hint = orig.getLong().toInt().toLong()
+                    invSpec.InvocationHandler = readRef()
                 }
             }
 
