@@ -323,17 +323,18 @@ object ExceptionHandling {
         var jcursor = 0
         var ncursor: CallFrame? = ex.origin
 
+        val nativeTrace = ex.nativeTrace
         while (ncursor != null) {
             val info = ncursor.codeRef.staticInfo
             val kls = info.compUnit.javaClass.name
             val method: String? = info.methodName
 
-            while (ex.nativeTrace != null && jcursor < ex.nativeTrace.size &&
-                    kls != ex.nativeTrace[jcursor].className &&
-                    (method == null || method != ex.nativeTrace[jcursor].methodName))
+            while (nativeTrace != null && jcursor < nativeTrace.size &&
+                    kls != nativeTrace[jcursor].className &&
+                    (method == null || method != nativeTrace[jcursor].methodName))
                 jcursor++
 
-            val el = if (ex.nativeTrace != null && jcursor < ex.nativeTrace.size) ex.nativeTrace[jcursor++] else null
+            val el = if (nativeTrace != null && jcursor < nativeTrace.size) nativeTrace[jcursor++] else null
 
             result.add(TraceElement(ncursor, el?.fileName, el?.lineNumber ?: -1))
             ncursor = ncursor.caller
