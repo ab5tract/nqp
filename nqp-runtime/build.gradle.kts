@@ -1,10 +1,20 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     java
+    kotlin("jvm")
 }
 
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of((property("javaLanguageVersion") as String).toInt())
+    }
+}
+
+kotlin {
+    compilerOptions {
+        // Matches javac --release 9 (class file major version 53).
+        jvmTarget = JvmTarget.JVM_9
     }
 }
 
@@ -20,6 +30,7 @@ dependencies {
 sourceSets {
     main {
         java.setSrcDirs(listOf(rootProject.layout.projectDirectory.dir("src/vm/jvm/runtime")))
+        kotlin.setSrcDirs(listOf(rootProject.layout.projectDirectory.dir("src/vm/jvm/runtime")))
         resources.setSrcDirs(emptyList<Any>())
     }
 }
