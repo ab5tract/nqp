@@ -41,15 +41,21 @@ public class JASTCompiler {
             return c;
         }
         catch (Exception e) {
-            /* ASM 4 signalled an oversized method with a RuntimeException
-             * carrying this message; modern ASM throws the typed
-             * MethodTooLargeException instead. Either way, retry with the
-             * autosplitting method writer. */
-            if (!split && (e instanceof org.objectweb.asm.MethodTooLargeException
-                    || "Method code too large!".equals(e.getMessage())))
+            if (!split && isMethodTooLarge(e))
                 return buildClass(jast, jastNodes, true, tc);
             throw new RuntimeException(e);
         }
+    }
+
+    /* ASM 4 signals an oversized method with a RuntimeException carrying
+     * this message; ASM 5+ throws the typed MethodTooLargeException (with a
+     * different message), which is matched by name here so that this code
+     * compiles against either ASM. Without this, the autosplitting method
+     * writer is unreachable under newer ASM and >64KB methods are a hard
+     * build failure. */
+    private static boolean isMethodTooLarge(Exception e) {
+        return "Method code too large!".equals(e.getMessage())
+            || "org.objectweb.asm.MethodTooLargeException".equals(e.getClass().getName());
     }
 
     private static final LZ4CompressorWithLength lz4 =
