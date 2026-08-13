@@ -17,7 +17,7 @@ class VMArray : REPR() {
         val obj = TypeObject()
         obj.st = st
         st.WHAT = obj
-        return st.WHAT
+        return st.WHAT!!
     }
 
     override fun allocate(tc: ThreadContext, st: STable): SixModelObject {
@@ -47,8 +47,8 @@ class VMArray : REPR() {
     override fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {
         val arrayInfo = repr_info.at_key_boxed(tc, "array")
         if (Ops.isnull(arrayInfo) == 0L) {
-            val type = arrayInfo.at_key_boxed(tc, "type")
-            val ss = type.st.REPR.get_storage_spec(tc, type.st)
+            val type = arrayInfo!!.at_key_boxed(tc, "type")
+            val ss = type!!.st.REPR.get_storage_spec(tc, type.st)
             when (ss.boxed_primitive) {
                 StorageSpec.BP_INT, StorageSpec.BP_UINT, StorageSpec.BP_NUM, StorageSpec.BP_STR -> {
                     val reprData = VMArrayREPRData()

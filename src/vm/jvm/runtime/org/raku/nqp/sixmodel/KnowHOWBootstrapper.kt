@@ -116,7 +116,7 @@ object KnowHOWBootstrapper {
 
     private fun bootstrapKnowHOWAttribute(tc: ThreadContext, knowhowUnit: CompilationUnit) {
         /* Create meta-object. */
-        val knowhow_how = tc.gc.KnowHOW.st.HOW
+        val knowhow_how = tc.gc.KnowHOW.st.HOW!!
         val meta_obj = knowhow_how.st.REPR.allocate(tc, knowhow_how.st) as KnowHOWREPRInstance
 
         /* Add methods. */
@@ -151,7 +151,7 @@ object KnowHOWBootstrapper {
     }
 
     private fun bootType(tc: ThreadContext, typeName: String, reprName: String): SixModelObject {
-        val knowhow_how = tc.gc.KnowHOW.st.HOW
+        val knowhow_how = tc.gc.KnowHOW.st.HOW!!
         val meta_obj = knowhow_how.st.REPR.allocate(tc, knowhow_how.st) as KnowHOWREPRInstance
         meta_obj.name = typeName
         val repr = REPRRegistry.getByName(reprName)
@@ -162,7 +162,7 @@ object KnowHOWBootstrapper {
         sc.addObject(type_obj)
         type_obj.sc = sc
         sc.addObject(type_obj.st.HOW)
-        type_obj.st.HOW.sc = sc
+        type_obj.st.HOW!!.sc = sc
         sc.addSTable(type_obj.st)
         type_obj.st.sc = sc
         return type_obj

@@ -17,7 +17,7 @@ class MultiDimArray : REPR() {
         val obj = TypeObject()
         obj.st = st
         st.WHAT = obj
-        return st.WHAT
+        return st.WHAT!!
     }
 
     override fun allocate(tc: ThreadContext, st: STable): SixModelObject {
@@ -62,17 +62,17 @@ class MultiDimArray : REPR() {
         val arrayInfo = repr_info.at_key_boxed(tc, "array")
         if (Ops.isnull(arrayInfo) == 0L) {
             val reprData = MultiDimArrayREPRData()
-            val dims = arrayInfo.at_key_boxed(tc, "dimensions")
+            val dims = arrayInfo!!.at_key_boxed(tc, "dimensions")
             if (Ops.isnull(dims) == 1L)
                 throw ExceptionHandling.dieInternal(tc,
                     "MultiDimArray REPR must be composed with a number of dimensions")
-            val dimensions = dims.get_int(tc).toInt()
+            val dimensions = dims!!.get_int(tc).toInt()
             if (dimensions < 1)
                 throw ExceptionHandling.dieInternal(tc,
                     "MultiDimArray REPR must be composed with at least 1 dimension")
             reprData.numDimensions = dimensions
             val type = arrayInfo.at_key_boxed(tc, "type")
-            val ss = if (Ops.isnull(type) == 0L) type.st.REPR.get_storage_spec(tc, type.st) else null
+            val ss = if (Ops.isnull(type) == 0L) type!!.st.REPR.get_storage_spec(tc, type.st) else null
             when (ss?.boxed_primitive ?: StorageSpec.REFERENCE) {
                 StorageSpec.BP_INT, StorageSpec.BP_UINT, StorageSpec.BP_NUM, StorageSpec.BP_STR -> {
                     reprData.type = type
