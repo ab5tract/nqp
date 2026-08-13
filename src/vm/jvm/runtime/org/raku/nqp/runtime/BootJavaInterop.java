@@ -20,6 +20,7 @@ import org.raku.nqp.sixmodel.SixModelObject;
 import org.raku.nqp.sixmodel.StorageSpec;
 import org.raku.nqp.sixmodel.reprs.JavaObjectWrapper;
 
+import org.raku.nqp.jast2bc.BytecodeVersion;
 import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
@@ -159,7 +160,7 @@ public class BootJavaInterop {
         while (matchName(tc, rows, rptr, "implements"))
             ifaces.add(Ops.unbox_s(rows[rptr++][1], tc).replace('.', '/'));
 
-        cw.visit(Opcodes.V1_7, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, className, null,
+        cw.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, className, null,
                 superclass, ifaces.toArray(new String[0]));
         cw.visitField(Opcodes.ACC_STATIC | Opcodes.ACC_PUBLIC, "constants", "[Ljava/lang/Object;", null, null).visitEnd();
 
@@ -282,7 +283,7 @@ public class BootJavaInterop {
     protected ClassContext createAdaptor(Class<?> target) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
         String className = "org/raku/nqp/generatedadaptor/" +target.getName().replace('.','/');
-        cw.visit(Opcodes.V1_7, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, className, null, TYPE_CU.getInternalName(), null);
+        cw.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, className, null, TYPE_CU.getInternalName(), null);
 
         cw.visitField(Opcodes.ACC_STATIC | Opcodes.ACC_PUBLIC, "constants", "[Ljava/lang/Object;", null, null).visitEnd();
 
@@ -1090,13 +1091,13 @@ public class BootJavaInterop {
 
         String superclass;
         if (Modifier.isInterface(iface.getModifiers())) {
-            cw.visit(Opcodes.V1_7, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, className, null,
+            cw.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, className, null,
                     "java/lang/Object", new String[] { Type.getInternalName(iface) });
             superclass = "java/lang/Object";
         }
         else {
             superclass = Type.getInternalName(iface);
-            cw.visit(Opcodes.V1_7, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, className, null,
+            cw.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, className, null,
                     superclass, new String[] { });
         }
         cw.visitField(Opcodes.ACC_STATIC | Opcodes.ACC_PUBLIC, "constants", "[Ljava/lang/Object;", null, null).visitEnd();
