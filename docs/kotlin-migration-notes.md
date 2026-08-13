@@ -137,9 +137,14 @@ but a table-driven generator can. Findings:
   lives in buildSrc and runs before compilation; nothing generated is
   committed.
 
-The ~11 `MultiDimArrayInstance_*` classes are the obvious follow-up (a
-second template over the same table; different base class and a `dims`
-dimension-strides axis).
+The nine `MultiDimArrayInstance_*` classes (another 529 lines of Java) are
+generated from the **same variant table** with a second, much smaller
+renderer — their only additional axis, the per-type serialization calls,
+derives from existing columns: what gets serialized is exactly the `read()`
+expression (unsigned variants write the widened value), and deserialization
+narrows with the same conversion as writes. The boxed
+`VMArrayInstance`/`MultiDimArrayInstance` and both base classes remain
+hand-written Java.
 
 ## Recommendation
 
