@@ -9,8 +9,8 @@
  */
 object NqpDeps {
     val thirdParty = listOf(
-        "org.ow2.asm:asm:4.1",
-        "org.ow2.asm:asm-tree:4.1",
+        "org.ow2.asm:asm:9.10.1",
+        "org.ow2.asm:asm-tree:9.10.1",
         "it.unimi.dsi:fastutil:8.5.13",
         "jline:jline:1.0",
         "net.java.dev.jna:jna:4.5.0",
