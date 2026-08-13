@@ -256,6 +256,30 @@ Lessons added by this batch:
   handle" in accept events wraps the anonymous CompletionHandler rather
   than the server socket handle (Java's `this` in the anonymous class).
 
+## The small runtime value classes
+
+EvalResult, HandlerInfo, IOExceptionMessages, JavaCallinException,
+CodeRefAnnotation, ContextKey and ByteClassLoader (seven files, ~236
+lines). Mostly mechanical; three notes:
+
+- `CodeRefAnnotation` converts to a Kotlin `annotation class` cleanly —
+  every generated compilation unit attaches it and `CompilationUnit` reads
+  it reflectively, so the bootstrap itself verifies element-signature
+  compatibility (including `LongArray`/`Array<String>` defaults and the
+  `Short` element).
+- `ContextKey`'s only consumer is rakudo's Java layer; its verification
+  here is signature-level (`javap` diff: public surface identical, two
+  never-read package-private fields dropped). Behavioral proof waits for
+  the rakudo layer build.
+- **Nullability strikes again, bootclasspath edition**: `ByteClassLoader`'s
+  `parent` constructor parameter must be `ClassLoader?` — for classes on
+  the boot classpath, `getClassLoader()` legitimately returns null (the
+  bootstrap loader), and Java's `ClassLoader` constructor accepts it. The
+  non-null Kotlin signature turned a valid call into an intrinsic-check
+  crash during stage1. When porting Java-facing constructors, audit call
+  sites for "obviously non-null" types that are null in exotic-but-real
+  deployments.
+
 ## Recommendation
 
 Mixed Java/Kotlin compilation is production-ready for this codebase: the
