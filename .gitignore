@@ -47,3 +47,11 @@ MANIFEST
 /bin
 /nqp.bat
 package-lock.json
+
+# Gradle build path (see docs/gradle-jvm-build.md)
+/.gradle/
+/build/
+/buildSrc/.gradle/
+/buildSrc/build/
+/nqp-runtime/build/
+/nqp-j-gradle
