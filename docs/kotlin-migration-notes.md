@@ -146,6 +146,47 @@ narrows with the same conversion as writes. The boxed
 `VMArrayInstance`/`MultiDimArrayInstance` and both base classes remain
 hand-written Java.
 
+## The idiomatic-rewrite experiment (AsyncProcessHandle)
+
+Every conversion above was deliberately literal. As a contrast datapoint,
+`io/AsyncProcessHandle` (276 lines of Java, the machinery behind
+`nqp::spawnprocasync`) was rewritten **idiomatically**: 204 lines of Kotlin
+with no line-by-line correspondence to the original.
+
+What idiomatic bought:
+
+- The config hash is resolved once into a null-free `Map`, so the lifecycle
+  logic collapses from repeated `Ops.isnull(config.get("x")) == 0` guards to
+  `config["done"]?.let { send(it, …) }` — the control flow becomes readable
+  at a glance.
+- 6model iteration became a `Sequence` helper; the three near-identical
+  `getArgs`/`getEnv`/`getConfig` walkers became three one-liners.
+- Real defects surfaced *because* the rewrite forced re-derivation of
+  intent: a 10 ms poll loop waiting for process start (nothing ever
+  `notify()`ed it) became a `CountDownLatch`; the `proc` field written from
+  the watcher thread and read from others was unsynchronized and is now
+  `@Volatile`; a vestigial JNA `Kernel32` PID interface (obsolete since
+  `Process.pid()`, Java 9) was deleted outright; `kill` on a process that
+  never started is now a no-op instead of an NPE.
+
+What it cost: each of those deltas is a **decision** that had to be
+individually justified and carries individual risk — a literal port has
+zero such decisions. Review requires understanding both versions rather
+than diffing them, and the safety argument rests entirely on test coverage
+(here: `111-spawnprocasync.t`, run repeatedly, plus the full suite).
+
+Verdict: idiomatic rewriting is affordable for **leaf classes with real
+test coverage and a small public surface** (this one: four public methods,
+one caller, already-Kotlin boundary). Literal-with-`@JvmField/@JvmStatic`
+remains the right default for anything ABI-facing, widely referenced, or
+thinly tested.
+
+Related discovery: `io/AsyncFileHandle` (299 lines), the originally planned
+target, is **dead code** — no constructor call anywhere in the runtime, no
+op mapping in `QAST/Compiler.nqp`, no test, no rakudo usage. Its async
+file-slurp/spurt/lines machinery lost its wiring at some point in history.
+Left in place for upstream to decide; do not bother converting it.
+
 ## Recommendation
 
 Mixed Java/Kotlin compilation is production-ready for this codebase: the
