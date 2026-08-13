@@ -322,6 +322,30 @@ parameter on a path reachable from GlobalContext's constructor deserves a
 `?` unless proven otherwise; the stage1 bootstrap finds violations within
 seconds, which is much cheaper than finding them in review.
 
+## The sixmodel core (S1 + S2, and a deliberate deferral)
+
+S1 converted the 13 spec/type classes (StorageSpec, the container-spec
+family with rakudo-facing `open`/`abstract` surfaces preserved,
+TypeObject, parametricity holders). S2 converted the three logic classes:
+REPRRegistry (the order-sensitive registration block becomes an object
+`init` with a "never reorder" comment — REPR ids are serialized indices),
+SerializationContext, and KnowHOWBootstrapper (the MOP knot-tying,
+including the null-HOW bootstrap this document's rule of thumb predicts).
+
+**Deliberately deferred: SixModelObject, STable and the REPR base.**
+These three are a nullability *cluster*: `IndyBootstrap` null-checks
+`invokee.st`, stub STables carry null `REPR`, and every already-converted
+Kotlin file currently enjoys platform-typed access to `st`/`st.REPR`/etc.
+through the Java declarations. Converting the trio flips those platform
+types into declared Kotlin types **for the whole codebase at once** —
+either `lateinit` (which turns legal null reads into
+UninitializedPropertyAccessException, breaking IndyBootstrap's check) or
+`T?` (which demands a `!!`/snapshot sweep across every converted file).
+That sweep is a legitimate engineering task with its own verification
+burden — exactly the "convert coupled clusters together" lesson at
+codebase scale — and should be its own dedicated round, not an
+afterthought of this one.
+
 ## Recommendation
 
 Mixed Java/Kotlin compilation is production-ready for this codebase: the
