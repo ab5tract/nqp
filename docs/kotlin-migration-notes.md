@@ -113,18 +113,33 @@ full suite identical to baseline. Two lessons:
 - `sixmodel/REPRRegistry.java` — order-sensitive static initializer; REPR
   ids are serialization indices.
 
-## On the VMArrayInstance duplication
+## The VMArrayInstance code-generation experiment
 
-The ~21 `VMArrayInstance_*`/`MultiDimArrayInstance_*` monomorphizations
-(~5k lines) port 1:1 (this prototype's `_i` variant is representative; the
-`_s`/`_n`/sized-int variants differ only in slot type and the handful of
-widening/boxing sites). Kotlin generics cannot collapse them without
-boxing — reified generics don't exist on the JVM and primitive
-specialization is exactly what these classes hand-implement. The realistic
-dedup options are (a) a small Kotlin/Gradle code generator emitting the
-variants from one template (fits naturally in buildSrc), or (b) leaving
-them: they are stable, closed code. Recommendation: (a) only if a full
-migration proceeds, as its pilot for generated sources.
+The nine `VMArrayInstance_*` monomorphizations (2,404 lines of Java plus
+the 283-line hand-ported `_i.kt`) are now **generated** from one template
+in `buildSrc/src/main/kotlin/VMArrayInstances.kt` (~380 lines: a variant
+table + renderer), emitted into `build/generated/vmarray/` and wired into
+the Kotlin source set. Kotlin generics could never collapse these without
+boxing — primitive specialization is exactly what they hand-implement —
+but a table-driven generator can. Findings:
+
+- The variation axes are exactly five: slot storage type, ThreadContext
+  native slot + `NATIVE_*` constant, write narrowing (`.toByte()` …),
+  unsigned read widening, and the empty value (`0`/`0.0`/`null`). The
+  generated `_i` differs from the reviewed hand-port only in comments —
+  the duplication really was mechanical.
+- Two class-file deltas versus the Java originals, both benign and both
+  already present in the hand-ported `_i`: Kotlin classes are `final` by
+  default (nothing subclasses these — checked nqp and rakudo trees), and
+  Kotlin emits an additive public `clone()Ljava/lang/Object;` alongside
+  `clone(ThreadContext)`.
+- Generated sources keep working under `git bisect` because the generator
+  lives in buildSrc and runs before compilation; nothing generated is
+  committed.
+
+The ~11 `MultiDimArrayInstance_*` classes are the obvious follow-up (a
+second template over the same table; different base class and a `dims`
+dimension-strides axis).
 
 ## Recommendation
 
