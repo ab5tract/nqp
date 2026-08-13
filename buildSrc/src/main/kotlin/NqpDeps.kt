@@ -16,11 +16,17 @@ object NqpDeps {
         "net.java.dev.jna:jna:4.5.0",
         "net.java.dev.jna:jna-platform:4.5.0",
         "org.lz4:lz4-java:1.8.0",
+        // Kotlin runtime for the incrementally converted sources
+        // (kotlin-prototype); brings org.jetbrains:annotations transitively.
+        "org.jetbrains.kotlin:kotlin-stdlib:2.4.10",
     )
 
     /** Module-name order for sorting resolved jar files back into
      *  THIRDPARTY_JARS order (Gradle resolution orders dependencies first). */
-    val moduleOrder = listOf("asm", "asm-tree", "fastutil", "jline", "jna", "jna-platform", "lz4-java")
+    val moduleOrder = listOf(
+        "asm", "asm-tree", "fastutil", "jline", "jna", "jna-platform", "lz4-java",
+        "kotlin-stdlib", "annotations",
+    )
 
     fun orderKey(fileName: String): Int {
         val idx = moduleOrder.indexOfFirst {
