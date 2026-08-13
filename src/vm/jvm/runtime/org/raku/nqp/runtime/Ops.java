@@ -71,7 +71,10 @@ import it.unimi.dsi.fastutil.ints.IntList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntComparators;
 
+import org.raku.nqp.io.AsyncFileHandle;
 import org.raku.nqp.io.FileHandle;
+import org.raku.nqp.io.IIOAsyncReadable;
+import org.raku.nqp.io.IIOAsyncWritable;
 import org.raku.nqp.io.IIOBindable;
 import org.raku.nqp.io.IIOCancelable;
 import org.raku.nqp.io.IIOClosable;
@@ -458,6 +461,70 @@ public final class Ops {
         IOHandleInstance h = (IOHandleInstance)IOType.st.REPR.allocate(tc, IOType.st);
         h.handle = new FileHandle(tc, path, mode);
         return h;
+    }
+
+    /* Async file IO. openasync/spurtasync originally existed 2013-2020 and
+     * were removed as unwired; reinstated (with the previously missing read
+     * side) to make AsyncFileHandle reachable and testable. */
+    public static SixModelObject openasync(String path, String mode, ThreadContext tc) {
+        SixModelObject IOType = tc.curFrame.codeRef.staticInfo.compUnit.hllConfig.ioType;
+        IOHandleInstance h = (IOHandleInstance)IOType.st.REPR.allocate(tc, IOType.st);
+        h.handle = new AsyncFileHandle(tc, path, mode);
+        return h;
+    }
+
+    public static SixModelObject spurtasync(SixModelObject obj, SixModelObject resultType, SixModelObject data,
+            SixModelObject done, SixModelObject error, ThreadContext tc) {
+        if (obj instanceof IOHandleInstance) {
+            IOHandleInstance h = (IOHandleInstance)obj;
+            if (h.handle instanceof IIOAsyncWritable)
+                ((IIOAsyncWritable)h.handle).spurt(tc, resultType, data, done, error);
+            else
+                throw ExceptionHandling.dieInternal(tc,
+                    "This handle does not support async spurt");
+        }
+        else {
+            die_s("spurtasync requires an object with the IOHandle REPR", tc);
+        }
+        return obj;
+    }
+
+    public static SixModelObject slurpasync(SixModelObject obj, SixModelObject resultType,
+            SixModelObject done, SixModelObject error, ThreadContext tc) {
+        if (obj instanceof IOHandleInstance) {
+            IOHandleInstance h = (IOHandleInstance)obj;
+            if (h.handle instanceof IIOAsyncReadable)
+                ((IIOAsyncReadable)h.handle).slurp(tc, resultType, done, error);
+            else
+                throw ExceptionHandling.dieInternal(tc,
+                    "This handle does not support async slurp");
+        }
+        else {
+            die_s("slurpasync requires an object with the IOHandle REPR", tc);
+        }
+        return obj;
+    }
+
+    public static SixModelObject linesasync(SixModelObject obj, SixModelObject resultType, long chomp,
+            SixModelObject queue, SixModelObject done, SixModelObject error, ThreadContext tc) {
+        if (obj instanceof IOHandleInstance) {
+            IOHandleInstance h = (IOHandleInstance)obj;
+            if (h.handle instanceof IIOAsyncReadable) {
+                if (queue instanceof ConcBlockingQueueInstance)
+                    ((IIOAsyncReadable)h.handle).lines(tc, resultType, chomp != 0,
+                        ((ConcBlockingQueueInstance)queue).queue, done, error);
+                else
+                    throw ExceptionHandling.dieInternal(tc,
+                        "linesasync requires a queue with the ConcBlockingQueue REPR");
+            }
+            else
+                throw ExceptionHandling.dieInternal(tc,
+                    "This handle does not support async lines");
+        }
+        else {
+            die_s("linesasync requires an object with the IOHandle REPR", tc);
+        }
+        return obj;
     }
 
     public static SixModelObject socket(long listener, ThreadContext tc) {
