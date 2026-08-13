@@ -39,7 +39,7 @@ class SerializationContext(@JvmField var handle: String) {
      * reposession entry. */
     fun repossessObject(origSC: SerializationContext, obj: SixModelObject) {
         /* Check the object really lives in the SC root set. */
-        if (obj.sc.root_objects.indexOf(obj) < 0)
+        if (obj.sc!!.root_objects.indexOf(obj) < 0)
             throw RuntimeException("Attempt to repossess object not in this context")
 
         /* Add to root set. */

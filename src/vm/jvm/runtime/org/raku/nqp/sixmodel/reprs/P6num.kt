@@ -33,15 +33,15 @@ class P6num : REPR() {
         ss.bits = 64
         ss.can_box = StorageSpec.CAN_BOX_NUM
         st.REPRData = ss
-        return st.WHAT
+        return st.WHAT!!
     }
 
     override fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {
         val floatInfo = repr_info.at_key_boxed(tc, "float")
         if (Ops.isnull(floatInfo) == 0L) {
-            val bits = floatInfo.at_key_boxed(tc, "bits")
+            val bits = floatInfo!!.at_key_boxed(tc, "bits")
             if (Ops.isnull(bits) == 0L) {
-                val bitwidth = bits.get_int(tc).toShort()
+                val bitwidth = bits!!.get_int(tc).toShort()
                 val ss = st.REPRData as StorageSpec
                 ss.bits = when (bitwidth.toInt()) {
                     P6NUM_C_TYPE_FLOAT.toInt() -> java.lang.Float.SIZE.toShort()

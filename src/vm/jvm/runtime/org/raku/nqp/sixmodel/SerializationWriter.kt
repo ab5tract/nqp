@@ -163,7 +163,8 @@ class SerializationWriter(
         }
 
         /* Work out SC reference. */
-        return intArrayOf(getSCId(st.sc), st.sc.getSTableIndex(st))
+        val stSC = st.sc!!
+        return intArrayOf(getSCId(stSC), stSC.getSTableIndex(st))
     }
 
     /* Writing function for native integers. */
@@ -202,8 +203,9 @@ class SerializationWriter(
 
         /* Write SC index, then object index. */
         growToHold(currentBuffer, 8)
-        outputs[currentBuffer].putInt(getSCId(ref.sc))
-        outputs[currentBuffer].putInt(ref.sc.getObjectIndex(ref))
+        val refSC = ref.sc!!
+        outputs[currentBuffer].putInt(getSCId(refSC))
+        outputs[currentBuffer].putInt(refSC.getObjectIndex(ref))
     }
 
     fun writeList(list: List<SixModelObject?>) {
@@ -237,7 +239,7 @@ class SerializationWriter(
     }
 
     private fun writeCodeRef(ref: SixModelObject) {
-        val codeSC = ref.sc
+        val codeSC = ref.sc!!
         val scId = getSCId(codeSC)
         val idx = codeSC.getCodeIndex(ref)
         growToHold(currentBuffer, 8)
@@ -531,56 +533,62 @@ class SerializationWriter(
         currentBuffer = STABLE_DATA
 
         /* Write HOW, WHAT and WHO. */
-        writeObjRef(st.HOW)
-        writeObjRef(st.WHAT)
+        writeObjRef(st.HOW!!)
+        writeObjRef(st.WHAT!!)
         writeRef(st.WHO)
 
         /* Method cache and v-table. */
         growToHold(currentBuffer, 2)
-        if (st.MethodCache != null) {
-            writeHash(st.MethodCache)
+        val methodCache = st.MethodCache
+        if (methodCache != null) {
+            writeHash(methodCache)
         } else {
             outputs[currentBuffer].putShort(REFVAR_NULL)
         }
-        val vtl = if (st.VTable == null) 0 else st.VTable.size
+        val vTable = st.VTable
+        val vtl = vTable?.size ?: 0
         writeInt(vtl.toLong())
         for (i in 0 until vtl)
-            writeRef(st.VTable[i])
+            writeRef(vTable!![i])
 
         /* Type check cache. */
-        val tcl = if (st.TypeCheckCache == null) 0 else st.TypeCheckCache.size
+        val typeCheckCache = st.TypeCheckCache
+        val tcl = typeCheckCache?.size ?: 0
         writeInt(tcl.toLong())
         for (i in 0 until tcl)
-            writeRef(st.TypeCheckCache[i])
+            writeRef(typeCheckCache!![i])
 
         /* Mode flags. */
         writeInt(st.ModeFlags.toLong())
 
         /* Boolification spec. */
-        writeInt(if (st.BoolificationSpec == null) 0L else 1L)
-        if (st.BoolificationSpec != null) {
-            writeInt(st.BoolificationSpec.Mode.toLong())
-            writeRef(st.BoolificationSpec.Method)
+        val boolSpec = st.BoolificationSpec
+        writeInt(if (boolSpec == null) 0L else 1L)
+        if (boolSpec != null) {
+            writeInt(boolSpec.Mode.toLong())
+            writeRef(boolSpec.Method)
         }
 
         /* Container spec. */
-        writeInt(if (st.ContainerSpec == null) 0L else 1L)
-        if (st.ContainerSpec != null) {
-            writeStr(st.ContainerSpec.name())
-            st.ContainerSpec.serialize(tc, st, this)
+        val contSpec = st.ContainerSpec
+        writeInt(if (contSpec == null) 0L else 1L)
+        if (contSpec != null) {
+            writeStr(contSpec.name())
+            contSpec.serialize(tc, st, this)
         }
 
         /* Invocation spec. */
-        writeInt(if (st.InvocationSpec == null) 0L else 1L)
-        if (st.InvocationSpec != null) {
-            writeRef(st.InvocationSpec.ClassHandle)
-            writeStr(st.InvocationSpec.AttrName)
-            writeInt(st.InvocationSpec.Hint)
-            writeRef(st.InvocationSpec.InvocationHandler)
+        val invSpec = st.InvocationSpec
+        writeInt(if (invSpec == null) 0L else 1L)
+        if (invSpec != null) {
+            writeRef(invSpec.ClassHandle)
+            writeStr(invSpec.AttrName)
+            writeInt(invSpec.Hint)
+            writeRef(invSpec.InvocationHandler)
         }
 
         /* HLL info. */
-        writeStr(if (st.hllOwner == null) "" else st.hllOwner.name)
+        writeStr(st.hllOwner?.name ?: "")
         writeInt(st.hllRole)
 
         /* Parametricity. */
@@ -630,7 +638,7 @@ class SerializationWriter(
     private fun serializeClosure(closure: CodeRef) {
         /* Locate the static code object. */
         val staticCodeRef = closureToStaticCodeRef(closure, true)!!
-        val staticCodeSC = staticCodeRef.sc
+        val staticCodeSC = staticCodeRef.sc!!
 
         /* Ensure there's space in the closures table; grow if not. */
         growToHold(CLOSURES, CLOSURES_TABLE_ENTRY_SIZE)
@@ -653,8 +661,9 @@ class SerializationWriter(
                 closure.codeObject.sc = this.sc
                 this.sc.addObject(closure.codeObject)
             }
-            outputs[CLOSURES].putInt(getSCId(closure.codeObject.sc))
-            outputs[CLOSURES].putInt(closure.codeObject.sc.getObjectIndex(closure.codeObject))
+            val codeObjectSC = closure.codeObject.sc!!
+            outputs[CLOSURES].putInt(getSCId(codeObjectSC))
+            outputs[CLOSURES].putInt(codeObjectSC.getObjectIndex(closure.codeObject))
         } else {
             outputs[CLOSURES].putInt(0)
             outputs[CLOSURES].putInt(0) // pad
@@ -706,7 +715,7 @@ class SerializationWriter(
         if (staticCodeSC == null)
             ExceptionHandling.dieInternal(tc,
                 "Serialization Error: closure outer is a code object not in an SC")
-        val staticSCId = getSCId(staticCodeSC)
+        val staticSCId = getSCId(staticCodeSC!!)
         val staticIdx = staticCodeSC.getCodeIndex(staticCodeRef)
 
         /* Ensure there's space in the contexts table; grow if not. */
