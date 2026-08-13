@@ -346,6 +346,79 @@ burden — exactly the "convert coupled clusters together" lesson at
 codebase scale — and should be its own dedicated round, not an
 afterthought of this one.
 
+## S3: the serialization pair and KnowHOWMethods
+
+KnowHOWMethods (the twelve MOP code-ref bodies) went first, then
+SerializationWriter and SerializationReader as literal ports. The byte
+format is pinned by t/serialization plus the bootstrap itself, and the
+reader's `readLong ()J` / `readDouble ()D` / `readStr ()Ljava/lang/String;`
+invokevirtual descriptors are pinned by the inline-deserialize bytecode
+that P6int/P6num/P6str emit — instance methods on a Kotlin class keep
+those descriptors as-is.
+
+Nullability policy that emerged: `writeStr`/`writeRef`/`readRef`/`readStr`
+are *honestly* nullable (the null string-heap entry and REFVAR_NULL are
+real values of the domain), while `readObjRef`/`readCodeRef`/
+`readSTableRef` stay non-null because stubbing fills every root-set slot
+before any reference into it is read. One upstream oddity preserved with a
+NOTE: every SerializationWriter instance registers a shutdown hook for an
+Accumulator debug map that nothing ever populates.
+
+## The nullability cluster, resolved
+
+The deferred SixModelObject/STable/REPR trio converted cleanly in one
+round, and the key insight held: **`lateinit` fields are invisible to
+Java**. Java code (IndyBootstrap's `invokee.st` null check, the ASM-
+generated P6Opaque subclasses) reads and writes the backing field raw, so
+it keeps Java null semantics; only Kotlin-side reads go through the
+initialization check. `st` and `REPR.name` are `lateinit`; `sc`, `HOW`,
+`WHAT`, `WHO` and the spec fields are honestly nullable; STable's `REPR`
+is a non-null constructor property (every construction site passes one).
+
+Fallout was mechanical and compiler-guided: `return st.WHAT!!` in 34
+`type_object_for` bodies (one sed), local snapshots for mutable STable
+fields in the serializer (Kotlin refuses smart casts on another object's
+`var`), and `!!` on `Ops.isnull`-guarded compose lookups (the guard is
+opaque to the compiler). Base-class signatures had to match the already-
+converted overrides *exactly* (parameter types are invariant in Kotlin
+overrides), so the survey-first approach — grep every `override fun`
+before writing the base — is mandatory, not optional.
+
+One genuine trap: a Kotlin class implementing `Cloneable` synthesizes a
+public `clone()` with no `throws` clause, which broke every Java instance
+class wrapping `this.clone()` in a `catch (CloneNotSupportedException)`.
+An explicit `@Throws(CloneNotSupportedException::class) override fun
+clone(): Any = super.clone()` restores the contract.
+
+## Small runtime classes and the jast2bc nodes
+
+Control exceptions, CodeRef and ThreadContext followed (CodeRef's big
+constructor descriptor and tc's raw `native_i/n/s`/`curFrame` fields are
+generated-bytecode contact points; `@JvmField` preserves them).
+ThreadContext's package-private fields became public `@JvmField` — Kotlin
+has no package visibility, and Ops/ContextKey/NFA already reach in. The
+jast2bc node classes (JavaClass, BytecodeVersion, JastField, JastClass,
+JastMethod) are compile-time only; the bootstrap is their proof.
+
+**New keep-as-Java entry: ResumeStatus.** `Frame.resume()` calls
+`method.invokeExact(this)` where the handle's type is
+`(ResumeStatus$Frame)void`. Java compiles that statement with a void
+polymorphic descriptor; Kotlin types signature-polymorphic calls as
+returning `Object`, and invokeExact demands an exact match — so the
+Kotlin form would throw WrongMethodTypeException on every continuation
+resume. There is no Kotlin syntax for a void-typed polymorphic call site.
+
+## Remaining Java (as of the java-to-kotlin branch head)
+
+~19K lines across: Ops.java (7.9K — one monolithic class, all-or-nothing,
+needs a dedicated session or a mechanical-translation harness),
+BootJavaInterop, NativeCallOps, IndyBootstrap, CallFrame, GlobalContext,
+LibraryLoader, CompilationUnit, StaticCodeInfo, CallSiteDescriptor,
+ArgsExpectation, ResumeStatus (keep-as-Java), EvalServer; jast2bc's
+JASTCompiler and AutosplitMethodWriter; the P6Opaque and C-struct REPR
+families plus their instance classes; and the boxed VMArrayInstance /
+MultiDimArrayInstance pair.
+
 ## Recommendation
 
 Mixed Java/Kotlin compilation is production-ready for this codebase: the
