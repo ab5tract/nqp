@@ -811,8 +811,10 @@ public class JASTCompiler {
         /* The JAST type language uses first-character-significant names
          * ("Long", "Double", "Byte", "[Byte", ...) alongside real JVM
          * descriptors. ASM 4's Type.getType happened to accept the friendly
-         * names because it only inspected the leading character; ASM 9 keeps
-         * the given string as the descriptor verbatim, so map explicitly. */
+         * names because it only inspected the leading character; newer ASM
+         * keeps the given string as the descriptor verbatim, producing
+         * corrupt descriptors like ([Byte[Ljava/lang/String;)V. Map the
+         * type language explicitly so either ASM works. */
         if (typeName.equals("Long"))
             return Type.LONG_TYPE;
         switch (typeName.charAt(0)) {
