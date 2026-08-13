@@ -135,7 +135,7 @@ public class JASTCompiler {
         String superName = jastClass.superName.replace('.', '/');
 
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
-        cw.visit(Opcodes.V1_7, Opcodes.ACC_PUBLIC + Opcodes.ACC_SUPER, className, null,
+        cw.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC + Opcodes.ACC_SUPER, className, null,
                 superName, null);
         cw.visitSource(jastClass.filename, null);
 

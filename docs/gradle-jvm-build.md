@@ -63,7 +63,33 @@ bootclasspath ordering (lib dir precedes the jar).
   `gen/jvm/share/{runtime,lib}` layout. Point it at the Gradle output only
   after installing (`installJvm`, TBD) or copying `build/jvm/share` over
   `gen/jvm/share`.
-- Gradle needs a Java 21 JVM (Gradle 8.14 cannot run on Java 25;
-  see `org.gradle.java.home` in `gradle.properties`). Compilation targets
-  `--release 9` either way, identical to the Makefile.
+- Gradle itself needs a Java ≤24 JVM to run (Gradle 8.14 cannot run on
+  Java 25; see `org.gradle.java.home` in `gradle.properties`), but the
+  compile toolchain, stage launchers and runner all use JDK 25.
 - The Windows runner template (`nqp-j.bat`) has no Gradle equivalent yet.
+
+## Modernization (2026-08)
+
+The JVM backend was modernized off its 2012-era pins:
+
+- **ASM 4.1 → 9.10.1** (Maven Central + vendored copies in `3rdparty/asm/`,
+  paths updated in `tools/lib/NQP/Config/NQP.pm`). Two behavioral fixes were
+  required: `JASTCompiler.processType` now parses the JAST type language
+  ("Long", "Byte", "[Byte", …) explicitly — ASM 4 accepted those names only
+  because it inspected just the leading character — and the
+  autosplit-on-oversized-method retry matches the typed
+  `MethodTooLargeException` instead of ASM 4's exception message string.
+- **`javac --release 9` → `--release 25`**; Kotlin `jvmTarget` 25.
+- **Emitted bytecode V1_7 → V25**, centralized in
+  `org.raku.nqp.jast2bc.BytecodeVersion` (used by the JAST compiler,
+  BootJavaInterop, NativeCallOps and the P6Opaque/C-struct REPRs).
+- **`sun.misc.Unsafe` eliminated from NQP's runtime**: P6Opaque atomic
+  attribute ops use `VarHandle`; the obsolete `Ops.disableWarning` hack
+  (targeting a class removed in JDK 17) was deleted. Remaining Unsafe noise
+  at runtime comes from lz4-java (third-party; future dep upgrade).
+  `ThreadDeath` (deprecated-for-removal) is still used for exit unwinding —
+  replacing it needs a designed exit protocol across generated mainlines and
+  EvalServer; deferred.
+- **stage0 regenerated** (`./gradlew jBootstrapFiles`): the committed
+  bootstrap jars are now Java 25 class files, so building or running the
+  JVM backend requires JDK 25+.
