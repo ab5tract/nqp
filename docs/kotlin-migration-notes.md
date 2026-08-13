@@ -228,6 +228,100 @@ step. Combined with the ops-bag result, no class in the runtime is
 categorically unconvertible — the keep-as-Java list is now a
 prioritization of care, not a wall.
 
+## Completing io/ (the first full-package conversion)
+
+The remaining eight Java files in `io/` were converted after the study
+closed: the six synchronous classes literally (SyncHandle, SocketHandle,
+ServerSocketHandle, StandardWriteHandle, SyncProcessHandle,
+ProcessChannel), the two async socket classes idiomatically after first
+pinning their event formats with `t/jvm/07-asyncsocket.t` (a loopback
+listen/connect/accept/write/read/EOF exchange). **io/ is now 100% Kotlin.**
+Lessons added by this batch:
+
+- `lateinit var` neatly replaces the "public field assigned in constructor"
+  Java pattern (`SyncHandle.chan`) — it exposes the raw field without
+  `@JvmField` and keeps the Kotlin type non-null. A field named `in`
+  (`ProcessChannel`) survives via backticks with its bytecode name intact.
+- **The tests-before-port pattern caught a real porting bug**: the
+  idiomatic async-socket rewrite initially re-derived `hllConfig` from
+  `tc.curFrame` inside a helper called on NIO completion threads, where
+  that frame belongs to someone else. The completion handler died silently
+  (NIO swallows handler exceptions), the event never arrived, and the test
+  hung on `nqp::shift` — precisely the failure class the pinned event
+  formats exist to catch. Rule: capture every HLL-config type on the
+  calling thread, before any handler is registered.
+- Two more latent upstream bugs preserved faithfully with NOTE comments:
+  `AsyncServerSocketHandle.failed()` builds its error event and never
+  pushes it (accept failures are silently dropped), and the "server
+  handle" in accept events wraps the anonymous CompletionHandler rather
+  than the server socket handle (Java's `this` in the anonymous class).
+
+## The small runtime value classes
+
+EvalResult, HandlerInfo, IOExceptionMessages, JavaCallinException,
+CodeRefAnnotation, ContextKey and ByteClassLoader (seven files, ~236
+lines). Mostly mechanical; three notes:
+
+- `CodeRefAnnotation` converts to a Kotlin `annotation class` cleanly —
+  every generated compilation unit attaches it and `CompilationUnit` reads
+  it reflectively, so the bootstrap itself verifies element-signature
+  compatibility (including `LongArray`/`Array<String>` defaults and the
+  `Short` element).
+- `ContextKey`'s only consumer is rakudo's Java layer; its verification
+  here is signature-level (`javap` diff: public surface identical, two
+  never-read package-private fields dropped). Behavioral proof waits for
+  the rakudo layer build.
+- **Nullability strikes again, bootclasspath edition**: `ByteClassLoader`'s
+  `parent` constructor parameter must be `ClassLoader?` — for classes on
+  the boot classpath, `getClassLoader()` legitimately returns null (the
+  bootstrap loader), and Java's `ClassLoader` constructor accepts it. The
+  non-null Kotlin signature turned a valid call into an intrinsic-check
+  crash during stage1. When porting Java-facing constructors, audit call
+  sites for "obviously non-null" types that are null in exotic-but-real
+  deployments.
+
+## The sixmodel/reprs leaves
+
+The 31 pure data/instance classes at ≤28 lines each (~450 lines): the
+`*Instance` holders (VMException, AsyncTask, IOHandle, KnowHOW*, P6int/
+num/str/bigint, C-interop instances, thread/lock/semaphore wrappers) and
+the `*REPRData` classes. Everything here is `@JvmField` fields plus the
+occasional tiny override; the REPR classes themselves (registered in
+REPRRegistry's order-sensitive static block) remain for a dedicated
+round. Notes:
+
+- The nested `AttrInfo` classes of the C-struct REPRData family widen
+  their fields from Java package-private to public `@JvmField` (Kotlin has
+  no package visibility); their only readers are same-package REPRs.
+- Another latent upstream bug preserved with a NOTE: `P6bigintInstance`'s
+  unboxability guard compares `this` (not `value`) against
+  SMALLEST_UNBOXABLE, and Long.MIN_VALUE has bitLength 63 anyway — the
+  guard is dead code either way.
+- Converting `VMExceptionInstance` rippled one more nullable-property
+  snapshot into `ExceptionHandling.backtrace` — by now the pattern
+  (convert coupled clusters, expect `val x = field` snapshots at old
+  Java-style null-check sites) is routine.
+
+## The REPR classes (wave A: the 24 small ones)
+
+All REPR classes at ≤70 lines: the uniform type_object_for/allocate/
+deserialize skeletons (CodeRef, JavaWrap, Uninstantiable, VMNull, the
+concurrency REPRs, the KnowHOW pair, VMHash/VMIter, CStr/CPointer with its
+small ASM boxing-method generator, and friends). REPRRegistry's
+order-sensitive registration is unaffected — it constructs these classes
+by compile-time reference, and the registration order encodes serialized
+REPR ids, not anything about the implementation language.
+
+**Bootstrap-null is a pattern, not an incident.** After ByteClassLoader's
+null parent (boot classpath), this wave hit the same shape again:
+`type_object_for(tc, HOW)` receives **null** HOW when
+KnowHOWBootstrapper creates the KnowHOW type itself — before any HOW can
+exist. The MOP bootstrap, like the classloader bootstrap, legitimately
+passes null where steady-state code never does. Rule of thumb: any
+parameter on a path reachable from GlobalContext's constructor deserves a
+`?` unless proven otherwise; the stage1 bootstrap finds violations within
+seconds, which is much cheaper than finding them in review.
+
 ## Recommendation
 
 Mixed Java/Kotlin compilation is production-ready for this codebase: the

@@ -134,7 +134,8 @@ class FileHandle(tc: ThreadContext, filename: String, mode: String) :
         try {
             flushWriteBuffer(tc)
             val position = fc.position()
-            return if (readBuffer != null) position - readBuffer.remaining() else position
+            val rb = readBuffer
+            return if (rb != null) position - rb.remaining() else position
         } catch (e: IOException) {
             throw ExceptionHandling.dieInternal(tc, e)
         }
@@ -198,9 +199,10 @@ class FileHandle(tc: ThreadContext, filename: String, mode: String) :
     }
 
     override fun eof(tc: ThreadContext): Boolean {
+        val rb = readBuffer
         if (eof)
             return true
-        else if (readBuffer != null && readBuffer.remaining() > 0)
+        else if (rb != null && rb.remaining() > 0)
             return false
         else {
             return try {
