@@ -27,10 +27,17 @@ dependencies {
     NqpDeps.thirdParty.forEach { implementation(it) }
 }
 
+// The monomorphized VMArrayInstance_* REPR classes are generated from one
+// template; see buildSrc/src/main/kotlin/VMArrayInstances.kt.
+val generateVMArrayInstances = tasks.register<GenerateVMArrayInstancesTask>("generateVMArrayInstances") {
+    outputDir = layout.buildDirectory.dir("generated/vmarray")
+}
+
 sourceSets {
     main {
         java.setSrcDirs(listOf(rootProject.layout.projectDirectory.dir("src/vm/jvm/runtime")))
         kotlin.setSrcDirs(listOf(rootProject.layout.projectDirectory.dir("src/vm/jvm/runtime")))
+        kotlin.srcDir(generateVMArrayInstances)
         resources.setSrcDirs(emptyList<Any>())
     }
 }
