@@ -41,10 +41,21 @@ public class JASTCompiler {
             return c;
         }
         catch (Exception e) {
-            if (!split && "Method code too large!".equals(e.getMessage()))
+            if (!split && isMethodTooLarge(e))
                 return buildClass(jast, jastNodes, true, tc);
             throw new RuntimeException(e);
         }
+    }
+
+    /* ASM 4 signals an oversized method with a RuntimeException carrying
+     * this message; ASM 5+ throws the typed MethodTooLargeException (with a
+     * different message), which is matched by name here so that this code
+     * compiles against either ASM. Without this, the autosplitting method
+     * writer is unreachable under newer ASM and >64KB methods are a hard
+     * build failure. */
+    private static boolean isMethodTooLarge(Exception e) {
+        return "Method code too large!".equals(e.getMessage())
+            || "org.objectweb.asm.MethodTooLargeException".equals(e.getClass().getName());
     }
 
     private static final LZ4CompressorWithLength lz4 =
@@ -803,10 +814,28 @@ public class JASTCompiler {
     }
 
     public static Type processType(String typeName) {
-        // Long needs special treatment; getType doesn't cope with it.
+        /* The JAST type language uses first-character-significant names
+         * ("Long", "Double", "Byte", "[Byte", ...) alongside real JVM
+         * descriptors. ASM 4's Type.getType happens to accept the friendly
+         * names because it only inspects the leading character; newer ASM
+         * keeps the given string as the descriptor verbatim, producing
+         * corrupt descriptors like ([Byte[Ljava/lang/String;)V. Map the
+         * type language explicitly so either ASM works. */
         if (typeName.equals("Long"))
             return Type.LONG_TYPE;
-        return Type.getType(typeName);
+        switch (typeName.charAt(0)) {
+            case 'V': return Type.VOID_TYPE;
+            case 'Z': return Type.BOOLEAN_TYPE;
+            case 'C': return Type.CHAR_TYPE;
+            case 'B': return Type.BYTE_TYPE;
+            case 'S': return Type.SHORT_TYPE;
+            case 'I': return Type.INT_TYPE;
+            case 'F': return Type.FLOAT_TYPE;
+            case 'J': return Type.LONG_TYPE;
+            case 'D': return Type.DOUBLE_TYPE;
+            case '[': return Type.getType('[' + processType(typeName.substring(1)).getDescriptor());
+            default:  return Type.getType(typeName);
+        }
     }
 
     static public class LabelInfo {
