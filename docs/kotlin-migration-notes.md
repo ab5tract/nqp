@@ -302,6 +302,26 @@ round. Notes:
   (convert coupled clusters, expect `val x = field` snapshots at old
   Java-style null-check sites) is routine.
 
+## The REPR classes (wave A: the 24 small ones)
+
+All REPR classes at ≤70 lines: the uniform type_object_for/allocate/
+deserialize skeletons (CodeRef, JavaWrap, Uninstantiable, VMNull, the
+concurrency REPRs, the KnowHOW pair, VMHash/VMIter, CStr/CPointer with its
+small ASM boxing-method generator, and friends). REPRRegistry's
+order-sensitive registration is unaffected — it constructs these classes
+by compile-time reference, and the registration order encodes serialized
+REPR ids, not anything about the implementation language.
+
+**Bootstrap-null is a pattern, not an incident.** After ByteClassLoader's
+null parent (boot classpath), this wave hit the same shape again:
+`type_object_for(tc, HOW)` receives **null** HOW when
+KnowHOWBootstrapper creates the KnowHOW type itself — before any HOW can
+exist. The MOP bootstrap, like the classloader bootstrap, legitimately
+passes null where steady-state code never does. Rule of thumb: any
+parameter on a path reachable from GlobalContext's constructor deserves a
+`?` unless proven otherwise; the stage1 bootstrap finds violations within
+seconds, which is much cheaper than finding them in review.
+
 ## Recommendation
 
 Mixed Java/Kotlin compilation is production-ready for this codebase: the
