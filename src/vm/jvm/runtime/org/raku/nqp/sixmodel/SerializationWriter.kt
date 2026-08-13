@@ -655,15 +655,16 @@ class SerializationWriter(
         outputs[CLOSURES].putInt(contextIdx)
 
         /* Check if it has a static code object. */
-        if (closure.codeObject != null) {
+        val codeObject = closure.codeObject
+        if (codeObject != null) {
             outputs[CLOSURES].putInt(1)
-            if (closure.codeObject.sc == null) {
-                closure.codeObject.sc = this.sc
-                this.sc.addObject(closure.codeObject)
+            if (codeObject.sc == null) {
+                codeObject.sc = this.sc
+                this.sc.addObject(codeObject)
             }
-            val codeObjectSC = closure.codeObject.sc!!
+            val codeObjectSC = codeObject.sc!!
             outputs[CLOSURES].putInt(getSCId(codeObjectSC))
-            outputs[CLOSURES].putInt(codeObjectSC.getObjectIndex(closure.codeObject))
+            outputs[CLOSURES].putInt(codeObjectSC.getObjectIndex(codeObject))
         } else {
             outputs[CLOSURES].putInt(0)
             outputs[CLOSURES].putInt(0) // pad
@@ -681,9 +682,8 @@ class SerializationWriter(
     private fun getSerializedOuterContextIdx(closure: CodeRef): Int {
         if (closure.isCompilerStub)
             return 0
-        if (closure.outer == null)
-            return 0
-        return getSerializedContextIdx(closure.outer)
+        val outer = closure.outer ?: return 0
+        return getSerializedContextIdx(outer)
     }
 
     private fun getSerializedContextIdx(cf: CallFrame): Int {
