@@ -2352,6 +2352,10 @@ QAST::OperationsJAST.map_classlib_core_op('lstat', $TYPE_OPS, 'lstat', [$RT_STR,
 QAST::OperationsJAST.map_classlib_core_op('stat_time', $TYPE_OPS, 'stat_time', [$RT_STR, $RT_INT], $RT_NUM);
 QAST::OperationsJAST.map_classlib_core_op('lstat_time', $TYPE_OPS, 'lstat_time', [$RT_STR, $RT_INT], $RT_NUM);
 QAST::OperationsJAST.map_classlib_core_op('open', $TYPE_OPS, 'open', [$RT_STR, $RT_STR], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('openasync', $TYPE_OPS, 'openasync', [$RT_STR, $RT_STR], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('spurtasync', $TYPE_OPS, 'spurtasync', [$RT_OBJ, $RT_OBJ, $RT_OBJ, $RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('slurpasync', $TYPE_OPS, 'slurpasync', [$RT_OBJ, $RT_OBJ, $RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('linesasync', $TYPE_OPS, 'linesasync', [$RT_OBJ, $RT_OBJ, $RT_INT, $RT_OBJ, $RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('readlink', $TYPE_OPS, 'readlink', [$RT_STR], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('filereadable', $TYPE_OPS, 'filereadable', [$RT_STR], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('filewritable', $TYPE_OPS, 'filewritable', [$RT_STR], $RT_INT, :tc);
