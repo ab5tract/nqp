@@ -228,6 +228,34 @@ step. Combined with the ops-bag result, no class in the runtime is
 categorically unconvertible — the keep-as-Java list is now a
 prioritization of care, not a wall.
 
+## Completing io/ (the first full-package conversion)
+
+The remaining eight Java files in `io/` were converted after the study
+closed: the six synchronous classes literally (SyncHandle, SocketHandle,
+ServerSocketHandle, StandardWriteHandle, SyncProcessHandle,
+ProcessChannel), the two async socket classes idiomatically after first
+pinning their event formats with `t/jvm/07-asyncsocket.t` (a loopback
+listen/connect/accept/write/read/EOF exchange). **io/ is now 100% Kotlin.**
+Lessons added by this batch:
+
+- `lateinit var` neatly replaces the "public field assigned in constructor"
+  Java pattern (`SyncHandle.chan`) — it exposes the raw field without
+  `@JvmField` and keeps the Kotlin type non-null. A field named `in`
+  (`ProcessChannel`) survives via backticks with its bytecode name intact.
+- **The tests-before-port pattern caught a real porting bug**: the
+  idiomatic async-socket rewrite initially re-derived `hllConfig` from
+  `tc.curFrame` inside a helper called on NIO completion threads, where
+  that frame belongs to someone else. The completion handler died silently
+  (NIO swallows handler exceptions), the event never arrived, and the test
+  hung on `nqp::shift` — precisely the failure class the pinned event
+  formats exist to catch. Rule: capture every HLL-config type on the
+  calling thread, before any handler is registered.
+- Two more latent upstream bugs preserved faithfully with NOTE comments:
+  `AsyncServerSocketHandle.failed()` builds its error event and never
+  pushes it (accept failures are silently dropped), and the "server
+  handle" in accept events wraps the anonymous CompletionHandler rather
+  than the server socket handle (Java's `this` in the anonymous class).
+
 ## Recommendation
 
 Mixed Java/Kotlin compilation is production-ready for this codebase: the
