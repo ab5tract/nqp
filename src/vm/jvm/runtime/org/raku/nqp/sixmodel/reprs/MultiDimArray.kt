@@ -160,7 +160,7 @@ class MultiDimArray : REPR() {
             val type = reader.readRef()
             if (Ops.isnull(type) == 0L) {
                 reprData.type = type
-                reprData.ss = type.st.REPR.get_storage_spec(tc, type.st)
+                reprData.ss = type!!.st.REPR.get_storage_spec(tc, type.st)
             }
             st.REPRData = reprData
         }

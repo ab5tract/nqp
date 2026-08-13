@@ -38,7 +38,7 @@ class KnowHOWREPR : REPR() {
         body.name = reader.readStr()
 
         val attributes = ArrayList<SixModelObject>()
-        val attrs = reader.readRef()
+        val attrs = reader.readRef()!!
         val elems = attrs.elems(tc)
         for (i in 0 until elems)
             attributes.add(attrs.at_pos_boxed(tc, i))

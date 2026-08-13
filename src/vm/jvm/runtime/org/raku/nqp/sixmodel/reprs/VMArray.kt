@@ -155,7 +155,7 @@ class VMArray : REPR() {
             if (Ops.isnull(type) == 0L) {
                 val reprData = VMArrayREPRData()
                 reprData.type = type
-                reprData.ss = type.st.REPR.get_storage_spec(tc, type.st)
+                reprData.ss = type!!.st.REPR.get_storage_spec(tc, type.st)
                 st.REPRData = reprData
             }
         }
