@@ -280,6 +280,28 @@ lines). Mostly mechanical; three notes:
   sites for "obviously non-null" types that are null in exotic-but-real
   deployments.
 
+## The sixmodel/reprs leaves
+
+The 31 pure data/instance classes at ≤28 lines each (~450 lines): the
+`*Instance` holders (VMException, AsyncTask, IOHandle, KnowHOW*, P6int/
+num/str/bigint, C-interop instances, thread/lock/semaphore wrappers) and
+the `*REPRData` classes. Everything here is `@JvmField` fields plus the
+occasional tiny override; the REPR classes themselves (registered in
+REPRRegistry's order-sensitive static block) remain for a dedicated
+round. Notes:
+
+- The nested `AttrInfo` classes of the C-struct REPRData family widen
+  their fields from Java package-private to public `@JvmField` (Kotlin has
+  no package visibility); their only readers are same-package REPRs.
+- Another latent upstream bug preserved with a NOTE: `P6bigintInstance`'s
+  unboxability guard compares `this` (not `value`) against
+  SMALLEST_UNBOXABLE, and Long.MIN_VALUE has bitLength 63 anyway — the
+  guard is dead code either way.
+- Converting `VMExceptionInstance` rippled one more nullable-property
+  snapshot into `ExceptionHandling.backtrace` — by now the pattern
+  (convert coupled clusters, expect `val x = field` snapshots at old
+  Java-style null-check sites) is routine.
+
 ## Recommendation
 
 Mixed Java/Kotlin compilation is production-ready for this codebase: the
