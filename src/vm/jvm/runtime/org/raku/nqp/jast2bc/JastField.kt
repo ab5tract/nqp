@@ -16,7 +16,7 @@ class JastField @Throws(Exception::class) constructor(jast: SixModelObject, jast
             throw Exception("JAST node isn't a JAST::Field")
 
         name = Ops.getattr_s(jast, jastField, "$!name", nameHint, tc)
-        type = JASTCompiler.processType(Ops.getattr_s(jast, jastField, "$!type", typeHint, tc))
+        type = JASTCompiler.processType(Ops.getattr_s(jast, jastField, "$!type", typeHint, tc)!!)
         isStatic = Ops.getattr_i(jast, jastField, "$!static", staticHint, tc) != 0L
     }
 
