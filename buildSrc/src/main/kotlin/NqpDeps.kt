@@ -40,6 +40,11 @@ object NqpDeps {
 
     /** The runner bootclasspath omits asm-tree, mirroring
      *  tools/templates/jvm/nqp-j.in. */
+    /* asm-tree IS included, unlike the Makefile runner's jar list: the
+     * AutosplitMethodWriter (the >64KB-method fallback in jast2bc) uses the
+     * ASM tree API at runtime, and without asm-tree that path dies with
+     * NoClassDefFoundError instead of splitting — t/jvm/09-autosplit.t
+     * covers it. */
     fun runnerJars(fileNames: List<String>): List<String> =
-        fileNames.sortedBy(::orderKey).filterNot { it.startsWith("asm-tree-") }
+        fileNames.sortedBy(::orderKey)
 }
