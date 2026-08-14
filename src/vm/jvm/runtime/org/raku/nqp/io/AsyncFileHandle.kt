@@ -69,7 +69,7 @@ class AsyncFileHandle(tc: ThreadContext, filename: String, mode: String) :
 
     /** Boxes a failure and invokes the error callback, from any thread. */
     private fun reportError(tc: ThreadContext, Str: SixModelObject, error: SixModelObject, exc: Throwable) {
-        val curTC = tc.gc.currentThreadContext
+        val curTC = tc.gc.getCurrentThreadContext()!!
         Ops.invokeDirect(curTC, error, oneArgCSD,
             arrayOf<Any>(Ops.box_s(exc.toString(), Str, curTC)))
     }
@@ -85,7 +85,7 @@ class AsyncFileHandle(tc: ThreadContext, filename: String, mode: String) :
                     if (bb.position().toLong() == expected) {
                         try {
                             /* We're done. Decode, box, call the done handler. */
-                            val curTC = tc.gc.currentThreadContext
+                            val curTC = tc.gc.getCurrentThreadContext()!!
                             bb.flip()
                             val boxed = Ops.box_s(dec.decode(bb).toString(), Str, curTC)
                             Ops.invokeDirect(curTC, done, oneArgCSD, arrayOf<Any>(boxed))
@@ -118,7 +118,7 @@ class AsyncFileHandle(tc: ThreadContext, filename: String, mode: String) :
                 override fun completed(bytes: Int, bb: ByteBuffer) {
                     if (bb.position().toLong() == expected) {
                         /* Done. Call the done handler. */
-                        val curTC = tc.gc.currentThreadContext
+                        val curTC = tc.gc.getCurrentThreadContext()!!
                         Ops.invokeDirect(curTC, done, zeroArgCSD, arrayOf<Any>())
                     }
                     else {
@@ -150,7 +150,7 @@ class AsyncFileHandle(tc: ThreadContext, filename: String, mode: String) :
         chan.read(ls.readBuffer, 0, ls, object : CompletionHandler<Int, LinesState> {
             override fun completed(bytes: Int, ss: LinesState) {
                 try {
-                    val curTC = tc.gc.currentThreadContext
+                    val curTC = tc.gc.getCurrentThreadContext()!!
 
                     /* If we've read it all, send the done notification. */
                     if (bytes == -1) {

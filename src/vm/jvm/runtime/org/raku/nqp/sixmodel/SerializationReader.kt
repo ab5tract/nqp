@@ -449,7 +449,7 @@ class SerializationReader(
 
             /* HLL stuff. */
             if (version >= 6) {
-                st.hllOwner = tc.gc.getHLLConfigFor(readStr())
+                st.hllOwner = tc.gc.getHLLConfigFor(readStr()!!)
                 st.hllRole = orig.getLong()
             }
 
@@ -465,7 +465,7 @@ class SerializationReader(
                 } else if (paraFlag == 2L) {
                     val pt = ParameterizedType()
                     pt.parametricType = readObjRef()
-                    val BOOTArray = tc.gc.BOOTArray
+                    val BOOTArray = tc.gc.BOOTArray!!
                     val parameters = BOOTArray.st.REPR.allocate(tc, BOOTArray.st)
                     pt.parameters = parameters
                     val elems = orig.getInt()
@@ -596,25 +596,25 @@ class SerializationReader(
         REFVAR_OBJECT ->
             return readObjRef()
         REFVAR_VM_INT -> {
-            val BOOTInt = tc.gc.BOOTInt
+            val BOOTInt = tc.gc.BOOTInt!!
             val iResult = BOOTInt.st.REPR.allocate(tc, BOOTInt.st)
             iResult.set_int(tc, orig.getLong())
             return iResult
         }
         REFVAR_VM_NUM -> {
-            val BOOTNum = tc.gc.BOOTNum
+            val BOOTNum = tc.gc.BOOTNum!!
             val nResult = BOOTNum.st.REPR.allocate(tc, BOOTNum.st)
             nResult.set_num(tc, orig.getDouble())
             return nResult
         }
         REFVAR_VM_STR -> {
-            val BOOTStr = tc.gc.BOOTStr
+            val BOOTStr = tc.gc.BOOTStr!!
             val sResult = BOOTStr.st.REPR.allocate(tc, BOOTStr.st)
             sResult.set_str(tc, lookupString(orig.getInt()))
             return sResult
         }
         REFVAR_VM_ARR_VAR -> {
-            val BOOTArray = tc.gc.BOOTArray
+            val BOOTArray = tc.gc.BOOTArray!!
             val resArray = BOOTArray.st.REPR.allocate(tc, BOOTArray.st)
             val elems = orig.getInt()
             for (i in 0 until elems)
@@ -626,7 +626,7 @@ class SerializationReader(
             return resArray
         }
         REFVAR_VM_ARR_STR -> {
-            val BOOTStrArray = tc.gc.BOOTStrArray
+            val BOOTStrArray = tc.gc.BOOTStrArray!!
             val resArray = BOOTStrArray.st.REPR.allocate(tc, BOOTStrArray.st)
             val elems = orig.getInt()
             for (i in 0 until elems) {
@@ -636,7 +636,7 @@ class SerializationReader(
             return resArray
         }
         REFVAR_VM_ARR_INT -> {
-            val BOOTIntArray = tc.gc.BOOTIntArray
+            val BOOTIntArray = tc.gc.BOOTIntArray!!
             val resArray = BOOTIntArray.st.REPR.allocate(tc, BOOTIntArray.st)
             val elems = orig.getInt()
             for (i in 0 until elems) {
@@ -646,7 +646,7 @@ class SerializationReader(
             return resArray
         }
         REFVAR_VM_HASH_STR_VAR -> {
-            val BOOTHash = tc.gc.BOOTHash
+            val BOOTHash = tc.gc.BOOTHash!!
             val resHash = BOOTHash.st.REPR.allocate(tc, BOOTHash.st)
             val elems = orig.getInt()
             for (i in 0 until elems) {

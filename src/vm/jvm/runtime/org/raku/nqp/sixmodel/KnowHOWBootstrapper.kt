@@ -29,23 +29,23 @@ object KnowHOWBootstrapper {
         tc.gc.VMNull = bootType(tc, "VMNull", "VMNull")
         tc.gc.Thread = bootType(tc, "Thread", "VMThread")
 
-        tc.gc.BOOTArray.st.hllRole = HLLConfig.ROLE_ARRAY.toLong()
-        tc.gc.BOOTHash.st.hllRole = HLLConfig.ROLE_HASH.toLong()
-        tc.gc.BOOTInt.st.hllRole = HLLConfig.ROLE_INT.toLong()
-        tc.gc.BOOTNum.st.hllRole = HLLConfig.ROLE_NUM.toLong()
-        tc.gc.BOOTStr.st.hllRole = HLLConfig.ROLE_STR.toLong()
-        tc.gc.BOOTCode.st.hllRole = HLLConfig.ROLE_CODE.toLong()
+        tc.gc.BOOTArray!!.st.hllRole = HLLConfig.ROLE_ARRAY.toLong()
+        tc.gc.BOOTHash!!.st.hllRole = HLLConfig.ROLE_HASH.toLong()
+        tc.gc.BOOTInt!!.st.hllRole = HLLConfig.ROLE_INT.toLong()
+        tc.gc.BOOTNum!!.st.hllRole = HLLConfig.ROLE_NUM.toLong()
+        tc.gc.BOOTStr!!.st.hllRole = HLLConfig.ROLE_STR.toLong()
+        tc.gc.BOOTCode!!.st.hllRole = HLLConfig.ROLE_CODE.toLong()
 
-        tc.gc.BOOTIntArray = bootTypedArray(tc, "BOOTIntArray", tc.gc.BOOTInt)
-        tc.gc.BOOTNumArray = bootTypedArray(tc, "BOOTNumArray", tc.gc.BOOTNum)
-        tc.gc.BOOTStrArray = bootTypedArray(tc, "BOOTStrArray", tc.gc.BOOTStr)
+        tc.gc.BOOTIntArray = bootTypedArray(tc, "BOOTIntArray", tc.gc.BOOTInt!!)
+        tc.gc.BOOTNumArray = bootTypedArray(tc, "BOOTNumArray", tc.gc.BOOTNum!!)
+        tc.gc.BOOTStrArray = bootTypedArray(tc, "BOOTStrArray", tc.gc.BOOTStr!!)
         tc.gc.MultiCache = bootType(tc, "MultiCache", "MultiCache")
         tc.gc.Continuation = bootType(tc, "Continuation", "Continuation")
         tc.gc.BOOTJava = bootType(tc, "BOOTJavaObject", "JavaWrap")
 
         // fixup missing STable for knowhow_how methods
-        for (cr in (tc.gc.KnowHOW.st.HOW as KnowHOWREPRInstance).methods!!.entries) {
-            cr.value.st = tc.gc.BOOTCode.st
+        for (cr in (tc.gc.KnowHOW!!.st.HOW as KnowHOWREPRInstance).methods!!.entries) {
+            cr.value.st = tc.gc.BOOTCode!!.st
         }
 
         Ops.setboolspec(tc.gc.BOOTIter, BoolificationSpec.MODE_ITER.toLong(), null, tc)
@@ -116,7 +116,7 @@ object KnowHOWBootstrapper {
 
     private fun bootstrapKnowHOWAttribute(tc: ThreadContext, knowhowUnit: CompilationUnit) {
         /* Create meta-object. */
-        val knowhow_how = tc.gc.KnowHOW.st.HOW!!
+        val knowhow_how = tc.gc.KnowHOW!!.st.HOW!!
         val meta_obj = knowhow_how.st.REPR.allocate(tc, knowhow_how.st) as KnowHOWREPRInstance
 
         /* Add methods. */
@@ -151,7 +151,7 @@ object KnowHOWBootstrapper {
     }
 
     private fun bootType(tc: ThreadContext, typeName: String, reprName: String): SixModelObject {
-        val knowhow_how = tc.gc.KnowHOW.st.HOW!!
+        val knowhow_how = tc.gc.KnowHOW!!.st.HOW!!
         val meta_obj = knowhow_how.st.REPR.allocate(tc, knowhow_how.st) as KnowHOWREPRInstance
         meta_obj.name = typeName
         val repr = REPRRegistry.getByName(reprName)
@@ -170,7 +170,7 @@ object KnowHOWBootstrapper {
 
     private fun bootTypedArray(tc: ThreadContext, name: String, type: SixModelObject): SixModelObject {
         val booted = bootType(tc, name, "VMArray")
-        val BOOTHash = tc.gc.BOOTHash
+        val BOOTHash = tc.gc.BOOTHash!!
         val repr_info = BOOTHash.st.REPR.allocate(tc, BOOTHash.st)
         val repr_array_info = BOOTHash.st.REPR.allocate(tc, BOOTHash.st)
         repr_array_info.bind_key_boxed(tc, "type", type)
