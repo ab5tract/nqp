@@ -408,6 +408,61 @@ returning `Object`, and invokeExact demands an exact match — so the
 Kotlin form would throw WrongMethodTypeException on every continuation
 resume. There is no Kotlin syntax for a void-typed polymorphic call site.
 
+## The dependency sweep
+
+With the runtime conversion settled, the third-party jars were brought
+current on the Gradle path (the Makefile/vendored path deliberately lags):
+fastutil 8.5.13 → 8.5.19, JNA 4.5.0 → 5.19.1, jline 1 → org.jline 4.3.1,
+plus lz4 switched to its pure-Java `safeInstance` (the `Unsafe` fast path
+warns on JDK 25 and is on borrowed time). Findings:
+
+- **JNA 5** removed `Pointer.SIZE` (→ `Native.POINTER_SIZE`) and typed
+  `Structure.newInstance` as `Class<? extends Structure>` — the REPRData
+  call sites keep their `Class<?>` fields and narrow with `asSubclass` at
+  the call. `t/nativecall/01-basic.t` (libc printf/strdup/callbacks) is the
+  regression gate; it was in the Makefile's JVM test target but missing
+  from the Gradle `testNqp` task, now added.
+- **JEP 472**: JNA loads its dispatch library via `System.load`, which
+  JDK 24+ warns about and will eventually block. Both launch points (the
+  stage-compile `jvmArgs` and the generated runner) now pass
+  `--enable-native-access=ALL-UNNAMED`. Together with the lz4 change this
+  makes subprocess stderr warning-free again — which cured the
+  environmental `114-pod-panic.t` failure (its `^`-anchored regex broke on
+  the Unsafe deprecation warnings).
+- **jline 4** replaces `ConsoleReader(in, out)` with a `LineReader` over a
+  `Terminal` (system terminal, `dumb(true)` fallback for no-tty). Semantic
+  mappings: EOF is now `EndOfFileException` (jline 1 returned null), and
+  Ctrl-C surfaces as `UserInterruptException`, mapped to an empty line;
+  the EOF path also does `terminal.close()`, since the system terminal's
+  reader pump is a non-daemon thread that would otherwise keep the JVM
+  alive. Caveat discovered while testing: **`readlineInteractive` has no
+  caller inside nqp** — NQP's own REPL reads via plain `$stdin.get`, and
+  the interface exists for rakudo's runtime layer. So the jline port is
+  verified here at compile/signature level only; behavioral proof waits
+  for the rakudo layer (the ContextKey precedent).
+- **The JVM REPL was broken upstream, twice, independent of any of
+  this** — pty-driven `script -qec` checks were plausibly the first
+  exercise this path has had in years (there is no REPL test coverage
+  anywhere):
+  1. `HLL::Compiler.eval` returns null for a REPL line on both backends,
+     and `input-incomplete` calls `nqp::where` on it. MoarVM's null is a
+     real VMNull object so `where` works; the JVM's is Java null, and
+     `Ops.where` NPE'd through `decont` — every REPL line died after
+     evaluation (since 2016). Fixed: null guard in `where` (identity 0).
+  2. `StandardReadHandle.read`'s tty branch sized requests purely by
+     `available()`; `read(buf, off, 0)` returns 0 without consulting the
+     fd, so the loop busy-spun at 100% CPU while waiting at the prompt
+     and could never observe EOF — Ctrl-D hung the REPL forever. Fixed:
+     block for at least one byte until something has been read, then
+     return the pending chunk.
+- **AggressiveHeap replaced by explicit caps** (Gradle path only): stage
+  compiles `-Xmx8g` (`-PnqpStageMaxHeap`), the runner `-Xmx4g`
+  (`NQP_JVM_MAXHEAP` env var). `-XX:+AggressiveHeap` sizes every JVM at
+  ~half of physical RAM; overlapping JVMs (stage compile, daemons, a test
+  and its spawned children) stalled a swapless 32 GB machine in memory
+  reclaim. See docs/gradle-jvm-build.md for the knobs and the
+  `systemd-run --scope` belt-and-braces wrapper.
+
 ## Remaining Java (as of the java-to-kotlin branch head)
 
 ~19K lines across: Ops.java (7.9K — one monolithic class, all-or-nothing,
