@@ -100,15 +100,15 @@ public class CStructInstance extends SixModelObject implements Refreshable {
         if (info.inlined == 0) {
             if (info.argType == ArgType.CSTRUCT) {
                 Class<?> structClass = ((CStructREPRData)info.type.st.REPRData).structureClass;
-                o                    = (Object)Structure.newInstance(structClass, ((Pointer)o));
+                o                    = (Object)Structure.newInstance(structClass.asSubclass(Structure.class), ((Pointer)o));
             }
             else if (info.argType == ArgType.CPPSTRUCT) {
                 Class<?> structClass = ((CPPStructREPRData)info.type.st.REPRData).structureClass;
-                o                    = (Object)Structure.newInstance(structClass, ((Pointer)o));
+                o                    = (Object)Structure.newInstance(structClass.asSubclass(Structure.class), ((Pointer)o));
             }
             else if (info.argType == ArgType.CUNION) {
                 Class<?> structClass = ((CUnionREPRData)info.type.st.REPRData).structureClass;
-                o                    = (Object)Union.newInstance(structClass, ((Pointer)o));
+                o                    = (Object)Union.newInstance(structClass.asSubclass(Union.class), ((Pointer)o));
             }
         }
 
