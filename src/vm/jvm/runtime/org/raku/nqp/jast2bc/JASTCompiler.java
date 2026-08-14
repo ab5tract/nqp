@@ -58,8 +58,13 @@ public class JASTCompiler {
             || "org.objectweb.asm.MethodTooLargeException".equals(e.getClass().getName());
     }
 
+    /* This used to be fastestInstance(), which selects lz4's
+     * sun.misc.Unsafe fast path. Switched to the pure-Java safeInstance()
+     * to future-proof against the deprecation-for-removal of Unsafe
+     * (JEP 498: JDK 24+ warns on every process start, and later releases
+     * will refuse outright). */
     private static final LZ4CompressorWithLength lz4 =
-        new LZ4CompressorWithLength(LZ4Factory.fastestInstance().highCompressor(8));
+        new LZ4CompressorWithLength(LZ4Factory.safeInstance().highCompressor(8));
     // The lower the compression level, the faster the serialization, at the
     // expense of deserialization and disk space; the higher the compression
     // level, the lower the disk space, at the expense of both serialization
