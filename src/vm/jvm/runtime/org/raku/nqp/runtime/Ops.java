@@ -2510,7 +2510,12 @@ public final class Ops {
         return decont(o, tc).st.WHO;
     }
     public static long where(SixModelObject o, ThreadContext tc) {
-        return decont(o, tc).hashCode();
+        /* Null is a real value here: the REPL calls where() on eval results,
+         * which are null for statements with no return value. MoarVM's null
+         * is a genuine VMNull object with an address, so where() works there;
+         * give the JVM's Java null a stable identity too instead of an NPE. */
+        SixModelObject d = decont(o, tc);
+        return d == null ? 0 : d.hashCode();
     }
     public static SixModelObject setwho(SixModelObject o, SixModelObject who, ThreadContext tc) {
         decont(o, tc).st.WHO = who;
