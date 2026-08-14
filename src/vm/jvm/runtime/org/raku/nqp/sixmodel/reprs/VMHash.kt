@@ -42,7 +42,7 @@ class VMHash : REPR() {
         for (i in 0 until elems) {
             val key = reader.readStr()
             val value = reader.readRef()
-            storage[key] = value
+            storage[key!!] = value
         }
     }
 
