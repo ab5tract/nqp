@@ -45,7 +45,7 @@ class AsyncProcessHandle(
     private val config: Map<String, SixModelObject> =
         iterate(configObj).mapNotNull { kv ->
             val value = Ops.iterval(kv, tc)
-            if (Ops.isnull(value) == 0L) Ops.iterkey_s(kv, tc) to value else null
+            if (Ops.isnull(value) == 0L) Ops.iterkey_s(kv, tc)!! to value!! else null
         }.toMap()
 
     private val bufType: SixModelObject? = config["buf_type"]

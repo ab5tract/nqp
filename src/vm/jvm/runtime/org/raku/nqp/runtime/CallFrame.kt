@@ -235,7 +235,7 @@ class CallFrame : Cloneable {
             tc.unwinder = UnwindException()
             val hll = sci.compUnit.hllConfig!!
             Ops.invokeDirect(tc, hll.exitHandler, exitHandlerCallSite,
-                arrayOf<Any?>(this.codeRef, Ops.result_o(this.caller)))
+                arrayOf<Any?>(this.codeRef, Ops.result_o(this.caller!!)))
             tc.unwinder = origUnwinder
         }
         this.tc.curFrame = this.caller

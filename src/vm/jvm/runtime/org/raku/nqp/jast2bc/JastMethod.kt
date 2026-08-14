@@ -39,7 +39,7 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
         var curArgIndex = 1
 
         name = Ops.getattr_s(jast, jastMethod, "$!name", nameHint, tc)
-        returns = JASTCompiler.processType(Ops.getattr(jast, jastMethod, "$!returns", returnsHint, tc).get_str(tc)!!)
+        returns = JASTCompiler.processType(Ops.getattr(jast, jastMethod, "$!returns", returnsHint, tc)!!.get_str(tc)!!)
         isStatic = Ops.getattr_i(jast, jastMethod, "$!static", staticHint, tc) != 0L
         if (isStatic)
             curArgIndex = 0
@@ -73,10 +73,10 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
         crCuid = Ops.getattr_s(jast, jastMethod, "$!cr_cuid", crCuidHint, tc)
         crOuter = Ops.getattr_i(jast, jastMethod, "$!cr_outer", crOuterHint, tc).toInt()
 
-        fillList(crOlex, Ops.getattr(jast, jastMethod, "@!cr_olex", crOlexHint, tc), tc)
-        fillList(crIlex, Ops.getattr(jast, jastMethod, "@!cr_ilex", crIlexHint, tc), tc)
-        fillList(crNlex, Ops.getattr(jast, jastMethod, "@!cr_nlex", crNlexHint, tc), tc)
-        fillList(crSlex, Ops.getattr(jast, jastMethod, "@!cr_slex", crSlexHint, tc), tc)
+        fillList(crOlex, Ops.getattr(jast, jastMethod, "@!cr_olex", crOlexHint, tc)!!, tc)
+        fillList(crIlex, Ops.getattr(jast, jastMethod, "@!cr_ilex", crIlexHint, tc)!!, tc)
+        fillList(crNlex, Ops.getattr(jast, jastMethod, "@!cr_nlex", crNlexHint, tc)!!, tc)
+        fillList(crSlex, Ops.getattr(jast, jastMethod, "@!cr_slex", crSlexHint, tc)!!, tc)
 
         val handlersList = Ops.getattr(jast, jastMethod, "@!cr_handlers", crHandlersHint, tc)
         iter = Ops.iter(handlersList, tc)

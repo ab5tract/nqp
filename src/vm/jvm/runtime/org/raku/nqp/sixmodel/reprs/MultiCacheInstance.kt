@@ -176,7 +176,7 @@ class MultiCacheInstance : SixModelObject() {
                     return MD_CACHE_NULL
                 val cont = arg as SixModelObject
                 val decont = Ops.decont(cont, tc)
-                var typeId = decont.st.hashCode().toLong() shl 4
+                var typeId = decont!!.st.hashCode().toLong() shl 4
                 if (Ops.iscont_i(cont) == 1L || Ops.iscont_u(cont) == 1L || Ops.iscont_n(cont) == 1L || Ops.iscont_s(cont) == 1L) {
                     typeId = typeId or 4    /* Native ref vs. non-native ref */
                     typeId = typeId or 2    /* Native refs are always writable. */
