@@ -230,7 +230,7 @@ fun registerStage(
                         thirdPartySorted().map { it.absolutePath } +
                         "${compilerDir.absolutePath}/nqp.jar"
                     ).joinToString(File.pathSeparator)
-                jvmArgs("-Xmx$nqpStageMaxHeap", "-XX:+AllowParallelDefineClass", "-Xbootclasspath/a:$bootcp")
+                jvmArgs("--enable-native-access=ALL-UNNAMED", "-Xmx$nqpStageMaxHeap", "-XX:+AllowParallelDefineClass", "-Xbootclasspath/a:$bootcp")
             }
 
             val stableSc = if (stage == 1) listOf("--stable-sc=stage1") else emptyList()
@@ -336,7 +336,8 @@ fun registerProveTask(name: String, testDirs: List<String>) =
 
 registerProveTask("testNqpCore", listOf("t/nqp"))
 registerProveTask("testNqp",
-    listOf("t/nqp", "t/hll", "t/qregex", "t/p5regex", "t/qast", "t/jvm", "t/serialization"))
+    listOf("t/nqp", "t/hll", "t/qregex", "t/p5regex", "t/qast", "t/jvm", "t/serialization",
+        "t/nativecall"))
 
 // Explicit, never part of buildJvm: install into the configured prefix,
 // mirroring the Makefile's j-install layout.

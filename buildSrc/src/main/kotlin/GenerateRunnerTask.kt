@@ -74,10 +74,14 @@ abstract class GenerateRunnerTask : DefaultTask() {
             |
             |EXEC=${'$'}(rreadlink "${'$'}0")
             |
+            |# --enable-native-access: JNA loads its dispatch library via
+            |# System.load, which JDK 24+ warns about (JEP 472) and will
+            |# eventually block for code without native access enabled.
+            |#
             |# NQP_JVM_MAXHEAP caps the heap (default 4g). The Makefile runner
             |# uses -XX:+AggressiveHeap (~half of physical RAM per JVM), which
             |# can stall a swapless machine when several runners overlap.
-            |exec java -Dnqp.execname="${'$'}EXEC" -Xmx"${'$'}{NQP_JVM_MAXHEAP:-4g}" -XX:+AllowParallelDefineClass -Xbootclasspath/a:"${bootEntries.joinToString(":")}" -cp "$lib" nqp "${'$'}@"
+            |exec java -Dnqp.execname="${'$'}EXEC" --enable-native-access=ALL-UNNAMED -Xmx"${'$'}{NQP_JVM_MAXHEAP:-4g}" -XX:+AllowParallelDefineClass -Xbootclasspath/a:"${bootEntries.joinToString(":")}" -cp "$lib" nqp "${'$'}@"
             |""".trimMargin()
         val file = output.get().asFile
         file.writeText(script)
