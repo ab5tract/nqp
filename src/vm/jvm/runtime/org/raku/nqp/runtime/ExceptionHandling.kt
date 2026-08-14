@@ -88,7 +88,7 @@ object ExceptionHandling {
         while (f != null) {
             if (f.curHandler != 0L) {
                 var tryHandler = f.curHandler
-                val handlers = f.codeRef.staticInfo.handlers
+                val handlers = f.codeRef.staticInfo.handlers!!
                 while (tryHandler != 0L) {
                     for (i in handlers.indices) {
                         if (handlers[i][0] == tryHandler) {
@@ -141,7 +141,7 @@ object ExceptionHandling {
         while (f != null) {
             if (f.curHandler != 0L) {
                 var tryHandler = f.curHandler
-                val handlers = f.codeRef.staticInfo.handlers
+                val handlers = f.codeRef.staticInfo.handlers!!
                 while (tryHandler != 0L) {
                     for (i in handlers.indices) {
                         if (handlers[i][0] == tryHandler) {

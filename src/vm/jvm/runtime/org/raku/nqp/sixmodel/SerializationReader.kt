@@ -515,13 +515,13 @@ class SerializationReader(
             ctx.codeRef = staticCode
             val sci = staticCode.staticInfo
             if (sci.oLexicalNames != null)
-                ctx.oLex = sci.oLexStatic.clone()
+                ctx.oLex = sci.oLexStatic!!.clone()
             if (sci.iLexicalNames != null)
-                ctx.iLex = LongArray(sci.iLexicalNames.size)
+                ctx.iLex = LongArray(sci.iLexicalNames!!.size)
             if (sci.nLexicalNames != null)
-                ctx.nLex = DoubleArray(sci.nLexicalNames.size)
+                ctx.nLex = DoubleArray(sci.nLexicalNames!!.size)
             if (sci.sLexicalNames != null)
-                ctx.sLex = arrayOfNulls(sci.sLexicalNames.size)
+                ctx.sLex = arrayOfNulls(sci.sLexicalNames!!.size)
 
             /* Set context data read position, and set current read buffer to the correct thing. */
             orig.position(contextDataOffset + orig.getInt())
@@ -529,7 +529,7 @@ class SerializationReader(
             /* Deserialize lexicals. */
             val syms = orig.getLong()
             for (j in 0 until syms) {
-                val sym = readStr()
+                val sym = readStr()!!
                 var idx = sci.oTryGetLexicalIdx(sym)
                 if (idx != -1) {
                     ctx.oLex[idx] = readRef()
@@ -578,10 +578,11 @@ class SerializationReader(
     private fun fixupContextOuters() {
         for (i in 0 until contextTableEntries) {
             val ctx = contexts[i]!!
+            val priorInvocation = ctx.codeRef.staticInfo.priorInvocation
             if (ctx.outer == null &&
-                ctx.codeRef.staticInfo.priorInvocation != null &&
-                ctx.codeRef.staticInfo.priorInvocation.outer != null)
-                ctx.outer = ctx.codeRef.staticInfo.priorInvocation.outer
+                priorInvocation != null &&
+                priorInvocation.outer != null)
+                ctx.outer = priorInvocation.outer
         }
     }
 

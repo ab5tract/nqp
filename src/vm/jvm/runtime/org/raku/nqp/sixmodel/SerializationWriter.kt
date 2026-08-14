@@ -744,28 +744,28 @@ class SerializationWriter(
         numLexicals += if (cf.sLex == null) 0 else cf.sLex.size
         writeInt(numLexicals.toLong())
         if (cf.oLex != null) {
-            val names = cf.codeRef.staticInfo.oLexicalNames
+            val names = cf.codeRef.staticInfo.oLexicalNames!!
             for (i in cf.oLex.indices) {
                 writeStr(names[i])
                 writeRef(cf.oLex[i])
             }
         }
         if (cf.iLex != null) {
-            val names = cf.codeRef.staticInfo.iLexicalNames
+            val names = cf.codeRef.staticInfo.iLexicalNames!!
             for (i in cf.iLex.indices) {
                 writeStr(names[i])
                 writeInt(cf.iLex[i])
             }
         }
         if (cf.nLex != null) {
-            val names = cf.codeRef.staticInfo.nLexicalNames
+            val names = cf.codeRef.staticInfo.nLexicalNames!!
             for (i in cf.nLex.indices) {
                 writeStr(names[i])
                 writeNum(cf.nLex[i])
             }
         }
         if (cf.sLex != null) {
-            val names = cf.codeRef.staticInfo.sLexicalNames
+            val names = cf.codeRef.staticInfo.sLexicalNames!!
             for (i in cf.sLex.indices) {
                 writeStr(names[i])
                 writeStr(cf.sLex[i])
