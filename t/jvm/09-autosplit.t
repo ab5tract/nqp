@@ -5,8 +5,7 @@ plan(1);
 # Force a single sub whose bytecode exceeds the 64KB JVM method limit, so
 # jast2bc falls back to the AutosplitMethodWriter. Exercises the splitter
 # end to end: type inference, split-point selection, and the generated
-# trampolines. (eval discards its result, so the value comes back via an
-# hllsym.)
+# trampolines.
 my $code := 'sub huge() {
     my $x := 0;
     $x := $x + 0;
@@ -20010,6 +20009,5 @@ my $code := 'sub huge() {
     $x := $x + 98;
     $x := $x + 99;
     $x
-}; nqp::bindhllsym("nqp", "autosplit_result", huge());';
-nqp::getcomp("nqp").eval($code);
-ok(nqp::gethllsym("nqp", "autosplit_result") == 990000, 'a >64KB method autosplits and computes correctly');
+}; huge()';
+ok(nqp::getcomp("nqp").eval($code) == 990000, 'a >64KB method autosplits and computes correctly');
