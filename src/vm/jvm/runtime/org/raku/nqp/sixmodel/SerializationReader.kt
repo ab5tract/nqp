@@ -449,7 +449,7 @@ class SerializationReader(
 
             /* HLL stuff. */
             if (version >= 6) {
-                st.hllOwner = tc.gc.getHLLConfigFor(readStr())
+                st.hllOwner = tc.gc.getHLLConfigFor(readStr()!!)
                 st.hllRole = orig.getLong()
             }
 
@@ -465,7 +465,7 @@ class SerializationReader(
                 } else if (paraFlag == 2L) {
                     val pt = ParameterizedType()
                     pt.parametricType = readObjRef()
-                    val BOOTArray = tc.gc.BOOTArray
+                    val BOOTArray = tc.gc.BOOTArray!!
                     val parameters = BOOTArray.st.REPR.allocate(tc, BOOTArray.st)
                     pt.parameters = parameters
                     val elems = orig.getInt()
@@ -515,13 +515,13 @@ class SerializationReader(
             ctx.codeRef = staticCode
             val sci = staticCode.staticInfo
             if (sci.oLexicalNames != null)
-                ctx.oLex = sci.oLexStatic.clone()
+                ctx.oLex = sci.oLexStatic!!.clone()
             if (sci.iLexicalNames != null)
-                ctx.iLex = LongArray(sci.iLexicalNames.size)
+                ctx.iLex = LongArray(sci.iLexicalNames!!.size)
             if (sci.nLexicalNames != null)
-                ctx.nLex = DoubleArray(sci.nLexicalNames.size)
+                ctx.nLex = DoubleArray(sci.nLexicalNames!!.size)
             if (sci.sLexicalNames != null)
-                ctx.sLex = arrayOfNulls(sci.sLexicalNames.size)
+                ctx.sLex = arrayOfNulls(sci.sLexicalNames!!.size)
 
             /* Set context data read position, and set current read buffer to the correct thing. */
             orig.position(contextDataOffset + orig.getInt())
@@ -529,22 +529,22 @@ class SerializationReader(
             /* Deserialize lexicals. */
             val syms = orig.getLong()
             for (j in 0 until syms) {
-                val sym = readStr()
+                val sym = readStr()!!
                 var idx = sci.oTryGetLexicalIdx(sym)
                 if (idx != -1) {
-                    ctx.oLex[idx] = readRef()
+                    ctx.oLex!![idx] = readRef()
                 } else {
                     idx = sci.iTryGetLexicalIdx(sym)
                     if (idx != -1) {
-                        ctx.iLex[idx] = orig.getLong()
+                        ctx.iLex!![idx] = orig.getLong()
                     } else {
                         idx = sci.nTryGetLexicalIdx(sym)
                         if (idx != -1) {
-                            ctx.nLex[idx] = orig.getDouble()
+                            ctx.nLex!![idx] = orig.getDouble()
                         } else {
                             idx = sci.sTryGetLexicalIdx(sym)
                             if (idx != -1)
-                                ctx.sLex[idx] = readStr()
+                                ctx.sLex!![idx] = readStr()
                             else
                                 throw RuntimeException("Failed to deserialize lexical $sym")
                         }
@@ -578,10 +578,11 @@ class SerializationReader(
     private fun fixupContextOuters() {
         for (i in 0 until contextTableEntries) {
             val ctx = contexts[i]!!
+            val priorInvocation = ctx.codeRef.staticInfo.priorInvocation
             if (ctx.outer == null &&
-                ctx.codeRef.staticInfo.priorInvocation != null &&
-                ctx.codeRef.staticInfo.priorInvocation.outer != null)
-                ctx.outer = ctx.codeRef.staticInfo.priorInvocation.outer
+                priorInvocation != null &&
+                priorInvocation.outer != null)
+                ctx.outer = priorInvocation.outer
         }
     }
 
@@ -595,25 +596,25 @@ class SerializationReader(
         REFVAR_OBJECT ->
             return readObjRef()
         REFVAR_VM_INT -> {
-            val BOOTInt = tc.gc.BOOTInt
+            val BOOTInt = tc.gc.BOOTInt!!
             val iResult = BOOTInt.st.REPR.allocate(tc, BOOTInt.st)
             iResult.set_int(tc, orig.getLong())
             return iResult
         }
         REFVAR_VM_NUM -> {
-            val BOOTNum = tc.gc.BOOTNum
+            val BOOTNum = tc.gc.BOOTNum!!
             val nResult = BOOTNum.st.REPR.allocate(tc, BOOTNum.st)
             nResult.set_num(tc, orig.getDouble())
             return nResult
         }
         REFVAR_VM_STR -> {
-            val BOOTStr = tc.gc.BOOTStr
+            val BOOTStr = tc.gc.BOOTStr!!
             val sResult = BOOTStr.st.REPR.allocate(tc, BOOTStr.st)
             sResult.set_str(tc, lookupString(orig.getInt()))
             return sResult
         }
         REFVAR_VM_ARR_VAR -> {
-            val BOOTArray = tc.gc.BOOTArray
+            val BOOTArray = tc.gc.BOOTArray!!
             val resArray = BOOTArray.st.REPR.allocate(tc, BOOTArray.st)
             val elems = orig.getInt()
             for (i in 0 until elems)
@@ -625,7 +626,7 @@ class SerializationReader(
             return resArray
         }
         REFVAR_VM_ARR_STR -> {
-            val BOOTStrArray = tc.gc.BOOTStrArray
+            val BOOTStrArray = tc.gc.BOOTStrArray!!
             val resArray = BOOTStrArray.st.REPR.allocate(tc, BOOTStrArray.st)
             val elems = orig.getInt()
             for (i in 0 until elems) {
@@ -635,7 +636,7 @@ class SerializationReader(
             return resArray
         }
         REFVAR_VM_ARR_INT -> {
-            val BOOTIntArray = tc.gc.BOOTIntArray
+            val BOOTIntArray = tc.gc.BOOTIntArray!!
             val resArray = BOOTIntArray.st.REPR.allocate(tc, BOOTIntArray.st)
             val elems = orig.getInt()
             for (i in 0 until elems) {
@@ -645,7 +646,7 @@ class SerializationReader(
             return resArray
         }
         REFVAR_VM_HASH_STR_VAR -> {
-            val BOOTHash = tc.gc.BOOTHash
+            val BOOTHash = tc.gc.BOOTHash!!
             val resHash = BOOTHash.st.REPR.allocate(tc, BOOTHash.st)
             val elems = orig.getInt()
             for (i in 0 until elems) {
