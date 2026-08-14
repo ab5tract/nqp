@@ -85,7 +85,7 @@ object IndyBootstrap {
 
         /* Don't update callsite in cases where it's not safe. */
         var shared = tc.curFrame!!.codeRef.staticInfo.compUnit.shared
-        if (invokee.stInitialized && invokee.st.ContainerSpec != null) {
+        if (invokee!!.stInitialized && invokee!!.st.ContainerSpec != null) {
             invokee = Ops.decont(invokee, tc)
             shared = true
         }
@@ -103,10 +103,10 @@ object IndyBootstrap {
             cr = invokee
         }
         else {
-            val ispec = invokee.st.InvocationSpec
+            val ispec = invokee!!.st.InvocationSpec
                 ?: throw ExceptionHandling.dieInternal(tc, "Can not invoke this object")
             if (Ops.isnull(ispec.ClassHandle) == 0L)
-                cr = invokee.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef
+                cr = invokee!!.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef
             else {
                 cr = ispec.InvocationHandler as CodeRef
                 @Suppress("UNCHECKED_CAST")
@@ -162,10 +162,10 @@ object IndyBootstrap {
             cr = invokee
         }
         else {
-            val ispec = invokee.st.InvocationSpec
+            val ispec = invokee!!.st.InvocationSpec
                 ?: throw ExceptionHandling.dieInternal(tc, "Can not invoke this object")
             if (Ops.isnull(ispec.ClassHandle) == 0L)
-                cr = invokee.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef
+                cr = invokee!!.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef
             else {
                 cr = ispec.InvocationHandler as CodeRef
                 @Suppress("UNCHECKED_CAST")
@@ -212,7 +212,7 @@ object IndyBootstrap {
 
         /* Don't update callsite in cases where it's not safe. */
         var shared = tc.curFrame!!.codeRef.staticInfo.compUnit.shared
-        if (invokee.stInitialized && invokee.st.ContainerSpec != null) {
+        if (invokee!!.stInitialized && invokee!!.st.ContainerSpec != null) {
             invokee = Ops.decont(invokee, tc)
             shared = true
         }
@@ -230,10 +230,10 @@ object IndyBootstrap {
             cr = invokee
         }
         else {
-            val ispec = invokee.st.InvocationSpec
+            val ispec = invokee!!.st.InvocationSpec
                 ?: throw ExceptionHandling.dieInternal(tc, "Can not invoke this object")
             if (Ops.isnull(ispec.ClassHandle) == 0L)
-                cr = invokee.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef
+                cr = invokee!!.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef
             else {
                 cr = ispec.InvocationHandler as CodeRef
                 @Suppress("UNCHECKED_CAST")
@@ -357,10 +357,10 @@ object IndyBootstrap {
             cr = invokee
         }
         else {
-            val ispec = invokee.st.InvocationSpec
+            val ispec = invokee!!.st.InvocationSpec
                 ?: throw ExceptionHandling.dieInternal(tc, "Can not invoke this object")
             if (Ops.isnull(ispec.ClassHandle) == 0L)
-                cr = invokee.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef
+                cr = invokee!!.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef
             else {
                 cr = ispec.InvocationHandler as CodeRef
                 @Suppress("UNCHECKED_CAST")
@@ -428,10 +428,10 @@ object IndyBootstrap {
             cr = invokee
         }
         else {
-            val ispec = invokee.st.InvocationSpec
+            val ispec = invokee!!.st.InvocationSpec
                 ?: throw ExceptionHandling.dieInternal(tc, "Can not invoke this object")
             if (Ops.isnull(ispec.ClassHandle) == 0L)
-                cr = invokee.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef
+                cr = invokee!!.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef
             else {
                 cr = ispec.InvocationHandler as CodeRef
                 @Suppress("UNCHECKED_CAST")
@@ -453,7 +453,7 @@ object IndyBootstrap {
                 cs.setTarget(MethodHandles
                     .dropArguments(
                         MethodHandles.insertArguments(res, 1, csd,
-                            Ops.decont(invocant, tc).st, cr),
+                            Ops.decont(invocant, tc)!!.st, cr),
                         1, Integer.TYPE)
                     .asCollector(Array<Any>::class.java, cs.type().parameterCount() - 3)
                     .asType(cs.type()))
@@ -483,7 +483,7 @@ object IndyBootstrap {
         /* Try to resolve method to a coderef. */
         val invocant = Ops.decont(args[0] as SixModelObject?, tc)
         val cr: CodeRef
-        if (invocant.st === assumedST) {
+        if (invocant!!.st === assumedST) {
             cr = assumedCR
         }
         else {
@@ -493,10 +493,10 @@ object IndyBootstrap {
                 cr = invokee
             }
             else {
-                val ispec = invokee.st.InvocationSpec
+                val ispec = invokee!!.st.InvocationSpec
                     ?: throw ExceptionHandling.dieInternal(tc, "Can not invoke this object")
                 if (Ops.isnull(ispec.ClassHandle) == 0L)
-                    cr = invokee.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef
+                    cr = invokee!!.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef
                 else {
                     cr = ispec.InvocationHandler as CodeRef
                     @Suppress("UNCHECKED_CAST")
@@ -561,10 +561,10 @@ object IndyBootstrap {
             cr = invokee
         }
         else {
-            val ispec = invokee.st.InvocationSpec
+            val ispec = invokee!!.st.InvocationSpec
                 ?: throw ExceptionHandling.dieInternal(tc, "Can not invoke this object")
             if (Ops.isnull(ispec.ClassHandle) == 0L)
-                cr = invokee.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef
+                cr = invokee!!.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef
             else {
                 cr = ispec.InvocationHandler as CodeRef
                 @Suppress("UNCHECKED_CAST")
