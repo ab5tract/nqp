@@ -36,7 +36,7 @@ object IOOps {
         override fun run() {
             val tc = Companion.tc!!
             Ops.invokeDirect(tc, Companion.schedulee, Ops.invocantCallSite,
-                arrayOf<Any>(Ops.box_i(Companion.signum, tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, tc)))
+                arrayOf<Any?>(Ops.box_i(Companion.signum, tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, tc)))
         }
     }
 

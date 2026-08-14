@@ -174,7 +174,7 @@ object ExceptionHandling {
             invokeHandler(tc, handler, category, f, false, exObj, null)
         else if (tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.lexicalHandlerNotFoundError != null) {
             Ops.invokeDirect(tc, tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.lexicalHandlerNotFoundError,
-                Ops.intIntCallSite, false, arrayOf<Any>(category, 0L))
+                Ops.intIntCallSite, false, arrayOf<Any?>(category, 0L))
         }
         else
             panic(tc, category, exObj)
@@ -234,7 +234,7 @@ object ExceptionHandling {
                     if (resume != null)
                         resume.resumeNext()
                     else
-                        Ops.invokeDirect(tc, Ops.getlex_o(handlerFrame, handlerInfo[4].toInt()),
+                        Ops.invokeDirect(tc, Ops.getlex_o(handlerFrame!!, handlerInfo[4].toInt()),
                             Ops.emptyCallSite, false, Ops.emptyArgList)
                 }
                 catch (e: ResumeException) {
@@ -261,7 +261,7 @@ object ExceptionHandling {
                 tc.unwinder.category = category
                 tc.unwinder.unwindTarget = handlerInfo[0]
                 tc.unwinder.unwindCompUnit = handlerFrame!!.codeRef.staticInfo.compUnit
-                tc.unwinder.result = Ops.result_o(tc.curFrame)
+                tc.unwinder.result = Ops.result_o(tc.curFrame!!)
                 if (Ops.isnull(exObj) == 0L)
                     tc.unwinder.payload = exObj!!.payload as SixModelObject?
                 throw tc.unwinder
