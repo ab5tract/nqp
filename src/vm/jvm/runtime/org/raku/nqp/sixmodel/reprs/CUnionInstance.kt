@@ -20,7 +20,7 @@ class CUnionInstance : SixModelObject(), Refreshable {
     /* XXX: Using a hash to store members is probably not an optimal solution.
      * Dynamically generating subclasses that have the appropriate members and
      * such is probably better, but that's harder to implement. */
-    @JvmField var memberCache = HashMap<String, SixModelObject>()
+    @JvmField var memberCache = HashMap<String, SixModelObject?>()
 
     override fun bind_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long, value: SixModelObject?) {
         val data = class_handle!!.st.REPRData as CUnionREPRData
@@ -41,7 +41,7 @@ class CUnionInstance : SixModelObject(), Refreshable {
             }
         }
         storage!!.writeField(name, o)
-        memberCache.put(name!!, value!!)
+        memberCache.put(name!!, value)
     }
 
     override fun bind_attribute_native(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long) {
@@ -105,7 +105,7 @@ class CUnionInstance : SixModelObject(), Refreshable {
         }
 
         member = NativeCallOps.toNQPType(tc, info.argType, info.type, o)
-        memberCache.put(name, member!!)
+        memberCache.put(name, member)
         return member
     }
 
