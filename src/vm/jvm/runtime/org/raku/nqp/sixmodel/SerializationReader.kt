@@ -532,19 +532,19 @@ class SerializationReader(
                 val sym = readStr()!!
                 var idx = sci.oTryGetLexicalIdx(sym)
                 if (idx != -1) {
-                    ctx.oLex[idx] = readRef()
+                    ctx.oLex!![idx] = readRef()
                 } else {
                     idx = sci.iTryGetLexicalIdx(sym)
                     if (idx != -1) {
-                        ctx.iLex[idx] = orig.getLong()
+                        ctx.iLex!![idx] = orig.getLong()
                     } else {
                         idx = sci.nTryGetLexicalIdx(sym)
                         if (idx != -1) {
-                            ctx.nLex[idx] = orig.getDouble()
+                            ctx.nLex!![idx] = orig.getDouble()
                         } else {
                             idx = sci.sTryGetLexicalIdx(sym)
                             if (idx != -1)
-                                ctx.sLex[idx] = readStr()
+                                ctx.sLex!![idx] = readStr()
                             else
                                 throw RuntimeException("Failed to deserialize lexical $sym")
                         }
