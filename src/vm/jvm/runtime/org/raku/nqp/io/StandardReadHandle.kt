@@ -45,20 +45,23 @@ class StandardReadHandle(tc: ThreadContext, private val inputStream: InputStream
             var read: Int
             var offset = 0
             if (isTTY(tc)) {
+                /* Return the pending input without blocking for the full
+                 * buffer, but always request at least one byte when nothing
+                 * has been read yet: read(array, offset, 0) returns 0
+                 * without consulting the fd, so sizing requests purely by
+                 * available() busy-spins at the prompt and can never
+                 * observe EOF (upstream bug — the REPL burned a core while
+                 * idle and hung forever on Ctrl-D). */
                 while (offset < bytes) {
-                    read = inputStream.read(array, offset, minOf(inputStream.available(), bytes - offset))
+                    val avail = inputStream.available()
+                    if (avail == 0 && offset > 0)
+                        break
+                    read = inputStream.read(array, offset, minOf(maxOf(avail, 1), bytes - offset))
                     if (read == -1) {
                         eof = true
                         break
                     }
-                    else if (read == 0) {
-                        if (inputStream.available() == 0 && offset > 0) {
-                            break
-                        }
-                    }
-                    else {
-                        offset += read
-                    }
+                    offset += read
                 }
             }
             else {
