@@ -14,7 +14,7 @@ object NqpDeps {
         "org.ow2.asm:asm:9.10.1",
         "org.ow2.asm:asm-tree:9.10.1",
         "it.unimi.dsi:fastutil:8.5.19",
-        "jline:jline:1.0",
+        "org.jline:jline:4.3.1",
         "net.java.dev.jna:jna:5.19.1",
         "net.java.dev.jna:jna-platform:5.19.1",
         "org.lz4:lz4-java:1.8.0",

@@ -4,10 +4,13 @@ import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
-import java.io.OutputStreamWriter
 import java.nio.charset.Charset
 
-import jline.ConsoleReader
+import org.jline.reader.EndOfFileException
+import org.jline.reader.LineReader
+import org.jline.reader.LineReaderBuilder
+import org.jline.reader.UserInterruptException
+import org.jline.terminal.TerminalBuilder
 
 import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.ThreadContext
@@ -16,7 +19,7 @@ class StandardReadHandle(tc: ThreadContext, private val inputStream: InputStream
     IIOClosable, IIOEncodable, IIOSyncReadable, IIOInteractive, IIOPossiblyTTY {
 
     private var br: BufferedReader? = null
-    private var cr: ConsoleReader? = null
+    private var cr: LineReader? = null
     private var eof = false
     private lateinit var cs: Charset
 
@@ -123,13 +126,28 @@ class StandardReadHandle(tc: ThreadContext, private val inputStream: InputStream
     @Synchronized
     override fun readlineInteractive(tc: ThreadContext, prompt: String): String {
         try {
-            val console = cr ?: ConsoleReader(inputStream, OutputStreamWriter(tc.gc.out)).also { cr = it }
-            var line = console.readLine(prompt)
-            if (line == null) {
+            /* jline 1's ConsoleReader(in, out) became a LineReader over a
+             * Terminal. This handle is process stdin, so let jline attach
+             * to the system terminal for real line editing, with a quiet
+             * dumb-terminal fallback when there is no tty. */
+            val console = cr ?: LineReaderBuilder.builder()
+                .terminal(TerminalBuilder.builder().dumb(true).build())
+                .build().also { cr = it }
+            return try {
+                console.readLine(prompt)
+            } catch (e: EndOfFileException) {
+                /* jline 1 returned null at EOF. Close the terminal too:
+                 * its reader pump is a non-daemon thread, and leaving it
+                 * open keeps the JVM alive after the REPL loop returns. */
                 eof = true
-                line = ""
+                console.terminal.close()
+                cr = null
+                ""
+            } catch (e: UserInterruptException) {
+                /* Ctrl-C mid-line: hand back an empty line and keep the
+                 * REPL alive rather than tearing down the VM. */
+                ""
             }
-            return line
         } catch (e: IOException) {
             throw ExceptionHandling.dieInternal(tc, e)
         }
