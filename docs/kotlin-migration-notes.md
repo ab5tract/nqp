@@ -93,11 +93,13 @@ full suite identical to baseline. Two lessons:
 
 ## Keep-as-Java list (do not convert without a dedicated effort)
 
-- `runtime/Ops.java` — 707 static methods; the generated-code ABI. The
-  IOOps experiment (above) proved `object` + `@JvmStatic` preserves the
-  descriptors, so this is now considered convertible — but only as a
-  dedicated, well-reviewed effort, ideally after the file is split by
-  section.
+- `runtime/ArgsExpectation.java` — void-position signature-polymorphic
+  `invokeExact` calls, inexpressible in Kotlin (see the medium-classes
+  section below).
+- `runtime/LibraryLoader.java` — caller-sensitive
+  `registerAsParallelCapable()` in nested-loader static initializers
+  (see below).
+
 - `runtime/IndyBootstrap.java` — invokedynamic bootstraps + MutableCallSite
   inline caches; names are baked into emitted `invokedynamic` instructions.
 - `runtime/CodeRef`, `runtime/ResumeStatus`, `runtime/SaveStackException` —
@@ -345,6 +347,458 @@ That sweep is a legitimate engineering task with its own verification
 burden — exactly the "convert coupled clusters together" lesson at
 codebase scale — and should be its own dedicated round, not an
 afterthought of this one.
+
+## S3: the serialization pair and KnowHOWMethods
+
+KnowHOWMethods (the twelve MOP code-ref bodies) went first, then
+SerializationWriter and SerializationReader as literal ports. The byte
+format is pinned by t/serialization plus the bootstrap itself, and the
+reader's `readLong ()J` / `readDouble ()D` / `readStr ()Ljava/lang/String;`
+invokevirtual descriptors are pinned by the inline-deserialize bytecode
+that P6int/P6num/P6str emit — instance methods on a Kotlin class keep
+those descriptors as-is.
+
+Nullability policy that emerged: `writeStr`/`writeRef`/`readRef`/`readStr`
+are *honestly* nullable (the null string-heap entry and REFVAR_NULL are
+real values of the domain), while `readObjRef`/`readCodeRef`/
+`readSTableRef` stay non-null because stubbing fills every root-set slot
+before any reference into it is read. One upstream oddity preserved with a
+NOTE: every SerializationWriter instance registers a shutdown hook for an
+Accumulator debug map that nothing ever populates.
+
+## The nullability cluster, resolved
+
+The deferred SixModelObject/STable/REPR trio converted cleanly in one
+round, and the key insight held: **`lateinit` fields are invisible to
+Java**. Java code (IndyBootstrap's `invokee.st` null check, the ASM-
+generated P6Opaque subclasses) reads and writes the backing field raw, so
+it keeps Java null semantics; only Kotlin-side reads go through the
+initialization check. `st` and `REPR.name` are `lateinit`; `sc`, `HOW`,
+`WHAT`, `WHO` and the spec fields are honestly nullable; STable's `REPR`
+is a non-null constructor property (every construction site passes one).
+
+Fallout was mechanical and compiler-guided: `return st.WHAT!!` in 34
+`type_object_for` bodies (one sed), local snapshots for mutable STable
+fields in the serializer (Kotlin refuses smart casts on another object's
+`var`), and `!!` on `Ops.isnull`-guarded compose lookups (the guard is
+opaque to the compiler). Base-class signatures had to match the already-
+converted overrides *exactly* (parameter types are invariant in Kotlin
+overrides), so the survey-first approach — grep every `override fun`
+before writing the base — is mandatory, not optional.
+
+One genuine trap: a Kotlin class implementing `Cloneable` synthesizes a
+public `clone()` with no `throws` clause, which broke every Java instance
+class wrapping `this.clone()` in a `catch (CloneNotSupportedException)`.
+An explicit `@Throws(CloneNotSupportedException::class) override fun
+clone(): Any = super.clone()` restores the contract.
+
+## Small runtime classes and the jast2bc nodes
+
+Control exceptions, CodeRef and ThreadContext followed (CodeRef's big
+constructor descriptor and tc's raw `native_i/n/s`/`curFrame` fields are
+generated-bytecode contact points; `@JvmField` preserves them).
+ThreadContext's package-private fields became public `@JvmField` — Kotlin
+has no package visibility, and Ops/ContextKey/NFA already reach in. The
+jast2bc node classes (JavaClass, BytecodeVersion, JastField, JastClass,
+JastMethod) are compile-time only; the bootstrap is their proof.
+
+**New keep-as-Java entry: ResumeStatus.** `Frame.resume()` calls
+`method.invokeExact(this)` where the handle's type is
+`(ResumeStatus$Frame)void`. Java compiles that statement with a void
+polymorphic descriptor; Kotlin types signature-polymorphic calls as
+returning `Object`, and invokeExact demands an exact match — so the
+Kotlin form would throw WrongMethodTypeException on every continuation
+resume. There is no Kotlin syntax for a void-typed polymorphic call site.
+
+## The dependency sweep
+
+With the runtime conversion settled, the third-party jars were brought
+current on the Gradle path (the Makefile/vendored path deliberately lags):
+fastutil 8.5.13 → 8.5.19, JNA 4.5.0 → 5.19.1, jline 1 → org.jline 4.3.1,
+plus lz4 switched to its pure-Java `safeInstance` (the `Unsafe` fast path
+warns on JDK 25 and is on borrowed time). Findings:
+
+- **JNA 5** removed `Pointer.SIZE` (→ `Native.POINTER_SIZE`) and typed
+  `Structure.newInstance` as `Class<? extends Structure>` — the REPRData
+  call sites keep their `Class<?>` fields and narrow with `asSubclass` at
+  the call. `t/nativecall/01-basic.t` (libc printf/strdup/callbacks) is the
+  regression gate; it was in the Makefile's JVM test target but missing
+  from the Gradle `testNqp` task, now added.
+- **JEP 472**: JNA loads its dispatch library via `System.load`, which
+  JDK 24+ warns about and will eventually block. Both launch points (the
+  stage-compile `jvmArgs` and the generated runner) now pass
+  `--enable-native-access=ALL-UNNAMED`. Together with the lz4 change this
+  makes subprocess stderr warning-free again — which cured the
+  environmental `114-pod-panic.t` failure (its `^`-anchored regex broke on
+  the Unsafe deprecation warnings).
+- **jline 4** replaces `ConsoleReader(in, out)` with a `LineReader` over a
+  `Terminal` (system terminal, `dumb(true)` fallback for no-tty). Semantic
+  mappings: EOF is now `EndOfFileException` (jline 1 returned null), and
+  Ctrl-C surfaces as `UserInterruptException`, mapped to an empty line;
+  the EOF path also does `terminal.close()`, since the system terminal's
+  reader pump is a non-daemon thread that would otherwise keep the JVM
+  alive. Caveat discovered while testing: **`readlineInteractive` has no
+  caller inside nqp** — NQP's own REPL reads via plain `$stdin.get`, and
+  the interface exists for rakudo's runtime layer. So the jline port is
+  verified here at compile/signature level only; behavioral proof waits
+  for the rakudo layer (the ContextKey precedent).
+- **The JVM REPL was broken upstream, twice, independent of any of
+  this** — pty-driven `script -qec` checks were plausibly the first
+  exercise this path has had in years (there is no REPL test coverage
+  anywhere):
+  1. `HLL::Compiler.eval` returns null for a REPL line on both backends,
+     and `input-incomplete` calls `nqp::where` on it. MoarVM's null is a
+     real VMNull object so `where` works; the JVM's is Java null, and
+     `Ops.where` NPE'd through `decont` — every REPL line died after
+     evaluation (since 2016). Fixed: null guard in `where` (identity 0).
+  2. `StandardReadHandle.read`'s tty branch sized requests purely by
+     `available()`; `read(buf, off, 0)` returns 0 without consulting the
+     fd, so the loop busy-spun at 100% CPU while waiting at the prompt
+     and could never observe EOF — Ctrl-D hung the REPL forever. Fixed:
+     block for at least one byte until something has been read, then
+     return the pending chunk.
+- **AggressiveHeap replaced by explicit caps** (Gradle path only): stage
+  compiles `-Xmx8g` (`-PnqpStageMaxHeap`), the runner `-Xmx4g`
+  (`NQP_JVM_MAXHEAP` env var). `-XX:+AggressiveHeap` sizes every JVM at
+  ~half of physical RAM; overlapping JVMs (stage compile, daemons, a test
+  and its spawned children) stalled a swapless 32 GB machine in memory
+  reclaim. See docs/gradle-jvm-build.md for the knobs and the
+  `systemd-run --scope` belt-and-braces wrapper.
+
+## The medium runtime classes
+
+StaticCodeInfo, CallSiteDescriptor, GlobalContext, CallFrame and
+CompilationUnit — the load-bearing middle of the runtime — converted
+literally, one commit each, with `javap -s` diffs on everything
+generated code touches (CallFrame's field/ctor descriptors, CSD's
+`([B[Ljava/lang/String;)V` ctor, CompilationUnit's virtual surface) and
+a full bootstrap + suite run per class. New traps for the catalogue:
+
+- **`const val`, not `@JvmField val`, where Java needs a compile-time
+  constant.** `caller.retType = CallFrame.RET_OBJ` only compiles because
+  a constant int expression gets implicit narrowing to byte; a plain
+  static final field (what `@JvmField val` emits) loses the
+  ConstantValue attribute and breaks every Java assignment/switch site.
+- `@JvmField lateinit` is rejected — redundant anyway, since lateinit
+  properties already expose their backing field to Java (CallFrame's
+  tc/codeRef rely on that).
+- Converting a class kills its accessor-style synthetic property for
+  Kotlin callers: `gc.currentThreadContext` (the Java getter seen as a
+  property) had to become `gc.getCurrentThreadContext()` in the async
+  handles once GlobalContext declared it as a function.
+- Signature invariance bites in both directions: the KnowHOW
+  compilation unit's existing overrides (`Array<CodeRef?>`) had to be
+  retyped to match the new Kotlin base's honest signatures — survey
+  *overrides* before writing a base class, and vice versa.
+- GlobalContext is the bootstrap-null motherlode: every BOOT*/MOP type
+  field is honestly nullable (KnowHOWBootstrapper creates them mid-
+  constructor; CompilationUnit null-checks BOOTCode legitimately), and
+  exit() nulls mainThread/currentThreadCtxRef at teardown. The ~80-site
+  `!!` sweep through the Kotlin tree was mechanical and compiler-guided.
+
+Three classes ruled out, each for a concrete reason:
+
+- **ArgsExpectation — keep as Java.** Nine `mh.invokeExact(...)` calls
+  in void statement position: the ResumeStatus trap. Kotlin types
+  signature-polymorphic calls as returning Object; invokeExact demands
+  an exact match, and there is no Kotlin syntax for a void-typed
+  polymorphic call site. (`invoke` would adapt, but this is the hottest
+  invocation path in the runtime.)
+- **LibraryLoader — keep as Java.** Each nested loader class runs
+  `ClassLoader.registerAsParallelCapable()` in its static initializer —
+  a caller-sensitive API that must execute with the loader class itself
+  as caller. Kotlin companion-object init runs with the Companion class
+  as caller, so registration silently fails and class-loading lock
+  granularity changes.
+- **EvalServer — deferred; broken upstream.** Both run() paths
+  dereference `gc.byteClassLoader` before `gc` is ever assigned (since
+  upstream 5d026b44b unified the class caches); the tool NPEs on entry
+  and nothing tests it. Converting dead code buys nothing.
+
+## The C-interop cluster
+
+NativeCallOps, the C-struct instance trio (CStruct/CPPStruct/CUnion),
+CArrayInstance, the three C-struct ASM class generators, and the whole
+P6Opaque family (REPRData, BaseInstance, DelegateInstance, and the
+936-line P6Opaque generator itself). Notes:
+
+- **Coverage honesty**: nqp's own tests never compose a C type — that
+  happens in Rakudo's NativeCall — so the C-struct generators got a new
+  test, t/jvm/08-cstruct.t, which composes and allocates through all
+  three (ASM emission → ByteClassLoader definition → JNA
+  instantiation). t/nativecall/01-basic.t covers the libc call paths
+  and callbacks; t/jvm/06-atomic-attrs covers the VarHandle CAS.
+- The generators' asymmetries are preserved: only CStruct dies on zero
+  attributes, each one's own-kind branch holds the not-yet-composed
+  forward-name fallback (using the already-incremented typeId — an
+  upstream off-by-one flavour left as-is), and CUnion's generated
+  classes extend com.sun.jna.Union.
+- P6OpaqueBaseInstance follows the CompilationUnit rule (open class,
+  open override surface — generated subclasses override the accessors,
+  deserializeFields and the pos/ass delegate lookups). The VarHandle
+  access-mode calls are safe in Kotlin: unlike invokeExact they have
+  declared return types (boolean/Object/void), so no polymorphic-
+  signature trap. The Bad*RuntimeException inner classes keep their
+  inner-class constructor shape for rakudo's Binder.
+- NativeCallOps is the third ops-bag conversion: all ten public static
+  descriptors javap-identical under object + @JvmStatic ($TYPE_NATIVE_OPS
+  invokestatics unaffected). Its nested CallbackHandler stays a public
+  abstract static-nested class — the runtime-generated callback classes
+  extend it, invokespecial its exact protected constructor signature,
+  and invokevirtual callFunction.
+- **Upstream bug found (JVM-only, not MoarVM)**: toJNAType's VMARRAY
+  case checks `instanceof VMArrayInstance_u32` but casts to
+  `VMArrayInstance_u16` — a guaranteed ClassCastException for uint32
+  arrays passed as vmarray arguments. Preserved in the conversion
+  commit, fixed in its own follow-up commit (the Ops.where precedent);
+  MoarVM's NativeCall is separate C and unaffected.
+
+## The long tail: reprs completed, interop, jast2bc, indy
+
+The rounds after the C-interop cluster finished the reprs directory
+(NativeRefInstance variants, the small instance leaves, the boxed
+VMArray/MultiDimArray pair with their bases, DecoderInstance) and took
+the three infrastructure classes everyone assumed would wait:
+BootJavaInterop, JASTCompiler and IndyBootstrap. Findings:
+
+- **Kotlin's `[]` on CharBuffer is not `charAt`.** The operator resolves
+  to `CharBuffer.get(int)` — an *absolute* index — while the Java used
+  the position-relative `charAt`. After `subSequence` slicing, decoder
+  line-separator matching read the wrong chars; caught as three real
+  `019-file-ops.t` failures by the gate. Kotlin also hides `charAt`
+  behind the mapped CharSequence type, so the fix is
+  `(buf as CharSequence)[j]`. Trap catalogued.
+- **nqp hash values are honestly nullable.** `Ops.namedslurpy` binds
+  named args whose values are Java null (nqp null); the stage1
+  bootstrap caught a `value!!` in the VMHashInstance port instantly.
+  VMHash storage, the C-struct member caches, STable.MethodCache and
+  KnowHOWREPRInstance.methods are all element-nullable now.
+- **BootJavaInterop is rakudo-facing** (only constructed within nqp),
+  so its gate is a javap diff of the full public/protected surface —
+  including nested ClassContext/MethodContext/STableCache shapes and
+  the RuntimeSupport statics whose invokestatic descriptors are baked
+  into adaptor bytecode.
+- **JASTCompiler's proof is the bootstrap itself** — every stage
+  compile runs the Kotlin jast2bc. One more latent upstream bug
+  preserved with a NOTE (astore_0..3 emit DSTORE on never-emitted
+  paths).
+- **IndyBootstrap converted after all** — the keep-as-Java entry
+  dissolved like the others: no polymorphic invokes of its own, and
+  the name-based findStatic resolvers plus BSM descriptors survive
+  object + @JvmStatic (all 15 statics javap-identical). The one real
+  subtlety was its raw `invokee.st != null` stub checks, which only
+  worked because Java reads the lateinit backing field directly; a
+  Kotlin-side read would throw UninitializedPropertyAccessException.
+  SixModelObject now exposes `stInitialized` (`::st.isInitialized`),
+  which is exactly the raw null check.
+
+## The autosplitter, and eval's lost return value
+
+AutosplitMethodWriter — the >64KB-method fallback and the last
+substantive non-Ops Java — converted after a tests-before-port round
+that immediately paid for itself twice:
+
+- **The autosplit path was broken at runtime**: the runner jar list
+  excluded asm-tree (faithfully mirroring the Makefile runner, which is
+  equally broken upstream), so any oversized method died with
+  NoClassDefFoundError instead of splitting. Fixed on the Gradle path;
+  t/jvm/09-autosplit.t now drives a real >64KB method through the
+  splitter.
+- **eval never returned a value, on any backend**: comp_unit pushed
+  $*W.libs() after the mainline, so the unit block's return — what
+  HLL::Compiler.eval hands back — was libs()'s value: a literal null op
+  on JVM/js. Fixed under `#?if !moar` (MoarVM keeps its historical
+  order byte-for-byte per review); eval now returns the mainline's
+  value and the REPL autoprints results. t/jvm/10-eval-return.t.
+
+Port notes: interned-string identity comparisons become value equality
+(equivalent — interning existed to make Java's == work); Frame.clone()
+renamed copy() to dodge Object.clone in a private nested class; and one
+more latent upstream bug preserved with a NOTE (the spilled-<init>
+unspill loop increments where it should decrement — infinite loop on
+that rare path in the Java too).
+
+## Ops.java: the generated-code ABI, converted whole
+
+The 7,891-line / 710-public-static `runtime/Ops.java` — the class every
+`$TYPE_OPS` invokestatic in generated bytecode points at — converted in a
+single all-or-nothing pass: `object Ops`, `@JvmStatic` on every op,
+`const val` for the public int constants (STAT_*/PIPE_*/SOCKET_FAMILY_*/
+MAX_GRAPHEMES), `@JvmField val` for the CallSiteDescriptor singletons and
+`emptyArgList`. The gate was a `javap -s -p` diff of the full public
+static surface old-jar-vs-new: **all 710 descriptors byte-identical**,
+the only delta the additive `INSTANCE` field. The unmodified stage0
+bootstrapped through it and the full suite stayed at baseline.
+
+Nullability policy, settled up front: nqp's null IS Java null (and
+`null_s` is a null String), so **every reference-typed op parameter is
+honestly nullable** — `isnull`/`ifnull`/`decont`/`atkey` legitimately
+receive and return Java null from generated code, and a non-null Kotlin
+parameter would add a throwing intrinsic check on paths Java allowed.
+`tc: ThreadContext`, `cf: CallFrame` and `cs: CallSiteDescriptor` stay
+non-null (generated code always passes real ones); `!!` goes exactly
+where Java would have dereferenced. Returns are nullable only where a
+null path exists (`atpos`, `atkey`, `accept`, `decont`, `result_o`...).
+
+Mechanical traps this file added to the catalogue:
+
+- **Kotlin has no octal literals.** `modeToPosixFilePermission`'s
+  `0010`-style masks are Java octal (8, not 10) — now spelled in decimal
+  with a NOTE. Grep any Java port for `0[0-7]+` before trusting it.
+- **`(char)0` is `'\u0000'`**, and `'\f'` doesn't exist in Kotlin
+  (`'\u000C'`). Raw control characters pasted into char literals make
+  the source file binary as far as grep is concerned — escape them.
+- **Compound assignment hides a narrowing cast**: Java `intVar -= longExpr`
+  compiles as `intVar = (int)(intVar - longExpr)`; Kotlin needs the
+  explicit `.toInt()` (runNFA's literal-length strip).
+- **Java `String.split` drops trailing empty strings; Kotlin's
+  `split(Regex)` doesn't.** Use `java.util.regex.Pattern.compile(...)
+  .split(...)` where the Java semantics matter (jvmclasspaths,
+  getuniprop_str).
+- `switch` cases on `byte` flags need `when ((lookup and 7).toByte())`;
+  Java's implicit byte→int widening has no Kotlin equivalent in `when`.
+- Java reference `==` → Kotlin `===` everywhere it matters (`eqaddr`,
+  type-check caches, `sse.key !== key`), including two *bug-preserving*
+  `===` in `pow_I` where Java compared `BigInteger.mod` results with `==`.
+- The feared void-`invokeExact` blocker never materialized: Ops.java's
+  continuation machinery only *throws* and calls `resume()`; the one
+  MethodHandle (`reset_reenter`) is built with `findStatic` against the
+  Kotlin-generated static and works unchanged.
+
+Two more traps were caught at runtime by the test gate, not the compiler:
+
+- **Kotlin's `String.lastIndexOf(String)` extension shadows Java's with a
+  different default**: it starts at `lastIndex` (length − 1), Java's
+  searches from `length`. Identical except for an empty needle —
+  `nqp::rindex('Hello World', '')` returned 10 instead of 11
+  (059-nqpop.t #49). Pass the start index explicitly. Any shadowing
+  stdlib extension with default arguments deserves suspicion.
+- **A bound MethodHandle can legally deliver null into a "never null"
+  parameter.** `reset_reenter` inserts null for key/run/*tc* and the
+  resume path reloads tc from the frame — the non-null `tc: ThreadContext`
+  intrinsic check killed every continuation resume (112-continuations.t,
+  t/jvm/01). The tc-is-never-null rule holds for generated code but not
+  for insertArguments plumbing; the 4-arg `continuationreset` takes
+  `ThreadContext?`.
+
+Fallout was the largest of any round but fully compiler-guided: ~173
+errors across 17 Kotlin files that had been enjoying platform-typed Ops
+returns, plus two honest widenings in GlobalContext (`hllSyms` /
+`compilerRegistry` map values are nullable — nqp can bind a null sym).
+Upstream quirks preserved with NOTEs: the duplicated `normalization == 1`
+branch that makes NFD unreachable, and `sethllconfig`'s crossed
+`foreign_transform_str`/`foreign_transform_num` key lookups.
+
+## The org.raku.rakudo layer
+
+Rakudo's own JVM runtime (6 files / 3,094 lines, on rakudo's
+`java-to-kotlin` branch) converted in one round; only RakudoEvalServer
+stays Java, deferred with its broken-upstream base class. Build first:
+rakudo has no Gradle, so a sibling `rakudo-runtime/` Gradle build
+(invoked with `../nqp/gradlew`) compiles the layer against nqp's
+Gradle-built runtime jar set — proven first on the unchanged Java with
+all eight class files byte-identical to a reference javac run. Note
+`--release 9` is dead on this branch line: javac refuses nqp's Java-25
+classfiles on the classpath, so the modernized release level is forced,
+not optional.
+
+Findings worth keeping:
+
+- **A `@JvmStatic` companion bridge is `final`, and Java forbids hiding
+  a final static.** BootJavaInterop.marshalOutRecursive's bridge broke
+  RakudoJavaInterop (whose own static *hides* it) — the first cross-repo
+  fallout the javap gates couldn't see, caught only by compiling the
+  subclass layer. `open` on the companion fun (legal — companions are
+  classes) emits a non-final bridge, restoring the exact Java shape.
+- RakOps is the layer's generated-code ABI (`$TYPE_P6OPS` in
+  Perl6/Ops.nqp) — same object/@JvmStatic/javap-gate recipe as nqp's
+  Ops; ThreadExt/GlobalExt nested binary names and their
+  `(ThreadContext)` ctors are load-bearing (ContextKey reflective), and
+  `p6bindsig` returns `CallSiteDescriptor?` by protocol (Ops.nqp emits
+  ifnonnull on it). Its two switch fall-throughs — the only ones in the
+  layer — restructure into explicit "FAIL continues into the junction
+  path" / "error handling continues into `return sig`" with NOTEs.
+- Binder (1,241 lines) needed no gate beyond RakOps compiling against
+  it: not an ABI (Perl6/Ops.nqp's `$Binder.trial_bind` is a
+  settings-level Raku object, not this class). One Kotlin-syntax trap:
+  `"$_"` is a template referencing `_` — escape it.
+- RakudoContainerSpec's atomics ported Unsafe→VarHandle (the
+  P6OpaqueBaseInstance recipe) as its own commit before conversion; the
+  single-VarHandle cache also removes the old two-field publication
+  race. Field/method name pairs (`store`/`store()`, `cas`/`cas()`)
+  survive @JvmField + fun untouched — fields and methods are separate
+  class-file namespaces. ContainerSpec's `cas`/`atomic_load` returns
+  widened to honest `SixModelObject?` in nqp (the Java subclass could
+  always return null; no other override affected).
+- RakudoJavaInterop's five self-referential anchors (adaptor
+  invokestatic of marshalOutRecursive, the two bootstrap Handles —
+  varargs flag intact on multiBootstrap — the findStatic-by-descriptor
+  filterReturnValueMethod, the findVirtual-by-name fallback) all verify
+  byte-identical against the pre-conversion javap. `handleList` types as
+  `Array<*>` because Java assigned `Constructor[]` to `Object[]` by
+  array covariance, which Kotlin's invariant arrays can only express
+  with a star projection. Preserved landmines, NOTE'd: the marshaller's
+  islist branch NPEs on a still-null `out` and marshals `in` instead of
+  `cur`; filterReturnValueMethod's `(int[])` casts CCE for
+  long[]/short[]/byte[]/boolean[] returns.
+
+**Verification honesty**: this rakudo checkout's Makefile is moar-only —
+there has never been a rakudo-j build here. Gates for this round are
+compile-level (javac type-checking the Java against Kotlin, javap
+surface diffs, byte-parity of the reference build) plus nqp's full suite
+for the two nqp-side changes. Behavioral proof needs a rakudo JVM
+build+spectest — a separate undertaking (Configure with
+--backends=moar,jvm and likely its own repair round, given upstream
+rakudo-jvm's state).
+
+## The !! debt: a planned post-parity cleanup round
+
+The `!!` density across the converted tree is the deliberate cost of the
+parity rules ("faithful ports force `T?` everywhere Java allowed null" /
+"must not be done during a parity-focused migration"): every commit stays
+diffable against the Java and every crash byte-for-byte equivalent to the
+NPE Java would have thrown. Once parity is proven end to end, that
+constraint lifts. When revisiting, the sites fall into three buckets with
+different fixes:
+
+- **Genuinely tightenable** — the majority. `sci.handlers!!`,
+  `storage!!`, `child_objs!!`, the `info.type!!` chains: these encode
+  real invariants ("a frame with a nonzero curHandler has handler
+  tables", "a composed CStruct has a structureClass"). Idiomatic fixes:
+  local `val` snapshots with early returns, establishing the invariant
+  at construction (constructor properties, `lateinit`), or richer types
+  (e.g. a composed-vs-uncomposed distinction in REPRData rather than
+  nullable-everything).
+- **Honestly nullable — leave alone.** The bootstrap-null pattern is
+  real: BOOT* types before KnowHOWBootstrapper runs, ClassLoader parents
+  on the boot classpath, null HOW during MOP bootstrap, mainThread
+  nulled at exit, REFVAR_NULL in serialization. Those `?`s are correct
+  modeling, not debt.
+- **Constrained by the Java boundary.** While Ops.java, IndyBootstrap,
+  ArgsExpectation, LibraryLoader and generated bytecode write raw
+  fields, some nullable declarations must stay (Java can always store
+  null into a `@JvmField`). This bucket shrinks as the remaining Java
+  shrinks — the cleanup gets *cheaper* after Ops.java converts and the
+  rakudo layer lands, which argues for doing it late.
+
+Caveats: each removed `!!` changes failure behavior on broken paths
+(KotlinNPE location, or lateinit's UninitializedPropertyAccessException
+instead of NPE) — a decision per site, the AsyncProcessHandle economics.
+It should be its own dedicated round with full-suite gating, same
+"convert coupled clusters together" reasoning as the nullability-cluster
+round, aimed at ergonomics instead of language. Under the
+merge-all-at-once-or-not-at-all plan it can land on this same branch as
+a final polish phase before merge.
+
+## Remaining Java (as of the java-to-kotlin branch head)
+
+In nqp, four files: the keep-as-Java trio (ArgsExpectation,
+LibraryLoader, ResumeStatus — each for a documented, concrete reason)
+and EvalServer (broken upstream, deferred). In rakudo, one:
+RakudoEvalServer, deferred with that same base. Everything else — both
+Ops bags, Binder, the whole interop and dispatch machinery — is Kotlin.
+Next: a rakudo JVM build for behavioral proof of the rakudo layer, then
+the post-parity `!!` cleanup round below.
 
 ## Recommendation
 
