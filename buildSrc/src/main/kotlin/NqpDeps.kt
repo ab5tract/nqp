@@ -15,8 +15,8 @@ object NqpDeps {
         "org.ow2.asm:asm-tree:9.10.1",
         "it.unimi.dsi:fastutil:8.5.19",
         "jline:jline:1.0",
-        "net.java.dev.jna:jna:4.5.0",
-        "net.java.dev.jna:jna-platform:4.5.0",
+        "net.java.dev.jna:jna:5.19.1",
+        "net.java.dev.jna:jna-platform:5.19.1",
         "org.lz4:lz4-java:1.8.0",
         // Kotlin runtime for the incrementally converted sources
         // (kotlin-prototype); brings org.jetbrains:annotations transitively.
