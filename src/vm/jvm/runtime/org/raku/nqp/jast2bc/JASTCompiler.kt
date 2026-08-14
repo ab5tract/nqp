@@ -390,14 +390,14 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
 
             m.visitLabel(start)
 
-            compileInstruction(Ops.getattr(insn, jastTryCatch, "\$!try", 0, tc), method, m, tc)
+            compileInstruction(Ops.getattr(insn, jastTryCatch, "\$!try", 0, tc)!!, method, m, tc)
 
             m.visitJumpInsn(Opcodes.GOTO, afterCatch)
             m.visitLabel(end)
             m.visitLabel(handler)
             m.visitTryCatchBlock(start, end, handler, typeName)
 
-            compileInstruction(Ops.getattr(insn, jastTryCatch, "\$!catch", 1, tc), method, m, tc)
+            compileInstruction(Ops.getattr(insn, jastTryCatch, "\$!catch", 1, tc)!!, method, m, tc)
 
             m.visitLabel(afterCatch)
         }
@@ -450,7 +450,7 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
                 m.visitInsn(instruction)
             0x12 -> { // ldc
                 // XXX: only supporting String constants currently
-                val constant = Ops.atpos(args, 0, tc).get_str(tc)
+                val constant = Ops.atpos(args, 0, tc)!!.get_str(tc)
                 m.visitLdcInsn(constant)
             }
             0x15, // iload
@@ -458,7 +458,7 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
             0x17, // fload
             0x18, // dload
             0x19 -> { // aload
-                val name = Ops.atpos(args, 0, tc).get_str(tc)
+                val name = Ops.atpos(args, 0, tc)!!.get_str(tc)
                 if (method.locals.containsKey(name))
                     m.visitVarInsn(instruction, method.locals[name]!!.index)
                 else
@@ -518,7 +518,7 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
             0x38, // fstore
             0x39, // dstore
             0x3a -> { // astore
-                val name = Ops.atpos(args, 0, tc).get_str(tc)
+                val name = Ops.atpos(args, 0, tc)!!.get_str(tc)
                 if (method.locals.containsKey(name))
                     m.visitVarInsn(instruction, method.locals[name]!!.index)
                 else
@@ -658,7 +658,7 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
             0xa7 -> // goto
                 emitBranchInstruction(method, m, Ops.getattr_s(Ops.atpos(args, 0, tc), jastLabel, "\$!name", 0, tc), instruction)
             0xaa -> // tableswitch
-                emitTableSwitchInstruction(method, m, args, tc)
+                emitTableSwitchInstruction(method, m, args!!, tc)
             0xac, // ireturn
             0xad, // lreturn
             0xae, // freturn
@@ -670,21 +670,21 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
             0xb3, // putstatic
             0xb4, // getfield
             0xb5 -> // putfield
-                emitFieldAccess(m, args, instruction, tc)
+                emitFieldAccess(m, args!!, instruction, tc)
             0xb6, // invokevirtual
             0xb7, // invokespecial
             0xb8 -> // invokestatic
-                emitCall(m, args, instruction, tc)
+                emitCall(m, args!!, instruction, tc)
             0xba ->
                 throw Exception("Encountered invokedynamic in emitInstruction. This should never happen.")
             0xbb, // new
             0xc0, // checkcast
             0xc1 -> { // instanceof
-                val t = processType(Ops.atpos(args, 0, tc).get_str(tc)!!)
+                val t = processType(Ops.atpos(args, 0, tc)!!.get_str(tc)!!)
                 m.visitTypeInsn(instruction, t.getInternalName())
             }
             0xbc -> { // newarray
-                val name = Ops.atpos(args, 0, tc).get_str(tc)
+                val name = Ops.atpos(args, 0, tc)!!.get_str(tc)
                 val type: Int
                 if (name == "Integer")
                     type = Opcodes.T_INT
@@ -703,7 +703,7 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
                 m.visitIntInsn(Opcodes.NEWARRAY, type)
             }
             0xbd -> // anewarray
-                m.visitTypeInsn(Opcodes.ANEWARRAY, processType(Ops.atpos(args, 0, tc).get_str(tc)!!).getInternalName())
+                m.visitTypeInsn(Opcodes.ANEWARRAY, processType(Ops.atpos(args, 0, tc)!!.get_str(tc)!!).getInternalName())
             0xbe -> // arraylength
                 m.visitInsn(Opcodes.ARRAYLENGTH)
             0xbf -> // athrow
@@ -744,40 +744,40 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
     }
 
     private fun emitFieldAccess(m: MethodVisitor, args: SixModelObject, accessType: Int, tc: ThreadContext) {
-        val classType = processType(Ops.atpos(args, 0, tc).get_str(tc)!!)
-        val fieldName = Ops.atpos(args, 1, tc).get_str(tc)
-        val fieldType = processType(Ops.atpos(args, 2, tc).get_str(tc)!!)
+        val classType = processType(Ops.atpos(args, 0, tc)!!.get_str(tc)!!)
+        val fieldName = Ops.atpos(args, 1, tc)!!.get_str(tc)
+        val fieldType = processType(Ops.atpos(args, 2, tc)!!.get_str(tc)!!)
         m.visitFieldInsn(accessType, classType.getInternalName(), fieldName, fieldType.getDescriptor())
     }
 
     private fun emitCall(m: MethodVisitor, args: SixModelObject, callType: Int, tc: ThreadContext) {
         val argLen = args.elems(tc).toInt()
-        val targetType = processType(Ops.atpos(args, 0, tc).get_str(tc)!!)
-        val methodName = Ops.atpos(args, 1, tc).get_str(tc)
-        val returnType = processType(Ops.atpos(args, 2, tc).get_str(tc)!!)
+        val targetType = processType(Ops.atpos(args, 0, tc)!!.get_str(tc)!!)
+        val methodName = Ops.atpos(args, 1, tc)!!.get_str(tc)
+        val returnType = processType(Ops.atpos(args, 2, tc)!!.get_str(tc)!!)
         val argumentTypes = arrayOfNulls<Type>(argLen - 3)
         for (i in 3 until argLen)
-            argumentTypes[i - 3] = processType(Ops.atpos(args, i.toLong(), tc).get_str(tc)!!)
+            argumentTypes[i - 3] = processType(Ops.atpos(args, i.toLong(), tc)!!.get_str(tc)!!)
         @Suppress("UNCHECKED_CAST")
         m.visitMethodInsn(callType, targetType.getInternalName(), methodName,
                 Type.getMethodDescriptor(returnType, *(argumentTypes as Array<Type>)))
     }
 
     private fun emitInvokeDynamic(insn: SixModelObject, m: MethodVisitor, tc: ThreadContext) {
-        val name = Ops.getattr(insn, jastIndy, "\$!name", 0, tc).get_str(tc)
+        val name = Ops.getattr(insn, jastIndy, "\$!name", 0, tc)!!.get_str(tc)
         val argTypesSmo = Ops.getattr(insn, jastIndy, "@!arg_types", 1, tc)
-        val retType = processType(Ops.getattr(insn, jastIndy, "\$!ret_type", 2, tc).get_str(tc)!!)
-        val bsmType = Ops.getattr(insn, jastIndy, "\$!bsm_type", 3, tc).get_str(tc)
-        val bsmName = Ops.getattr(insn, jastIndy, "\$!bsm_name", 4, tc).get_str(tc)
+        val retType = processType(Ops.getattr(insn, jastIndy, "\$!ret_type", 2, tc)!!.get_str(tc)!!)
+        val bsmType = Ops.getattr(insn, jastIndy, "\$!bsm_type", 3, tc)!!.get_str(tc)
+        val bsmName = Ops.getattr(insn, jastIndy, "\$!bsm_name", 4, tc)!!.get_str(tc)
         val extraArgsSmo = Ops.getattr(insn, jastIndy, "@!extra_args", 5, tc)
 
-        val numArgs = argTypesSmo.elems(tc).toInt()
+        val numArgs = argTypesSmo!!.elems(tc).toInt()
         val argTypes = arrayOfNulls<Type>(numArgs)
         for (i in 0 until numArgs) {
-            argTypes[i] = processType(Ops.atpos(argTypesSmo, i.toLong(), tc).get_str(tc)!!)
+            argTypes[i] = processType(Ops.atpos(argTypesSmo, i.toLong(), tc)!!.get_str(tc)!!)
         }
 
-        val numExtraArgs = extraArgsSmo.elems(tc).toInt()
+        val numExtraArgs = extraArgsSmo!!.elems(tc).toInt()
         var bsmMT = MethodType.methodType(CallSite::class.java, MethodHandles.Lookup::class.java,
                 java.lang.String::class.java, MethodType::class.java)
 

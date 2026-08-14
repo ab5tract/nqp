@@ -13,36 +13,36 @@ open class CodePairContainerSpec : ContainerSpec() {
 
     /* Fetches a value out of a container. Used for decontainerization. */
     override fun fetch(tc: ThreadContext, cont: SixModelObject): SixModelObject? {
-        Ops.invokeDirect(tc, fetchCode, Ops.invocantCallSite, arrayOf<Any>(cont))
-        return Ops.result_o(tc.curFrame)
+        Ops.invokeDirect(tc, fetchCode, Ops.invocantCallSite, arrayOf<Any?>(cont))
+        return Ops.result_o(tc.curFrame!!)
     }
 
     override fun fetch_i(tc: ThreadContext, cont: SixModelObject): Long {
-        Ops.invokeDirect(tc, fetchCode, Ops.invocantCallSite, arrayOf<Any>(cont))
-        return Ops.result_i(tc.curFrame)
+        Ops.invokeDirect(tc, fetchCode, Ops.invocantCallSite, arrayOf<Any?>(cont))
+        return Ops.result_i(tc.curFrame!!)
     }
 
     override fun fetch_n(tc: ThreadContext, cont: SixModelObject): Double {
-        Ops.invokeDirect(tc, fetchCode, Ops.invocantCallSite, arrayOf<Any>(cont))
-        return Ops.result_n(tc.curFrame)
+        Ops.invokeDirect(tc, fetchCode, Ops.invocantCallSite, arrayOf<Any?>(cont))
+        return Ops.result_n(tc.curFrame!!)
     }
 
     override fun fetch_s(tc: ThreadContext, cont: SixModelObject): String? {
-        Ops.invokeDirect(tc, fetchCode, Ops.invocantCallSite, arrayOf<Any>(cont))
-        return Ops.result_s(tc.curFrame)
+        Ops.invokeDirect(tc, fetchCode, Ops.invocantCallSite, arrayOf<Any?>(cont))
+        return Ops.result_s(tc.curFrame!!)
     }
 
     /* Stores a value in a container. Used for assignment. */
     override fun store(tc: ThreadContext, cont: SixModelObject, obj: SixModelObject) {
-        Ops.invokeDirect(tc, storeCode, Ops.storeCallSite, arrayOf<Any>(cont, obj))
+        Ops.invokeDirect(tc, storeCode, Ops.storeCallSite, arrayOf<Any?>(cont, obj))
     }
 
     override fun store_i(tc: ThreadContext, cont: SixModelObject, value: Long) {
-        Ops.invokeDirect(tc, storeCode, Ops.storeCallSite_i, arrayOf<Any>(cont, value))
+        Ops.invokeDirect(tc, storeCode, Ops.storeCallSite_i, arrayOf<Any?>(cont, value))
     }
 
     override fun store_n(tc: ThreadContext, cont: SixModelObject, value: Double) {
-        Ops.invokeDirect(tc, storeCode, Ops.storeCallSite_n, arrayOf<Any>(cont, value))
+        Ops.invokeDirect(tc, storeCode, Ops.storeCallSite_n, arrayOf<Any?>(cont, value))
     }
 
     override fun store_s(tc: ThreadContext, cont: SixModelObject, value: String?) {

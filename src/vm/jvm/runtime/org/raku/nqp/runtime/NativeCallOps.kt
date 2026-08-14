@@ -233,7 +233,7 @@ object NativeCallOps {
     @JvmStatic
     fun nativecallsizeof(obj: SixModelObject, tc: ThreadContext): Long {
         var o = Ops.decont(obj, tc)
-        val ss = o.st.REPR.get_storage_spec(tc, o.st)
+        val ss = o!!.st.REPR.get_storage_spec(tc, o.st)
 
         when (ss.boxed_primitive) {
             StorageSpec.BP_INT, StorageSpec.BP_UINT, StorageSpec.BP_NUM ->
@@ -242,7 +242,7 @@ object NativeCallOps {
                 return Native.POINTER_SIZE.toLong()
             else -> {
                 if (Ops.isconcrete(o, tc) == 0L)
-                    o = o.st.REPR.allocate(tc, o.st)
+                    o = o!!.st.REPR.allocate(tc, o.st)
                 if (o is CStrInstance
                  || o is CPointerInstance
                  || o is CArrayInstance) {
@@ -422,62 +422,62 @@ object NativeCallOps {
         ArgType.CHAR -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return v.get_int(tc).toByte()
+            return v!!.get_int(tc).toByte()
         }
         ArgType.SHORT -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return v.get_int(tc).toShort()
+            return v!!.get_int(tc).toShort()
         }
         ArgType.INT -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return v.get_int(tc).toInt()
+            return v!!.get_int(tc).toInt()
         }
         ArgType.LONG -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return NativeLong(v.get_int(tc))
+            return NativeLong(v!!.get_int(tc))
         }
         ArgType.LONGLONG -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return v.get_int(tc)
+            return v!!.get_int(tc)
         }
         ArgType.UCHAR -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return v.get_int(tc).toByte()
+            return v!!.get_int(tc).toByte()
         }
         ArgType.USHORT -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return v.get_int(tc).toShort()
+            return v!!.get_int(tc).toShort()
         }
         ArgType.UINT -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return v.get_int(tc).toInt()
+            return v!!.get_int(tc).toInt()
         }
         ArgType.ULONG -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return NativeLong(v.get_int(tc))
+            return NativeLong(v!!.get_int(tc))
         }
         ArgType.ULONGLONG -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return v.get_int(tc)
+            return v!!.get_int(tc)
         }
         ArgType.FLOAT -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return v.get_num(tc).toFloat()
+            return v!!.get_num(tc).toFloat()
         }
         ArgType.DOUBLE -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return v.get_num(tc)
+            return v!!.get_num(tc)
         }
         ArgType.ASCIISTR, ArgType.UTF8STR, ArgType.UTF16STR -> {
             /* TODO: Handle encodings. */
@@ -490,7 +490,7 @@ object NativeCallOps {
                 return cstr.cstr
             }
             else {
-                return v.get_str(tc)
+                return v!!.get_str(tc)
             }
         }
         ArgType.CPOINTER -> {
@@ -521,7 +521,7 @@ object NativeCallOps {
         ArgType.CALLBACK -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return callbackHandlerFor(v, info!!, tc)
+            return callbackHandlerFor(v!!, info!!, tc)
         }
         ArgType.VMARRAY -> {
             v = Ops.decont(v, tc)
