@@ -42,7 +42,7 @@ class AsyncSocketHandle : IIOClosable, IIOCancelable {
     /* The HLL types must be captured on the calling thread: completion
      * handlers run on NIO pool threads where tc.curFrame is not ours. */
     private fun hll(tc: ThreadContext) =
-        tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig
+        tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!
 
     private fun send(listType: SixModelObject, tc: ThreadContext,
                      task: AsyncTaskInstance, vararg items: SixModelObject?) {
@@ -63,7 +63,7 @@ class AsyncSocketHandle : IIOClosable, IIOCancelable {
         /* Event: [schedulee, handle, err, peerHost, peerPort, socketHost, socketPort] */
         val handler = object : CompletionHandler<Void, AsyncTaskInstance> {
             override fun completed(v: Void?, task: AsyncTaskInstance) {
-                val curTC = tc.gc.currentThreadContext
+                val curTC = tc.gc.getCurrentThreadContext()!!
                 val ioHandle = ioType.st.REPR.allocate(curTC, ioType.st) as IOHandleInstance
                 ioHandle.handle = task.handle
                 send(listType, curTC, task, ioHandle, strType,
@@ -74,7 +74,7 @@ class AsyncSocketHandle : IIOClosable, IIOCancelable {
             }
 
             override fun failed(t: Throwable, task: AsyncTaskInstance) {
-                val curTC = tc.gc.currentThreadContext
+                val curTC = tc.gc.getCurrentThreadContext()!!
                 send(listType, curTC, task, ioType,
                     Ops.box_s(t.toString(), strType, curTC), strType, intType, strType, intType)
             }
@@ -98,12 +98,12 @@ class AsyncSocketHandle : IIOClosable, IIOCancelable {
         /* Event: [schedulee, bytesWritten, err] */
         val handler = object : CompletionHandler<Int, AsyncTaskInstance> {
             override fun completed(bytesWritten: Int, task: AsyncTaskInstance) {
-                val curTC = tc.gc.currentThreadContext
+                val curTC = tc.gc.getCurrentThreadContext()!!
                 send(listType, curTC, task, Ops.box_i(bytesWritten.toLong(), intType, curTC), nullValue)
             }
 
             override fun failed(t: Throwable, task: AsyncTaskInstance) {
-                val curTC = tc.gc.currentThreadContext
+                val curTC = tc.gc.getCurrentThreadContext()!!
                 send(listType, curTC, task, strType, Ops.box_s(t.toString(), strType, curTC))
             }
         }
@@ -141,7 +141,7 @@ class AsyncSocketHandle : IIOClosable, IIOCancelable {
                 send(listType, curTC, task, Ops.box_i(seq, intType, curTC), payload, err)
 
             override fun completed(numRead: Int, task: AsyncTaskInstance) {
-                val curTC = tc.gc.currentThreadContext
+                val curTC = tc.gc.getCurrentThreadContext()!!
                 try {
                     if (numRead == -1) {
                         send4(curTC, task, task.seq, strType, nullValue)
@@ -160,7 +160,7 @@ class AsyncSocketHandle : IIOClosable, IIOCancelable {
             }
 
             override fun failed(t: Throwable, task: AsyncTaskInstance) {
-                val curTC = tc.gc.currentThreadContext
+                val curTC = tc.gc.getCurrentThreadContext()!!
                 val err =
                     if (t is AsynchronousCloseException || t is ClosedChannelException) strType
                     else Ops.box_s(t.toString(), strType, curTC)
