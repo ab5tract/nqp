@@ -39,7 +39,7 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
         var curArgIndex = 1
 
         name = Ops.getattr_s(jast, jastMethod, "$!name", nameHint, tc)
-        returns = JASTCompiler.processType(Ops.getattr(jast, jastMethod, "$!returns", returnsHint, tc).get_str(tc))
+        returns = JASTCompiler.processType(Ops.getattr(jast, jastMethod, "$!returns", returnsHint, tc).get_str(tc)!!)
         isStatic = Ops.getattr_i(jast, jastMethod, "$!static", staticHint, tc) != 0L
         if (isStatic)
             curArgIndex = 0
@@ -48,7 +48,7 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
         while (Ops.istrue(iter, tc) != 0L) {
             val pair = iter.shift_boxed(tc)!!
             val argName = pair.at_pos_boxed(tc, 0)!!.get_str(tc)
-            val type = JASTCompiler.processType(pair.at_pos_boxed(tc, 1)!!.get_str(tc))
+            val type = JASTCompiler.processType(pair.at_pos_boxed(tc, 1)!!.get_str(tc)!!)
             arguments.add(type)
             if (locals.containsKey(argName))
                 throw Exception("Duplicate local name: " + argName)
@@ -60,7 +60,7 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
         while (Ops.istrue(iter, tc) != 0L) {
             val pair = iter.shift_boxed(tc)!!
             val localName = pair.at_pos_boxed(tc, 0)!!.get_str(tc)
-            val type = JASTCompiler.processType(pair.at_pos_boxed(tc, 1)!!.get_str(tc))
+            val type = JASTCompiler.processType(pair.at_pos_boxed(tc, 1)!!.get_str(tc)!!)
             if (locals.containsKey(localName))
                 throw Exception("Duplicate local name: " + localName)
             locals.put(localName, JASTCompiler.VariableDef(curArgIndex, type.descriptor, beginAll, endAll))
