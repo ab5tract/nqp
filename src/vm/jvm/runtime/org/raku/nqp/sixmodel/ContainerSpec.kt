@@ -42,13 +42,16 @@ abstract class ContainerSpec {
     open fun canStore(tc: ThreadContext, cont: SixModelObject): Boolean = true
 
     /* Atomic reference operations; not supported by default. */
+    /* Nullable returns: rakudo's value_desc_cont spec forwards to Raku
+     * code whose result can be nqp-null (the Java subclass could always
+     * return null here). */
     open fun cas(tc: ThreadContext, cont: SixModelObject,
-                 expected: SixModelObject, value: SixModelObject): SixModelObject {
+                 expected: SixModelObject, value: SixModelObject): SixModelObject? {
         throw ExceptionHandling.dieInternal(tc,
             "This kind of container does not support atomic compare and swap")
     }
 
-    open fun atomic_load(tc: ThreadContext, cont: SixModelObject): SixModelObject {
+    open fun atomic_load(tc: ThreadContext, cont: SixModelObject): SixModelObject? {
         throw ExceptionHandling.dieInternal(tc,
             "This kind of container does not support atomic load")
     }

@@ -25,15 +25,15 @@ class KnowHOWMethods : CompilationUnit() {
         val cf = CallFrame(tc, cr)
         try {
             val csd = Ops.checkarity(cf, csd0, args0, 1, 1)
-            val args = tc.flatArgs
+            val args = tc.flatArgs!!
             val self = Ops.posparam_o(cf, csd, args, 0)
             val reprArg = Ops.namedparam_opt_s(cf, csd, args, "repr")
             val nameArg = Ops.namedparam_opt_s(cf, csd, args, "name")
-            if (Ops.isnull(self) == 1L || self.st.REPR !is KnowHOWREPR)
+            if (Ops.isnull(self) == 1L || self!!.st.REPR !is KnowHOWREPR)
                 throw ExceptionHandling.dieInternal(tc, "KnowHOW methods must be called on object with REPR KnowHOWREPR")
 
             /* We first create a new HOW instance. */
-            val HOW = self.st.REPR.allocate(tc, self.st)
+            val HOW = self!!.st.REPR.allocate(tc, self.st)
 
             /* See if we have a representation name; if not default to P6opaque. */
             val reprName = reprArg ?: "P6opaque"
@@ -64,13 +64,13 @@ class KnowHOWMethods : CompilationUnit() {
         val cf = CallFrame(tc, cr)
         try {
             val csd = Ops.checkarity(cf, csd0, args0, 4, 4)
-            val args = tc.flatArgs
+            val args = tc.flatArgs!!
             val self = Ops.posparam_o(cf, csd, args, 0)
             val name = Ops.posparam_s(cf, csd, args, 2)
             val method = Ops.posparam_o(cf, csd, args, 3)
             if (Ops.isnull(self) == 1L || self !is KnowHOWREPRInstance)
                 throw ExceptionHandling.dieInternal(tc, "KnowHOW methods must be called on object instance with REPR KnowHOWREPR")
-            self.methods!![name] = method
+            self.methods!![name!!] = method
             Ops.return_o(method, cf)
         }
         finally {
@@ -82,7 +82,7 @@ class KnowHOWMethods : CompilationUnit() {
         val cf = CallFrame(tc, cr)
         try {
             val csd = Ops.checkarity(cf, csd0, args0, 3, 3)
-            val args = tc.flatArgs
+            val args = tc.flatArgs!!
             val self = Ops.posparam_o(cf, csd, args, 0)
             val attribute = Ops.posparam_o(cf, csd, args, 2)
             if (Ops.isnull(self) == 1L || self !is KnowHOWREPRInstance)
@@ -101,18 +101,18 @@ class KnowHOWMethods : CompilationUnit() {
         val cf = CallFrame(tc, cr)
         try {
             val csd = Ops.checkarity(cf, csd0, args0, 2, 2)
-            val args = tc.flatArgs
+            val args = tc.flatArgs!!
             val self = Ops.posparam_o(cf, csd, args, 0)
             val typeObj = Ops.posparam_o(cf, csd, args, 1)
             if (Ops.isnull(self) == 1L || self !is KnowHOWREPRInstance)
                 throw ExceptionHandling.dieInternal(tc, "KnowHOW methods must be called on object instance with REPR KnowHOWREPR")
 
             /* Set method cache. */
-            typeObj.st.MethodCache = self.methods
-            typeObj.st.ModeFlags = STable.METHOD_CACHE_AUTHORITATIVE
+            typeObj!!.st.MethodCache = self.methods
+            typeObj!!.st.ModeFlags = STable.METHOD_CACHE_AUTHORITATIVE
 
             /* Set type check cache. */
-            typeObj.st.TypeCheckCache = arrayOf(typeObj)
+            typeObj!!.st.TypeCheckCache = arrayOf(typeObj)
 
             /* Use any attribute information to produce attribute protocol
              * data. The protocol consists of an array... */
@@ -152,7 +152,7 @@ class KnowHOWMethods : CompilationUnit() {
             reprInfoHash.bind_key_boxed(tc, "attribute", reprInfo)
 
             /* Compose the representation using it. */
-            typeObj.st.REPR.compose(tc, typeObj.st, reprInfoHash)
+            typeObj!!.st.REPR.compose(tc, typeObj.st, reprInfoHash)
 
             Ops.return_o(typeObj, cf)
         }
@@ -165,7 +165,7 @@ class KnowHOWMethods : CompilationUnit() {
         val cf = CallFrame(tc, cr)
         try {
             val csd = Ops.checkarity(cf, csd0, args0, 2, 2)
-            val args = tc.flatArgs
+            val args = tc.flatArgs!!
             val self = Ops.posparam_o(cf, csd, args, 0)
             if (Ops.isnull(self) == 1L || self !is KnowHOWREPRInstance)
                 throw ExceptionHandling.dieInternal(tc, "KnowHOW methods must be called on object instance with REPR KnowHOWREPR")
@@ -184,7 +184,7 @@ class KnowHOWMethods : CompilationUnit() {
         val cf = CallFrame(tc, cr)
         try {
             val csd = Ops.checkarity(cf, csd0, args0, 2, 2)
-            val args = tc.flatArgs
+            val args = tc.flatArgs!!
             val self = Ops.posparam_o(cf, csd, args, 0)
             if (Ops.isnull(self) == 1L || self !is KnowHOWREPRInstance)
                 throw ExceptionHandling.dieInternal(tc, "KnowHOW methods must be called on object instance with REPR KnowHOWREPR")
@@ -204,7 +204,7 @@ class KnowHOWMethods : CompilationUnit() {
         val cf = CallFrame(tc, cr)
         try {
             val csd = Ops.checkarity(cf, csd0, args0, 2, 2)
-            val args = tc.flatArgs
+            val args = tc.flatArgs!!
             val self = Ops.posparam_o(cf, csd, args, 0)
             if (Ops.isnull(self) == 1L || self !is KnowHOWREPRInstance)
                 throw ExceptionHandling.dieInternal(tc, "KnowHOW methods must be called on object instance with REPR KnowHOWREPR")
@@ -220,7 +220,7 @@ class KnowHOWMethods : CompilationUnit() {
         try {
             /* Process arguments. */
             val csd = Ops.checkarity(cf, csd0, args0, 1, 1)
-            val args = tc.flatArgs
+            val args = tc.flatArgs!!
             val self = Ops.posparam_o(cf, csd, args, 0)
             val nameArg = Ops.namedparam_s(cf, csd, args, "name")
             val typeArg = Ops.namedparam_opt_o(cf, csd, args, "type")
@@ -228,7 +228,7 @@ class KnowHOWMethods : CompilationUnit() {
 
             /* Allocate attribute object. */
             val repr = REPRRegistry.getByName("KnowHOWAttribute")
-            val obj = repr.allocate(tc, self.st) as KnowHOWAttributeInstance
+            val obj = repr.allocate(tc, self!!.st) as KnowHOWAttributeInstance
 
             /* Populate it. */
             obj.name = nameArg
@@ -247,7 +247,7 @@ class KnowHOWMethods : CompilationUnit() {
         val cf = CallFrame(tc, cr)
         try {
             val csd = Ops.checkarity(cf, csd0, args0, 1, 1)
-            val args = tc.flatArgs
+            val args = tc.flatArgs!!
             val self = Ops.posparam_o(cf, csd, args, 0)
             Ops.return_o(self, cf)
         }
@@ -260,7 +260,7 @@ class KnowHOWMethods : CompilationUnit() {
         val cf = CallFrame(tc, cr)
         try {
             val csd = Ops.checkarity(cf, csd0, args0, 1, 1)
-            val args = tc.flatArgs
+            val args = tc.flatArgs!!
             val self = Ops.posparam_o(cf, csd, args, 0)
             Ops.return_s((self as KnowHOWAttributeInstance).name, cf)
         }
@@ -273,7 +273,7 @@ class KnowHOWMethods : CompilationUnit() {
         val cf = CallFrame(tc, cr)
         try {
             val csd = Ops.checkarity(cf, csd0, args0, 1, 1)
-            val args = tc.flatArgs
+            val args = tc.flatArgs!!
             val self = Ops.posparam_o(cf, csd, args, 0)
             Ops.return_o((self as KnowHOWAttributeInstance).type, cf)
         }
@@ -286,7 +286,7 @@ class KnowHOWMethods : CompilationUnit() {
         val cf = CallFrame(tc, cr)
         try {
             val csd = Ops.checkarity(cf, csd0, args0, 1, 1)
-            val args = tc.flatArgs
+            val args = tc.flatArgs!!
             val self = Ops.posparam_o(cf, csd, args, 0)
             Ops.return_i((self as KnowHOWAttributeInstance).box_target.toLong(), cf)
         }

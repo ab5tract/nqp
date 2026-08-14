@@ -154,12 +154,12 @@ class GlobalContext {
     /**
      * HLL global symbols.
      */
-    @JvmField var hllSyms: HashMap<String, HashMap<String, SixModelObject>>
+    @JvmField var hllSyms: HashMap<String, HashMap<String, SixModelObject?>>
 
     /**
      * Compiler registry.
      */
-    @JvmField var compilerRegistry: HashMap<String, SixModelObject>
+    @JvmField var compilerRegistry: HashMap<String, SixModelObject?>
 
     /**
      * Container configurer registry.
@@ -239,8 +239,8 @@ class GlobalContext {
 
         scs = HashMap<String, SerializationContext>()
         scRefs = HashMap<String, SixModelObject>()
-        compilerRegistry = HashMap<String, SixModelObject>()
-        hllSyms = HashMap<String, HashMap<String, SixModelObject>>()
+        compilerRegistry = HashMap<String, SixModelObject?>()
+        hllSyms = HashMap<String, HashMap<String, SixModelObject?>>()
 
         contConfigs = HashMap<String, ContainerConfigurer>()
         contConfigs.put("code_pair", CodePairContainerConfigurer())

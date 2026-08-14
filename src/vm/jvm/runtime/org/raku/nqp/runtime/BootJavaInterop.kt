@@ -108,7 +108,7 @@ open class BootJavaInterop(gc: GlobalContext) {
             if (o is Class<*>) return o
         }
         try {
-            return Class.forName(Ops.unbox_s(to, gc.getCurrentThreadContext()))
+            return Class.forName(Ops.unbox_s(to, gc.getCurrentThreadContext()!!))
         } catch (e: ClassNotFoundException) {
             throw ExceptionHandling.dieInternal(gc.getCurrentThreadContext()!!, e)
         }
@@ -145,10 +145,10 @@ open class BootJavaInterop(gc: GlobalContext) {
         val ifaces = ArrayList<String>()
 
         if (matchName(tc, rows, rptr, "extends"))
-            superclass = Ops.unbox_s(rows[rptr++]!![1], tc).replace('.', '/')
+            superclass = Ops.unbox_s(rows[rptr++]!![1], tc)!!.replace('.', '/')
 
         while (matchName(tc, rows, rptr, "implements"))
-            ifaces.add(Ops.unbox_s(rows[rptr++]!![1], tc).replace('.', '/'))
+            ifaces.add(Ops.unbox_s(rows[rptr++]!![1], tc)!!.replace('.', '/'))
 
         cw.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER, className, null,
                 superclass, ifaces.toTypedArray())
@@ -409,7 +409,7 @@ open class BootJavaInterop(gc: GlobalContext) {
         if (row.size != 4) throw ExceptionHandling.dieInternal(tc, "instance_method requires 3 arguments")
         val name = Ops.unbox_s(row[1], tc)
         val desc = Type.getMethodType(Ops.unbox_s(row[2], tc))
-        val mc = startCallin(c, if (isStatic) Opcodes.ACC_STATIC or Opcodes.ACC_PUBLIC else Opcodes.ACC_PUBLIC, name, desc)
+        val mc = startCallin(c, if (isStatic) Opcodes.ACC_STATIC or Opcodes.ACC_PUBLIC else Opcodes.ACC_PUBLIC, name!!, desc)
         val mv = mc.mv!!
 
         val ret = desc.getReturnType()
@@ -669,9 +669,15 @@ open class BootJavaInterop(gc: GlobalContext) {
             return retVal
         }
 
+        /* `open` so the @JvmStatic bridge is emitted non-final: rakudo's
+         * RakudoJavaInterop declares its own static marshalOutRecursive
+         * (invoked by name from its emitted adaptors), which under Java's
+         * rules *hides* this one — and hiding a final static is a
+         * compile error. The Java original was a plain (non-final)
+         * public static. */
         @JvmStatic
         @Throws(Throwable::class)
-        fun marshalOutRecursive(`in`: SixModelObject, tc: ThreadContext, what: Class<*>?): Any? {
+        open fun marshalOutRecursive(`in`: SixModelObject, tc: ThreadContext, what: Class<*>?): Any? {
             var out: Any? = null
             val size = Ops.elems(`in`, tc).toInt()
             if (what != null) {
@@ -695,7 +701,7 @@ open class BootJavaInterop(gc: GlobalContext) {
                             value = RuntimeSupport.unboxJava(cur)
                         } // XXX: probably cases missing here
                         else {
-                            value = marshalOutRecursive(cur, tc, what.componentType)
+                            value = marshalOutRecursive(cur!!, tc, what.componentType)
                         }
                     }
                     value = castObjectToClass(value!!, what.componentType)
@@ -732,7 +738,7 @@ open class BootJavaInterop(gc: GlobalContext) {
                         } // XXX: probably cases missing here?
                         else {
                             @Suppress("UNCHECKED_CAST")
-                            (out as Array<Any?>)[i] = marshalOutRecursive(cur, tc, null)
+                            (out as Array<Any?>)[i] = marshalOutRecursive(cur!!, tc, null)
                         }
                     }
                 }
