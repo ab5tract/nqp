@@ -558,6 +558,45 @@ P6Opaque family (REPRData, BaseInstance, DelegateInstance, and the
   commit, fixed in its own follow-up commit (the Ops.where precedent);
   MoarVM's NativeCall is separate C and unaffected.
 
+## The long tail: reprs completed, interop, jast2bc, indy
+
+The rounds after the C-interop cluster finished the reprs directory
+(NativeRefInstance variants, the small instance leaves, the boxed
+VMArray/MultiDimArray pair with their bases, DecoderInstance) and took
+the three infrastructure classes everyone assumed would wait:
+BootJavaInterop, JASTCompiler and IndyBootstrap. Findings:
+
+- **Kotlin's `[]` on CharBuffer is not `charAt`.** The operator resolves
+  to `CharBuffer.get(int)` — an *absolute* index — while the Java used
+  the position-relative `charAt`. After `subSequence` slicing, decoder
+  line-separator matching read the wrong chars; caught as three real
+  `019-file-ops.t` failures by the gate. Kotlin also hides `charAt`
+  behind the mapped CharSequence type, so the fix is
+  `(buf as CharSequence)[j]`. Trap catalogued.
+- **nqp hash values are honestly nullable.** `Ops.namedslurpy` binds
+  named args whose values are Java null (nqp null); the stage1
+  bootstrap caught a `value!!` in the VMHashInstance port instantly.
+  VMHash storage, the C-struct member caches, STable.MethodCache and
+  KnowHOWREPRInstance.methods are all element-nullable now.
+- **BootJavaInterop is rakudo-facing** (only constructed within nqp),
+  so its gate is a javap diff of the full public/protected surface —
+  including nested ClassContext/MethodContext/STableCache shapes and
+  the RuntimeSupport statics whose invokestatic descriptors are baked
+  into adaptor bytecode.
+- **JASTCompiler's proof is the bootstrap itself** — every stage
+  compile runs the Kotlin jast2bc. One more latent upstream bug
+  preserved with a NOTE (astore_0..3 emit DSTORE on never-emitted
+  paths).
+- **IndyBootstrap converted after all** — the keep-as-Java entry
+  dissolved like the others: no polymorphic invokes of its own, and
+  the name-based findStatic resolvers plus BSM descriptors survive
+  object + @JvmStatic (all 15 statics javap-identical). The one real
+  subtlety was its raw `invokee.st != null` stub checks, which only
+  worked because Java reads the lateinit backing field directly; a
+  Kotlin-side read would throw UninitializedPropertyAccessException.
+  SixModelObject now exposes `stInitialized` (`::st.isInitialized`),
+  which is exactly the raw null check.
+
 ## The !! debt: a planned post-parity cleanup round
 
 The `!!` density across the converted tree is the deliberate cost of the
@@ -599,15 +638,14 @@ a final polish phase before merge.
 
 ## Remaining Java (as of the java-to-kotlin branch head)
 
-~13K lines across: Ops.java (7.9K — one monolithic class, all-or-nothing,
-needs a dedicated session or a mechanical-translation harness),
-BootJavaInterop, IndyBootstrap, ArgsExpectation (keep-as-Java),
-LibraryLoader (keep-as-Java), ResumeStatus (keep-as-Java), EvalServer
-(broken upstream, deferred); jast2bc's JASTCompiler and
-AutosplitMethodWriter; and the boxed VMArrayInstance /
-MultiDimArrayInstance pair plus a handful of remaining instance leaves
-(DecoderInstance, MultiDimArrayInstanceBase, the NativeRefInstance*
-variants, ConcBlockingQueue/ContextRef/MultiCache instances).
+~10.5K lines across six files: Ops.java (7.9K — one monolithic class,
+all-or-nothing, needs a dedicated session), jast2bc's
+AutosplitMethodWriter (1.7K, ASM tree surgery), the keep-as-Java trio
+(ArgsExpectation, LibraryLoader, ResumeStatus — each for a documented,
+concrete reason), and EvalServer (broken upstream, deferred).
+Everything else — all of sixmodel/, io/, jast2bc's compiler and nodes,
+tools-adjacent runtime classes, the interop and dispatch layers — is
+Kotlin.
 
 ## Recommendation
 
