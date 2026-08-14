@@ -93,6 +93,13 @@ full suite identical to baseline. Two lessons:
 
 ## Keep-as-Java list (do not convert without a dedicated effort)
 
+- `runtime/ArgsExpectation.java` — void-position signature-polymorphic
+  `invokeExact` calls, inexpressible in Kotlin (see the medium-classes
+  section below).
+- `runtime/LibraryLoader.java` — caller-sensitive
+  `registerAsParallelCapable()` in nested-loader static initializers
+  (see below).
+
 - `runtime/Ops.java` — 707 static methods; the generated-code ABI. The
   IOOps experiment (above) proved `object` + `@JvmStatic` preserves the
   descriptors, so this is now considered convertible — but only as a
@@ -463,13 +470,63 @@ warns on JDK 25 and is on borrowed time). Findings:
   reclaim. See docs/gradle-jvm-build.md for the knobs and the
   `systemd-run --scope` belt-and-braces wrapper.
 
+## The medium runtime classes
+
+StaticCodeInfo, CallSiteDescriptor, GlobalContext, CallFrame and
+CompilationUnit — the load-bearing middle of the runtime — converted
+literally, one commit each, with `javap -s` diffs on everything
+generated code touches (CallFrame's field/ctor descriptors, CSD's
+`([B[Ljava/lang/String;)V` ctor, CompilationUnit's virtual surface) and
+a full bootstrap + suite run per class. New traps for the catalogue:
+
+- **`const val`, not `@JvmField val`, where Java needs a compile-time
+  constant.** `caller.retType = CallFrame.RET_OBJ` only compiles because
+  a constant int expression gets implicit narrowing to byte; a plain
+  static final field (what `@JvmField val` emits) loses the
+  ConstantValue attribute and breaks every Java assignment/switch site.
+- `@JvmField lateinit` is rejected — redundant anyway, since lateinit
+  properties already expose their backing field to Java (CallFrame's
+  tc/codeRef rely on that).
+- Converting a class kills its accessor-style synthetic property for
+  Kotlin callers: `gc.currentThreadContext` (the Java getter seen as a
+  property) had to become `gc.getCurrentThreadContext()` in the async
+  handles once GlobalContext declared it as a function.
+- Signature invariance bites in both directions: the KnowHOW
+  compilation unit's existing overrides (`Array<CodeRef?>`) had to be
+  retyped to match the new Kotlin base's honest signatures — survey
+  *overrides* before writing a base class, and vice versa.
+- GlobalContext is the bootstrap-null motherlode: every BOOT*/MOP type
+  field is honestly nullable (KnowHOWBootstrapper creates them mid-
+  constructor; CompilationUnit null-checks BOOTCode legitimately), and
+  exit() nulls mainThread/currentThreadCtxRef at teardown. The ~80-site
+  `!!` sweep through the Kotlin tree was mechanical and compiler-guided.
+
+Three classes ruled out, each for a concrete reason:
+
+- **ArgsExpectation — keep as Java.** Nine `mh.invokeExact(...)` calls
+  in void statement position: the ResumeStatus trap. Kotlin types
+  signature-polymorphic calls as returning Object; invokeExact demands
+  an exact match, and there is no Kotlin syntax for a void-typed
+  polymorphic call site. (`invoke` would adapt, but this is the hottest
+  invocation path in the runtime.)
+- **LibraryLoader — keep as Java.** Each nested loader class runs
+  `ClassLoader.registerAsParallelCapable()` in its static initializer —
+  a caller-sensitive API that must execute with the loader class itself
+  as caller. Kotlin companion-object init runs with the Companion class
+  as caller, so registration silently fails and class-loading lock
+  granularity changes.
+- **EvalServer — deferred; broken upstream.** Both run() paths
+  dereference `gc.byteClassLoader` before `gc` is ever assigned (since
+  upstream 5d026b44b unified the class caches); the tool NPEs on entry
+  and nothing tests it. Converting dead code buys nothing.
+
 ## Remaining Java (as of the java-to-kotlin branch head)
 
-~19K lines across: Ops.java (7.9K — one monolithic class, all-or-nothing,
+~16K lines across: Ops.java (7.9K — one monolithic class, all-or-nothing,
 needs a dedicated session or a mechanical-translation harness),
-BootJavaInterop, NativeCallOps, IndyBootstrap, CallFrame, GlobalContext,
-LibraryLoader, CompilationUnit, StaticCodeInfo, CallSiteDescriptor,
-ArgsExpectation, ResumeStatus (keep-as-Java), EvalServer; jast2bc's
+BootJavaInterop, NativeCallOps, IndyBootstrap, ArgsExpectation
+(keep-as-Java), LibraryLoader (keep-as-Java), ResumeStatus
+(keep-as-Java), EvalServer (broken upstream, deferred); jast2bc's
 JASTCompiler and AutosplitMethodWriter; the P6Opaque and C-struct REPR
 families plus their instance classes; and the boxed VMArrayInstance /
 MultiDimArrayInstance pair.
