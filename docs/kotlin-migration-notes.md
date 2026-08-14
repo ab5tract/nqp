@@ -689,6 +689,68 @@ Upstream quirks preserved with NOTEs: the duplicated `normalization == 1`
 branch that makes NFD unreachable, and `sethllconfig`'s crossed
 `foreign_transform_str`/`foreign_transform_num` key lookups.
 
+## The org.raku.rakudo layer
+
+Rakudo's own JVM runtime (6 files / 3,094 lines, on rakudo's
+`java-to-kotlin` branch) converted in one round; only RakudoEvalServer
+stays Java, deferred with its broken-upstream base class. Build first:
+rakudo has no Gradle, so a sibling `rakudo-runtime/` Gradle build
+(invoked with `../nqp/gradlew`) compiles the layer against nqp's
+Gradle-built runtime jar set — proven first on the unchanged Java with
+all eight class files byte-identical to a reference javac run. Note
+`--release 9` is dead on this branch line: javac refuses nqp's Java-25
+classfiles on the classpath, so the modernized release level is forced,
+not optional.
+
+Findings worth keeping:
+
+- **A `@JvmStatic` companion bridge is `final`, and Java forbids hiding
+  a final static.** BootJavaInterop.marshalOutRecursive's bridge broke
+  RakudoJavaInterop (whose own static *hides* it) — the first cross-repo
+  fallout the javap gates couldn't see, caught only by compiling the
+  subclass layer. `open` on the companion fun (legal — companions are
+  classes) emits a non-final bridge, restoring the exact Java shape.
+- RakOps is the layer's generated-code ABI (`$TYPE_P6OPS` in
+  Perl6/Ops.nqp) — same object/@JvmStatic/javap-gate recipe as nqp's
+  Ops; ThreadExt/GlobalExt nested binary names and their
+  `(ThreadContext)` ctors are load-bearing (ContextKey reflective), and
+  `p6bindsig` returns `CallSiteDescriptor?` by protocol (Ops.nqp emits
+  ifnonnull on it). Its two switch fall-throughs — the only ones in the
+  layer — restructure into explicit "FAIL continues into the junction
+  path" / "error handling continues into `return sig`" with NOTEs.
+- Binder (1,241 lines) needed no gate beyond RakOps compiling against
+  it: not an ABI (Perl6/Ops.nqp's `$Binder.trial_bind` is a
+  settings-level Raku object, not this class). One Kotlin-syntax trap:
+  `"$_"` is a template referencing `_` — escape it.
+- RakudoContainerSpec's atomics ported Unsafe→VarHandle (the
+  P6OpaqueBaseInstance recipe) as its own commit before conversion; the
+  single-VarHandle cache also removes the old two-field publication
+  race. Field/method name pairs (`store`/`store()`, `cas`/`cas()`)
+  survive @JvmField + fun untouched — fields and methods are separate
+  class-file namespaces. ContainerSpec's `cas`/`atomic_load` returns
+  widened to honest `SixModelObject?` in nqp (the Java subclass could
+  always return null; no other override affected).
+- RakudoJavaInterop's five self-referential anchors (adaptor
+  invokestatic of marshalOutRecursive, the two bootstrap Handles —
+  varargs flag intact on multiBootstrap — the findStatic-by-descriptor
+  filterReturnValueMethod, the findVirtual-by-name fallback) all verify
+  byte-identical against the pre-conversion javap. `handleList` types as
+  `Array<*>` because Java assigned `Constructor[]` to `Object[]` by
+  array covariance, which Kotlin's invariant arrays can only express
+  with a star projection. Preserved landmines, NOTE'd: the marshaller's
+  islist branch NPEs on a still-null `out` and marshals `in` instead of
+  `cur`; filterReturnValueMethod's `(int[])` casts CCE for
+  long[]/short[]/byte[]/boolean[] returns.
+
+**Verification honesty**: this rakudo checkout's Makefile is moar-only —
+there has never been a rakudo-j build here. Gates for this round are
+compile-level (javac type-checking the Java against Kotlin, javap
+surface diffs, byte-parity of the reference build) plus nqp's full suite
+for the two nqp-side changes. Behavioral proof needs a rakudo JVM
+build+spectest — a separate undertaking (Configure with
+--backends=moar,jvm and likely its own repair round, given upstream
+rakudo-jvm's state).
+
 ## The !! debt: a planned post-parity cleanup round
 
 The `!!` density across the converted tree is the deliberate cost of the
@@ -730,11 +792,13 @@ a final polish phase before merge.
 
 ## Remaining Java (as of the java-to-kotlin branch head)
 
-Four files: the keep-as-Java trio (ArgsExpectation, LibraryLoader,
-ResumeStatus — each for a documented, concrete reason) and EvalServer
-(broken upstream, deferred). Everything else — Ops.java included — is
-Kotlin. Next: the `org.raku.rakudo` layer, then the post-parity `!!`
-cleanup round below.
+In nqp, four files: the keep-as-Java trio (ArgsExpectation,
+LibraryLoader, ResumeStatus — each for a documented, concrete reason)
+and EvalServer (broken upstream, deferred). In rakudo, one:
+RakudoEvalServer, deferred with that same base. Everything else — both
+Ops bags, Binder, the whole interop and dispatch machinery — is Kotlin.
+Next: a rakudo JVM build for behavioral proof of the rakudo layer, then
+the post-parity `!!` cleanup round below.
 
 ## Recommendation
 
