@@ -69,7 +69,7 @@ class CodeRef : SixModelObject {
         if (this.outer != null)
             clone.outer = this.outer
         else
-            clone.outer = staticInfo.outerStaticInfo.priorInvocation
+            clone.outer = staticInfo.outerStaticInfo!!.priorInvocation
         clone.name = this.name
         return clone
     }
