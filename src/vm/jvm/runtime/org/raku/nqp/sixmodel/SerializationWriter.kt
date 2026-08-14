@@ -728,8 +728,9 @@ class SerializationWriter(
 
         /* See if there's any relevant outer context, and if so set it up to
          * be serialized. */
-        if (cf.outer != null)
-            outputs[CONTEXTS].putInt(getSerializedContextIdx(cf.outer))
+        val outerFrame = cf.outer
+        if (outerFrame != null)
+            outputs[CONTEXTS].putInt(getSerializedContextIdx(outerFrame))
         else
             outputs[CONTEXTS].putInt(0)
 
@@ -737,38 +738,42 @@ class SerializationWriter(
         currentBuffer = CONTEXT_DATA
 
         /* Serialize lexicals. */
+        val oLex = cf.oLex
+        val iLex = cf.iLex
+        val nLex = cf.nLex
+        val sLex = cf.sLex
         var numLexicals = 0
-        numLexicals += if (cf.oLex == null) 0 else cf.oLex.size
-        numLexicals += if (cf.iLex == null) 0 else cf.iLex.size
-        numLexicals += if (cf.nLex == null) 0 else cf.nLex.size
-        numLexicals += if (cf.sLex == null) 0 else cf.sLex.size
+        numLexicals += oLex?.size ?: 0
+        numLexicals += iLex?.size ?: 0
+        numLexicals += nLex?.size ?: 0
+        numLexicals += sLex?.size ?: 0
         writeInt(numLexicals.toLong())
-        if (cf.oLex != null) {
+        if (oLex != null) {
             val names = cf.codeRef.staticInfo.oLexicalNames!!
-            for (i in cf.oLex.indices) {
+            for (i in oLex.indices) {
                 writeStr(names[i])
-                writeRef(cf.oLex[i])
+                writeRef(oLex[i])
             }
         }
-        if (cf.iLex != null) {
+        if (iLex != null) {
             val names = cf.codeRef.staticInfo.iLexicalNames!!
-            for (i in cf.iLex.indices) {
+            for (i in iLex.indices) {
                 writeStr(names[i])
-                writeInt(cf.iLex[i])
+                writeInt(iLex[i])
             }
         }
-        if (cf.nLex != null) {
+        if (nLex != null) {
             val names = cf.codeRef.staticInfo.nLexicalNames!!
-            for (i in cf.nLex.indices) {
+            for (i in nLex.indices) {
                 writeStr(names[i])
-                writeNum(cf.nLex[i])
+                writeNum(nLex[i])
             }
         }
-        if (cf.sLex != null) {
+        if (sLex != null) {
             val names = cf.codeRef.staticInfo.sLexicalNames!!
-            for (i in cf.sLex.indices) {
+            for (i in sLex.indices) {
                 writeStr(names[i])
-                writeStr(cf.sLex[i])
+                writeStr(sLex[i])
             }
         }
     }
