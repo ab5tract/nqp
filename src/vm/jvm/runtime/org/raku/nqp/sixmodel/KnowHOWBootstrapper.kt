@@ -76,13 +76,13 @@ object KnowHOWBootstrapper {
 
         /* Add various methods to the KnowHOW's HOW. */
         val methods = knowhow_how.methods!!
-        methods["new_type"] = knowhowUnit.lookupCodeRef("new_type")
-        methods["add_method"] = knowhowUnit.lookupCodeRef("add_method")
-        methods["add_attribute"] = knowhowUnit.lookupCodeRef("add_attribute")
-        methods["compose"] = knowhowUnit.lookupCodeRef("compose")
-        methods["attributes"] = knowhowUnit.lookupCodeRef("attributes")
-        methods["methods"] = knowhowUnit.lookupCodeRef("methods")
-        methods["name"] = knowhowUnit.lookupCodeRef("name")
+        methods["new_type"] = knowhowUnit.lookupCodeRef("new_type")!!
+        methods["add_method"] = knowhowUnit.lookupCodeRef("add_method")!!
+        methods["add_attribute"] = knowhowUnit.lookupCodeRef("add_attribute")!!
+        methods["compose"] = knowhowUnit.lookupCodeRef("compose")!!
+        methods["attributes"] = knowhowUnit.lookupCodeRef("attributes")!!
+        methods["methods"] = knowhowUnit.lookupCodeRef("methods")!!
+        methods["name"] = knowhowUnit.lookupCodeRef("name")!!
 
         /* Set name KnowHOW for the KnowHOW's HOW. */
         knowhow_how.name = "KnowHOW"
@@ -121,11 +121,11 @@ object KnowHOWBootstrapper {
 
         /* Add methods. */
         val methods = meta_obj.methods!!
-        methods["new"] = knowhowUnit.lookupCodeRef("attr_new")
-        methods["compose"] = knowhowUnit.lookupCodeRef("attr_compose")
-        methods["name"] = knowhowUnit.lookupCodeRef("attr_name")
-        methods["type"] = knowhowUnit.lookupCodeRef("attr_type")
-        methods["box_target"] = knowhowUnit.lookupCodeRef("attr_box_target")
+        methods["new"] = knowhowUnit.lookupCodeRef("attr_new")!!
+        methods["compose"] = knowhowUnit.lookupCodeRef("attr_compose")!!
+        methods["name"] = knowhowUnit.lookupCodeRef("attr_name")!!
+        methods["type"] = knowhowUnit.lookupCodeRef("attr_type")!!
+        methods["box_target"] = knowhowUnit.lookupCodeRef("attr_box_target")!!
 
         /* Set name. */
         meta_obj.name = "KnowHOWAttribute"
