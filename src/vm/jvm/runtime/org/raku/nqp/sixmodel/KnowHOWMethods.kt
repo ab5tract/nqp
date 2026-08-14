@@ -49,7 +49,7 @@ class KnowHOWMethods : CompilationUnit() {
                 (HOW as KnowHOWREPRInstance).name = nameArg
 
             /* Set .WHO to an empty hash. */
-            val hash = tc.gc.BOOTHash
+            val hash = tc.gc.BOOTHash!!
             typeObject.st.WHO = hash.st.REPR.allocate(tc, hash.st)
 
             /* Return the type object. */
@@ -116,23 +116,23 @@ class KnowHOWMethods : CompilationUnit() {
 
             /* Use any attribute information to produce attribute protocol
              * data. The protocol consists of an array... */
-            val reprInfo = tc.gc.BOOTArray.st.REPR.allocate(tc, tc.gc.BOOTArray.st)
+            val reprInfo = tc.gc.BOOTArray!!.st.REPR.allocate(tc, tc.gc.BOOTArray!!.st)
 
             /* ...which contains an array per MRO entry... */
-            val typeInfo = tc.gc.BOOTArray.st.REPR.allocate(tc, tc.gc.BOOTArray.st)
+            val typeInfo = tc.gc.BOOTArray!!.st.REPR.allocate(tc, tc.gc.BOOTArray!!.st)
             reprInfo.push_boxed(tc, typeInfo)
 
             /* ...which in turn contains this type... */
             typeInfo.push_boxed(tc, typeObj)
 
             /* ...then an array of hashes per attribute... */
-            val attrInfoList = tc.gc.BOOTArray.st.REPR.allocate(tc, tc.gc.BOOTArray.st)
+            val attrInfoList = tc.gc.BOOTArray!!.st.REPR.allocate(tc, tc.gc.BOOTArray!!.st)
             typeInfo.push_boxed(tc, attrInfoList)
             val attributes = self.attributes!!
             for (i in attributes.indices) {
                 val attribute = attributes[i] as KnowHOWAttributeInstance
-                val attrInfo = tc.gc.BOOTHash.st.REPR.allocate(tc, tc.gc.BOOTHash.st)
-                val nameObj = tc.gc.BOOTStr.st.REPR.allocate(tc, tc.gc.BOOTStr.st)
+                val attrInfo = tc.gc.BOOTHash!!.st.REPR.allocate(tc, tc.gc.BOOTHash!!.st)
+                val nameObj = tc.gc.BOOTStr!!.st.REPR.allocate(tc, tc.gc.BOOTStr!!.st)
                 nameObj.set_str(tc, attribute.name)
                 attrInfo.bind_key_boxed(tc, "name", nameObj)
                 attrInfo.bind_key_boxed(tc, "type", attribute.type)
@@ -144,11 +144,11 @@ class KnowHOWMethods : CompilationUnit() {
             }
 
             /* ...followed by a list of parents (none). */
-            val parentInfo = tc.gc.BOOTArray.st.REPR.allocate(tc, tc.gc.BOOTArray.st)
+            val parentInfo = tc.gc.BOOTArray!!.st.REPR.allocate(tc, tc.gc.BOOTArray!!.st)
             typeInfo.push_boxed(tc, parentInfo)
 
             /* All of this goes in a hash. */
-            val reprInfoHash = tc.gc.BOOTHash.st.REPR.allocate(tc, tc.gc.BOOTHash.st)
+            val reprInfoHash = tc.gc.BOOTHash!!.st.REPR.allocate(tc, tc.gc.BOOTHash!!.st)
             reprInfoHash.bind_key_boxed(tc, "attribute", reprInfo)
 
             /* Compose the representation using it. */
@@ -169,7 +169,7 @@ class KnowHOWMethods : CompilationUnit() {
             val self = Ops.posparam_o(cf, csd, args, 0)
             if (Ops.isnull(self) == 1L || self !is KnowHOWREPRInstance)
                 throw ExceptionHandling.dieInternal(tc, "KnowHOW methods must be called on object instance with REPR KnowHOWREPR")
-            val bootArray = tc.gc.BOOTArray
+            val bootArray = tc.gc.BOOTArray!!
             val result = bootArray.st.REPR.allocate(tc, bootArray.st)
             for (attr in self.attributes!!)
                 result.push_boxed(tc, attr)
@@ -188,7 +188,7 @@ class KnowHOWMethods : CompilationUnit() {
             val self = Ops.posparam_o(cf, csd, args, 0)
             if (Ops.isnull(self) == 1L || self !is KnowHOWREPRInstance)
                 throw ExceptionHandling.dieInternal(tc, "KnowHOW methods must be called on object instance with REPR KnowHOWREPR")
-            val bootHash = tc.gc.BOOTHash
+            val bootHash = tc.gc.BOOTHash!!
             val result = bootHash.st.REPR.allocate(tc, bootHash.st)
             val methods = self.methods!!
             for (name in methods.keys)

@@ -86,7 +86,7 @@ class AsyncServerSocketHandle(tc: ThreadContext) : IIOBindable, IIOCancelable {
                     throw ExceptionHandling.dieInternal(tc, e)
                 }
 
-                val curTC = tc.gc.currentThreadContext
+                val curTC = tc.gc.getCurrentThreadContext()!!
                 /* Event: [schedulee, clientHandle, err, peerHost, peerPort,
                  *         serverHandle, socketHost, socketPort] */
                 push(curTC, listOf(
@@ -103,7 +103,7 @@ class AsyncServerSocketHandle(tc: ThreadContext) : IIOBindable, IIOCancelable {
                 /* NOTE: faithful to the historical Java, which built this
                  * event list and never pushed it to the queue — accept
                  * failures are silently dropped. */
-                val curTC = tc.gc.currentThreadContext
+                val curTC = tc.gc.getCurrentThreadContext()!!
                 val result = listType.st.REPR.allocate(curTC, listType.st)
                 result.push_boxed(curTC, task.schedulee)
                 result.push_boxed(curTC, ioType)
@@ -123,7 +123,7 @@ class AsyncServerSocketHandle(tc: ThreadContext) : IIOBindable, IIOCancelable {
                 throw ExceptionHandling.dieInternal(tc, e)
             }
 
-            val curTC = tc.gc.currentThreadContext
+            val curTC = tc.gc.getCurrentThreadContext()!!
             /* Initial event: [schedulee, IOType, err, Str, Int, serverHandle,
              *                 socketHost, socketPort] */
             push(curTC, listOf(
