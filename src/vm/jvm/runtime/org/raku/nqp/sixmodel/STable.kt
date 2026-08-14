@@ -73,7 +73,7 @@ class STable(
     /**
      * By-name method dispatch cache.
      */
-    @JvmField var MethodCache: MutableMap<String, SixModelObject>? = null
+    @JvmField var MethodCache: MutableMap<String, SixModelObject?>? = null
 
     /**
      * The computed v-table for static dispatch.
