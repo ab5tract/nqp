@@ -165,8 +165,13 @@ public class LibraryLoader {
         return ByteBuffer.wrap(is.readAllBytes());
     }
 
+    /* This used to be fastestInstance(), which selects lz4's
+     * sun.misc.Unsafe fast path. Switched to the pure-Java safeInstance()
+     * to future-proof against the deprecation-for-removal of Unsafe
+     * (JEP 498: JDK 24+ warns on every process start, and later releases
+     * will refuse outright). */
     private static final LZ4DecompressorWithLength lz4 =
-        new LZ4DecompressorWithLength(LZ4Factory.fastestInstance().fastDecompressor());
+        new LZ4DecompressorWithLength(LZ4Factory.safeInstance().fastDecompressor());
 
     public static ByteBuffer readToHeapBufferLz4(InputStream is) throws IOException {
         return ByteBuffer.wrap(lz4.decompress(is.readAllBytes()));
