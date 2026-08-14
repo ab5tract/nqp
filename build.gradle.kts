@@ -94,6 +94,12 @@ tasks.register("genCatParityCheck") {
 
 val nqpPrefix = providers.gradleProperty("nqpPrefix").get()
 val toolchainVersion = (property("javaLanguageVersion") as String).toInt()
+// Hard heap ceiling for the stage-compile JVMs. The Makefile build uses
+// -XX:+AggressiveHeap, which sizes the heap at roughly half of physical
+// RAM per JVM — on a swapless machine several such JVMs stall the whole
+// OS in reclaim before the OOM killer acts. An explicit cap fails as a
+// contained OutOfMemoryError instead.
+val nqpStageMaxHeap = providers.gradleProperty("nqpStageMaxHeap").getOrElse("8g")
 val javaToolchains = extensions.getByType<JavaToolchainService>()
 
 val jvmDir: Directory = layout.buildDirectory.dir("jvm").get()
@@ -224,7 +230,7 @@ fun registerStage(
                         thirdPartySorted().map { it.absolutePath } +
                         "${compilerDir.absolutePath}/nqp.jar"
                     ).joinToString(File.pathSeparator)
-                jvmArgs("-XX:+AggressiveHeap", "-XX:+AllowParallelDefineClass", "-Xbootclasspath/a:$bootcp")
+                jvmArgs("--enable-native-access=ALL-UNNAMED", "-Xmx$nqpStageMaxHeap", "-XX:+AllowParallelDefineClass", "-Xbootclasspath/a:$bootcp")
             }
 
             val stableSc = if (stage == 1) listOf("--stable-sc=stage1") else emptyList()
@@ -330,7 +336,8 @@ fun registerProveTask(name: String, testDirs: List<String>) =
 
 registerProveTask("testNqpCore", listOf("t/nqp"))
 registerProveTask("testNqp",
-    listOf("t/nqp", "t/hll", "t/qregex", "t/p5regex", "t/qast", "t/jvm", "t/serialization"))
+    listOf("t/nqp", "t/hll", "t/qregex", "t/p5regex", "t/qast", "t/jvm", "t/serialization",
+        "t/nativecall"))
 
 // Explicit, never part of buildJvm: install into the configured prefix,
 // mirroring the Makefile's j-install layout.

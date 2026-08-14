@@ -1,8 +1,10 @@
 /**
- * Third-party runtime dependencies of the JVM backend — the same versions as
- * the jars vendored in 3rdparty/ (see tools/lib/NQP/Config/NQP.pm,
- * configure_jars), resolved from Maven Central. fastutil resolves to the full
- * artifact rather than the vendored minimized build; it is a superset.
+ * Third-party runtime dependencies of the JVM backend, resolved from Maven
+ * Central. Originally pinned to the versions vendored in 3rdparty/ (see
+ * tools/lib/NQP/Config/NQP.pm, configure_jars); since the dependency sweep
+ * they track current releases instead, so the Makefile/vendored path lags
+ * behind this build. fastutil resolves to the full artifact rather than the
+ * vendored minimized build; it is a superset.
  *
  * Order is the THIRDPARTY_JARS classpath order from
  * tools/templates/jvm/Makefile.in and must be preserved.
@@ -11,10 +13,10 @@ object NqpDeps {
     val thirdParty = listOf(
         "org.ow2.asm:asm:9.10.1",
         "org.ow2.asm:asm-tree:9.10.1",
-        "it.unimi.dsi:fastutil:8.5.13",
-        "jline:jline:1.0",
-        "net.java.dev.jna:jna:4.5.0",
-        "net.java.dev.jna:jna-platform:4.5.0",
+        "it.unimi.dsi:fastutil:8.5.19",
+        "org.jline:jline:4.3.1",
+        "net.java.dev.jna:jna:5.19.1",
+        "net.java.dev.jna:jna-platform:5.19.1",
         "org.lz4:lz4-java:1.8.0",
         // Kotlin runtime for the incrementally converted sources
         // (kotlin-prototype); brings org.jetbrains:annotations transitively.
