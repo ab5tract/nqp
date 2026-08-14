@@ -45,7 +45,7 @@ object KnowHOWBootstrapper {
 
         // fixup missing STable for knowhow_how methods
         for (cr in (tc.gc.KnowHOW!!.st.HOW as KnowHOWREPRInstance).methods!!.entries) {
-            cr.value.st = tc.gc.BOOTCode!!.st
+            cr.value!!.st = tc.gc.BOOTCode!!.st
         }
 
         Ops.setboolspec(tc.gc.BOOTIter, BoolificationSpec.MODE_ITER.toLong(), null, tc)
