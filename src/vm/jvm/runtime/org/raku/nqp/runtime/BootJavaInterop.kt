@@ -669,9 +669,15 @@ open class BootJavaInterop(gc: GlobalContext) {
             return retVal
         }
 
+        /* `open` so the @JvmStatic bridge is emitted non-final: rakudo's
+         * RakudoJavaInterop declares its own static marshalOutRecursive
+         * (invoked by name from its emitted adaptors), which under Java's
+         * rules *hides* this one — and hiding a final static is a
+         * compile error. The Java original was a plain (non-final)
+         * public static. */
         @JvmStatic
         @Throws(Throwable::class)
-        fun marshalOutRecursive(`in`: SixModelObject, tc: ThreadContext, what: Class<*>?): Any? {
+        open fun marshalOutRecursive(`in`: SixModelObject, tc: ThreadContext, what: Class<*>?): Any? {
             var out: Any? = null
             val size = Ops.elems(`in`, tc).toInt()
             if (what != null) {
