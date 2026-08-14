@@ -71,7 +71,7 @@ class AsyncFileHandle(tc: ThreadContext, filename: String, mode: String) :
     private fun reportError(tc: ThreadContext, Str: SixModelObject, error: SixModelObject, exc: Throwable) {
         val curTC = tc.gc.getCurrentThreadContext()!!
         Ops.invokeDirect(curTC, error, oneArgCSD,
-            arrayOf<Any>(Ops.box_s(exc.toString(), Str, curTC)))
+            arrayOf<Any?>(Ops.box_s(exc.toString(), Str, curTC)))
     }
 
     override fun slurp(tc: ThreadContext, Str: SixModelObject,
@@ -88,7 +88,7 @@ class AsyncFileHandle(tc: ThreadContext, filename: String, mode: String) :
                             val curTC = tc.gc.getCurrentThreadContext()!!
                             bb.flip()
                             val boxed = Ops.box_s(dec.decode(bb).toString(), Str, curTC)
-                            Ops.invokeDirect(curTC, done, oneArgCSD, arrayOf<Any>(boxed))
+                            Ops.invokeDirect(curTC, done, oneArgCSD, arrayOf<Any?>(boxed))
                         } catch (e: IOException) {
                             failed(e, bb)
                         }
@@ -119,7 +119,7 @@ class AsyncFileHandle(tc: ThreadContext, filename: String, mode: String) :
                     if (bb.position().toLong() == expected) {
                         /* Done. Call the done handler. */
                         val curTC = tc.gc.getCurrentThreadContext()!!
-                        Ops.invokeDirect(curTC, done, zeroArgCSD, arrayOf<Any>())
+                        Ops.invokeDirect(curTC, done, zeroArgCSD, arrayOf<Any?>())
                     }
                     else {
                         /* Need to write some more. */
@@ -158,7 +158,7 @@ class AsyncFileHandle(tc: ThreadContext, filename: String, mode: String) :
                          * spit out; no need to chomp it. */
                         if (ss.lineChunks.isNotEmpty())
                             queue.put(Ops.box_s(decodeChunks(ss), Str, curTC))
-                        Ops.invokeDirect(curTC, done, zeroArgCSD, arrayOf<Any>())
+                        Ops.invokeDirect(curTC, done, zeroArgCSD, arrayOf<Any?>())
                         return
                     }
 

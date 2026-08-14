@@ -125,7 +125,7 @@ class CArrayInstance : SixModelObject(), Refreshable {
         if (Ops.isconcrete(deconted, tc) != 0L) {
             when (repr_data.elem_kind) {
                 ElemKind.STRING -> {
-                    val bytes = Native.toByteArray(deconted.get_str(tc))
+                    val bytes = Native.toByteArray(deconted!!.get_str(tc))
                     val mem = Memory(bytes.size.toLong())
                     mem.write(0, bytes, 0, bytes.size)
                     ptr = mem
