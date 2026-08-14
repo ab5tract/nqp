@@ -47,7 +47,7 @@ object ExceptionHandling {
             (t ?: Throwable(msg)).printStackTrace()
         }
         try {
-            val exType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig.exceptionType!!
+            val exType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.exceptionType!!
             exObj = exType.st.REPR.allocate(tc, exType.st) as VMExceptionInstance
             exObj.message = msg
             exObj.category = EX_CAT_CATCH.toLong()
@@ -172,8 +172,8 @@ object ExceptionHandling {
         }
         if (handler != null)
             invokeHandler(tc, handler, category, f, false, exObj, null)
-        else if (tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig.lexicalHandlerNotFoundError != null) {
-            Ops.invokeDirect(tc, tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig.lexicalHandlerNotFoundError,
+        else if (tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.lexicalHandlerNotFoundError != null) {
+            Ops.invokeDirect(tc, tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.lexicalHandlerNotFoundError,
                 Ops.intIntCallSite, false, arrayOf<Any>(category, 0L))
         }
         else

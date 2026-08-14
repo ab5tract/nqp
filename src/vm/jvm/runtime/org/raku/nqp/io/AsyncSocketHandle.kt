@@ -42,7 +42,7 @@ class AsyncSocketHandle : IIOClosable, IIOCancelable {
     /* The HLL types must be captured on the calling thread: completion
      * handlers run on NIO pool threads where tc.curFrame is not ours. */
     private fun hll(tc: ThreadContext) =
-        tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig
+        tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!
 
     private fun send(listType: SixModelObject, tc: ThreadContext,
                      task: AsyncTaskInstance, vararg items: SixModelObject?) {
