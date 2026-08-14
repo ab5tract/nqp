@@ -7,6 +7,7 @@ import java.util.HashMap;
 
 import com.sun.jna.Callback;
 import com.sun.jna.Function;
+import com.sun.jna.Native;
 import com.sun.jna.NativeLibrary;
 import com.sun.jna.NativeLong;
 import com.sun.jna.Memory;
@@ -234,14 +235,14 @@ public final class NativeCallOps {
             case StorageSpec.BP_NUM:
                 return ss.bits / 8;
             case StorageSpec.BP_STR:
-                return Pointer.SIZE;
+                return Native.POINTER_SIZE;
             default:
                 if (Ops.isconcrete(obj, tc) == 0)
                     obj = obj.st.REPR.allocate(tc, obj.st);
                 if (obj instanceof CStrInstance
                  || obj instanceof CPointerInstance
                  || obj instanceof CArrayInstance) {
-                    return Pointer.SIZE;
+                    return Native.POINTER_SIZE;
                 }
                 else if (obj instanceof CStructInstance) {
                     return ((CStructInstance) obj).storage.size();
@@ -355,17 +356,17 @@ public final class NativeCallOps {
                 else if (nqpobj instanceof CStructInstance) {
                     Class<?>    structClass = ((CStructREPRData)target_type.st.REPRData).structureClass;
                     CStructInstance cstruct = (CStructInstance)nqpobj;
-                    cstruct.storage         = Structure.newInstance(structClass, o);
+                    cstruct.storage         = Structure.newInstance(structClass.asSubclass(Structure.class), o);
                 }
                 else if (nqpobj instanceof CPPStructInstance) {
                     Class<?>    structClass     = ((CPPStructREPRData)target_type.st.REPRData).structureClass;
                     CPPStructInstance cppstruct = (CPPStructInstance)nqpobj;
-                    cppstruct.storage           = Structure.newInstance(structClass, o);
+                    cppstruct.storage           = Structure.newInstance(structClass.asSubclass(Structure.class), o);
                 }
                 else if (nqpobj instanceof CUnionInstance) {
                     Class<?>  structClass = ((CUnionREPRData)target_type.st.REPRData).structureClass;
                     CUnionInstance cunion = (CUnionInstance)nqpobj;
-                    cunion.storage        = (Union)Union.newInstance(structClass, o);
+                    cunion.storage        = (Union)Union.newInstance(structClass.asSubclass(Union.class), o);
                 }
                 else {
                     throw ExceptionHandling.dieInternal(tc,
@@ -627,7 +628,7 @@ public final class NativeCallOps {
             return m;
         }
         case CPOINTER_RW: {
-            Memory m = new Memory(Pointer.SIZE);
+            Memory m = new Memory(Native.POINTER_SIZE);
             o        = Ops.decont(o, tc);
             long ptr = ((CPointerInstance) o).get_int(tc);
             if (ptr > 0)

@@ -223,15 +223,15 @@ public class CArrayInstance extends SixModelObject implements Refreshable {
             return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CPOINTER, repr_data.elem_type, ptr);
         case CSTRUCT: {
             Class<?> structClass = ((CStructREPRData) repr_data.elem_type.st.REPRData).structureClass;
-            return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CSTRUCT, repr_data.elem_type, Structure.newInstance(structClass, ptr));
+            return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CSTRUCT, repr_data.elem_type, Structure.newInstance(structClass.asSubclass(Structure.class), ptr));
         }
         case CPPSTRUCT: {
             Class<?> structClass = ((CPPStructREPRData) repr_data.elem_type.st.REPRData).structureClass;
-            return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CPPSTRUCT, repr_data.elem_type, Structure.newInstance(structClass, ptr));
+            return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CPPSTRUCT, repr_data.elem_type, Structure.newInstance(structClass.asSubclass(Structure.class), ptr));
         }
         case CUNION: {
             Class<?> structClass = ((CUnionREPRData) repr_data.elem_type.st.REPRData).structureClass;
-            return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CUNION, repr_data.elem_type, Union.newInstance(structClass, ptr));
+            return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CUNION, repr_data.elem_type, Union.newInstance(structClass.asSubclass(Union.class), ptr));
         }
         default:
             ExceptionHandling.dieInternal(tc, "CArray can only makeObject strings, arrays, structs and pointers");
