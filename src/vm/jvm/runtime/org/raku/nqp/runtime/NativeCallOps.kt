@@ -551,10 +551,7 @@ object NativeCallOps {
                 return v.slots
             }
             else if (v is VMArrayInstance_u32) {
-                /* NOTE: the Java original casts u32 arrays to
-                 * VMArrayInstance_u16 here (ClassCastException);
-                 * faithfully preserved. */
-                return (v as SixModelObject as VMArrayInstance_u16).slots
+                return v.slots
             }
             return (v as VMArrayInstance).slots
         }
