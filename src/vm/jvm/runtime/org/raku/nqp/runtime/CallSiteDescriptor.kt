@@ -137,7 +137,7 @@ class CallSiteDescriptor(flags: ByteArray, names: Array<String>?) {
                 ARG_OBJ.toInt() or ARG_FLAT.toInt() or ARG_NAMED.toInt() -> {
                     val flatHash = oldArgs[oldArgsIdx++] as SixModelObject
                     if (flatHash is VMHashInstance) {
-                        val storage: HashMap<String, SixModelObject> = flatHash.storage
+                        val storage: HashMap<String, SixModelObject?> = flatHash.storage
                         for (key in storage.keys) {
                             newNames.add(key)
                             newArgs.add(storage[key])
