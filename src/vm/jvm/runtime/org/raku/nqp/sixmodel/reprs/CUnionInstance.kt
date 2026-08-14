@@ -105,7 +105,7 @@ class CUnionInstance : SixModelObject(), Refreshable {
         }
 
         member = NativeCallOps.toNQPType(tc, info.argType, info.type, o)
-        memberCache.put(name, member)
+        memberCache.put(name, member!!)
         return member
     }
 
