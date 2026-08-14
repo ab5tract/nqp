@@ -597,6 +597,32 @@ BootJavaInterop, JASTCompiler and IndyBootstrap. Findings:
   SixModelObject now exposes `stInitialized` (`::st.isInitialized`),
   which is exactly the raw null check.
 
+## The autosplitter, and eval's lost return value
+
+AutosplitMethodWriter — the >64KB-method fallback and the last
+substantive non-Ops Java — converted after a tests-before-port round
+that immediately paid for itself twice:
+
+- **The autosplit path was broken at runtime**: the runner jar list
+  excluded asm-tree (faithfully mirroring the Makefile runner, which is
+  equally broken upstream), so any oversized method died with
+  NoClassDefFoundError instead of splitting. Fixed on the Gradle path;
+  t/jvm/09-autosplit.t now drives a real >64KB method through the
+  splitter.
+- **eval never returned a value, on any backend**: comp_unit pushed
+  $*W.libs() after the mainline, so the unit block's return — what
+  HLL::Compiler.eval hands back — was libs()'s value: a literal null op
+  on JVM/js. Fixed under `#?if !moar` (MoarVM keeps its historical
+  order byte-for-byte per review); eval now returns the mainline's
+  value and the REPL autoprints results. t/jvm/10-eval-return.t.
+
+Port notes: interned-string identity comparisons become value equality
+(equivalent — interning existed to make Java's == work); Frame.clone()
+renamed copy() to dodge Object.clone in a private nested class; and one
+more latent upstream bug preserved with a NOTE (the spilled-<init>
+unspill loop increments where it should decrement — infinite loop on
+that rare path in the Java too).
+
 ## The !! debt: a planned post-parity cleanup round
 
 The `!!` density across the converted tree is the deliberate cost of the
