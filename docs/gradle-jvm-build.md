@@ -34,6 +34,27 @@ The build-tree runner is `./nqp-j-gradle` (absolute paths into
 `build/jvm/share/`, so it works from any directory and never picks up the
 Makefile build's artifacts). The Makefile's runner remains `./nqp-j`.
 
+## Memory limits
+
+Unlike the Makefile build (`-XX:+AggressiveHeap`, which sizes every JVM's
+heap at roughly half of physical RAM), the Gradle path caps heaps
+explicitly — several AggressiveHeap JVMs overlapping (a stage compile, the
+Gradle/Kotlin daemons, a test and its spawned subprocesses) can stall a
+swapless machine in memory reclaim before the OOM killer reacts:
+
+- stage-compile JVMs: `-Xmx8g`, override with `-PnqpStageMaxHeap=12g`
+- `nqp-j-gradle` (and every test process prove spawns with it): `-Xmx4g`,
+  override with the `NQP_JVM_MAXHEAP` environment variable
+
+An overflow surfaces as a contained `java.lang.OutOfMemoryError`; raise the
+knob and retry. For heavy runs an OS-level ceiling on top is cheap
+insurance — the kernel then OOM-kills inside the scope instead of stalling
+the desktop:
+
+```sh
+systemd-run --user --scope -p MemoryHigh=18G -p MemoryMax=20G ./gradlew testNqp
+```
+
 ## How the bootstrap is modeled
 
 Each stage registers, per target, a `GenCatTask` (concatenation +
