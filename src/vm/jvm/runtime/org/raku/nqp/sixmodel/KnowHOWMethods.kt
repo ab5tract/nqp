@@ -295,8 +295,8 @@ class KnowHOWMethods : CompilationUnit() {
         }
     }
 
-    override fun getCodeRefs(): Array<CodeRef?> {
-        val refs = arrayOfNulls<CodeRef>(12)
+    override fun getCodeRefs(): Array<CodeRef> {
+        val refs = arrayOfNulls<CodeRef>(12)  // every slot is filled below
         val snull: Array<String>? = null
         val hnull = arrayOf<LongArray>()
         val mt = MethodType.methodType(Void.TYPE, ThreadContext::class.java,
@@ -331,13 +331,14 @@ class KnowHOWMethods : CompilationUnit() {
         catch (e: Exception) {
             throw RuntimeException(e)
         }
-        return refs
+        @Suppress("UNCHECKED_CAST")
+        return refs as Array<CodeRef>
     }
 
     /* Vestigial: CompilationUnit declares no such method (same in the Java). */
     fun getOuterMap(): IntArray = IntArray(0)
 
-    override fun getCallSites(): Array<CallSiteDescriptor?> = arrayOfNulls(0)
+    override fun getCallSites(): Array<CallSiteDescriptor> = emptyArray()
 
     override fun hllName(): String = ""
 }
