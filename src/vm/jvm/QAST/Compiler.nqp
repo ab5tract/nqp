@@ -5205,7 +5205,11 @@ class QAST::CompilerJAST {
         my $idx    := nqp::scgetobjidx($sc, $val);
         my $il     := JAST::InstructionList.new();
         $il.append(JAST::PushSVal.new( :value($handle) ));
-        $il.append(JAST::PushIVal.new( :value($idx) ));
+        # Push the index as an int and widen: an ldc2_w long would cost a
+        # 2-slot constant pool entry per distinct index, which overflows the
+        # 65535-entry pool on CORE.c.setting.
+        $il.append(JAST::PushIndex.new( :value($idx) ));
+        $il.append($I2L);
         $il.append($ALOAD_1);
         # A plain invokestatic, not invokedynamic: WVals are the most common
         # callsite kind by far, and HotSpot (observed on 25.0.3) silently
