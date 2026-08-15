@@ -25,9 +25,17 @@ class ThreadContext(
     }
 
     /**
-     * The current call frame.
+     * The current call frame. Null before this thread enters its first frame
+     * and again after the outermost one returns, since a frame's return puts
+     * this back to its own caller.
      */
     @JvmField var curFrame: CallFrame? = null
+
+    /**
+     * The current call frame, for the ops that only ever run inside one.
+     */
+    val frame: CallFrame
+        get() = curFrame ?: throw IllegalStateException("No call frame is running on this thread")
 
     /**
      * When we wish to access optional parameters, we need to convey
