@@ -64,6 +64,16 @@ class StaticCodeInfo(
     @JvmField var priorInvocation: CallFrame? = null
 
     /**
+     * Deserialized contexts waiting for a frame of this code to become their
+     * outer. A compilation unit's serialization context is read before its
+     * mainline runs, so contexts that had no outer serialized cannot be
+     * hooked up at the time they are created; the frame adopts them when it
+     * finally shows up. Null whenever there is nothing waiting, which is the
+     * overwhelmingly common case.
+     */
+    @JvmField var contextsAwaitingOuter: ArrayList<CallFrame>? = null
+
+    /**
      * Static lexicals.
      */
     @JvmField var oLexStatic: Array<SixModelObject?>? = null
