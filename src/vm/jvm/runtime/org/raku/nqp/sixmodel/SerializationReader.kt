@@ -577,12 +577,9 @@ class SerializationReader(
 
     private fun fixupContextOuters() {
         for (i in 0 until contextTableEntries) {
-            val ctx = contexts[i]!!
-            val priorInvocation = ctx.codeRef.staticInfo.priorInvocation
-            if (ctx.outer == null &&
-                priorInvocation != null &&
-                priorInvocation.outer != null)
-                ctx.outer = priorInvocation.outer
+            // Nothing was serialized as this context's outer, so go and find
+            // the frame it should be running inside.
+            contexts[i]!!.resolveDeserializedOuter()
         }
     }
 
