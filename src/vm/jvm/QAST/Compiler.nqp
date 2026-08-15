@@ -2552,6 +2552,9 @@ QAST::OperationsJAST.add_core_op('substr', -> $qastcomp, $op {
 
 QAST::OperationsJAST.map_classlib_core_op('eqat', $TYPE_OPS, 'eqat', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
 QAST::OperationsJAST.map_classlib_core_op('eqatic', $TYPE_OPS, 'eqatic', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
+QAST::OperationsJAST.map_classlib_core_op('eqatim', $TYPE_OPS, 'eqatim', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
+QAST::OperationsJAST.map_classlib_core_op('eqaticim', $TYPE_OPS, 'eqaticim', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
+QAST::OperationsJAST.map_classlib_core_op('eqatic', $TYPE_OPS, 'eqatic', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
 # ord can be on a the first char in a string or at a particular char.
 QAST::OperationsJAST.map_classlib_core_op('ordfirst', $TYPE_OPS, 'ordfirst', [$RT_STR], $RT_INT);
 QAST::OperationsJAST.map_classlib_core_op('ordat',    $TYPE_OPS, 'ordat',    [$RT_STR, $RT_INT], $RT_INT);
@@ -2571,6 +2574,10 @@ QAST::OperationsJAST.add_core_op('index',  -> $qastcomp, $op {
         ?? QAST::Op.new( :op('indexfrom'), |@operands, QAST::IVal.new( :value(0)) )
         !! QAST::Op.new( :op('indexfrom'), |@operands ));
 });
+
+QAST::OperationsJAST.map_classlib_core_op('indexic', $TYPE_OPS, 'indexic', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
+QAST::OperationsJAST.map_classlib_core_op('indexim', $TYPE_OPS, 'indexim', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
+QAST::OperationsJAST.map_classlib_core_op('indexicim', $TYPE_OPS, 'indexicim', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
 
 # rindex may or may not take a starting position
 QAST::OperationsJAST.map_classlib_core_op('rindexfromend', $TYPE_OPS, 'rindexfromend', [$RT_STR, $RT_STR], $RT_INT);

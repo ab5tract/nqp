@@ -323,8 +323,8 @@ The opcodes are grouped into the following categories:
 [cmp](#cmp) |
 [eqat](#eqat) |
 [eqatic](#eqatic) |
-[eqaticim](#eqaticim-moar-js) |
-[eqatim](#eqatim-moar-js) |
+[eqaticim](#eqaticim-moar-js-jvm) |
+[eqatim](#eqatim-moar-js-jvm) |
 [falsey](#falsey) |
 [iseq](#iseq) |
 [isge](#isge) |
@@ -451,9 +451,9 @@ The opcodes are grouped into the following categories:
 [findnotcclass](#findnotcclass) |
 [flip](#flip) |
 [index](#index) |
-[indexic](#indexic-moar) |
-[indexicim](#indexicim-moar) |
-[indexim](#indexim-moar) |
+[indexic](#indexic-moar-jvm) |
+[indexicim](#indexicim-moar-jvm) |
+[indexim](#indexim-moar-jvm) |
 [indexingoptimized](#indexingoptimized) |
 [iscclass](#iscclass) |
 [join](#join) |
@@ -2120,13 +2120,23 @@ otherwise return 0.
 
 ## eqatic
 * `eqatic(str haystack, str $needle, int $pos --> int)`
-Case-insensitive `eqat`
+Case-insensitive `eqat`. Folding expands, so this is not a per-character
+comparison: `eqatic('ﬆ', 'st', 0)` and `eqatic('st', 'ﬆ', 0)` are both true.
 
-## eqaticim `moar` `js`
+Note on the JVM: MoarVM strings are NFG, so its indices count graphemes and a
+base character plus its combining marks is one of them. JVM strings are UTF-16
+and have no NFG, so indices there count UTF-16 units. That difference is not
+specific to this op - `chars`, `index`, `eqat` and even string equality already
+disagree between the two backends for decomposed text - but it does mean the
+position arguments and results here are only interchangeable with MoarVM's for
+text where a grapheme is a single UTF-16 unit.
+
+
+## eqaticim `moar` `js` `jvm`
 * `eqaticim(str haystack, str $needle, int $pos --> int)`
 Case-insensitive and ignore-mark `eqat`
 
-## eqatim `moar` `js`
+## eqatim `moar` `js` `jvm`
 * `eqatim(str haystack, str $needle, int $pos --> int)`
 Ignore-mark `eqat`, NFD decomposes and matches the base codepoint
 
@@ -2932,21 +2942,23 @@ or at 0, otherwise.
 
 `index` is converted to this internal opcode by the compiler.
 
-## indexic `moar`
+## indexic `moar` `jvm`
 * `indexic(str $haystack, str $needle, int $pos --> int)`
 
 This op has the same arguments and functionality as nqp::index,
-except it is case-insensitive. For now we only have it under MoarVM,
-but the plan is to support it on other platforms as well.
+except it is case-insensitive.
 
-On MoarVM uses proper Unicode foldcase type comparison.
+On MoarVM uses proper Unicode foldcase type comparison. On the JVM the
+folding is done a character at a time via uppercase-then-lowercase, which
+gets the expanding mappings ("ﬆ" folds to "st", "ß" to "ss") but not the
+context-sensitive ones. See the note under `eqatic` about indices.
 
-## indexicim `moar`
+## indexicim `moar` `jvm`
 * `indexicim(str $haystack, str $needle, int $pos)`
 
 Ignorecase and ignoremark `index`
 
-## indexim `moar`
+## indexim `moar` `jvm`
 * `indexim(str $haystack, str $needle, int $pos --> int)`
 
 Like index but decomposes and matches against the base character.
