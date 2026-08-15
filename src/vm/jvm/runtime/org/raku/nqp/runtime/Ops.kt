@@ -8517,6 +8517,29 @@ object Ops {
         return java.lang.Long.parseLong(s)
     }
 
+    /* int<->num and int<->uint coercions, present on MoarVM since long
+     * before the JVM backend stalled; added here because rakudo's CORE
+     * uses nqp::coerce_in. Semantics mirror the *_2* helpers above. */
+    @JvmStatic
+    fun coerce_in(l: Long, tc: ThreadContext): Double {
+        return l.toDouble()
+    }
+
+    @JvmStatic
+    fun coerce_ni(d: Double, tc: ThreadContext): Long {
+        return coerce_n2i(d)
+    }
+
+    @JvmStatic
+    fun coerce_ui(l: Long, tc: ThreadContext): Long {
+        return l
+    }
+
+    @JvmStatic
+    fun coerce_iu(l: Long, tc: ThreadContext): Long {
+        return l
+    }
+
     @JvmStatic
     fun coerce_is(l: Long, tc: ThreadContext): String {
         return l.toString()
