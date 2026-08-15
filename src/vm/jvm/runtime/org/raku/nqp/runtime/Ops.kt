@@ -4754,6 +4754,105 @@ object Ops {
     }
 
     @JvmStatic
+    fun indexic(string: String?, pattern: String?, fromIndex: Long): Long =
+        foldedIndex(string!!, pattern!!, fromIndex, ignoreCase = true, ignoreMark = false)
+
+    @JvmStatic
+    fun indexim(string: String?, pattern: String?, fromIndex: Long): Long =
+        foldedIndex(string!!, pattern!!, fromIndex, ignoreCase = false, ignoreMark = true)
+
+    @JvmStatic
+    fun indexicim(string: String?, pattern: String?, fromIndex: Long): Long =
+        foldedIndex(string!!, pattern!!, fromIndex, ignoreCase = true, ignoreMark = true)
+
+    private fun isCombiningMark(cp: Int): Boolean {
+        val type = Character.getType(cp)
+        return type == Character.NON_SPACING_MARK.toInt() ||
+               type == Character.COMBINING_SPACING_MARK.toInt() ||
+               type == Character.ENCLOSING_MARK.toInt()
+    }
+
+    /* Folds a string one character at a time, recording for every character of
+     * the result which character of the original produced it.
+     *
+     * Folding is not length-preserving - "ﬆ" casefolds to "st" and "ß" to "ss"
+     * - so a match has to be found in folded text and then reported as an
+     * index into the original, which is what the map is for. Java has no
+     * casefold, but uppercasing applies the full (expanding) mappings and
+     * lowercasing then normalises the result, so the pair does the job.
+     * Locale.ROOT keeps Turkish dotless i out of it. */
+    private fun foldWithMap(s: String, ignoreCase: Boolean, ignoreMark: Boolean): Pair<String, IntArray> {
+        val folded = StringBuilder(s.length)
+        val origin = IntArray(s.length * 2)
+        var n = 0
+        var i = 0
+        while (i < s.length) {
+            val cp = s.codePointAt(i)
+            val width = Character.charCount(cp)
+            if (!(ignoreMark && isCombiningMark(cp))) {
+                var piece = String(Character.toChars(cp))
+                if (ignoreMark) {
+                    piece = java.text.Normalizer.normalize(piece, java.text.Normalizer.Form.NFD)
+                    piece = piece.filterNot { isCombiningMark(it.code) }
+                }
+                if (ignoreCase)
+                    piece = piece.uppercase(java.util.Locale.ROOT).lowercase(java.util.Locale.ROOT)
+                for (k in piece.indices) {
+                    folded.append(piece[k])
+                    if (n == origin.size) return foldWithMapSlow(s, ignoreCase, ignoreMark)
+                    origin[n++] = i
+                }
+            }
+            i += width
+        }
+        return Pair(folded.toString(), origin.copyOf(n))
+    }
+
+    /* Same thing for the rare string that folds to more than twice its
+     * length, where the pre-sized map above would not have fitted. */
+    private fun foldWithMapSlow(s: String, ignoreCase: Boolean, ignoreMark: Boolean): Pair<String, IntArray> {
+        val folded = StringBuilder(s.length * 2)
+        val origin = java.util.ArrayList<Int>(s.length * 2)
+        var i = 0
+        while (i < s.length) {
+            val cp = s.codePointAt(i)
+            if (!(ignoreMark && isCombiningMark(cp))) {
+                var piece = String(Character.toChars(cp))
+                if (ignoreMark) {
+                    piece = java.text.Normalizer.normalize(piece, java.text.Normalizer.Form.NFD)
+                    piece = piece.filterNot { isCombiningMark(it.code) }
+                }
+                if (ignoreCase)
+                    piece = piece.uppercase(java.util.Locale.ROOT).lowercase(java.util.Locale.ROOT)
+                for (k in piece.indices) {
+                    folded.append(piece[k])
+                    origin.add(i)
+                }
+            }
+            i += Character.charCount(cp)
+        }
+        return Pair(folded.toString(), origin.toIntArray())
+    }
+
+    private fun foldedIndex(haystack: String, needle: String, fromIndex: Long,
+                            ignoreCase: Boolean, ignoreMark: Boolean): Long {
+        if (fromIndex > haystack.length) return -1
+        val from = if (fromIndex < 0) 0 else fromIndex.toInt()
+        if (needle.isEmpty()) return from.toLong()
+
+        val (hay, origin) = foldWithMap(haystack, ignoreCase, ignoreMark)
+        val (pat, _) = foldWithMap(needle, ignoreCase, ignoreMark)
+        if (pat.isEmpty()) return from.toLong()
+
+        // Start where the caller asked, in folded coordinates.
+        var foldedFrom = 0
+        while (foldedFrom < origin.size && origin[foldedFrom] < from) foldedFrom++
+
+        val hit = hay.indexOf(pat, foldedFrom)
+        return if (hit < 0) -1 else origin[hit].toLong()
+    }
+
+    @JvmStatic
     fun rindexfromend(string: String?, pattern: String?): Long {
         /* NOTE: explicit start index, because Kotlin's lastIndexOf(String)
          * extension defaults to lastIndex (length - 1) while Java's
