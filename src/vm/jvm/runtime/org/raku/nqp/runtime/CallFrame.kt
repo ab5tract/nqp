@@ -30,7 +30,8 @@ class CallFrame : Cloneable {
     lateinit var tc: ThreadContext
 
     /**
-     * The next entry in the static (lexical) chain.
+     * The next entry in the static (lexical) chain. Generated code reads this
+     * field directly when it walks the chain, so it has to stay a field.
      */
     @JvmField var outer: CallFrame? = null
 
@@ -173,6 +174,9 @@ class CallFrame : Cloneable {
         sci.nLexicalNames?.let { this.nLex = DoubleArray(it.size) }
         sci.sLexicalNames?.let { this.sLex = arrayOfNulls(it.size) }
 
+        if (sci.contextsAwaitingOuter != null)
+            adoptWaitingContexts(sci)
+
         // Current call frame becomes this new one.
         tc.curFrame = this
     }
@@ -219,6 +223,56 @@ class CallFrame : Cloneable {
         sci.iLexicalNames?.let { this.iLex = LongArray(it.size) }
         sci.nLexicalNames?.let { this.nLex = DoubleArray(it.size) }
         sci.sLexicalNames?.let { this.sLex = arrayOfNulls(it.size) }
+
+        if (sci.contextsAwaitingOuter != null)
+            adoptWaitingContexts(sci)
+    }
+
+    /**
+     * Sorts out the outer of a context that came back from deserialization
+     * with nothing serialized as its outer. The frame it belongs inside is
+     * usually the mainline of the compilation unit being loaded, which has
+     * not run yet - the serialization context is read on the way in - so in
+     * that case the context is parked on the enclosing code and picked up
+     * when a frame for it is created.
+     */
+    fun resolveDeserializedOuter() {
+        if (outer != null)
+            return
+
+        val sci = codeRef.staticInfo
+
+        // An earlier live invocation of this same code already knows.
+        val priorOuter = sci.priorInvocation?.outer
+        if (priorOuter != null) {
+            outer = priorOuter
+            return
+        }
+
+        val wanted = sci.outerStaticInfo ?: return
+
+        val alreadyRun = wanted.priorInvocation
+        if (alreadyRun != null) {
+            outer = alreadyRun
+            return
+        }
+
+        val waiting = wanted.contextsAwaitingOuter
+            ?: ArrayList<CallFrame>().also { wanted.contextsAwaitingOuter = it }
+        waiting.add(this)
+    }
+
+    /**
+     * Hands this frame to any deserialized contexts that have been waiting
+     * for the scope it runs to show up.
+     */
+    private fun adoptWaitingContexts(sci: StaticCodeInfo) {
+        val waiting = sci.contextsAwaitingOuter ?: return
+        sci.contextsAwaitingOuter = null
+        for (ctx in waiting) {
+            if (ctx.outer == null)
+                ctx.outer = this
+        }
     }
 
     fun autoClose(wanted: StaticCodeInfo) {
