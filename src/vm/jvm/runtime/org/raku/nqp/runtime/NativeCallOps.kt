@@ -12,38 +12,39 @@ import java.lang.invoke.MethodType
 import java.util.Arrays
 import java.util.HashMap
 
+import org.raku.nqp.sixmodel.BoxedPrimitive
 import org.raku.nqp.sixmodel.REPRRegistry
-import org.raku.nqp.sixmodel.StorageSpec
 import org.raku.nqp.sixmodel.SixModelObject
-import org.raku.nqp.sixmodel.reprs.VMArrayInstance
-import org.raku.nqp.sixmodel.reprs.VMArrayInstance_i
-import org.raku.nqp.sixmodel.reprs.VMArrayInstance_i8
-import org.raku.nqp.sixmodel.reprs.VMArrayInstance_i16
-import org.raku.nqp.sixmodel.reprs.VMArrayInstance_i32
-import org.raku.nqp.sixmodel.reprs.VMArrayInstance_n
-import org.raku.nqp.sixmodel.reprs.VMArrayInstance_s
-import org.raku.nqp.sixmodel.reprs.VMArrayInstance_u8
-import org.raku.nqp.sixmodel.reprs.VMArrayInstance_u16
-import org.raku.nqp.sixmodel.reprs.VMArrayInstance_u32
+import org.raku.nqp.sixmodel.StorageSpec
 import org.raku.nqp.sixmodel.reprs.CArray
 import org.raku.nqp.sixmodel.reprs.CArrayInstance
+import org.raku.nqp.sixmodel.reprs.CPPStruct
+import org.raku.nqp.sixmodel.reprs.CPPStructInstance
 import org.raku.nqp.sixmodel.reprs.CPointer
 import org.raku.nqp.sixmodel.reprs.CPointerInstance
 import org.raku.nqp.sixmodel.reprs.CStrInstance
 import org.raku.nqp.sixmodel.reprs.CStruct
 import org.raku.nqp.sixmodel.reprs.CStructInstance
-import org.raku.nqp.sixmodel.reprs.CPPStruct
-import org.raku.nqp.sixmodel.reprs.CPPStructInstance
-import org.raku.nqp.sixmodel.reprs.CUnion
-import org.raku.nqp.sixmodel.reprs.CUnionInstance
 import org.raku.nqp.sixmodel.reprs.CTypeInstance
 import org.raku.nqp.sixmodel.reprs.CTypeREPRData
+import org.raku.nqp.sixmodel.reprs.CUnion
+import org.raku.nqp.sixmodel.reprs.CUnionInstance
 import org.raku.nqp.sixmodel.reprs.NativeCall.ArgType
-import org.raku.nqp.sixmodel.reprs.NativeCallInstance
 import org.raku.nqp.sixmodel.reprs.NativeCallBody
+import org.raku.nqp.sixmodel.reprs.NativeCallInstance
 import org.raku.nqp.sixmodel.reprs.NativeRefInstance
-import org.raku.nqp.sixmodel.reprs.Refreshable
 import org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance
+import org.raku.nqp.sixmodel.reprs.Refreshable
+import org.raku.nqp.sixmodel.reprs.VMArrayInstance
+import org.raku.nqp.sixmodel.reprs.VMArrayInstance_i
+import org.raku.nqp.sixmodel.reprs.VMArrayInstance_i16
+import org.raku.nqp.sixmodel.reprs.VMArrayInstance_i32
+import org.raku.nqp.sixmodel.reprs.VMArrayInstance_i8
+import org.raku.nqp.sixmodel.reprs.VMArrayInstance_n
+import org.raku.nqp.sixmodel.reprs.VMArrayInstance_s
+import org.raku.nqp.sixmodel.reprs.VMArrayInstance_u16
+import org.raku.nqp.sixmodel.reprs.VMArrayInstance_u32
+import org.raku.nqp.sixmodel.reprs.VMArrayInstance_u8
 
 object NativeCallOps {
     @JvmStatic
@@ -227,7 +228,7 @@ object NativeCallOps {
                 })
 
             val ss = target_spec.st.REPR.get_storage_spec(tc, target_spec.st)
-            if (ss.boxed_primitive == StorageSpec.BP_STR)
+            if (ss.boxedPrimitive == BoxedPrimitive.STR)
                 entry_point = NativeSupport.unbounded(entry_point!!.get(ValueLayout.ADDRESS, 0))
 
             return castNativeCall(tc, target_spec, target_type, entry_point)
@@ -242,10 +243,10 @@ object NativeCallOps {
         var o = Ops.decont(obj, tc)
         val ss = o!!.st.REPR.get_storage_spec(tc, o.st)
 
-        when (ss.boxed_primitive) {
-            StorageSpec.BP_INT, StorageSpec.BP_UINT, StorageSpec.BP_NUM ->
+        when (ss.boxedPrimitive) {
+            BoxedPrimitive.INT, BoxedPrimitive.UINT, BoxedPrimitive.NUM ->
                 return (ss.bits / 8).toLong()
-            StorageSpec.BP_STR ->
+            BoxedPrimitive.STR ->
                 return NativeSupport.POINTER_SIZE.toLong()
             else -> {
                 if (Ops.isconcrete(o, tc) == 0L)
@@ -307,8 +308,8 @@ object NativeCallOps {
         val nqpobj = target_type.st.REPR.allocate(tc, target_type.st)
         val ss = target_spec.st.REPR.get_storage_spec(tc, target_spec.st)
 
-        when (ss.boxed_primitive) {
-            StorageSpec.BP_INT, StorageSpec.BP_UINT ->
+        when (ss.boxedPrimitive) {
+            BoxedPrimitive.INT, BoxedPrimitive.UINT ->
                 when (ss.bits.toInt()) {
                     8 -> nqpobj.set_int(tc, o.get(ValueLayout.JAVA_BYTE, 0).toLong())
                     16 -> nqpobj.set_int(tc, o.get(ValueLayout.JAVA_SHORT, 0).toLong())
@@ -318,7 +319,7 @@ object NativeCallOps {
                         throw ExceptionHandling.dieInternal(tc,
                             String.format("Cannot cast to %d bits integer", ss.bits))
                 }
-            StorageSpec.BP_NUM ->
+            BoxedPrimitive.NUM ->
                 when (ss.bits.toInt()) {
                     32 -> nqpobj.set_num(tc, o.get(ValueLayout.JAVA_FLOAT, 0).toDouble())
                     64 -> nqpobj.set_num(tc, o.get(ValueLayout.JAVA_DOUBLE, 0))
@@ -326,7 +327,7 @@ object NativeCallOps {
                         throw ExceptionHandling.dieInternal(tc,
                             String.format("Cannot cast to %d bits number", ss.bits))
                 }
-            StorageSpec.BP_STR ->
+            BoxedPrimitive.STR ->
                 /* TODO: Handle encodings. */
                 nqpobj.set_str(tc, o.getString(0))
             else -> {

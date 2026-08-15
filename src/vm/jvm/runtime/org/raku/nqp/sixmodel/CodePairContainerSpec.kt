@@ -14,22 +14,22 @@ open class CodePairContainerSpec : ContainerSpec() {
     /* Fetches a value out of a container. Used for decontainerization. */
     override fun fetch(tc: ThreadContext, cont: SixModelObject): SixModelObject? {
         Ops.invokeDirect(tc, fetchCode, Ops.invocantCallSite, arrayOf<Any?>(cont))
-        return Ops.result_o(tc.curFrame!!)
+        return Ops.result_o(tc.frame)
     }
 
     override fun fetch_i(tc: ThreadContext, cont: SixModelObject): Long {
         Ops.invokeDirect(tc, fetchCode, Ops.invocantCallSite, arrayOf<Any?>(cont))
-        return Ops.result_i(tc.curFrame!!)
+        return Ops.result_i(tc.frame)
     }
 
     override fun fetch_n(tc: ThreadContext, cont: SixModelObject): Double {
         Ops.invokeDirect(tc, fetchCode, Ops.invocantCallSite, arrayOf<Any?>(cont))
-        return Ops.result_n(tc.curFrame!!)
+        return Ops.result_n(tc.frame)
     }
 
     override fun fetch_s(tc: ThreadContext, cont: SixModelObject): String? {
         Ops.invokeDirect(tc, fetchCode, Ops.invocantCallSite, arrayOf<Any?>(cont))
-        return Ops.result_s(tc.curFrame!!)
+        return Ops.result_s(tc.frame)
     }
 
     /* Stores a value in a container. Used for assignment. */

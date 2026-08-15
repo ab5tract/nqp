@@ -36,7 +36,7 @@ object IOOps {
         override fun run() {
             val tc = Companion.tc!!
             Ops.invokeDirect(tc, Companion.schedulee, Ops.invocantCallSite,
-                arrayOf<Any?>(Ops.box_i(Companion.signum, tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, tc)))
+                arrayOf<Any?>(Ops.box_i(Companion.signum, tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)))
         }
     }
 
@@ -129,9 +129,9 @@ object IOOps {
     fun getsignals(tc: ThreadContext): SixModelObject {
         if (Ops.isnull(sigCache) == 0L) return sigCache!!
 
-        val listType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.listType!!
-        val strType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType
-        val intType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType
+        val listType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.listType!!
+        val strType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType
+        val intType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType
         val res = listType.st.REPR.allocate(tc, listType.st)
 
         val sigWanted = SigProcess.process()
@@ -236,7 +236,7 @@ object IOOps {
     fun spawnprocasync(queue: SixModelObject, prog: String,
                        args: SixModelObject, cwd: String, env: SixModelObject, config: SixModelObject,
                        tc: ThreadContext): SixModelObject {
-        val hllConfig = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!
+        val hllConfig = tc.frame.codeRef.staticInfo.compUnit.hllConfig
         val ioType = hllConfig.ioType!!
         val ioHandle = ioType.st.REPR.allocate(tc, ioType.st) as IOHandleInstance
         ioHandle.handle = AsyncProcessHandle(tc, queue, prog, args, cwd, env, config)

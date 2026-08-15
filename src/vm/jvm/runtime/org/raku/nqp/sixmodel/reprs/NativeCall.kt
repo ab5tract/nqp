@@ -6,6 +6,7 @@ import org.objectweb.asm.Opcodes
 import org.objectweb.asm.Type
 
 import org.raku.nqp.runtime.ThreadContext
+import org.raku.nqp.sixmodel.Inlining
 import org.raku.nqp.sixmodel.REPR
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SerializationReader
@@ -61,7 +62,7 @@ class NativeCall : REPR() {
         val obj = TypeObject()
         obj.st = st
         st.WHAT = obj
-        return st.WHAT!!
+        return st.WHAT
     }
 
     override fun allocate(tc: ThreadContext, st: STable): SixModelObject {
@@ -72,10 +73,7 @@ class NativeCall : REPR() {
     }
 
     override fun get_storage_spec(tc: ThreadContext, st: STable): StorageSpec {
-        val ss = StorageSpec()
-        ss.inlineable = StorageSpec.INLINED
-        ss.bits = 64
-        return ss
+        return StorageSpec(inlining = Inlining.INLINED, bits = 64)
     }
 
     override fun inlineStorage(tc: ThreadContext, st: STable, cw: ClassWriter, prefix: String) {
