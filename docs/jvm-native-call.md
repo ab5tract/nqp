@@ -74,9 +74,10 @@ The consequence is not an ABI subtlety: when a variadic sub is called,
 `arg_types` describes the declared parameters only while `arguments`
 carries the whole call, so the two disagree in length — which is what the
 `/* TODO: Make sure n == call.arg_types.length? */` in `call` has always
-been worried about. Rakudo's `t/04-nativecall/26-varargs.t` dies before
-its first test on the JVM backend, identically through JNA and through the
-linker. Making this work needs the fixed-parameter count to reach
+been worried about — a mismatch neither implementation of the op could
+have coped with, since both index the argument types by the argument
+position. Rakudo's `t/04-nativecall/26-varargs.t` dies before its first
+test here. Making this work needs the fixed-parameter count to reach
 `buildnativecall`; given that, `Linker.Option.firstVariadicArg` would say
 the rest, and the ABIs that distinguish variadic from named arguments
 would be handled properly rather than by accident.

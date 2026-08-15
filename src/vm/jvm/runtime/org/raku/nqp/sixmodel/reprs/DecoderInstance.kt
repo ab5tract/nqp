@@ -12,6 +12,7 @@ import org.raku.nqp.runtime.Buffers
 import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
+import org.raku.nqp.sixmodel.BoxedPrimitive
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.StorageSpec
 
@@ -40,8 +41,8 @@ class DecoderInstance : SixModelObject() {
     }
 
     fun setLineSeps(tc: ThreadContext, seps: SixModelObject) {
-        val prim = seps.st.REPR.get_value_storage_spec(tc, seps.st)!!.boxed_primitive
-        if (prim != StorageSpec.BP_STR)
+        val prim = seps.st.REPR.get_value_storage_spec(tc, seps.st)!!.boxedPrimitive
+        if (prim != BoxedPrimitive.STR)
             ExceptionHandling.dieInternal(tc,
                     "Line separators must be provided as an array of native strings")
         lineSeps!!.clear()

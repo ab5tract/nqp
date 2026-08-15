@@ -5,6 +5,8 @@ import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 
 import org.raku.nqp.runtime.ThreadContext
+import org.raku.nqp.sixmodel.BoxedPrimitive
+import org.raku.nqp.sixmodel.Inlining
 import org.raku.nqp.sixmodel.REPR
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SerializationReader
@@ -15,11 +17,7 @@ import org.raku.nqp.sixmodel.TypeObject
 
 class P6str : REPR() {
     private companion object {
-        val ss = StorageSpec().apply {
-            inlineable = StorageSpec.INLINED
-            boxed_primitive = StorageSpec.BP_STR
-            can_box = StorageSpec.CAN_BOX_STR
-        }
+        val ss = StorageSpec.string()
     }
 
     override fun type_object_for(tc: ThreadContext, HOW: SixModelObject?): SixModelObject {
@@ -27,7 +25,7 @@ class P6str : REPR() {
         val obj = TypeObject()
         obj.st = st
         st.WHAT = obj
-        return st.WHAT!!
+        return st.WHAT
     }
 
     override fun allocate(tc: ThreadContext, st: STable): SixModelObject {

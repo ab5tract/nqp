@@ -79,7 +79,7 @@ abstract class CompilationUnit {
     /**
      * HLL configuration for this compilation unit.
      */
-    @JvmField var hllConfig: HLLConfig? = null
+    lateinit var hllConfig: HLLConfig
 
     /**
      * If true, the class corresponding to this CompilationUnit is shared between GlobalContexts.

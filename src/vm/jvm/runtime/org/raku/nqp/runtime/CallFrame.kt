@@ -233,7 +233,7 @@ class CallFrame : Cloneable {
         if (sci.hasExitHandler) {
             val origUnwinder = tc.unwinder
             tc.unwinder = UnwindException()
-            val hll = sci.compUnit.hllConfig!!
+            val hll = sci.compUnit.hllConfig
             Ops.invokeDirect(tc, hll.exitHandler, exitHandlerCallSite,
                 arrayOf<Any?>(this.codeRef, Ops.result_o(this.caller!!)))
             tc.unwinder = origUnwinder
