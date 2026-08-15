@@ -13,7 +13,7 @@ open class NativeRefContainerSpec : ContainerSpec() {
         var hll = cont.st.hllOwner
         if (hll == null)
             hll = tc.frame.codeRef.staticInfo.compUnit.hllConfig
-        return when (rd.primitive_type) {
+        return when (rd.primitiveType) {
             BoxedPrimitive.INT, BoxedPrimitive.UINT ->
                 Ops.box_i(fetch_i(tc, cont), hll.intBoxType, tc)
             BoxedPrimitive.NUM ->
@@ -37,7 +37,7 @@ open class NativeRefContainerSpec : ContainerSpec() {
     /* Stores a value in a container. Used for assignment. */
     override fun store(tc: ThreadContext, cont: SixModelObject, obj: SixModelObject) {
         val rd = cont.st.REPRData as NativeRefREPRData
-        when (rd.primitive_type) {
+        when (rd.primitiveType) {
             BoxedPrimitive.INT, BoxedPrimitive.UINT -> store_i(tc, cont, obj.get_int(tc))
             BoxedPrimitive.NUM -> store_n(tc, cont, obj.get_num(tc))
             BoxedPrimitive.STR -> store_s(tc, cont, obj.get_str(tc))
