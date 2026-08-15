@@ -5205,12 +5205,19 @@ class QAST::CompilerJAST {
         my $idx    := nqp::scgetobjidx($sc, $val);
         my $il     := JAST::InstructionList.new();
         $il.append(JAST::PushSVal.new( :value($handle) ));
+        # Push the index as an int and widen: an ldc2_w long would cost a
+        # 2-slot constant pool entry per distinct index, which overflows the
+        # 65535-entry pool on CORE.c.setting.
         $il.append(JAST::PushIndex.new( :value($idx) ));
+        $il.append($I2L);
         $il.append($ALOAD_1);
-        $il.append(JAST::InvokeDynamic.new(
-            'wval_noa', $TYPE_SMO, [$TYPE_STR, 'I', $TYPE_TC],
-            'org/raku/nqp/runtime/IndyBootstrap', 'wval_noa'
-        ));
+        # A plain invokestatic, not invokedynamic: WVals are the most common
+        # callsite kind by far, and HotSpot (observed on 25.0.3) silently
+        # corrupts per-class invokedynamic resolution state once a class has
+        # more than 65535 indy instructions — which CORE.c.setting exceeds
+        # nearly 3x with indy wvals included.
+        $il.append(JAST::Instruction.new( :op('invokestatic'),
+            $TYPE_OPS, 'wval', $TYPE_SMO, $TYPE_STR, 'Long', $TYPE_TC ));
         result($il, $RT_OBJ);
     }
 
