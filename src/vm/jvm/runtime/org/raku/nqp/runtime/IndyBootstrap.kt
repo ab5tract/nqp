@@ -40,7 +40,7 @@ object IndyBootstrap {
         /* Update this callsite, so that we never run the lookup again and instead
          * just always use the resolved object. Discards incoming arguments, as
          * they are no longer needed. */
-        if (!tc.curFrame!!.codeRef.staticInfo.compUnit.shared)
+        if (!tc.frame.codeRef.staticInfo.compUnit.shared)
             cs.setTarget(MethodHandles.dropArguments(
                         MethodHandles.constant(SixModelObject::class.java, res),
                         0, String::class.java, Integer.TYPE, ThreadContext::class.java))
@@ -84,7 +84,7 @@ object IndyBootstrap {
             throw ExceptionHandling.dieInternal(tc, "Can not invoke object '$name'")
 
         /* Don't update callsite in cases where it's not safe. */
-        var shared = tc.curFrame!!.codeRef.staticInfo.compUnit.shared
+        var shared = tc.frame.codeRef.staticInfo.compUnit.shared
         if (invokee!!.stInitialized && invokee!!.st.ContainerSpec != null) {
             invokee = Ops.decont(invokee, tc)
             shared = true
@@ -92,7 +92,7 @@ object IndyBootstrap {
 
         /* Resolve callsite descriptor. */
         var csd = if (csIdx >= 0)
-            tc.curFrame!!.codeRef.staticInfo.compUnit.callSites!![csIdx]
+            tc.frame.codeRef.staticInfo.compUnit.callSites!![csIdx]
         else
             Ops.emptyCallSite
         val csdOrig = csd
@@ -211,7 +211,7 @@ object IndyBootstrap {
             throw ExceptionHandling.dieInternal(tc, "Can not invoke object '$name'")
 
         /* Don't update callsite in cases where it's not safe. */
-        var shared = tc.curFrame!!.codeRef.staticInfo.compUnit.shared
+        var shared = tc.frame.codeRef.staticInfo.compUnit.shared
         if (invokee!!.stInitialized && invokee!!.st.ContainerSpec != null) {
             invokee = Ops.decont(invokee, tc)
             shared = true
@@ -219,7 +219,7 @@ object IndyBootstrap {
 
         /* Resolve callsite descriptor. */
         var csd = if (csIdx >= 0)
-            tc.curFrame!!.codeRef.staticInfo.compUnit.callSites!![csIdx]
+            tc.frame.codeRef.staticInfo.compUnit.callSites!![csIdx]
         else
             Ops.emptyCallSite
         val csdOrig = csd
@@ -346,7 +346,7 @@ object IndyBootstrap {
         var args: Array<out Any?> = argsIn
         /* Resolve callsite descriptor. */
         var csd = if (csIdx >= 0)
-            tc.curFrame!!.codeRef.staticInfo.compUnit.callSites!![csIdx]
+            tc.frame.codeRef.staticInfo.compUnit.callSites!![csIdx]
         else
             Ops.emptyCallSite
 
@@ -413,12 +413,12 @@ object IndyBootstrap {
         var args: Array<out Any?> = argsIn
         /* Resolve callsite descriptor. */
         var csd = if (csIdx >= 0)
-            tc.curFrame!!.codeRef.staticInfo.compUnit.callSites!![csIdx]
+            tc.frame.codeRef.staticInfo.compUnit.callSites!![csIdx]
         else
             Ops.emptyCallSite
 
         /* Don't update callsite in cases where it's not safe. */
-        var shared = tc.curFrame!!.codeRef.staticInfo.compUnit.shared
+        var shared = tc.frame.codeRef.staticInfo.compUnit.shared
 
         /* Try to resolve method to a coderef. */
         val invocant = args[0] as SixModelObject
@@ -549,7 +549,7 @@ object IndyBootstrap {
         var args: Array<out Any?> = argsIn
         /* Resolve callsite descriptor. */
         var csd = if (csIdx >= 0)
-            tc.curFrame!!.codeRef.staticInfo.compUnit.callSites!![csIdx]
+            tc.frame.codeRef.staticInfo.compUnit.callSites!![csIdx]
         else
             Ops.emptyCallSite
 

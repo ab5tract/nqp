@@ -47,7 +47,7 @@ object ExceptionHandling {
             (t ?: Throwable(msg)).printStackTrace()
         }
         try {
-            val exType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.exceptionType!!
+            val exType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.exceptionType!!
             exObj = exType.st.REPR.allocate(tc, exType.st) as VMExceptionInstance
             exObj.message = msg
             exObj.category = EX_CAT_CATCH.toLong()
@@ -172,8 +172,8 @@ object ExceptionHandling {
         }
         if (handler != null)
             invokeHandler(tc, handler, category, f, false, exObj, null)
-        else if (tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.lexicalHandlerNotFoundError != null) {
-            Ops.invokeDirect(tc, tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.lexicalHandlerNotFoundError,
+        else if (tc.frame.codeRef.staticInfo.compUnit.hllConfig.lexicalHandlerNotFoundError != null) {
+            Ops.invokeDirect(tc, tc.frame.codeRef.staticInfo.compUnit.hllConfig.lexicalHandlerNotFoundError,
                 Ops.intIntCallSite, false, arrayOf<Any?>(category, 0L))
         }
         else
@@ -238,11 +238,11 @@ object ExceptionHandling {
                             Ops.emptyCallSite, false, Ops.emptyArgList)
                 }
                 catch (e: ResumeException) {
-                    tc.curFrame!!.retType = (if (die_s_return) CallFrame.RET_STR else CallFrame.RET_OBJ).toByte()
+                    tc.frame.retType = (if (die_s_return) CallFrame.RET_STR else CallFrame.RET_OBJ).toByte()
                     if (die_s_return)
-                        tc.curFrame!!.sRet = exObj!!.message
+                        tc.frame.sRet = exObj!!.message
                     else
-                        tc.curFrame!!.oRet = exObj
+                        tc.frame.oRet = exObj
                     return
                 }
                 catch (sse: SaveStackException) {
@@ -261,7 +261,7 @@ object ExceptionHandling {
                 tc.unwinder.category = category
                 tc.unwinder.unwindTarget = handlerInfo[0]
                 tc.unwinder.unwindCompUnit = handlerFrame!!.codeRef.staticInfo.compUnit
-                tc.unwinder.result = Ops.result_o(tc.curFrame!!)
+                tc.unwinder.result = Ops.result_o(tc.frame)
                 if (Ops.isnull(exObj) == 0L)
                     tc.unwinder.payload = exObj!!.payload as SixModelObject?
                 throw tc.unwinder

@@ -382,7 +382,7 @@ object Ops {
 
     @JvmStatic
     fun open(path: String?, mode: String?, tc: ThreadContext): SixModelObject {
-        val IOType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.ioType!!
+        val IOType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.ioType!!
         val h = IOType.st.REPR.allocate(tc, IOType.st) as IOHandleInstance
         h.handle = FileHandle(tc, path!!, mode!!)
         return h
@@ -393,7 +393,7 @@ object Ops {
      * side) to make AsyncFileHandle reachable and testable. */
     @JvmStatic
     fun openasync(path: String?, mode: String?, tc: ThreadContext): SixModelObject {
-        val IOType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.ioType!!
+        val IOType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.ioType!!
         val h = IOType.st.REPR.allocate(tc, IOType.st) as IOHandleInstance
         h.handle = AsyncFileHandle(tc, path!!, mode!!)
         return h
@@ -458,7 +458,7 @@ object Ops {
 
     @JvmStatic
     fun socket(listener: Long, tc: ThreadContext): SixModelObject {
-        val IOType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.ioType!!
+        val IOType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.ioType!!
         val h = IOType.st.REPR.allocate(tc, IOType.st) as IOHandleInstance
         if (listener == 0L) {
             h.handle = SocketHandle(tc)
@@ -533,7 +533,7 @@ object Ops {
         if (listenerHandle is ServerSocketHandle) {
             val handle = listenerHandle.accept(tc)
             if (handle != null) {
-                val IOType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.ioType!!
+                val IOType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.ioType!!
                 val h = IOType.st.REPR.allocate(tc, IOType.st) as IOHandleInstance
                 h.handle = handle
                 return h
@@ -620,7 +620,7 @@ object Ops {
 
     @JvmStatic
     fun getstdin(tc: ThreadContext): SixModelObject {
-        val IOType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.ioType!!
+        val IOType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.ioType!!
         val h = IOType.st.REPR.allocate(tc, IOType.st) as IOHandleInstance
         h.handle = StandardReadHandle(tc, tc.gc.`in`)
         return h
@@ -628,7 +628,7 @@ object Ops {
 
     @JvmStatic
     fun getstdout(tc: ThreadContext): SixModelObject {
-        val IOType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.ioType!!
+        val IOType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.ioType!!
         val h = IOType.st.REPR.allocate(tc, IOType.st) as IOHandleInstance
         h.handle = StandardWriteHandle(tc, tc.gc.out)
         return h
@@ -636,7 +636,7 @@ object Ops {
 
     @JvmStatic
     fun getstderr(tc: ThreadContext): SixModelObject {
-        val IOType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.ioType!!
+        val IOType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.ioType!!
         val h = IOType.st.REPR.allocate(tc, IOType.st) as IOHandleInstance
         h.handle = StandardWriteHandle(tc, tc.gc.err)
         return h
@@ -1085,7 +1085,7 @@ object Ops {
     fun opendir(path: String?, tc: ThreadContext): SixModelObject? {
         try {
             val dirstrm = Files.newDirectoryStream(Paths.get(path))
-            val IOType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.ioType!!
+            val IOType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.ioType!!
             val ioh = IOType.st.REPR.allocate(tc, IOType.st) as IOHandleInstance
             ioh.dirstrm = dirstrm
             ioh.diri = dirstrm.iterator()
@@ -1308,7 +1308,7 @@ object Ops {
     }
     @JvmStatic
     fun getlexouter(name: String, tc: ThreadContext): SixModelObject? {
-        var curFrame = tc.curFrame!!.outer
+        var curFrame = tc.frame.outer
         while (curFrame != null) {
             val found = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (found != -1)
@@ -1388,8 +1388,8 @@ object Ops {
     /* Native lexical references. */
     @JvmStatic
     fun getlexref_i(tc: ThreadContext, idx: Int): SixModelObject {
-        val cf = tc.curFrame!!
-        val refType = cf.codeRef.staticInfo.compUnit.hllConfig!!.intLexRef
+        val cf = tc.frame
+        val refType = cf.codeRef.staticInfo.compUnit.hllConfig.intLexRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No int lexical reference type registered for current HLL")
@@ -1400,8 +1400,8 @@ object Ops {
     }
     @JvmStatic
     fun getlexref_u(tc: ThreadContext, idx: Int): SixModelObject {
-        val cf = tc.curFrame!!
-        val refType = cf.codeRef.staticInfo.compUnit.hllConfig!!.uintLexRef
+        val cf = tc.frame
+        val refType = cf.codeRef.staticInfo.compUnit.hllConfig.uintLexRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No int lexical reference type registered for current HLL")
@@ -1412,8 +1412,8 @@ object Ops {
     }
     @JvmStatic
     fun getlexref_n(tc: ThreadContext, idx: Int): SixModelObject {
-        val cf = tc.curFrame!!
-        val refType = cf.codeRef.staticInfo.compUnit.hllConfig!!.numLexRef
+        val cf = tc.frame
+        val refType = cf.codeRef.staticInfo.compUnit.hllConfig.numLexRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No num lexical reference type registered for current HLL")
@@ -1424,8 +1424,8 @@ object Ops {
     }
     @JvmStatic
     fun getlexref_s(tc: ThreadContext, idx: Int): SixModelObject {
-        val cf = tc.curFrame!!
-        val refType = cf.codeRef.staticInfo.compUnit.hllConfig!!.strLexRef
+        val cf = tc.frame
+        val refType = cf.codeRef.staticInfo.compUnit.hllConfig.strLexRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No str lexical reference type registered for current HLL")
@@ -1436,8 +1436,8 @@ object Ops {
     }
     @JvmStatic
     fun getlexref_i_si(tc: ThreadContext, idx: Int, si: Int): SixModelObject {
-        var cf = tc.curFrame!!
-        val refType = cf.codeRef.staticInfo.compUnit.hllConfig!!.intLexRef
+        var cf = tc.frame
+        val refType = cf.codeRef.staticInfo.compUnit.hllConfig.intLexRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No int lexical reference type registered for current HLL")
@@ -1451,8 +1451,8 @@ object Ops {
     }
     @JvmStatic
     fun getlexref_u_si(tc: ThreadContext, idx: Int, si: Int): SixModelObject {
-        var cf = tc.curFrame!!
-        val refType = cf.codeRef.staticInfo.compUnit.hllConfig!!.uintLexRef
+        var cf = tc.frame
+        val refType = cf.codeRef.staticInfo.compUnit.hllConfig.uintLexRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No int lexical reference type registered for current HLL")
@@ -1466,8 +1466,8 @@ object Ops {
     }
     @JvmStatic
     fun getlexref_n_si(tc: ThreadContext, idx: Int, si: Int): SixModelObject {
-        var cf = tc.curFrame!!
-        val refType = cf.codeRef.staticInfo.compUnit.hllConfig!!.numLexRef
+        var cf = tc.frame
+        val refType = cf.codeRef.staticInfo.compUnit.hllConfig.numLexRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No num lexical reference type registered for current HLL")
@@ -1481,8 +1481,8 @@ object Ops {
     }
     @JvmStatic
     fun getlexref_s_si(tc: ThreadContext, idx: Int, si: Int): SixModelObject {
-        var cf = tc.curFrame!!
-        val refType = cf.codeRef.staticInfo.compUnit.hllConfig!!.strLexRef
+        var cf = tc.frame
+        val refType = cf.codeRef.staticInfo.compUnit.hllConfig.strLexRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No str lexical reference type registered for current HLL")
@@ -1497,7 +1497,7 @@ object Ops {
     @JvmStatic
     fun getlexref_i(name: String, tc: ThreadContext): SixModelObject {
         var cf = tc.curFrame
-        val refType = cf!!.codeRef.staticInfo.compUnit.hllConfig!!.intLexRef
+        val refType = cf!!.codeRef.staticInfo.compUnit.hllConfig.intLexRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No int lexical reference type registered for current HLL")
@@ -1516,7 +1516,7 @@ object Ops {
     @JvmStatic
     fun getlexref_u(name: String, tc: ThreadContext): SixModelObject {
         var cf = tc.curFrame
-        val refType = cf!!.codeRef.staticInfo.compUnit.hllConfig!!.uintLexRef
+        val refType = cf!!.codeRef.staticInfo.compUnit.hllConfig.uintLexRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No int lexical reference type registered for current HLL")
@@ -1535,7 +1535,7 @@ object Ops {
     @JvmStatic
     fun getlexref_n(name: String, tc: ThreadContext): SixModelObject {
         var cf = tc.curFrame
-        val refType = cf!!.codeRef.staticInfo.compUnit.hllConfig!!.numLexRef
+        val refType = cf!!.codeRef.staticInfo.compUnit.hllConfig.numLexRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No num lexical reference type registered for current HLL")
@@ -1554,7 +1554,7 @@ object Ops {
     @JvmStatic
     fun getlexref_s(name: String, tc: ThreadContext): SixModelObject {
         var cf = tc.curFrame
-        val refType = cf!!.codeRef.staticInfo.compUnit.hllConfig!!.strLexRef
+        val refType = cf!!.codeRef.staticInfo.compUnit.hllConfig.strLexRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No str lexical reference type registered for current HLL")
@@ -1574,7 +1574,7 @@ object Ops {
     /* Dynamic lexicals. */
     @JvmStatic
     fun bindlexdyn(name: String, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        var curFrame = tc.curFrame!!.caller
+        var curFrame = tc.frame.caller
         while (curFrame != null) {
             val idx = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (idx != -1) {
@@ -1587,7 +1587,7 @@ object Ops {
     }
     @JvmStatic
     fun getlexdyn(name: String, tc: ThreadContext): SixModelObject? {
-        var curFrame = tc.curFrame!!.caller
+        var curFrame = tc.frame.caller
         while (curFrame != null) {
             val idx = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (idx != -1)
@@ -1598,7 +1598,7 @@ object Ops {
     }
     @JvmStatic
     fun getlexcaller(name: String, tc: ThreadContext): SixModelObject? {
-        var curCallerFrame = tc.curFrame!!.caller
+        var curCallerFrame = tc.frame.caller
         while (curCallerFrame != null) {
             var curFrame: CallFrame? = curCallerFrame
             while (curFrame != null) {
@@ -1671,7 +1671,7 @@ object Ops {
     fun ctx(tc: ThreadContext): SixModelObject {
         val ContextRef = tc.gc.ContextRef!!
         val wrap = ContextRef.st.REPR.allocate(tc, ContextRef.st)
-        (wrap as ContextRefInstance).context = tc.curFrame!!
+        (wrap as ContextRefInstance).context = tc.frame
         return wrap
     }
     @JvmStatic
@@ -1760,11 +1760,11 @@ object Ops {
     }
     @JvmStatic
     fun curcode(tc: ThreadContext): SixModelObject {
-        return tc.curFrame!!.codeRef
+        return tc.frame.codeRef
     }
     @JvmStatic
     fun callercode(tc: ThreadContext): SixModelObject? {
-        val caller = tc.curFrame!!.caller
+        val caller = tc.frame.caller
         return if (caller == null) null else caller.codeRef
     }
     @JvmStatic
@@ -1805,13 +1805,13 @@ object Ops {
         CallSiteDescriptor.ARG_OBJ ->
             return args[idx] as SixModelObject?
         CallSiteDescriptor.ARG_INT ->
-            return box_i(args[idx] as Long, cf.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, cf.tc)
+            return box_i(args[idx] as Long, cf.codeRef.staticInfo.compUnit.hllConfig.intBoxType, cf.tc)
         CallSiteDescriptor.ARG_UINT ->
-            return box_i(args[idx] as Long, cf.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, cf.tc)
+            return box_i(args[idx] as Long, cf.codeRef.staticInfo.compUnit.hllConfig.intBoxType, cf.tc)
         CallSiteDescriptor.ARG_NUM ->
-            return box_n(args[idx] as Double, cf.codeRef.staticInfo.compUnit.hllConfig!!.numBoxType, cf.tc)
+            return box_n(args[idx] as Double, cf.codeRef.staticInfo.compUnit.hllConfig.numBoxType, cf.tc)
         CallSiteDescriptor.ARG_STR ->
-            return box_s(args[idx] as String?, cf.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType, cf.tc)
+            return box_s(args[idx] as String?, cf.codeRef.staticInfo.compUnit.hllConfig.strBoxType, cf.tc)
         else ->
             throw ExceptionHandling.dieInternal(cf.tc, "Error in argument processing")
         }
@@ -1918,7 +1918,7 @@ object Ops {
     @JvmStatic
     fun posslurpy(tc: ThreadContext, cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, fromIdx: Int): SixModelObject {
         /* Create result. */
-        val hllConfig = cf.codeRef.staticInfo.compUnit.hllConfig!!
+        val hllConfig = cf.codeRef.staticInfo.compUnit.hllConfig
         val resType = hllConfig.slurpyArrayType!!
         val result = resType.st.REPR.allocate(tc, resType.st)
 
@@ -1952,13 +1952,13 @@ object Ops {
             CallSiteDescriptor.ARG_OBJ ->
                 return args[lookup shr 6] as SixModelObject?
             CallSiteDescriptor.ARG_INT ->
-                return box_i(args[lookup shr 6] as Long, cf.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, cf.tc)
+                return box_i(args[lookup shr 6] as Long, cf.codeRef.staticInfo.compUnit.hllConfig.intBoxType, cf.tc)
             CallSiteDescriptor.ARG_UINT ->
-                return box_i(args[lookup shr 6] as Long, cf.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, cf.tc)
+                return box_i(args[lookup shr 6] as Long, cf.codeRef.staticInfo.compUnit.hllConfig.intBoxType, cf.tc)
             CallSiteDescriptor.ARG_NUM ->
-                return box_n(args[lookup shr 6] as Double, cf.codeRef.staticInfo.compUnit.hllConfig!!.numBoxType, cf.tc)
+                return box_n(args[lookup shr 6] as Double, cf.codeRef.staticInfo.compUnit.hllConfig.numBoxType, cf.tc)
             CallSiteDescriptor.ARG_STR ->
-                return box_s(args[lookup shr 6] as String?, cf.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType, cf.tc)
+                return box_s(args[lookup shr 6] as String?, cf.codeRef.staticInfo.compUnit.hllConfig.strBoxType, cf.tc)
             else ->
                 throw ExceptionHandling.dieInternal(cf.tc, "Error in argument processing")
             }
@@ -2051,13 +2051,13 @@ object Ops {
             CallSiteDescriptor.ARG_OBJ ->
                 return args[lookup shr 6] as SixModelObject?
             CallSiteDescriptor.ARG_INT ->
-                return box_i(args[lookup shr 6] as Long, cf.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, cf.tc)
+                return box_i(args[lookup shr 6] as Long, cf.codeRef.staticInfo.compUnit.hllConfig.intBoxType, cf.tc)
             CallSiteDescriptor.ARG_UINT ->
-                return box_i(args[lookup shr 6] as Long, cf.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, cf.tc)
+                return box_i(args[lookup shr 6] as Long, cf.codeRef.staticInfo.compUnit.hllConfig.intBoxType, cf.tc)
             CallSiteDescriptor.ARG_NUM ->
-                return box_n(args[lookup shr 6] as Double, cf.codeRef.staticInfo.compUnit.hllConfig!!.numBoxType, cf.tc)
+                return box_n(args[lookup shr 6] as Double, cf.codeRef.staticInfo.compUnit.hllConfig.numBoxType, cf.tc)
             CallSiteDescriptor.ARG_STR ->
-                return box_s(args[lookup shr 6] as String?, cf.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType, cf.tc)
+                return box_s(args[lookup shr 6] as String?, cf.codeRef.staticInfo.compUnit.hllConfig.strBoxType, cf.tc)
             else ->
                 throw ExceptionHandling.dieInternal(cf.tc, "Error in argument processing")
             }
@@ -2153,7 +2153,7 @@ object Ops {
     @JvmStatic
     fun namedslurpy(tc: ThreadContext, cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>): SixModelObject {
         /* Create result. */
-        val hllConfig = cf.codeRef.staticInfo.compUnit.hllConfig!!
+        val hllConfig = cf.codeRef.staticInfo.compUnit.hllConfig
         val resType = hllConfig.slurpyHashType!!
         val result = resType.st.REPR.allocate(tc, resType.st)
 
@@ -2221,11 +2221,11 @@ object Ops {
     fun result_o(cf: CallFrame): SixModelObject? {
         when (cf.retType.toInt()) {
         CallFrame.RET_INT ->
-            return box_i(cf.iRet, cf.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, cf.tc)
+            return box_i(cf.iRet, cf.codeRef.staticInfo.compUnit.hllConfig.intBoxType, cf.tc)
         CallFrame.RET_NUM ->
-            return box_n(cf.nRet, cf.codeRef.staticInfo.compUnit.hllConfig!!.numBoxType, cf.tc)
+            return box_n(cf.nRet, cf.codeRef.staticInfo.compUnit.hllConfig.numBoxType, cf.tc)
         CallFrame.RET_STR ->
-            return box_s(cf.sRet, cf.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType, cf.tc)
+            return box_s(cf.sRet, cf.codeRef.staticInfo.compUnit.hllConfig.strBoxType, cf.tc)
         else ->
             return cf.oRet
         }
@@ -2319,16 +2319,16 @@ object Ops {
                 return obj.args!![i] as SixModelObject?
             CallSiteDescriptor.ARG_INT ->
                 return box_i(obj.args!![i] as Long,
-                        tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, tc)
+                        tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)
             CallSiteDescriptor.ARG_UINT ->
                 return box_i(obj.args!![i] as Long,
-                        tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, tc)
+                        tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)
             CallSiteDescriptor.ARG_NUM ->
                 return box_n(obj.args!![i] as Double,
-                        tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.numBoxType, tc)
+                        tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc)
             CallSiteDescriptor.ARG_STR ->
                 return box_s(obj.args!![i] as String?,
-                        tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType, tc)
+                        tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
             else ->
                 throw ExceptionHandling.dieInternal(tc, "Invalid positional argument access from capture")
             }
@@ -2409,7 +2409,7 @@ object Ops {
     @JvmStatic
     fun capturenamedshash(obj: SixModelObject?, tc: ThreadContext): SixModelObject? {
         if (obj is CallCaptureInstance) {
-            val hashType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.hashType!!
+            val hashType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.hashType!!
             val res = hashType.st.REPR.allocate(tc, hashType.st)
 
             for (n in obj.descriptor!!.nameMap.keys) {
@@ -2421,15 +2421,15 @@ object Ops {
 
                 if ((flagged and CallSiteDescriptor.ARG_INT.toInt()) != 0) {
                     arg = box_i(obj.args!![i] as Long,
-                        tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, tc)
+                        tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)
                 }
                 else if ((flagged and CallSiteDescriptor.ARG_STR.toInt()) != 0) {
                     arg = box_s(obj.args!![i] as String?,
-                        tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType, tc)
+                        tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
                 }
                 else if ((flagged and CallSiteDescriptor.ARG_NUM.toInt()) != 0) {
                     arg = box_n(obj.args!![i] as Double,
-                        tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.numBoxType, tc)
+                        tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc)
                 }
                 else if (obj.args!![i] != null) {
                     try {
@@ -2498,7 +2498,7 @@ object Ops {
     fun invoke(invokee: SixModelObject?, callsiteIndex: Int, args: Array<Any?>, tc: ThreadContext) {
         // TODO Find a smarter way to do this without all the pointer chasing.
         if (callsiteIndex >= 0)
-            invokeDirect(tc, invokee, tc.curFrame!!.codeRef.staticInfo.compUnit.callSites!![callsiteIndex], args)
+            invokeDirect(tc, invokee, tc.frame.codeRef.staticInfo.compUnit.callSites!![callsiteIndex], args)
         else
             invokeDirect(tc, invokee, emptyCallSite, args)
     }
@@ -2509,7 +2509,7 @@ object Ops {
     @JvmStatic
     fun invokeMain(tc: ThreadContext, invokee: SixModelObject?, prog: String?, argv: Array<String>) {
         /* Build argument list from argv. */
-        val Str = (invokee as CodeRef).staticInfo.compUnit.hllConfig!!.strBoxType
+        val Str = (invokee as CodeRef).staticInfo.compUnit.hllConfig.strBoxType
         val args = arrayOfNulls<Any>(argv.size + 1)
         val callsite = ByteArray(argv.size + 1)
         args[0] = box_s(prog, Str, tc)
@@ -2562,7 +2562,7 @@ object Ops {
     fun invokewithcapture(invokee: SixModelObject?, capture: SixModelObject?, tc: ThreadContext): SixModelObject? {
         if (capture is CallCaptureInstance) {
             invokeDirect(tc, invokee, capture.descriptor!!, capture.args!!)
-            return result_o(tc.curFrame!!)
+            return result_o(tc.frame)
         }
         else {
             throw ExceptionHandling.dieInternal(tc, "invokewithcapture requires a CallCapture")
@@ -2580,7 +2580,7 @@ object Ops {
             throw ExceptionHandling.dieInternal(tc,
                 "Tried to set unsupported config key '" + key + "'")
 
-        val hllName = tc.curFrame!!.codeRef.staticInfo.compUnit.hllName()
+        val hllName = tc.frame.codeRef.staticInfo.compUnit.hllName()
         val config = tc.gc.getHLLConfigFor(hllName)
         config.uintBoxType = value
 
@@ -2712,11 +2712,11 @@ object Ops {
     }
     @JvmStatic
     fun hlllist(tc: ThreadContext): SixModelObject? {
-        return tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.listType
+        return tc.frame.codeRef.staticInfo.compUnit.hllConfig.listType
     }
     @JvmStatic
     fun hllhash(tc: ThreadContext): SixModelObject? {
-        return tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.hashType
+        return tc.frame.codeRef.staticInfo.compUnit.hllConfig.hashType
     }
     @JvmStatic
     fun findmethodInCache(tc: ThreadContext, invocant: SixModelObject?, name: String): SixModelObject {
@@ -2760,7 +2760,7 @@ object Ops {
         val find_method = findmethod(how, "find_method", tc)
         invokeDirect(tc, find_method, findmethCallSite,
                 arrayOf<Any?>(how, theInvocant, name))
-        return result_o(tc.curFrame!!)
+        return result_o(tc.frame)
     }
     @JvmStatic
     fun typeName(invocant: SixModelObject?, tc: ThreadContext): String? {
@@ -2768,7 +2768,7 @@ object Ops {
         val how = theInvocant!!.st.HOW
         val nameMeth = findmethodInCache(tc, how, "name")
         invokeDirect(tc, nameMeth, howObjCallSite, arrayOf<Any?>(how, theInvocant))
-        return result_s(tc.curFrame!!)
+        return result_s(tc.frame)
     }
     @JvmStatic
     fun can(invocant: SixModelObject?, name: String, tc: ThreadContext): Long {
@@ -2912,12 +2912,12 @@ object Ops {
                 /*throw ExceptionHandling.dieInternal(tc,
                     "No type check cache and no type_check method in meta-object");*/
             invokeDirect(tc, tcMeth, typeCheckCallSite, arrayOf<Any?>(obj.st.HOW, obj, type))
-            if (tc.curFrame!!.retType.toInt() == CallFrame.RET_INT) {
-                if (result_i(tc.curFrame!!) != 0L)
+            if (tc.frame.retType.toInt() == CallFrame.RET_INT) {
+                if (result_i(tc.frame) != 0L)
                     return 1
             }
             else {
-                if (istrue(result_o(tc.curFrame!!), tc) != 0L)
+                if (istrue(result_o(tc.frame), tc) != 0L)
                     return 1
             }
         }
@@ -2929,7 +2929,7 @@ object Ops {
                 throw ExceptionHandling.dieInternal(tc,
                     "Expected accepts_type method, but none found in meta-object")
             invokeDirect(tc, atMeth, typeCheckCallSite, arrayOf<Any?>(type.st.HOW, type, obj))
-            return istrue(result_o(tc.curFrame!!), tc)
+            return istrue(result_o(tc.frame), tc)
         }
 
         /* If we get here, type check failed. */
@@ -2993,33 +2993,33 @@ object Ops {
     /* HLL aware boxing operations */
     @JvmStatic
     fun hllboxtype_i(tc: ThreadContext): SixModelObject? {
-        return tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType
+        return tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType
     }
     @JvmStatic
     fun hllboxtype_i(value: Long, tc: ThreadContext): SixModelObject {
-        val type = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType!!
+        val type = tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType!!
         val res = type.st.REPR.allocate(tc, type.st)
         res.set_int(tc, value)
         return res
     }
     @JvmStatic
     fun hllboxtype_n(tc: ThreadContext): SixModelObject? {
-        return tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.numBoxType
+        return tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType
     }
     @JvmStatic
     fun hllboxtype_n(value: Double, tc: ThreadContext): SixModelObject {
-        val type = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.numBoxType!!
+        val type = tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType!!
         val res = type.st.REPR.allocate(tc, type.st)
         res.set_num(tc, value)
         return res
     }
     @JvmStatic
     fun hllboxtype_s(tc: ThreadContext): SixModelObject? {
-        return tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType
+        return tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType
     }
     @JvmStatic
     fun hllboxtype_s(value: String?, tc: ThreadContext): SixModelObject {
-        val type = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType!!
+        val type = tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType!!
         val res = type.st.REPR.allocate(tc, type.st)
         res.set_str(tc, value)
         return res
@@ -3035,13 +3035,13 @@ object Ops {
             var retval: SixModelObject? = createNull(tc)
             obj!!.get_attribute_native(tc, decont(ch, tc), name, STable.NO_HINT)
             if (tc.native_type == ThreadContext.NATIVE_INT) {
-                retval = box_i(tc.native_i, tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, tc)
+                retval = box_i(tc.native_i, tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)
             }
             else if (tc.native_type == ThreadContext.NATIVE_NUM) {
-                retval = box_n(tc.native_n, tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.numBoxType, tc)
+                retval = box_n(tc.native_n, tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc)
             }
             else if (tc.native_type == ThreadContext.NATIVE_STR) {
-                retval = box_s(tc.native_s, tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType, tc)
+                retval = box_s(tc.native_s, tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
             }
             else if (tc.native_type == ThreadContext.NATIVE_JVM_OBJ) {
                 val slot = (obj as P6OpaqueBaseInstance).resolveAttribute(obj.st.WHAT, name)
@@ -3109,13 +3109,13 @@ object Ops {
             var retval: SixModelObject? = createNull(tc)
             obj!!.get_attribute_native(tc, decont(ch, tc), name, theHint)
             if (tc.native_type == ThreadContext.NATIVE_INT) {
-                retval = box_i(tc.native_i, tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, tc)
+                retval = box_i(tc.native_i, tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)
             }
             else if (tc.native_type == ThreadContext.NATIVE_NUM) {
-                retval = box_n(tc.native_n, tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.numBoxType, tc)
+                retval = box_n(tc.native_n, tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc)
             }
             else if (tc.native_type == ThreadContext.NATIVE_STR) {
-                retval = box_s(tc.native_s, tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType, tc)
+                retval = box_s(tc.native_s, tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
             }
             else if (tc.native_type == ThreadContext.NATIVE_JVM_OBJ) {
                 val slot = (obj as P6OpaqueBaseInstance).resolveAttribute(obj.st.WHAT, name)
@@ -3295,7 +3295,7 @@ object Ops {
     /* Attribute reference operations. */
     @JvmStatic
     fun getattrref_i(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext): SixModelObject {
-        val refType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intAttrRef
+        val refType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.intAttrRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No int attribute reference type registered for current HLL")
@@ -3308,7 +3308,7 @@ object Ops {
     }
     @JvmStatic
     fun getattrref_u(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext): SixModelObject {
-        val refType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.uintAttrRef
+        val refType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.uintAttrRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No int attribute reference type registered for current HLL")
@@ -3321,7 +3321,7 @@ object Ops {
     }
     @JvmStatic
     fun getattrref_n(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext): SixModelObject {
-        val refType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.numAttrRef
+        val refType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.numAttrRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No num attribute reference type registered for current HLL")
@@ -3334,7 +3334,7 @@ object Ops {
     }
     @JvmStatic
     fun getattrref_s(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext): SixModelObject {
-        val refType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strAttrRef
+        val refType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.strAttrRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No string attribute reference type registered for current HLL")
@@ -3733,7 +3733,7 @@ object Ops {
     /* Positional reference operations. */
     @JvmStatic
     fun atposref_i(obj: SixModelObject?, idx: Long, tc: ThreadContext): SixModelObject {
-        val refType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intPosRef
+        val refType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.intPosRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No int positional reference type registered for current HLL")
@@ -3744,7 +3744,7 @@ object Ops {
     }
     @JvmStatic
     fun atposref_u(obj: SixModelObject?, idx: Long, tc: ThreadContext): SixModelObject {
-        val refType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.uintPosRef
+        val refType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.uintPosRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No uint positional reference type registered for current HLL")
@@ -3755,7 +3755,7 @@ object Ops {
     }
     @JvmStatic
     fun atposref_n(obj: SixModelObject?, idx: Long, tc: ThreadContext): SixModelObject {
-        val refType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.numPosRef
+        val refType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.numPosRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No num positional reference type registered for current HLL")
@@ -3766,7 +3766,7 @@ object Ops {
     }
     @JvmStatic
     fun atposref_s(obj: SixModelObject?, idx: Long, tc: ThreadContext): SixModelObject {
-        val refType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strPosRef
+        val refType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.strPosRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No string positional reference type registered for current HLL")
@@ -3779,7 +3779,7 @@ object Ops {
     /* Positional multidim reference operations. */
     @JvmStatic
     fun multidimref_i(obj: SixModelObject?, indices: SixModelObject?, tc: ThreadContext): SixModelObject {
-        val refType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intMultidimRef
+        val refType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.intMultidimRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No int multidim positional reference type registered for current HLL")
@@ -3791,7 +3791,7 @@ object Ops {
 
     @JvmStatic
     fun multidimref_u(obj: SixModelObject?, indices: SixModelObject?, tc: ThreadContext): SixModelObject {
-        val refType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.uintMultidimRef
+        val refType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.uintMultidimRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No int multidim positional reference type registered for current HLL")
@@ -3803,7 +3803,7 @@ object Ops {
 
     @JvmStatic
     fun multidimref_n(obj: SixModelObject?, indices: SixModelObject?, tc: ThreadContext): SixModelObject {
-        val refType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.numMultidimRef
+        val refType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.numMultidimRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No num multidim positional reference type registered for current HLL")
@@ -3815,7 +3815,7 @@ object Ops {
 
     @JvmStatic
     fun multidimref_s(obj: SixModelObject?, indices: SixModelObject?, tc: ThreadContext): SixModelObject {
-        val refType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strMultidimRef
+        val refType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.strMultidimRef
         if (isnull(refType) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "No str multidim positional reference type registered for current HLL")
@@ -4003,7 +4003,7 @@ object Ops {
         /* It wasn't found; run parameterizer. */
         invokeDirect(tc, (st.parametricity as ParametricType).parameterizer,
             parameterizeCallSite, arrayOf<Any?>(st.WHAT, params))
-        val result = result_o(tc.curFrame!!)
+        val result = result_o(tc.frame)
 
         /* Mark parametric and stash required data. */
         val newSTable = result!!.st
@@ -4199,7 +4199,7 @@ object Ops {
     @JvmStatic
     fun iter(agg: SixModelObject?, tc: ThreadContext): SixModelObject {
         if (agg!!.st.REPR is VMArray) {
-            val iterType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.arrayIteratorType!!
+            val iterType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.arrayIteratorType!!
             val iter = iterType.st.REPR.allocate(tc, iterType.st) as VMIterInstance
             iter.target = agg
             iter.idx = -1
@@ -4217,7 +4217,7 @@ object Ops {
             return iter
         }
         else if (agg.st.REPR is VMHash) {
-            val iterType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.hashIteratorType!!
+            val iterType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.hashIteratorType!!
             val iter = iterType.st.REPR.allocate(tc, iterType.st) as VMIterInstance
             iter.target = agg
             @Suppress("UNCHECKED_CAST")
@@ -4242,7 +4242,7 @@ object Ops {
                 for (i in iLexicalNames.indices) {
                     agg.at_key_boxed(tc, iLexicalNames[i])
                     hash.bind_key_boxed(tc, iLexicalNames[i],
-                        box_i(tc.native_i, agg.context!!.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType, tc))
+                        box_i(tc.native_i, agg.context!!.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc))
                 }
             }
             val nLexicalNames = sci.nLexicalNames
@@ -4250,7 +4250,7 @@ object Ops {
                 for (i in nLexicalNames.indices) {
                     agg.at_key_boxed(tc, nLexicalNames[i])
                     hash.bind_key_boxed(tc, nLexicalNames[i],
-                        box_n(tc.native_n, agg.context!!.codeRef.staticInfo.compUnit.hllConfig!!.numBoxType, tc))
+                        box_n(tc.native_n, agg.context!!.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc))
                 }
             }
             val sLexicalNames = sci.sLexicalNames
@@ -4258,7 +4258,7 @@ object Ops {
                 for (i in sLexicalNames.indices) {
                     agg.at_key_boxed(tc, sLexicalNames[i])
                     hash.bind_key_boxed(tc, sLexicalNames[i],
-                        box_s(tc.native_s, agg.context!!.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType, tc))
+                        box_s(tc.native_s, agg.context!!.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc))
                 }
             }
 
@@ -4294,7 +4294,7 @@ object Ops {
         when (if (bs == null) BoolificationSpec.MODE_NOT_TYPE_OBJECT else bs.Mode) {
         BoolificationSpec.MODE_CALL_METHOD -> {
             invokeDirect(tc, bs!!.Method, invocantCallSite, arrayOf<Any?>(o))
-            return istrue(result_o(tc.curFrame!!), tc)
+            return istrue(result_o(tc.frame), tc)
         }
         BoolificationSpec.MODE_UNBOX_INT ->
             return if (o is TypeObject || o.get_int(tc) == 0L) 0 else 1
@@ -4357,7 +4357,7 @@ object Ops {
         val strMeth = if (o.st.MethodCache == null) null else o.st.MethodCache!!.get("Str")
         if (isnull(strMeth) == 0L) {
             invokeDirect(tc, strMeth, invocantCallSite, arrayOf<Any?>(o))
-            return result_s(tc.curFrame!!)
+            return result_s(tc.frame)
         }
 
         // If it's a type object, empty string.
@@ -4398,7 +4398,7 @@ object Ops {
         val numMeth = o.st.MethodCache!!.get("Num")
         if (isnull(numMeth) == 0L) {
             invokeDirect(tc, numMeth, invocantCallSite, arrayOf<Any?>(o))
-            return result_n(tc.curFrame!!)
+            return result_n(tc.frame)
         }
 
         // If it's a type object, zero.
@@ -4433,7 +4433,7 @@ object Ops {
         val intMeth = o.st.MethodCache!!.get("Int")
         if (isnull(intMeth) == 0L) {
             invokeDirect(tc, intMeth, invocantCallSite, arrayOf<Any?>(o))
-            return result_i(tc.curFrame!!)
+            return result_i(tc.frame)
         }
 
         // If it's a type object, zero.
@@ -4539,7 +4539,7 @@ object Ops {
 
         if (neg || (flags and 0x01L) != 0L) { value = -value }
 
-        val hllConfig = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!
+        val hllConfig = tc.frame.codeRef.staticInfo.compUnit.hllConfig
         val result = hllConfig.slurpyArrayType!!.st.REPR.allocate(tc,
                 hllConfig.slurpyArrayType!!.st)
 
@@ -4693,7 +4693,7 @@ object Ops {
             return null
         }
 
-        val hllConfig = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!
+        val hllConfig = tc.frame.codeRef.staticInfo.compUnit.hllConfig
         val arrayType = hllConfig.slurpyArrayType!!
         val array = arrayType.st.REPR.allocate(tc, arrayType.st)
 
@@ -5866,7 +5866,7 @@ object Ops {
             shArray[i] = tc.native_s
         }
 
-        val cu = tc.curFrame!!.codeRef.staticInfo.compUnit
+        val cu = tc.frame.codeRef.staticInfo.compUnit
         val crArray: Array<CodeRef?>
         val crCount: Int
         if (isnull(cr) == 1L) {
@@ -6287,8 +6287,8 @@ object Ops {
     fun takedispatcher(lexIdx: Int, tc: ThreadContext) {
         if (isnull(tc.currentDispatcher) == 0L) {
             if (isnull(tc.currentDispatcherFor) == 1L ||
-                    tc.currentDispatcherFor === tc.curFrame!!.codeRef) {
-                tc.curFrame!!.oLex!![lexIdx] = tc.currentDispatcher
+                    tc.currentDispatcherFor === tc.frame.codeRef) {
+                tc.frame.oLex!![lexIdx] = tc.currentDispatcher
                 tc.currentDispatcher = null
             }
         }
@@ -6314,8 +6314,8 @@ object Ops {
     fun takenextdispatcher(lexIdx: Int, tc: ThreadContext) {
         if (isnull(tc.nextDispatcher) == 0L) {
             if (isnull(tc.nextDispatcherFor) == 1L ||
-                    tc.nextDispatcherFor === tc.curFrame!!.codeRef) {
-                tc.curFrame!!.oLex!![lexIdx] = tc.nextDispatcher
+                    tc.nextDispatcherFor === tc.frame.codeRef) {
+                tc.frame.oLex!![lexIdx] = tc.nextDispatcher
                 tc.nextDispatcher = null
             }
         }
@@ -6357,8 +6357,8 @@ object Ops {
 
     @JvmStatic
     fun getenvhash(tc: ThreadContext): SixModelObject {
-        val hashType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.hashType!!
-        val strType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType
+        val hashType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.hashType!!
+        val strType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType
         val res = hashType.st.REPR.allocate(tc, hashType.st)
 
         val env = System.getenv()
@@ -6410,7 +6410,7 @@ object Ops {
             /* TODO remove workar^H^H^Hdirty hack for non-working native arrays in ThreadPoolScheduler */
             /* https://github.com/rakudo/rakudo/issues/1666 */
             else {
-                val Int = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType
+                val Int = tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType
                 res!!.bind_pos_boxed(tc, 0, box_i(cpuMillis / 1000000, Int, tc)) // UTIME_SEC
                 res.bind_pos_boxed(tc, 1, box_i(cpuMillis % 1000000, Int, tc)) // UTIME_MSEC
                 res.bind_pos_boxed(tc, 2, box_i(0, Int, tc))                   // STIME_SEC
@@ -6425,8 +6425,8 @@ object Ops {
 
     @JvmStatic
     fun jvmgetproperties(tc: ThreadContext): SixModelObject {
-        val hashType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.hashType!!
-        val strType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType
+        val hashType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.hashType!!
+        val strType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType
         val res = hashType.st.REPR.allocate(tc, hashType.st)
 
         val env = System.getProperties()
@@ -6777,7 +6777,7 @@ object Ops {
     @JvmStatic
     fun die_s_c(msg: String?, tc: ThreadContext) {
         // Construct exception object.
-        val exType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.exceptionType!!
+        val exType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.exceptionType!!
         val exObj = exType.st.REPR.allocate(tc, exType.st) as VMExceptionInstance
         exObj.message = msg
         exObj.category = ExceptionHandling.EX_CAT_CATCH.toLong()
@@ -6787,7 +6787,7 @@ object Ops {
     }
     @JvmStatic
     fun throwcatdyn_c(category: Long, tc: ThreadContext) {
-        val exType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.exceptionType!!
+        val exType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.exceptionType!!
         val exObj = exType.st.REPR.allocate(tc, exType.st) as VMExceptionInstance
         exObj.origin = tc.curFrame
         exObj.category = category
@@ -6853,15 +6853,15 @@ object Ops {
     }
     @JvmStatic
     fun newexception(tc: ThreadContext): SixModelObject {
-        val exType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.exceptionType!!
+        val exType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.exceptionType!!
         val exObj: SixModelObject = exType.st.REPR.allocate(tc, exType.st) as VMExceptionInstance
         return exObj
     }
     @JvmStatic
     fun backtracestrings(obj: SixModelObject?, tc: ThreadContext): SixModelObject {
         if (obj is VMExceptionInstance) {
-            val Array = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.listType!!
-            val Str = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType
+            val Array = tc.frame.codeRef.staticInfo.compUnit.hllConfig.listType!!
+            val Str = tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType
             val result = Array.st.REPR.allocate(tc, Array.st)
 
             val lines = ExceptionHandling.backtraceStrings(obj)
@@ -6884,10 +6884,10 @@ object Ops {
         }
 
         if (theObj is VMExceptionInstance) {
-            val Array = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.listType!!
-            val Hash = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.hashType!!
-            val Str = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType
-            val Int = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.intBoxType
+            val Array = tc.frame.codeRef.staticInfo.compUnit.hllConfig.listType!!
+            val Hash = tc.frame.codeRef.staticInfo.compUnit.hllConfig.hashType!!
+            val Str = tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType
+            val Int = tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType
             val result = Array.st.REPR.allocate(tc, Array.st)
 
             for (te in ExceptionHandling.backtrace(theObj)) {
@@ -6931,7 +6931,7 @@ object Ops {
         /* We're moving to the outside so we do not rethrow to us. */
         vmex.category = uwex.category
         vmex.payload = uwex.payload
-        tc.curFrame!!.curHandler = outerHandler
+        tc.frame.curHandler = outerHandler
         ExceptionHandling.handlerDynamic(tc, vmex.category, false, vmex)
     }
     @JvmStatic
@@ -6943,7 +6943,7 @@ object Ops {
         val vmex = newexception(tc) as VMExceptionInstance
         vmex.category = uwex.category
         vmex.payload = uwex.payload
-        tc.curFrame!!.curHandler = outerHandler
+        tc.frame.curHandler = outerHandler
         ExceptionHandling.handlerDynamic(tc, vmex.category, false, vmex)
     }
     @JvmStatic
@@ -6962,7 +6962,7 @@ object Ops {
     }
     @JvmStatic
     fun _throwpayloadlex_c(category: Long, payload: SixModelObject?, tc: ThreadContext) {
-        val exType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.exceptionType!!
+        val exType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.exceptionType!!
         val exObj = exType.st.REPR.allocate(tc, exType.st) as VMExceptionInstance
         exObj.category = category
         exObj.origin = tc.curFrame
@@ -6971,7 +6971,7 @@ object Ops {
     }
     @JvmStatic
     fun _throwpayloadlexcaller_c(category: Long, payload: SixModelObject?, tc: ThreadContext) {
-        val exType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.exceptionType!!
+        val exType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.exceptionType!!
         val exObj = exType.st.REPR.allocate(tc, exType.st) as VMExceptionInstance
         exObj.category = category
         exObj.origin = tc.curFrame
@@ -6991,7 +6991,7 @@ object Ops {
         } catch (sse: SaveStackException) {
             ExceptionHandling.dieInternal(tc, "control operator crossed continuation barrier")
         }
-        return result_s(tc.curFrame!!)
+        return result_s(tc.frame)
     }
     @JvmStatic
     fun throwcatdyn(category: Long, tc: ThreadContext): SixModelObject? {
@@ -7000,7 +7000,7 @@ object Ops {
         } catch (sse: SaveStackException) {
             ExceptionHandling.dieInternal(tc, "control operator crossed continuation barrier")
         }
-        return result_o(tc.curFrame!!)
+        return result_o(tc.frame)
     }
     @JvmStatic
     fun _throw(obj: SixModelObject?, tc: ThreadContext): SixModelObject? {
@@ -7009,7 +7009,7 @@ object Ops {
         } catch (sse: SaveStackException) {
             ExceptionHandling.dieInternal(tc, "control operator crossed continuation barrier")
         }
-        return result_o(tc.curFrame!!)
+        return result_o(tc.frame)
     }
     @JvmStatic
     fun rethrow(obj: SixModelObject?, tc: ThreadContext): SixModelObject? {
@@ -7018,7 +7018,7 @@ object Ops {
         } catch (sse: SaveStackException) {
             ExceptionHandling.dieInternal(tc, "control operator crossed continuation barrier")
         }
-        return result_o(tc.curFrame!!)
+        return result_o(tc.frame)
     }
 
     /* HLL configuration and compiler related options. */
@@ -7120,13 +7120,13 @@ object Ops {
     }
     @JvmStatic
     fun getcurhllsym(name: String, tc: ThreadContext): SixModelObject? {
-        val hllName = tc.curFrame!!.codeRef.staticInfo.compUnit.hllName()
+        val hllName = tc.frame.codeRef.staticInfo.compUnit.hllName()
         val hllSyms = tc.gc.hllSyms.get(hllName)
         return if (hllSyms == null) null else hllSyms.get(name)
     }
     @JvmStatic
     fun bindcurhllsym(name: String, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        val hllName = tc.curFrame!!.codeRef.staticInfo.compUnit.hllName()
+        val hllName = tc.frame.codeRef.staticInfo.compUnit.hllName()
         var hllSyms = tc.gc.hllSyms.get(hllName)
         if (hllSyms == null) {
             hllSyms = HashMap()
@@ -7177,7 +7177,7 @@ object Ops {
     }
     @JvmStatic
     fun hllize(obj: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        val wanted = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!
+        val wanted = tc.frame.codeRef.staticInfo.compUnit.hllConfig
         if (isnull(obj) == 0L && obj!!.st.hllOwner === wanted)
             return obj
         else
@@ -7193,7 +7193,7 @@ object Ops {
     }
     @JvmStatic
     fun hllbool(value: Long, tc: ThreadContext): SixModelObject? {
-        val hllConfig = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!
+        val hllConfig = tc.frame.codeRef.staticInfo.compUnit.hllConfig
         return if (value != 0L) hllConfig.trueValue else hllConfig.falseValue
     }
     @JvmStatic
@@ -7245,7 +7245,7 @@ object Ops {
                 if (isnull(wanted.foreignTransformArray) == 0L) {
                     invokeDirect(tc, wanted.foreignTransformArray,
                         invocantCallSite, arrayOf<Any?>(obj))
-                    return result_o(tc.curFrame!!)
+                    return result_o(tc.frame)
                 }
                 else {
                     return obj
@@ -7255,7 +7255,7 @@ object Ops {
                 if (isnull(wanted.foreignTransformHash) == 0L) {
                     invokeDirect(tc, wanted.foreignTransformHash,
                         invocantCallSite, arrayOf<Any?>(obj))
-                    return result_o(tc.curFrame!!)
+                    return result_o(tc.frame)
                 }
                 else {
                     return obj
@@ -7265,7 +7265,7 @@ object Ops {
                 if (isnull(wanted.foreignTransformCode) == 0L) {
                     invokeDirect(tc, wanted.foreignTransformCode,
                         invocantCallSite, arrayOf<Any?>(obj))
-                    return result_o(tc.curFrame!!)
+                    return result_o(tc.frame)
                 }
                 else {
                     return obj
@@ -7275,7 +7275,7 @@ object Ops {
                 if (isnull(wanted.foreignTransformAny) == 0L) {
                     invokeDirect(tc, wanted.foreignTransformAny,
                         invocantCallSite, arrayOf<Any?>(obj))
-                    return result_o(tc.curFrame!!)
+                    return result_o(tc.frame)
                 }
                 else {
                     return obj
@@ -8100,7 +8100,7 @@ object Ops {
 
         if (neg || (flags and 0x01L) != 0L) { value = value.negate() }
 
-        val hllConfig = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!
+        val hllConfig = tc.frame.codeRef.staticInfo.compUnit.hllConfig
         val result = hllConfig.slurpyArrayType!!.st.REPR.allocate(tc,
                 hllConfig.slurpyArrayType!!.st)
 
@@ -8186,7 +8186,7 @@ object Ops {
     @JvmStatic
     fun compunitcodes(obj: SixModelObject?, tc: ThreadContext): SixModelObject {
         val res = obj as EvalResult
-        val Array = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.listType!!
+        val Array = tc.frame.codeRef.staticInfo.compUnit.hllConfig.listType!!
         val result = Array.st.REPR.allocate(tc, Array.st)
         for (i in res.cu!!.codeRefs!!.indices)
             result.bind_pos_boxed(tc, i.toLong(), res.cu!!.codeRefs!![i])
@@ -8194,8 +8194,8 @@ object Ops {
     }
     @JvmStatic
     fun jvmclasspaths(tc: ThreadContext): SixModelObject {
-        val Array = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.listType!!
-        val Str = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType
+        val Array = tc.frame.codeRef.staticInfo.compUnit.hllConfig.listType!!
+        val Str = tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType
         val result = Array.st.REPR.allocate(tc, Array.st)
         val cpStr = System.getProperty("java.class.path")
         val cps = java.util.regex.Pattern.compile("[:;]").split(cpStr)
@@ -8355,8 +8355,8 @@ object Ops {
 
     @JvmStatic
     fun jvmgetconfig(tc: ThreadContext): SixModelObject {
-        val hashType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.hashType!!
-        val strType = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!.strBoxType
+        val hashType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.hashType!!
+        val strType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType
         val res = hashType.st.REPR.allocate(tc, hashType.st)
 
         try {
@@ -8497,7 +8497,7 @@ object Ops {
             "set-cur-hll-config-key" -> {
                 val key = unbox_s(args!!.at_pos_boxed(tc, 0), tc)
                 val value = args.at_pos_boxed(tc, 1)
-                val hllName = tc.curFrame!!.codeRef.staticInfo.compUnit.hllName()
+                val hllName = tc.frame.codeRef.staticInfo.compUnit.hllName()
                 val config = tc.gc.getHLLConfigFor(hllName)
                 when (key) {
                     "uint_box" -> config.uintBoxType = value

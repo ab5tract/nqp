@@ -20,7 +20,7 @@ class CArray : REPR() {
         val obj = TypeObject()
         obj.st = st
         st.WHAT = obj
-        return st.WHAT!!
+        return st.WHAT
     }
 
     override fun allocate(tc: ThreadContext, st: STable): SixModelObject {
@@ -37,7 +37,7 @@ class CArray : REPR() {
         val meth = Ops.findmethodNonFatal(st.WHAT, "of", tc)
         if (Ops.isnull(meth) == 1L)
             ExceptionHandling.dieInternal(tc, "CArray representation expects an 'of' method, specifying the element type")
-        Ops.invokeDirect(tc, meth, CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null), arrayOf<Any?>(st.WHAT!!))
+        Ops.invokeDirect(tc, meth, CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null), arrayOf<Any?>(st.WHAT))
         data.elem_type = Ops.decont(Ops.result_o(tc.resultFrame()), tc)
         if (Ops.isnull(data.elem_type) == 1L)
             ExceptionHandling.dieInternal(tc, "CArray representation expects a non-null return value from the 'of' method, specifying the element type")
