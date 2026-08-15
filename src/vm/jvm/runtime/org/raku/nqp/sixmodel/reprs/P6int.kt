@@ -7,6 +7,8 @@ import org.objectweb.asm.Opcodes
 import org.raku.nqp.runtime.NativeSupport
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
+import org.raku.nqp.sixmodel.BoxedPrimitive
+import org.raku.nqp.sixmodel.Inlining
 import org.raku.nqp.sixmodel.REPR
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SerializationReader
@@ -32,13 +34,8 @@ class P6int : REPR() {
         val obj = TypeObject()
         obj.st = st
         st.WHAT = obj
-        val ss = StorageSpec()
-        ss.inlineable = StorageSpec.INLINED
-        ss.boxed_primitive = if (ss.is_unsigned.toInt() == 0) StorageSpec.BP_INT else StorageSpec.BP_UINT
-        ss.bits = 64
-        ss.can_box = StorageSpec.CAN_BOX_INT
-        st.REPRData = ss
-        return st.WHAT!!
+        st.REPRData = StorageSpec.integer(64)
+        return st.WHAT
     }
 
     override fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {
@@ -47,8 +44,7 @@ class P6int : REPR() {
             val bits = integerInfo!!.at_key_boxed(tc, "bits")
             if (Ops.isnull(bits) == 0L) {
                 val bitwidth = bits!!.get_int(tc).toShort()
-                val ss = st.REPRData as StorageSpec
-                ss.bits = when (bitwidth.toInt()) {
+                val width = when (bitwidth.toInt()) {
                     P6INT_C_TYPE_CHAR.toInt() -> java.lang.Byte.SIZE.toShort()
                     P6INT_C_TYPE_SHORT.toInt() -> java.lang.Short.SIZE.toShort()
                     P6INT_C_TYPE_INT.toInt() -> Integer.SIZE.toShort()
@@ -61,12 +57,12 @@ class P6int : REPR() {
                     P6INT_C_TYPE_BOOL.toInt() -> java.lang.Byte.SIZE.toShort()
                     else -> bitwidth
                 }
+                st.REPRData = (st.REPRData as StorageSpec).copy(bits = width)
             }
             val unsigned = integerInfo.at_key_boxed(tc, "unsigned")
             if (Ops.isnull(unsigned) == 0L) {
                 val ss = st.REPRData as StorageSpec
-                ss.is_unsigned = unsigned!!.get_int(tc).toShort()
-                ss.boxed_primitive = if (ss.is_unsigned.toInt() == 0) StorageSpec.BP_INT else StorageSpec.BP_UINT
+                st.REPRData = StorageSpec.integer(ss.bits, unsigned!!.get_int(tc) != 0L)
             }
         }
     }
@@ -160,16 +156,12 @@ class P6int : REPR() {
 
     override fun serialize_repr_data(tc: ThreadContext, st: STable, writer: SerializationWriter) {
         writer.writeInt((st.REPRData as StorageSpec).bits.toLong())
-        writer.writeInt((st.REPRData as StorageSpec).is_unsigned.toLong())
+        writer.writeInt(if ((st.REPRData as StorageSpec).isUnsigned) 1L else 0L)
     }
 
     override fun deserialize_repr_data(tc: ThreadContext, st: STable, reader: SerializationReader) {
-        val ss = StorageSpec()
-        ss.inlineable = StorageSpec.INLINED
-        ss.bits = if (reader.version >= 7) reader.readLong().toShort() else 64
-        ss.is_unsigned = if (reader.version >= 8) reader.readLong().toShort() else 0
-        ss.boxed_primitive = if (ss.is_unsigned.toInt() == 0) StorageSpec.BP_INT else StorageSpec.BP_UINT
-        ss.can_box = StorageSpec.CAN_BOX_INT
-        st.REPRData = ss
+        val bits = if (reader.version >= 7) reader.readLong().toShort() else 64
+        val unsigned = reader.version >= 8 && reader.readLong() != 0L
+        st.REPRData = StorageSpec.integer(bits, unsigned)
     }
 }

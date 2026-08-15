@@ -3,6 +3,8 @@ package org.raku.nqp.sixmodel.reprs
 import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
+import org.raku.nqp.sixmodel.BoxedPrimitive
+import org.raku.nqp.sixmodel.Inlining
 import org.raku.nqp.sixmodel.REPR
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SerializationReader
@@ -17,7 +19,7 @@ class MultiDimArray : REPR() {
         val obj = TypeObject()
         obj.st = st
         st.WHAT = obj
-        return st.WHAT!!
+        return st.WHAT
     }
 
     override fun allocate(tc: ThreadContext, st: STable): SixModelObject {
@@ -25,23 +27,23 @@ class MultiDimArray : REPR() {
         if (rd != null) {
             val ss = rd.ss
             val obj: MultiDimArrayInstanceBase = if (ss != null) {
-                when (ss.boxed_primitive) {
-                    StorageSpec.BP_INT -> when (ss.bits.toInt()) {
+                when (ss.boxedPrimitive) {
+                    BoxedPrimitive.INT -> when (ss.bits.toInt()) {
                         64 -> MultiDimArrayInstance_i()
                         8 -> MultiDimArrayInstance_i8()
                         16 -> MultiDimArrayInstance_i16()
                         32 -> MultiDimArrayInstance_i32()
                         else -> MultiDimArrayInstance_i()
                     }
-                    StorageSpec.BP_UINT -> when (ss.bits.toInt()) {
+                    BoxedPrimitive.UINT -> when (ss.bits.toInt()) {
                         64 -> MultiDimArrayInstance_i()
                         8 -> MultiDimArrayInstance_u8()
                         16 -> MultiDimArrayInstance_u16()
                         32 -> MultiDimArrayInstance_u32()
                         else -> MultiDimArrayInstance_i()
                     }
-                    StorageSpec.BP_NUM -> MultiDimArrayInstance_n()
-                    StorageSpec.BP_STR -> MultiDimArrayInstance_s()
+                    BoxedPrimitive.NUM -> MultiDimArrayInstance_n()
+                    BoxedPrimitive.STR -> MultiDimArrayInstance_s()
                     else -> MultiDimArrayInstance()
                 }
             }
@@ -73,13 +75,13 @@ class MultiDimArray : REPR() {
             reprData.numDimensions = dimensions
             val type = arrayInfo.at_key_boxed(tc, "type")
             val ss = if (Ops.isnull(type) == 0L) type!!.st.REPR.get_storage_spec(tc, type.st) else null
-            when (ss?.boxed_primitive ?: StorageSpec.REFERENCE) {
-                StorageSpec.BP_INT, StorageSpec.BP_UINT, StorageSpec.BP_NUM, StorageSpec.BP_STR -> {
+            when (ss?.boxedPrimitive ?: Inlining.REFERENCE) {
+                BoxedPrimitive.INT, BoxedPrimitive.UINT, BoxedPrimitive.NUM, BoxedPrimitive.STR -> {
                     reprData.type = type
                     reprData.ss = ss
                 }
                 else ->
-                    if (ss != null && ss.inlineable != StorageSpec.REFERENCE)
+                    if (ss != null && ss.inlining != Inlining.REFERENCE)
                         throw ExceptionHandling.dieInternal(tc, "MultiDimArray can only store native int/num/str or reference types")
             }
             st.REPRData = reprData
@@ -97,23 +99,23 @@ class MultiDimArray : REPR() {
         var obj: MultiDimArrayInstanceBase? = null
         val ss = rd?.ss
         if (ss != null) {
-            obj = when (ss.boxed_primitive) {
-                StorageSpec.BP_INT -> when (ss.bits.toInt()) {
+            obj = when (ss.boxedPrimitive) {
+                BoxedPrimitive.INT -> when (ss.bits.toInt()) {
                     64 -> MultiDimArrayInstance_i()
                     8 -> MultiDimArrayInstance_i8()
                     16 -> MultiDimArrayInstance_i16()
                     32 -> MultiDimArrayInstance_i32()
                     else -> MultiDimArrayInstance_i()
                 }
-                StorageSpec.BP_UINT -> when (ss.bits.toInt()) {
+                BoxedPrimitive.UINT -> when (ss.bits.toInt()) {
                     64 -> MultiDimArrayInstance_i()
                     8 -> MultiDimArrayInstance_u8()
                     16 -> MultiDimArrayInstance_u16()
                     32 -> MultiDimArrayInstance_u32()
                     else -> MultiDimArrayInstance_i()
                 }
-                StorageSpec.BP_NUM -> MultiDimArrayInstance_n()
-                StorageSpec.BP_STR -> MultiDimArrayInstance_s()
+                BoxedPrimitive.NUM -> MultiDimArrayInstance_n()
+                BoxedPrimitive.STR -> MultiDimArrayInstance_s()
                 else -> null
             }
         }

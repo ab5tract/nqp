@@ -1,47 +1,87 @@
 package org.raku.nqp.sixmodel
 
-/* This data structure describes what storage a given representation
- * needs if something of that representation is to be embedded in
- * another place. For any representation that expects to be used
- * as a kind of reference type, it will just want to be a pointer.
- * But for other things, they would prefer to be "inlined" into
- * the object. */
-class StorageSpec {
+/** Whether a representation wants to be a pointer or to sit inline. */
+enum class Inlining { REFERENCE, INLINED }
+
+/**
+ * The primitive that an inlined representation unboxes to.
+ *
+ * The numbers are not ours to pick: nqp::objprimspec hands them to NQP
+ * code, which indexes a table of runtime types with them, and the other
+ * backends answer with the same ones. Hence the gap before UINT.
+ */
+enum class BoxedPrimitive(val spec: Int) {
+    NONE(0),
+    INT(1),
+    NUM(2),
+    STR(3),
+    UINT(10);
+
     companion object {
-        /* Inlined or not. */
-        const val REFERENCE: Short = 0
-        const val INLINED: Short = 1
+        private val bySpec = entries.associateBy { it.spec }
 
-        /* Possible options for boxed primitives. */
-        const val BP_NONE: Short = 0
-        const val BP_INT: Short = 1
-        const val BP_NUM: Short = 2
-        const val BP_STR: Short = 3
-        const val BP_UINT: Short = 10
-
-        /* can_box bit field values. */
-        const val CAN_BOX_INT: Short = 1
-        const val CAN_BOX_NUM: Short = 2
-        const val CAN_BOX_STR: Short = 4
-
-        @JvmField val BOXED = StorageSpec()
+        /** The primitive a persisted spec number names. */
+        @JvmStatic
+        fun ofSpec(spec: Int): BoxedPrimitive = bySpec[spec] ?: NONE
     }
+}
 
-    /* 0 if this is to be referenced, anything else otherwise. */
-    @JvmField var inlineable: Short = 0
+/** A primitive that a representation can box and unbox. */
+enum class Boxable { INT, NUM, STR }
 
-    /* For things that want to be inlined, the number of bits of
-     * storage they need. Ignored otherwise. */
-    @JvmField var bits: Short = 0
+/**
+ * What storage a given representation needs if something of that
+ * representation is to be embedded in another place. For any representation
+ * that expects to be used as a kind of reference type, it will just want to
+ * be a pointer. But for other things, they would prefer to be "inlined" into
+ * the object.
+ */
+data class StorageSpec(
+    /** Whether this is to be referenced or inlined. */
+    val inlining: Inlining = Inlining.REFERENCE,
 
-    /* For things that are inlined, if they are just storage of a
-     * primitive type and can unbox, this says what primitive type
-     * that they unbox to. */
-    @JvmField var boxed_primitive: Short = 0
+    /** For things that want to be inlined, the number of bits of storage
+     *  they need. Ignored otherwise. */
+    val bits: Short = 0,
 
-    /* The types that this one can box/unbox to. */
-    @JvmField var can_box: Short = 0
+    /** For things that are inlined, if they are just storage of a primitive
+     *  type and can unbox, the primitive type they unbox to. */
+    val boxedPrimitive: BoxedPrimitive = BoxedPrimitive.NONE,
 
-    /* For ints, whether it's an unsigned value. */
-    @JvmField var is_unsigned: Short = 0
+    /** The types that this one can box and unbox. */
+    val canBox: Set<Boxable> = emptySet(),
+
+    /** For ints, whether it's an unsigned value. */
+    val isUnsigned: Boolean = false,
+) {
+    companion object {
+        @JvmField val BOXED = StorageSpec()
+
+        /** An integer of the given width, signed or not. */
+        @JvmStatic
+        fun integer(bits: Short, unsigned: Boolean = false) = StorageSpec(
+            inlining = Inlining.INLINED,
+            bits = bits,
+            boxedPrimitive = if (unsigned) BoxedPrimitive.UINT else BoxedPrimitive.INT,
+            canBox = setOf(Boxable.INT),
+            isUnsigned = unsigned,
+        )
+
+        /** A floating point number of the given width. */
+        @JvmStatic
+        fun number(bits: Short) = StorageSpec(
+            inlining = Inlining.INLINED,
+            bits = bits,
+            boxedPrimitive = BoxedPrimitive.NUM,
+            canBox = setOf(Boxable.NUM),
+        )
+
+        /** A string. */
+        @JvmStatic
+        fun string() = StorageSpec(
+            inlining = Inlining.INLINED,
+            boxedPrimitive = BoxedPrimitive.STR,
+            canBox = setOf(Boxable.STR),
+        )
+    }
 }

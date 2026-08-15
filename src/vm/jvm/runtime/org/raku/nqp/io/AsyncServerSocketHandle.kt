@@ -50,7 +50,7 @@ class AsyncServerSocketHandle(tc: ThreadContext) : IIOBindable, IIOCancelable {
     }
 
     fun accept(tc: ThreadContext, task: AsyncTaskInstance) {
-        val config = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!
+        val config = tc.frame.codeRef.staticInfo.compUnit.hllConfig
         val ioType = config.ioType!!
         val listType = config.listType!!
         val nullValue = config.nullValue
