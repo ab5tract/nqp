@@ -1,12 +1,10 @@
 package org.raku.nqp.sixmodel.reprs
 
-import com.sun.jna.Native
-import com.sun.jna.NativeLong
-
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 
+import org.raku.nqp.runtime.NativeSupport
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.REPR
@@ -54,11 +52,11 @@ class P6int : REPR() {
                     P6INT_C_TYPE_CHAR.toInt() -> java.lang.Byte.SIZE.toShort()
                     P6INT_C_TYPE_SHORT.toInt() -> java.lang.Short.SIZE.toShort()
                     P6INT_C_TYPE_INT.toInt() -> Integer.SIZE.toShort()
-                    /* NativeLong.SIZE is in bytes, not bits. */
-                    P6INT_C_TYPE_LONG.toInt() -> (8 * NativeLong.SIZE).toShort()
+                    /* C_LONG_SIZE is in bytes, not bits. */
+                    P6INT_C_TYPE_LONG.toInt() -> (8 * NativeSupport.C_LONG_SIZE).toShort()
                     /* There is no LongLong in Java */
                     P6INT_C_TYPE_LONGLONG.toInt() -> java.lang.Long.SIZE.toShort()
-                    P6INT_C_TYPE_SIZE_T.toInt() -> (8 * Native.SIZE_T_SIZE).toShort()
+                    P6INT_C_TYPE_SIZE_T.toInt() -> (8 * NativeSupport.SIZE_T_SIZE).toShort()
                     /* Let's just hope that a bool is 1 byte in size, always. */
                     P6INT_C_TYPE_BOOL.toInt() -> java.lang.Byte.SIZE.toShort()
                     else -> bitwidth

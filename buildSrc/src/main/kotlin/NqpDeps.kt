@@ -15,8 +15,6 @@ object NqpDeps {
         "org.ow2.asm:asm-tree:9.10.1",
         "it.unimi.dsi:fastutil:8.5.19",
         "org.jline:jline:4.3.1",
-        "net.java.dev.jna:jna:5.19.1",
-        "net.java.dev.jna:jna-platform:5.19.1",
         "org.lz4:lz4-java:1.8.0",
         // Kotlin runtime for the incrementally converted sources
         // (kotlin-prototype); brings org.jetbrains:annotations transitively.
@@ -26,7 +24,7 @@ object NqpDeps {
     /** Module-name order for sorting resolved jar files back into
      *  THIRDPARTY_JARS order (Gradle resolution orders dependencies first). */
     val moduleOrder = listOf(
-        "asm", "asm-tree", "fastutil", "jline", "jna", "jna-platform", "lz4-java",
+        "asm", "asm-tree", "fastutil", "jline", "lz4-java",
         "kotlin-stdlib", "annotations",
     )
 

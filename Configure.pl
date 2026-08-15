@@ -91,7 +91,7 @@ MAIN: {
         'with-moar=s',      'gen-moar:s',
         'moar-option=s@',   'with-asm=s',
         'with-asm-tree=s',  'with-jline=s',
-        'with-jna=s',       'make-install!',
+        'make-install!',
         'makefile-timing!', 'git-protocol=s',
         'ignore-errors!',   'link',
         'git-depth=s',      'git-cache-dir=s',
@@ -192,7 +192,6 @@ General Options:
     --with-asm='/path/to/jar'
     --with-asm-tree='/path/to/jar'
     --with-jline='/path/to/jar'
-    --with-jna='/path/to/jar'
                        Provide paths to already installed jars
     --github-user=<user>
                        Fetch all repositories (rakudo, nqp, roast, MoarVM) from
