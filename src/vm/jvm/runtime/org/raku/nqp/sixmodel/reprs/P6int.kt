@@ -38,7 +38,7 @@ class P6int : REPR() {
         ss.bits = 64
         ss.can_box = StorageSpec.CAN_BOX_INT
         st.REPRData = ss
-        return st.WHAT!!
+        return st.WHAT
     }
 
     override fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {

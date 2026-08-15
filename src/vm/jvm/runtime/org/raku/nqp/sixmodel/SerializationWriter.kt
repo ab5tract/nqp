@@ -534,7 +534,7 @@ class SerializationWriter(
 
         /* Write HOW, WHAT and WHO. */
         writeObjRef(st.HOW!!)
-        writeObjRef(st.WHAT!!)
+        writeObjRef(st.WHAT)
         writeRef(st.WHO)
 
         /* Method cache and v-table. */

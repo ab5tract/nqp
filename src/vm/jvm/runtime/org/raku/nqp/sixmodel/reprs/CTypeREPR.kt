@@ -33,7 +33,7 @@ abstract class CTypeREPR(
         val obj = TypeObject()
         obj.st = st
         st.WHAT = obj
-        return st.WHAT!!
+        return st.WHAT
     }
 
     override fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {

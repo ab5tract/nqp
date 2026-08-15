@@ -12,7 +12,7 @@ open class NativeRefContainerSpec : ContainerSpec() {
         val rd = cont.st.REPRData as NativeRefREPRData
         var hll = cont.st.hllOwner
         if (hll == null)
-            hll = tc.curFrame!!.codeRef.staticInfo.compUnit.hllConfig!!
+            hll = tc.frame.codeRef.staticInfo.compUnit.hllConfig
         return when (rd.primitive_type) {
             StorageSpec.BP_INT, StorageSpec.BP_UINT ->
                 Ops.box_i(fetch_i(tc, cont), hll.intBoxType, tc)

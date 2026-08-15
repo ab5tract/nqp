@@ -63,7 +63,7 @@ class STable(
     /**
      * The type-object.
      */
-    @JvmField var WHAT: SixModelObject? = null
+    lateinit var WHAT: SixModelObject
 
     /**
      * Info for types that are parametric or parameterized.
