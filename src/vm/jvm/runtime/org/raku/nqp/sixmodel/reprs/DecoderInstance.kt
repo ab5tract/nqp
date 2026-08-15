@@ -314,8 +314,17 @@ class DecoderInstance : SixModelObject() {
         while (remaining > 0 && decoded.size > 0) {
             val source = decoded[0]
             if (source.remaining() <= remaining) {
+                /* Snapshot the count first: modern JDKs fast-path
+                 * append(CharSequence) for a CharBuffer argument into
+                 * put(CharBuffer), which drains the source — so reading
+                 * source.remaining() after the append yields 0, the loop
+                 * never converged, and the next buffer overflowed the
+                 * target (the long-standing 116-streaming-decoder.t
+                 * BufferOverflowException, present in the Java original
+                 * too). */
+                val count = source.remaining()
                 target.append(source)
-                remaining -= source.remaining()
+                remaining -= count
                 decoded.removeAt(0)
             }
             else {
