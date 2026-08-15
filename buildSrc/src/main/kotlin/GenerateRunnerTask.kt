@@ -74,9 +74,10 @@ abstract class GenerateRunnerTask : DefaultTask() {
             |
             |EXEC=${'$'}(rreadlink "${'$'}0")
             |
-            |# --enable-native-access: JNA loads its dispatch library via
-            |# System.load, which JDK 24+ warns about (JEP 472) and will
-            |# eventually block for code without native access enabled.
+            |# --enable-native-access: the native call support links foreign
+            |# functions with java.lang.foreign, whose restricted methods JDK
+            |# 24+ warns about (JEP 472) and will eventually refuse to code
+            |# that has not been granted native access.
             |#
             |# NQP_JVM_MAXHEAP caps the heap (default 4g). The Makefile runner
             |# uses -XX:+AggressiveHeap (~half of physical RAM per JVM), which

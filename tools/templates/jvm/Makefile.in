@@ -14,8 +14,6 @@ ASM = @asm@
 ASMTREE = @asmtree@
 FASTUTIL = @fastutil@
 JLINE = @jline@
-JNA = @jna@
-JNAPLATFORM = @jnaplatform@
 LZ4 = @lz4@
 
 RUNTIME_JAVAS = \
@@ -27,8 +25,8 @@ RUNTIME_JAVAS = \
   @nfp(src/vm/jvm/runtime/org/raku/nqp/tools/*.java)@ \
 
 @bsv(RUNTIME)@ = @nfp(@bpm(RUNNER_JAR_DIR)@/nqp-runtime.@bext@)@
-THIRDPARTY_JARS = $(ASM)@cpsep@$(ASMTREE)@cpsep@$(FASTUTIL)@cpsep@$(JLINE)@cpsep@$(JNA)@cpsep@$(JNAPLATFORM)@cpsep@$(LZ4)
-@bpv(RUNNER_JARS)@ = @nfplq($(ASM) $(ASMTREE) $(FASTUTIL) $(JLINE) $(JNA) $(JNAPLATFORM) $(LZ4))@
+THIRDPARTY_JARS = $(ASM)@cpsep@$(ASMTREE)@cpsep@$(FASTUTIL)@cpsep@$(JLINE)@cpsep@$(LZ4)
+@bpv(RUNNER_JARS)@ = @nfplq($(ASM) $(ASMTREE) $(FASTUTIL) $(JLINE) $(LZ4))@
 @bpv(RUNNER_LIBS)@ = @nfplq(nqp.@bext@)@
 @bpv(EVAL_CLIENT)@ = @nfp(tools/jvm/eval-client.pl)@
 
@@ -63,8 +61,7 @@ THIRDPARTY_JARS = $(ASM)@cpsep@$(ASMTREE)@cpsep@$(FASTUTIL)@cpsep@$(JLINE)@cpsep
 	@echo(+++ Installing @uc(@backend@)@ specifics)@
 	$(NOECHO)$(CP) @q($(ASM))@ @q($(ASMTREE))@ @q($(DESTDIR@nop())@@bsm(NQP_LIB_DIR)@)@
 	$(NOECHO)$(CP) @q($(FASTUTIL))@ @q($(DESTDIR@nop())@@bsm(NQP_LIB_DIR)@)@
-	$(NOECHO)$(CP) @q($(JLINE))@ @q($(JNA))@ @q($(DESTDIR@nop())@@bsm(NQP_LIB_DIR)@)@
-	$(NOECHO)$(CP) @q($(JNAPLATFORM))@ @q($(DESTDIR@nop())@@bsm(NQP_LIB_DIR)@)@
+	$(NOECHO)$(CP) @q($(JLINE))@ @q($(DESTDIR@nop())@@bsm(NQP_LIB_DIR)@)@
 	$(NOECHO)$(CP) @q($(LZ4))@ @q($(DESTDIR@nop())@@bsm(NQP_LIB_DIR)@)@
 	$(NOECHO)$(CP) @q(@bsm(RUNTIME)@)@ @q($(DESTDIR@nop())@@bsm(NQP_LIB_DIR)@)@
 	$(NOECHO)$(CP) @q(@bpm(EVAL_CLIENT)@)@ @q($(DESTDIR)$(BIN_DIR))@
