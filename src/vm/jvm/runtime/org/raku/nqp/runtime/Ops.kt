@@ -1,14 +1,5 @@
 package org.raku.nqp.runtime
 
-import com.sun.jna.Memory
-import com.sun.jna.platform.win32.Kernel32
-import com.sun.jna.platform.win32.WinError
-import com.sun.jna.platform.win32.WinNT
-import com.sun.jna.platform.win32.WinNT.HANDLE
-import com.sun.jna.platform.win32.WinBase
-import com.sun.jna.platform.win32.WinBase.FILETIME
-import com.sun.jna.platform.win32.WinBase.FILE_BASIC_INFO
-import com.sun.jna.platform.win32.WinDef.DWORD
 import com.sun.management.OperatingSystemMXBean
 import java.io.File
 import java.io.IOException
@@ -188,29 +179,8 @@ object Ops {
 
     const val MAX_GRAPHEMES           = 2147483647
 
-    private fun windows_native_changetime(filename: String?): Long {
-        var hFile: HANDLE? = null
-        try {
-            hFile = Kernel32.INSTANCE.CreateFile(filename, WinNT.GENERIC_READ, WinNT.FILE_SHARE_READ, WinBase.SECURITY_ATTRIBUTES(), WinNT.OPEN_EXISTING, WinNT.FILE_ATTRIBUTE_NORMAL, null)
-            if (Kernel32.INSTANCE.GetLastError() != WinError.ERROR_SUCCESS) {
-                return -1
-            }
-
-            val p = Memory(FILE_BASIC_INFO.sizeOf().toLong())
-            if (Kernel32.INSTANCE.GetFileInformationByHandleEx(hFile, WinBase.FileBasicInfo, p, DWORD(p.size()))) {
-                val fbi = FILE_BASIC_INFO(p)
-                return FILETIME(fbi.ChangeTime).toTime() / 1000
-            } else {
-                return -1
-            }
-        } catch (e: Exception) {
-            return -1
-        } finally {
-            if (hFile != null) {
-                Kernel32.INSTANCE.CloseHandle(hFile)
-            }
-        }
-    }
+    private fun windows_native_changetime(filename: String?): Long =
+        WindowsChangeTime.of(filename)
 
     @JvmStatic
     fun stat(filename: String?, status: Long): Long {
