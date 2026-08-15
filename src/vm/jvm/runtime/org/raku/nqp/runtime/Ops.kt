@@ -75,6 +75,8 @@ import org.raku.nqp.io.StandardReadHandle
 import org.raku.nqp.io.StandardWriteHandle
 import org.raku.nqp.jast2bc.JASTCompiler
 import org.raku.nqp.sixmodel.BoolificationSpec
+import org.raku.nqp.sixmodel.Boxable
+import org.raku.nqp.sixmodel.BoxedPrimitive
 import org.raku.nqp.sixmodel.ContainerConfigurer
 import org.raku.nqp.sixmodel.ContainerSpec
 import org.raku.nqp.sixmodel.InvocationSpec
@@ -104,17 +106,17 @@ import org.raku.nqp.sixmodel.reprs.NFAInstance
 import org.raku.nqp.sixmodel.reprs.NFAStateInfo
 import org.raku.nqp.sixmodel.reprs.NativeRefInstanceAttribute
 import org.raku.nqp.sixmodel.reprs.NativeRefInstanceIntLex
+import org.raku.nqp.sixmodel.reprs.NativeRefInstanceMultidim
 import org.raku.nqp.sixmodel.reprs.NativeRefInstanceNumLex
 import org.raku.nqp.sixmodel.reprs.NativeRefInstancePositional
-import org.raku.nqp.sixmodel.reprs.NativeRefInstanceMultidim
 import org.raku.nqp.sixmodel.reprs.NativeRefInstanceStrLex
 import org.raku.nqp.sixmodel.reprs.NativeRefREPRData
+import org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance
+import org.raku.nqp.sixmodel.reprs.P6OpaqueREPRData
 import org.raku.nqp.sixmodel.reprs.P6bigintInstance
 import org.raku.nqp.sixmodel.reprs.P6int
-import org.raku.nqp.sixmodel.reprs.P6str
 import org.raku.nqp.sixmodel.reprs.P6num
-import org.raku.nqp.sixmodel.reprs.P6OpaqueREPRData
-import org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance
+import org.raku.nqp.sixmodel.reprs.P6str
 import org.raku.nqp.sixmodel.reprs.ReentrantMutexInstance
 import org.raku.nqp.sixmodel.reprs.SCRefInstance
 import org.raku.nqp.sixmodel.reprs.SemaphoreInstance
@@ -1771,11 +1773,11 @@ object Ops {
     fun lexprimspec(pad: SixModelObject?, key: String, tc: ThreadContext): Long {
         if (pad is ContextRefInstance) {
             val sci = pad.context!!.codeRef.staticInfo
-            if (sci.oTryGetLexicalIdx(key) != -1) return StorageSpec.BP_NONE.toLong()
-            if (sci.iTryGetLexicalIdx(key) != -1) return StorageSpec.BP_INT.toLong()
-            if (sci.uTryGetLexicalIdx(key) != -1) return StorageSpec.BP_UINT.toLong()
-            if (sci.nTryGetLexicalIdx(key) != -1) return StorageSpec.BP_NUM.toLong()
-            if (sci.sTryGetLexicalIdx(key) != -1) return StorageSpec.BP_STR.toLong()
+            if (sci.oTryGetLexicalIdx(key) != -1) return BoxedPrimitive.NONE.spec.toLong()
+            if (sci.iTryGetLexicalIdx(key) != -1) return BoxedPrimitive.INT.spec.toLong()
+            if (sci.uTryGetLexicalIdx(key) != -1) return BoxedPrimitive.UINT.spec.toLong()
+            if (sci.nTryGetLexicalIdx(key) != -1) return BoxedPrimitive.NUM.spec.toLong()
+            if (sci.sTryGetLexicalIdx(key) != -1) return BoxedPrimitive.STR.spec.toLong()
             throw ExceptionHandling.dieInternal(tc, "Invalid lexical name passed to lexprimspec")
         }
         else {
@@ -2463,15 +2465,15 @@ object Ops {
         if (obj is CallCaptureInstance) {
             when (obj.descriptor!!.argFlags[idx.toInt()]) {
             CallSiteDescriptor.ARG_INT ->
-                return StorageSpec.BP_INT.toLong()
+                return BoxedPrimitive.INT.spec.toLong()
             CallSiteDescriptor.ARG_UINT ->
-                return StorageSpec.BP_UINT.toLong()
+                return BoxedPrimitive.UINT.spec.toLong()
             CallSiteDescriptor.ARG_NUM ->
-                return StorageSpec.BP_NUM.toLong()
+                return BoxedPrimitive.NUM.spec.toLong()
             CallSiteDescriptor.ARG_STR ->
-                return StorageSpec.BP_STR.toLong()
+                return BoxedPrimitive.STR.spec.toLong()
             else ->
-                return StorageSpec.BP_NONE.toLong()
+                return BoxedPrimitive.NONE.spec.toLong()
             }
         }
         else {
@@ -2849,11 +2851,11 @@ object Ops {
     }
     @JvmStatic
     fun objprimspec(obj: SixModelObject?, tc: ThreadContext): Long {
-        return if (isnull(obj) == 1L) 0 else obj!!.st.REPR.get_storage_spec(tc, obj.st).boxed_primitive.toLong()
+        return if (isnull(obj) == 1L) 0 else obj!!.st.REPR.get_storage_spec(tc, obj.st).boxedPrimitive.spec.toLong()
     }
     @JvmStatic
     fun objprimunsigned(obj: SixModelObject?, tc: ThreadContext): Long {
-        return if (isnull(obj) == 1L) 0 else obj!!.st.REPR.get_storage_spec(tc, obj.st).is_unsigned.toLong()
+        return if (isnull(obj) == 1L) 0 else if (obj!!.st.REPR.get_storage_spec(tc, obj.st).isUnsigned) 1L else 0L
     }
     @JvmStatic
     fun objprimbits(obj: SixModelObject?, tc: ThreadContext): Long {
@@ -4072,29 +4074,29 @@ object Ops {
         }
         return 0
     }
-    private fun getContainerPrimitive(obj: SixModelObject?): Short {
+    private fun getContainerPrimitive(obj: SixModelObject?): BoxedPrimitive {
         if (isnull(obj) == 0L && obj !is TypeObject) {
             val cs = obj!!.st.ContainerSpec
             if (cs is NativeRefContainerSpec)
-                return (obj.st.REPRData as NativeRefREPRData).primitive_type.toShort()
+                return (obj.st.REPRData as NativeRefREPRData).primitive_type
         }
-        return StorageSpec.BP_NONE.toShort()
+        return BoxedPrimitive.NONE
     }
     @JvmStatic
     fun iscont_i(obj: SixModelObject?): Long {
-        return if (getContainerPrimitive(obj).toInt() == StorageSpec.BP_INT.toInt()) 1 else 0
+        return if (getContainerPrimitive(obj) == BoxedPrimitive.INT) 1 else 0
     }
     @JvmStatic
     fun iscont_u(obj: SixModelObject?): Long {
-        return if (getContainerPrimitive(obj).toInt() == StorageSpec.BP_UINT.toInt()) 1 else 0
+        return if (getContainerPrimitive(obj) == BoxedPrimitive.UINT) 1 else 0
     }
     @JvmStatic
     fun iscont_n(obj: SixModelObject?): Long {
-        return if (getContainerPrimitive(obj).toInt() == StorageSpec.BP_NUM.toInt()) 1 else 0
+        return if (getContainerPrimitive(obj) == BoxedPrimitive.NUM) 1 else 0
     }
     @JvmStatic
     fun iscont_s(obj: SixModelObject?): Long {
-        return if (getContainerPrimitive(obj).toInt() == StorageSpec.BP_STR.toInt()) 1 else 0
+        return if (getContainerPrimitive(obj) == BoxedPrimitive.STR) 1 else 0
     }
     @JvmStatic
     fun decont(obj: SixModelObject?, tc: ThreadContext): SixModelObject? {
@@ -4204,12 +4206,12 @@ object Ops {
             iter.target = agg
             iter.idx = -1
             iter.limit = agg.elems(tc)
-            when (agg.st.REPR.get_value_storage_spec(tc, agg.st)!!.boxed_primitive.toInt()) {
-                StorageSpec.BP_UINT.toInt(), StorageSpec.BP_INT.toInt() ->
+            when (agg.st.REPR.get_value_storage_spec(tc, agg.st)!!.boxedPrimitive) {
+                BoxedPrimitive.UINT, BoxedPrimitive.INT ->
                     iter.iterMode = VMIterInstance.MODE_ARRAY_INT
-                StorageSpec.BP_NUM.toInt() ->
+                BoxedPrimitive.NUM ->
                     iter.iterMode = VMIterInstance.MODE_ARRAY_NUM
-                StorageSpec.BP_STR.toInt() ->
+                BoxedPrimitive.STR ->
                     iter.iterMode = VMIterInstance.MODE_ARRAY_STR
                 else ->
                     iter.iterMode = VMIterInstance.MODE_ARRAY
@@ -4348,7 +4350,7 @@ object Ops {
 
         // If it can unbox to a string, that wins right off.
         val ss = o!!.st.REPR.get_storage_spec(tc, o.st)
-        if ((ss.can_box.toInt() and StorageSpec.CAN_BOX_STR.toInt()) != 0 && o !is TypeObject)
+        if (Boxable.STR in ss.canBox && o !is TypeObject)
             return o.get_str(tc)
 
         // If it has a Str method, that wins.
@@ -4365,9 +4367,9 @@ object Ops {
             return ""
 
         // See if it can unbox to another primitive we can stringify.
-        if ((ss.can_box.toInt() and StorageSpec.CAN_BOX_INT.toInt()) != 0)
+        if (Boxable.INT in ss.canBox)
             return coerce_i2s(o.get_int(tc))
-        if ((ss.can_box.toInt() and StorageSpec.CAN_BOX_NUM.toInt()) != 0)
+        if (Boxable.NUM in ss.canBox)
             return coerce_n2s(o.get_num(tc))
 
         // If it's an exception, take the message.
@@ -4389,9 +4391,9 @@ object Ops {
 
         // If it can unbox as an int or a num, that wins right off.
         val ss = o!!.st.REPR.get_storage_spec(tc, o.st)
-        if ((ss.can_box.toInt() and StorageSpec.CAN_BOX_INT.toInt()) != 0)
+        if (Boxable.INT in ss.canBox)
             return o.get_int(tc).toDouble()
-        if ((ss.can_box.toInt() and StorageSpec.CAN_BOX_NUM.toInt()) != 0)
+        if (Boxable.NUM in ss.canBox)
             return o.get_num(tc)
 
         // Otherwise, look for a Num method.
@@ -4406,7 +4408,7 @@ object Ops {
             return 0.0
 
         // See if it can unbox to a primitive we can numify.
-        if ((ss.can_box.toInt() and StorageSpec.CAN_BOX_STR.toInt()) != 0)
+        if (Boxable.STR in ss.canBox)
             return coerce_s2n(o.get_str(tc))
         if (o is VMArrayInstance || o is VMHashInstance)
             return o.elems(tc).toDouble()
@@ -4424,9 +4426,9 @@ object Ops {
 
         // If it can unbox as an int or a num, that wins right off.
         val ss = o!!.st.REPR.get_storage_spec(tc, o.st)
-        if ((ss.can_box.toInt() and StorageSpec.CAN_BOX_INT.toInt()) != 0)
+        if (Boxable.INT in ss.canBox)
             return o.get_int(tc)
-        if ((ss.can_box.toInt() and StorageSpec.CAN_BOX_NUM.toInt()) != 0)
+        if (Boxable.NUM in ss.canBox)
             return o.get_num(tc).toLong()
 
         // Otherwise, look for an Int method.
@@ -4441,7 +4443,7 @@ object Ops {
             return 0
 
         // See if it can unbox to a primitive we can numify.
-        if ((ss.can_box.toInt() and StorageSpec.CAN_BOX_STR.toInt()) != 0)
+        if (Boxable.STR in ss.canBox)
             return coerce_s2i(o.get_str(tc))
         if (o is VMArrayInstance || o is VMHashInstance)
             return o.elems(tc)
@@ -4646,8 +4648,8 @@ object Ops {
 
     @JvmStatic
     fun join(delimiter: String?, arr: SixModelObject?, tc: ThreadContext): String {
-        val prim = arr!!.st.REPR.get_value_storage_spec(tc, arr.st)!!.boxed_primitive.toInt()
-        if (prim != StorageSpec.BP_NONE.toInt() && prim != StorageSpec.BP_STR.toInt())
+        val prim = arr!!.st.REPR.get_value_storage_spec(tc, arr.st)!!.boxedPrimitive
+        if (prim != BoxedPrimitive.NONE && prim != BoxedPrimitive.STR)
             ExceptionHandling.dieInternal(tc, "Unsupported native array type in join")
 
         val numElems = arr.elems(tc).toInt()
@@ -4657,7 +4659,7 @@ object Ops {
         val strings = arrayOfNulls<String>(numElems)
         var totalLength = delimiter!!.length * (numElems - 1)
 
-        if (prim == StorageSpec.BP_STR.toInt()) {
+        if (prim == BoxedPrimitive.STR) {
             for (i in 0 until numElems) {
                 arr.at_pos_native(tc, i.toLong())
                 strings[i] = tc.native_s
@@ -4846,11 +4848,11 @@ object Ops {
         for (i in 0 until numElems) {
             val obj = arr.at_pos_boxed(tc, i.toLong())
             val ss = obj!!.st.REPR.get_storage_spec(tc, obj.st)
-            if ((ss.can_box.toInt() and StorageSpec.CAN_BOX_INT.toInt()) != 0) {
+            if (Boxable.INT in ss.canBox) {
                 args[i] = java.lang.Long.valueOf(obj.get_int(tc))
-            } else if ((ss.can_box.toInt() and StorageSpec.CAN_BOX_NUM.toInt()) != 0) {
+            } else if (Boxable.NUM in ss.canBox) {
                 args[i] = java.lang.Double.valueOf(obj.get_num(tc))
-            } else if ((ss.can_box.toInt() and StorageSpec.CAN_BOX_STR.toInt()) != 0) {
+            } else if (Boxable.STR in ss.canBox) {
                 args[i] = obj.get_str(tc)
             } else {
                 throw IllegalArgumentException("sprintf only accepts ints, nums, and strs, not " + obj.javaClass)

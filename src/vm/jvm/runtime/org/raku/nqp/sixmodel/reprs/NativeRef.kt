@@ -3,6 +3,7 @@ package org.raku.nqp.sixmodel.reprs
 import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
+import org.raku.nqp.sixmodel.BoxedPrimitive
 import org.raku.nqp.sixmodel.REPR
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SerializationReader
@@ -26,9 +27,9 @@ class NativeRef : REPR() {
                 "Cannot allocate NativeRef type that is not yet composed")
         val obj: SixModelObject = when (rd.ref_kind) {
             NativeRefREPRData.REF_LEXICAL -> when (rd.primitive_type) {
-                StorageSpec.BP_INT, StorageSpec.BP_UINT -> NativeRefInstanceIntLex()
-                StorageSpec.BP_NUM -> NativeRefInstanceNumLex()
-                StorageSpec.BP_STR -> NativeRefInstanceStrLex()
+                BoxedPrimitive.INT, BoxedPrimitive.UINT -> NativeRefInstanceIntLex()
+                BoxedPrimitive.NUM -> NativeRefInstanceNumLex()
+                BoxedPrimitive.STR -> NativeRefInstanceStrLex()
                 else -> throw ExceptionHandling.dieInternal(tc,
                     "Unknown primtive type in native ref allocation")
             }
@@ -46,8 +47,8 @@ class NativeRef : REPR() {
         val info = repr_info.at_key_boxed(tc, "nativeref")
         if (Ops.isnull(info) == 0L) {
             val type = info!!.at_key_boxed(tc, "type")
-            val prim = type!!.st.REPR.get_storage_spec(tc, type.st).boxed_primitive
-            if (prim != StorageSpec.BP_NONE) {
+            val prim = type!!.st.REPR.get_storage_spec(tc, type.st).boxedPrimitive
+            if (prim != BoxedPrimitive.NONE) {
                 val refkind = info.at_key_boxed(tc, "refkind")
                 if (Ops.isnull(refkind) == 0L) {
                     val refkindS = refkind!!.get_str(tc)
@@ -91,7 +92,7 @@ class NativeRef : REPR() {
     override fun serialize_repr_data(tc: ThreadContext, st: STable, writer: SerializationWriter) {
         val rd = st.REPRData as NativeRefREPRData?
         if (rd != null) {
-            writer.writeInt32(rd.primitive_type.toInt())
+            writer.writeInt32(rd.primitive_type.spec)
             writer.writeInt32(rd.ref_kind.toInt())
         }
         else {
@@ -102,7 +103,7 @@ class NativeRef : REPR() {
 
     override fun deserialize_repr_data(tc: ThreadContext, st: STable, reader: SerializationReader) {
         val rd = NativeRefREPRData()
-        rd.primitive_type = reader.readInt32().toShort()
+        rd.primitive_type = BoxedPrimitive.ofSpec(reader.readInt32())
         rd.ref_kind = reader.readInt32().toShort()
         st.REPRData = rd
     }

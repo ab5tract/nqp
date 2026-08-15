@@ -14,11 +14,11 @@ open class NativeRefContainerSpec : ContainerSpec() {
         if (hll == null)
             hll = tc.frame.codeRef.staticInfo.compUnit.hllConfig
         return when (rd.primitive_type) {
-            StorageSpec.BP_INT, StorageSpec.BP_UINT ->
+            BoxedPrimitive.INT, BoxedPrimitive.UINT ->
                 Ops.box_i(fetch_i(tc, cont), hll.intBoxType, tc)
-            StorageSpec.BP_NUM ->
+            BoxedPrimitive.NUM ->
                 Ops.box_n(fetch_n(tc, cont), hll.numBoxType, tc)
-            StorageSpec.BP_STR ->
+            BoxedPrimitive.STR ->
                 Ops.box_s(fetch_s(tc, cont), hll.strBoxType, tc)
             else -> throw ExceptionHandling.dieInternal(tc,
                 "Unknown native reference primitive type")
@@ -38,9 +38,9 @@ open class NativeRefContainerSpec : ContainerSpec() {
     override fun store(tc: ThreadContext, cont: SixModelObject, obj: SixModelObject) {
         val rd = cont.st.REPRData as NativeRefREPRData
         when (rd.primitive_type) {
-            StorageSpec.BP_INT, StorageSpec.BP_UINT -> store_i(tc, cont, obj.get_int(tc))
-            StorageSpec.BP_NUM -> store_n(tc, cont, obj.get_num(tc))
-            StorageSpec.BP_STR -> store_s(tc, cont, obj.get_str(tc))
+            BoxedPrimitive.INT, BoxedPrimitive.UINT -> store_i(tc, cont, obj.get_int(tc))
+            BoxedPrimitive.NUM -> store_n(tc, cont, obj.get_num(tc))
+            BoxedPrimitive.STR -> store_s(tc, cont, obj.get_str(tc))
             else -> throw ExceptionHandling.dieInternal(tc,
                 "Unknown native reference primitive type")
         }

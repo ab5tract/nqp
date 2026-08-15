@@ -13,6 +13,9 @@ import org.raku.nqp.sixmodel.StorageSpec
 import org.raku.nqp.sixmodel.TypeObject
 
 import org.raku.nqp.sixmodel.reprs.NativeCall.ArgType
+import org.raku.nqp.sixmodel.Boxable
+import org.raku.nqp.sixmodel.BoxedPrimitive
+import org.raku.nqp.sixmodel.Inlining
 
 /**
  * Shared machinery for the three C aggregate representations: the field
@@ -142,7 +145,7 @@ abstract class CTypeREPR(
         val spec = repr.get_storage_spec(tc, info.type!!.st)
         info.bits = spec.bits
 
-        if (spec.inlineable == StorageSpec.INLINED && spec.boxed_primitive == StorageSpec.BP_INT) {
+        if (spec.inlining == Inlining.INLINED && spec.boxedPrimitive == BoxedPrimitive.INT) {
             info.argType = when (spec.bits.toInt()) {
                 8 -> ArgType.CHAR
                 16 -> ArgType.SHORT
@@ -155,7 +158,7 @@ abstract class CTypeREPR(
             }
             scalar(info, spec.bits / 8L)
         }
-        else if (spec.inlineable == StorageSpec.INLINED && spec.boxed_primitive == StorageSpec.BP_UINT) {
+        else if (spec.inlining == Inlining.INLINED && spec.boxedPrimitive == BoxedPrimitive.UINT) {
             info.argType = when (spec.bits.toInt()) {
                 8 -> ArgType.UCHAR
                 16 -> ArgType.USHORT
@@ -168,7 +171,7 @@ abstract class CTypeREPR(
             }
             scalar(info, spec.bits / 8L)
         }
-        else if (spec.inlineable == StorageSpec.INLINED && spec.boxed_primitive == StorageSpec.BP_NUM) {
+        else if (spec.inlining == Inlining.INLINED && spec.boxedPrimitive == BoxedPrimitive.NUM) {
             info.argType = when (spec.bits.toInt()) {
                 32 -> ArgType.FLOAT
                 64 -> ArgType.DOUBLE
@@ -179,7 +182,7 @@ abstract class CTypeREPR(
             }
             scalar(info, spec.bits / 8L)
         }
-        else if ((spec.can_box.toInt() and StorageSpec.CAN_BOX_STR.toInt()) != 0) {
+        else if (Boxable.STR in spec.canBox) {
             info.argType = ArgType.UTF8STR
             pointer(info)
         }

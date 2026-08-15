@@ -6,6 +6,8 @@ import org.objectweb.asm.Opcodes
 
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
+import org.raku.nqp.sixmodel.BoxedPrimitive
+import org.raku.nqp.sixmodel.Inlining
 import org.raku.nqp.sixmodel.REPR
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SerializationReader
@@ -27,12 +29,7 @@ class P6num : REPR() {
         val obj = TypeObject()
         obj.st = st
         st.WHAT = obj
-        val ss = StorageSpec()
-        ss.inlineable = StorageSpec.INLINED
-        ss.boxed_primitive = StorageSpec.BP_NUM
-        ss.bits = 64
-        ss.can_box = StorageSpec.CAN_BOX_NUM
-        st.REPRData = ss
+        st.REPRData = StorageSpec.number(64)
         return st.WHAT
     }
 
@@ -42,14 +39,14 @@ class P6num : REPR() {
             val bits = floatInfo!!.at_key_boxed(tc, "bits")
             if (Ops.isnull(bits) == 0L) {
                 val bitwidth = bits!!.get_int(tc).toShort()
-                val ss = st.REPRData as StorageSpec
-                ss.bits = when (bitwidth.toInt()) {
+                val width = when (bitwidth.toInt()) {
                     P6NUM_C_TYPE_FLOAT.toInt() -> java.lang.Float.SIZE.toShort()
                     P6NUM_C_TYPE_DOUBLE.toInt() -> java.lang.Double.SIZE.toShort()
                     /* There is no LongDouble in Java */
                     P6NUM_C_TYPE_LONGDOUBLE.toInt() -> java.lang.Double.SIZE.toShort()
                     else -> bitwidth
                 }
+                st.REPRData = (st.REPRData as StorageSpec).copy(bits = width)
             }
         }
     }
@@ -147,11 +144,7 @@ class P6num : REPR() {
     }
 
     override fun deserialize_repr_data(tc: ThreadContext, st: STable, reader: SerializationReader) {
-        val ss = StorageSpec()
-        ss.inlineable = StorageSpec.INLINED
-        ss.boxed_primitive = StorageSpec.BP_NUM
-        ss.bits = if (reader.version >= 7) reader.readLong().toShort() else 64
-        ss.can_box = StorageSpec.CAN_BOX_NUM
-        st.REPRData = ss
+        st.REPRData = StorageSpec.number(
+            if (reader.version >= 7) reader.readLong().toShort() else 64)
     }
 }

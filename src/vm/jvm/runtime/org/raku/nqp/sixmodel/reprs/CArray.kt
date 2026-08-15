@@ -5,6 +5,8 @@ import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.NativeSupport
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
+import org.raku.nqp.sixmodel.Boxable
+import org.raku.nqp.sixmodel.BoxedPrimitive
 import org.raku.nqp.sixmodel.REPR
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SerializationReader
@@ -45,21 +47,21 @@ class CArray : REPR() {
         val ss = elemType.st.REPR.get_storage_spec(tc, elemType.st)
         data.elem_size = ss.bits
         val pointerBytes = NativeSupport.POINTER_SIZE.toLong()
-        if (ss.boxed_primitive == StorageSpec.BP_INT || ss.boxed_primitive == StorageSpec.BP_UINT) {
+        if (ss.boxedPrimitive == BoxedPrimitive.INT || ss.boxedPrimitive == BoxedPrimitive.UINT) {
             when (ss.bits.toInt()) {
                 8, 16, 32, 64 -> data.elem_bytes = ss.bits / 8L
                 else -> ExceptionHandling.dieInternal(tc, "CArray can only handle 8, 16, 32 and 64 bit ints.")
             }
             data.elem_kind = ElemKind.INTEGER
         }
-        else if (ss.boxed_primitive == StorageSpec.BP_NUM) {
+        else if (ss.boxedPrimitive == BoxedPrimitive.NUM) {
             when (ss.bits.toInt()) {
                 32, 64 -> data.elem_bytes = ss.bits / 8L
                 else -> ExceptionHandling.dieInternal(tc, "CArray can only handle 32 and 64 bit floats.")
             }
             data.elem_kind = ElemKind.NUMERIC
         }
-        else if ((ss.can_box.toInt() and StorageSpec.CAN_BOX_STR.toInt()) != 0) {
+        else if (Boxable.STR in ss.canBox) {
             data.elem_bytes = pointerBytes
             data.elem_kind = ElemKind.STRING
         }
