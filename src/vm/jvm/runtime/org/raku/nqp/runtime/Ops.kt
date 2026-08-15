@@ -8517,6 +8517,54 @@ object Ops {
         return java.lang.Long.parseLong(s)
     }
 
+    /* The dispatcher-era boot-syscall surface (nqp::syscall). MoarVM
+     * implements these through new-disp; here they are a plain by-name
+     * dispatch, implemented as rakudo's CORE demands them and rejected
+     * loudly otherwise. */
+    @JvmStatic
+    fun syscall(name: String?, args: SixModelObject?, tc: ThreadContext): SixModelObject? {
+        when (name) {
+            "set-cur-hll-config-key" -> {
+                val key = unbox_s(args!!.at_pos_boxed(tc, 0), tc)
+                val value = args.at_pos_boxed(tc, 1)
+                val hllName = tc.curFrame!!.codeRef.staticInfo.compUnit.hllName()
+                val config = tc.gc.getHLLConfigFor(hllName)
+                when (key) {
+                    "uint_box" -> config.uintBoxType = value
+                    else -> throw ExceptionHandling.dieInternal(tc,
+                        "Unsupported config key '" + key + "' for set-cur-hll-config-key on the JVM backend")
+                }
+                return null
+            }
+            else ->
+                throw ExceptionHandling.dieInternal(tc,
+                    "nqp::syscall('" + name + "') is not implemented on the JVM backend")
+        }
+    }
+
+    /* int<->num and int<->uint coercions, present on MoarVM since long
+     * before the JVM backend stalled; added here because rakudo's CORE
+     * uses nqp::coerce_in. Semantics mirror the *_2* helpers above. */
+    @JvmStatic
+    fun coerce_in(l: Long, tc: ThreadContext): Double {
+        return l.toDouble()
+    }
+
+    @JvmStatic
+    fun coerce_ni(d: Double, tc: ThreadContext): Long {
+        return coerce_n2i(d)
+    }
+
+    @JvmStatic
+    fun coerce_ui(l: Long, tc: ThreadContext): Long {
+        return l
+    }
+
+    @JvmStatic
+    fun coerce_iu(l: Long, tc: ThreadContext): Long {
+        return l
+    }
+
     @JvmStatic
     fun coerce_is(l: Long, tc: ThreadContext): String {
         return l.toString()
