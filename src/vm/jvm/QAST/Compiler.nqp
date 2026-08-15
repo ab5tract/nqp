@@ -2572,6 +2572,10 @@ QAST::OperationsJAST.add_core_op('index',  -> $qastcomp, $op {
         !! QAST::Op.new( :op('indexfrom'), |@operands ));
 });
 
+QAST::OperationsJAST.map_classlib_core_op('indexic', $TYPE_OPS, 'indexic', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
+QAST::OperationsJAST.map_classlib_core_op('indexim', $TYPE_OPS, 'indexim', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
+QAST::OperationsJAST.map_classlib_core_op('indexicim', $TYPE_OPS, 'indexicim', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
+
 # rindex may or may not take a starting position
 QAST::OperationsJAST.map_classlib_core_op('rindexfromend', $TYPE_OPS, 'rindexfromend', [$RT_STR, $RT_STR], $RT_INT);
 QAST::OperationsJAST.map_classlib_core_op('rindexfrom', $TYPE_OPS, 'rindexfrom', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
