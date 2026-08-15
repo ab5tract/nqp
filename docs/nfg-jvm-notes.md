@@ -107,6 +107,16 @@ immediately and it can be replaced underneath later.
    and see what the suite says.
 3. Then the positional ops, then normalization-on-construction for equality.
 
+## Leads to evaluate
+
+- kotlinx.serialization was suggested as a scaffold. Worth a look for option 3
+  in particular: if NFG strings stop being `java.lang.String` they need to go
+  in and out of the serialization blobs, and the synthetics table needs a
+  persisted form, which is the shape that library is good at. Check first what
+  it costs at runtime and whether it drags a dependency into the bootstrap,
+  since `SerializationReader`/`Writer` here are hand-rolled and byte-format
+  exact against MoarVM.
+
 ## Gotchas already known
 
 - `BreakIterator` instances are not thread-safe; one per use or a
