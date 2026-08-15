@@ -1,6 +1,7 @@
 package org.raku.nqp.sixmodel.reprs
 
-import com.sun.jna.Function
+import java.lang.foreign.MemorySegment
+import java.lang.invoke.MethodHandle
 
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.reprs.NativeCall.ArgType
@@ -15,7 +16,12 @@ class NativeCallBody {
         const val ARG_FREE_STR_MASK: Byte = 1
     }
 
-    @JvmField var entry_point: Function? = null
+    @JvmField var entry_point: MemorySegment? = null
+    @JvmField var handle: MethodHandle? = null
+    /* A void-returning handle onto the same symbol, for the C++ constructor
+     * case, where the invocant we allocated is the result rather than
+     * whatever the function nominally returns. */
+    @JvmField var ctor_handle: MethodHandle? = null
     @JvmField var arg_types: Array<ArgType>? = null
     @JvmField var arg_info: Array<SixModelObject?>? = null
     @JvmField var ret_type: ArgType? = null

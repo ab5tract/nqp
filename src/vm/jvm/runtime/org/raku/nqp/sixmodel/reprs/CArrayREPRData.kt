@@ -6,7 +6,8 @@ class CArrayREPRData {
     @JvmField var elem_size: Short = 0
     @JvmField var elem_type: SixModelObject? = null
     @JvmField var elem_kind: ElemKind? = null
-    @JvmField var jna_size = 0
+    /* Width of one element in C memory, in bytes. */
+    @JvmField var elem_bytes: Long = 0
 
     enum class ElemKind { INTEGER, NUMERIC, STRING, CPOINTER, CARRAY, CSTRUCT, CPPSTRUCT, CUNION }
 }
