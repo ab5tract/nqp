@@ -3,6 +3,8 @@ package org.raku.nqp.sixmodel.reprs
 import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
+import org.raku.nqp.sixmodel.BoxedPrimitive
+import org.raku.nqp.sixmodel.Inlining
 import org.raku.nqp.sixmodel.REPR
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SerializationReader
@@ -17,7 +19,7 @@ class VMArray : REPR() {
         val obj = TypeObject()
         obj.st = st
         st.WHAT = obj
-        return st.WHAT!!
+        return st.WHAT
     }
 
     override fun allocate(tc: ThreadContext, st: STable): SixModelObject {
@@ -27,16 +29,16 @@ class VMArray : REPR() {
         }
         else {
             val ss = (st.REPRData as VMArrayREPRData).ss!!
-            obj = when (ss.boxed_primitive) {
-                StorageSpec.BP_INT, StorageSpec.BP_UINT -> when (ss.bits.toInt()) {
+            obj = when (ss.boxedPrimitive) {
+                BoxedPrimitive.INT, BoxedPrimitive.UINT -> when (ss.bits.toInt()) {
                     64 -> VMArrayInstance_i()
-                    8 -> if (ss.is_unsigned.toInt() == 0) VMArrayInstance_i8() else VMArrayInstance_u8()
-                    16 -> if (ss.is_unsigned.toInt() == 0) VMArrayInstance_i16() else VMArrayInstance_u16()
-                    32 -> if (ss.is_unsigned.toInt() == 0) VMArrayInstance_i32() else VMArrayInstance_u32()
+                    8 -> if (!ss.isUnsigned) VMArrayInstance_i8() else VMArrayInstance_u8()
+                    16 -> if (!ss.isUnsigned) VMArrayInstance_i16() else VMArrayInstance_u16()
+                    32 -> if (!ss.isUnsigned) VMArrayInstance_i32() else VMArrayInstance_u32()
                     else -> VMArrayInstance_i()
                 }
-                StorageSpec.BP_NUM -> VMArrayInstance_n()
-                StorageSpec.BP_STR -> VMArrayInstance_s()
+                BoxedPrimitive.NUM -> VMArrayInstance_n()
+                BoxedPrimitive.STR -> VMArrayInstance_s()
                 else -> throw ExceptionHandling.dieInternal(tc, "Invalid REPR data for VMArray in allocate")
             }
         }
@@ -49,15 +51,15 @@ class VMArray : REPR() {
         if (Ops.isnull(arrayInfo) == 0L) {
             val type = arrayInfo!!.at_key_boxed(tc, "type")
             val ss = type!!.st.REPR.get_storage_spec(tc, type.st)
-            when (ss.boxed_primitive) {
-                StorageSpec.BP_INT, StorageSpec.BP_UINT, StorageSpec.BP_NUM, StorageSpec.BP_STR -> {
+            when (ss.boxedPrimitive) {
+                BoxedPrimitive.INT, BoxedPrimitive.UINT, BoxedPrimitive.NUM, BoxedPrimitive.STR -> {
                     val reprData = VMArrayREPRData()
                     reprData.type = type
                     reprData.ss = ss
                     st.REPRData = reprData
                 }
                 else ->
-                    if (ss.inlineable != StorageSpec.REFERENCE)
+                    if (ss.inlining != Inlining.REFERENCE)
                         throw ExceptionHandling.dieInternal(tc, "VMArray can only store native int/num/str or reference types")
             }
         }
@@ -83,15 +85,15 @@ class VMArray : REPR() {
         }
         else {
             val ss = (st.REPRData as VMArrayREPRData).ss!!
-            obj = when (ss.boxed_primitive) {
-                StorageSpec.BP_INT, StorageSpec.BP_UINT -> when (ss.bits.toInt()) {
-                    8 -> if (ss.is_unsigned.toInt() == 0) VMArrayInstance_i8() else VMArrayInstance_u8()
-                    16 -> if (ss.is_unsigned.toInt() == 0) VMArrayInstance_i16() else VMArrayInstance_u16()
-                    32 -> if (ss.is_unsigned.toInt() == 0) VMArrayInstance_i32() else VMArrayInstance_u32()
+            obj = when (ss.boxedPrimitive) {
+                BoxedPrimitive.INT, BoxedPrimitive.UINT -> when (ss.bits.toInt()) {
+                    8 -> if (!ss.isUnsigned) VMArrayInstance_i8() else VMArrayInstance_u8()
+                    16 -> if (!ss.isUnsigned) VMArrayInstance_i16() else VMArrayInstance_u16()
+                    32 -> if (!ss.isUnsigned) VMArrayInstance_i32() else VMArrayInstance_u32()
                     else -> VMArrayInstance_i()
                 }
-                StorageSpec.BP_NUM -> VMArrayInstance_n()
-                StorageSpec.BP_STR -> VMArrayInstance_s()
+                BoxedPrimitive.NUM -> VMArrayInstance_n()
+                BoxedPrimitive.STR -> VMArrayInstance_s()
                 else -> throw ExceptionHandling.dieInternal(tc, "Invalid REPR data for VMArray in deserialize_stub")
             }
         }
@@ -108,12 +110,12 @@ class VMArray : REPR() {
                 obj.bind_pos_boxed(tc, i.toLong(), reader.readRef())
         }
         else {
-            val boxPrim = (st.REPRData as VMArrayREPRData).ss!!.boxed_primitive
+            val boxPrim = (st.REPRData as VMArrayREPRData).ss!!.boxedPrimitive
             for (i in 0 until elems.toLong()) {
                 when (boxPrim) {
-                    StorageSpec.BP_INT, StorageSpec.BP_UINT -> tc.native_i = reader.readLong()
-                    StorageSpec.BP_NUM -> tc.native_n = reader.readDouble()
-                    StorageSpec.BP_STR -> tc.native_s = reader.readStr()
+                    BoxedPrimitive.INT, BoxedPrimitive.UINT -> tc.native_i = reader.readLong()
+                    BoxedPrimitive.NUM -> tc.native_n = reader.readDouble()
+                    BoxedPrimitive.STR -> tc.native_s = reader.readStr()
                     else -> throw ExceptionHandling.dieInternal(tc, "Invalid REPR data for VMArray in deserialize_finish")
                 }
                 obj.bind_pos_native(tc, i)
@@ -129,13 +131,13 @@ class VMArray : REPR() {
                 writer.writeRef(obj.at_pos_boxed(tc, i))
         }
         else {
-            val boxPrim = (obj.st.REPRData as VMArrayREPRData).ss!!.boxed_primitive
+            val boxPrim = (obj.st.REPRData as VMArrayREPRData).ss!!.boxedPrimitive
             for (i in 0 until elems.toLong()) {
                 obj.at_pos_native(tc, i)
                 when (boxPrim) {
-                    StorageSpec.BP_INT, StorageSpec.BP_UINT -> writer.writeInt(tc.native_i)
-                    StorageSpec.BP_NUM -> writer.writeNum(tc.native_n)
-                    StorageSpec.BP_STR -> writer.writeStr(tc.native_s)
+                    BoxedPrimitive.INT, BoxedPrimitive.UINT -> writer.writeInt(tc.native_i)
+                    BoxedPrimitive.NUM -> writer.writeNum(tc.native_n)
+                    BoxedPrimitive.STR -> writer.writeStr(tc.native_s)
                     else -> throw ExceptionHandling.dieInternal(tc, "Invalid REPR data for VMArray in serialize")
                 }
             }

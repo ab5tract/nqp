@@ -4,6 +4,7 @@ import java.util.HashMap
 
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap
 
+import org.raku.nqp.sixmodel.BoxedPrimitive
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.StorageSpec
 import org.raku.nqp.sixmodel.reprs.VMHashInstance
@@ -103,28 +104,28 @@ class CallSiteDescriptor(flags: ByteArray, names: Array<String>?) {
             when (af.toInt()) {
                 ARG_OBJ.toInt() or ARG_FLAT.toInt() -> {
                     val flatArray = oldArgs[oldArgsIdx++] as SixModelObject
-                    val prim = flatArray.st.REPR.get_value_storage_spec(cf.tc, flatArray.st)!!.boxed_primitive.toInt()
+                    val prim = flatArray.st.REPR.get_value_storage_spec(cf.tc, flatArray.st)!!.boxedPrimitive
                     val elems = flatArray.elems(cf.tc)
                     for (i in 0 until elems) {
-                        if (prim == StorageSpec.BP_NONE.toInt()) {
+                        if (prim == BoxedPrimitive.NONE) {
                             newArgs.add(flatArray.at_pos_boxed(cf.tc, i))
                             newFlags.add(ARG_OBJ)
                         } else {
                             flatArray.at_pos_native(cf.tc, i)
                             when (prim) {
-                                StorageSpec.BP_INT.toInt() -> {
+                                BoxedPrimitive.INT -> {
                                     newArgs.add(cf.tc.native_i)
                                     newFlags.add(ARG_INT)
                                 }
-                                StorageSpec.BP_UINT.toInt() -> {
+                                BoxedPrimitive.UINT -> {
                                     newArgs.add(cf.tc.native_i)
                                     newFlags.add(ARG_UINT)
                                 }
-                                StorageSpec.BP_NUM.toInt() -> {
+                                BoxedPrimitive.NUM -> {
                                     newArgs.add(cf.tc.native_n)
                                     newFlags.add(ARG_NUM)
                                 }
-                                StorageSpec.BP_STR.toInt() -> {
+                                BoxedPrimitive.STR -> {
                                     newArgs.add(cf.tc.native_s)
                                     newFlags.add(ARG_STR)
                                 }

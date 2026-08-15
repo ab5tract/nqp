@@ -12,6 +12,7 @@ import java.net.URLClassLoader
 import java.util.ArrayList
 import java.util.HashMap
 
+import org.raku.nqp.sixmodel.BoxedPrimitive
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.StorageSpec
@@ -470,19 +471,19 @@ open class BootJavaInterop(gc: GlobalContext) {
     }
 
     /**
-     * Returns a [StorageSpec] BP_XXX constant for a given type.
-     * Override this to customize marshalling.  You will probably only need to
-     * change this if you want to make char or boolean come in as objects.
+     * The primitive a given Java type marshals as. Override this to
+     * customize marshalling. You will probably only need to change this if
+     * you want to make char or boolean come in as objects.
      */
-    protected open fun storageForType(what: Class<*>): Int {
+    protected open fun storageForType(what: Class<*>): BoxedPrimitive {
         return if (what == String::class.java || what == Character.TYPE)
-            StorageSpec.BP_STR.toInt()
+            BoxedPrimitive.STR
         else if (what == java.lang.Float.TYPE || what == java.lang.Double.TYPE)
-            StorageSpec.BP_NUM.toInt()
+            BoxedPrimitive.NUM
         else if (what != Void.TYPE && what.isPrimitive())
-            StorageSpec.BP_INT.toInt()
+            BoxedPrimitive.INT
         else
-            StorageSpec.BP_NONE.toInt()
+            BoxedPrimitive.NONE
     }
 
     /** Generates "early" code for a marshal-in, such as `new` opcodes.  Override this to customize marshalling. */
@@ -747,6 +748,8 @@ open class BootJavaInterop(gc: GlobalContext) {
         }
 
         /** Maps BP_XXX constants to o, i, n, s flags. */
+        /* Indexed by BoxedPrimitive.spec, which is why the order is
+         * object, int, num, str. */
         @JvmField protected val TYPE_CHAR = charArrayOf('o', 'i', 'n', 's')
         /** Maps BP_XXX constants to ARG_XXX constants. */
         @JvmField protected val TYPE_argflag = byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_INT, CallSiteDescriptor.ARG_NUM, CallSiteDescriptor.ARG_STR)
@@ -909,7 +912,7 @@ open class BootJavaInterop(gc: GlobalContext) {
     protected open fun setupCallback(mc: MethodContext, invokee: SixModelObject?, invokeeKey: Method?, args: Array<Class<*>?>) {
         val csdFlags = ByteArray(args.size)
         for (i in args.indices)
-            csdFlags[i] = TYPE_argflag[storageForType(args[i]!!)]
+            csdFlags[i] = TYPE_argflag[storageForType(args[i]!!).spec]
         val csd = CallSiteDescriptor(csdFlags, null)
 
         val mv = mc.mv!!
@@ -977,23 +980,23 @@ open class BootJavaInterop(gc: GlobalContext) {
     }
 
     /** Emits code to a working method to get a value from an argument list or return value. */
-    protected open fun emitGetFromNQP(c: MethodContext, index: Int, type: Int) {
+    protected open fun emitGetFromNQP(c: MethodContext, index: Int, type: BoxedPrimitive) {
         if (c.callback) {
             // return value
             c.mv!!.visitVarInsn(Opcodes.ALOAD, c.cfLoc)
-            c.mv!!.visitMethodInsn(Opcodes.INVOKESTATIC, TYPE_OPS.getInternalName(), "result_" + TYPE_CHAR[type], Type.getMethodDescriptor(TYPES[type], TYPE_CF))
+            c.mv!!.visitMethodInsn(Opcodes.INVOKESTATIC, TYPE_OPS.getInternalName(), "result_" + TYPE_CHAR[type.spec], Type.getMethodDescriptor(TYPES[type.spec], TYPE_CF))
         } else {
             // an argument
             c.mv!!.visitVarInsn(Opcodes.ALOAD, c.cfLoc)
             c.mv!!.visitVarInsn(Opcodes.ALOAD, c.csdLoc)
             c.mv!!.visitVarInsn(Opcodes.ALOAD, c.argsLoc)
             emitInteger(c, index)
-            c.mv!!.visitMethodInsn(Opcodes.INVOKESTATIC, TYPE_OPS.getInternalName(), "posparam_" + TYPE_CHAR[type], Type.getMethodDescriptor(TYPES[type], TYPE_CF, TYPE_CSD, TYPE_AOBJ, Type.INT_TYPE))
+            c.mv!!.visitMethodInsn(Opcodes.INVOKESTATIC, TYPE_OPS.getInternalName(), "posparam_" + TYPE_CHAR[type.spec], Type.getMethodDescriptor(TYPES[type.spec], TYPE_CF, TYPE_CSD, TYPE_AOBJ, Type.INT_TYPE))
         }
     }
 
     /** Emits "early" code to a working method to push a value to a return value or argument list constructor. */
-    protected open fun preEmitPutToNQP(c: MethodContext, index: Int, type: Int) {
+    protected open fun preEmitPutToNQP(c: MethodContext, index: Int, type: BoxedPrimitive) {
         if (c.callback) {
             // an argument
             c.mv!!.visitVarInsn(Opcodes.ALOAD, c.argsLoc)
@@ -1002,18 +1005,18 @@ open class BootJavaInterop(gc: GlobalContext) {
     }
 
     /** Emits "late" code to a working method to push a value to a return value or argument list constructor. */
-    protected open fun emitPutToNQP(c: MethodContext, index: Int, type: Int) {
+    protected open fun emitPutToNQP(c: MethodContext, index: Int, type: BoxedPrimitive) {
         if (c.callback) {
             // an argument
-            if (type == StorageSpec.BP_INT.toInt()) {
+            if (type == BoxedPrimitive.INT) {
                 c.mv!!.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Long", "valueOf", "(J)Ljava/lang/Long;")
-            } else if (type == StorageSpec.BP_NUM.toInt()) {
+            } else if (type == BoxedPrimitive.NUM) {
                 c.mv!!.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Double", "valueOf", "(D)Ljava/lang/Double")
             }
             c.mv!!.visitInsn(Opcodes.AASTORE)
         } else {
             c.mv!!.visitVarInsn(Opcodes.ALOAD, c.cfLoc)
-            c.mv!!.visitMethodInsn(Opcodes.INVOKESTATIC, TYPE_OPS.getInternalName(), "return_" + TYPE_CHAR[type], Type.getMethodDescriptor(Type.VOID_TYPE, TYPES[type], TYPE_CF))
+            c.mv!!.visitMethodInsn(Opcodes.INVOKESTATIC, TYPE_OPS.getInternalName(), "return_" + TYPE_CHAR[type.spec], Type.getMethodDescriptor(Type.VOID_TYPE, TYPES[type.spec], TYPE_CF))
         }
     }
 
