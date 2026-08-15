@@ -2624,7 +2624,11 @@ object Ops {
     }
     @JvmStatic
     fun who(o: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        return decont(o, tc)!!.st.WHO
+        /* Same story as where() below: MoarVM's null is a real object whose
+         * STable has no WHO, so nqp::who(nqp::null) hands back a null there
+         * rather than blowing up. Match that instead of an NPE. */
+        val d = decont(o, tc) ?: return null
+        return d.st.WHO
     }
     @JvmStatic
     fun where(o: SixModelObject?, tc: ThreadContext): Long {
@@ -3351,7 +3355,10 @@ object Ops {
     /* Positional operations. */
     @JvmStatic
     fun atpos(arr: SixModelObject?, idx: Long, tc: ThreadContext): SixModelObject? {
-        return arr!!.at_pos_boxed(tc, idx)
+        /* Indexing a null reads back as null on MoarVM rather than throwing,
+         * and code in the wild relies on that (unlike elems/existskey, which
+         * do throw there); keep the two backends saying the same thing. */
+        return arr?.at_pos_boxed(tc, idx)
     }
     @JvmStatic
     fun atpos_i(arr: SixModelObject?, idx: Long, tc: ThreadContext): Long {
@@ -3830,7 +3837,9 @@ object Ops {
     /* Associative operations. */
     @JvmStatic
     fun atkey(hash: SixModelObject?, key: String?, tc: ThreadContext): SixModelObject? {
-        return hash!!.at_key_boxed(tc, key)
+        /* As with atpos above: MoarVM hands back a null here instead of
+         * throwing, so match it. */
+        return hash?.at_key_boxed(tc, key)
     }
     @JvmStatic
     fun atkey_i(hash: SixModelObject?, key: String?, tc: ThreadContext): Long {
