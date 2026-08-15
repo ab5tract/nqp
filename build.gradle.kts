@@ -308,6 +308,12 @@ val compileP5qregex = tasks.register("compileP5qregex") {
     val input = jvmDir.dir("stage2").file("NQPP5QRegex.nqp").asFile
     val outputJar = shareLibDir.file("NQPP5QRegex.jar").asFile
     inputs.file(input)
+    // The compile records dependency versions against the module set it
+    // loads (QAST.nqp et al.), so a stage2 rebuild must invalidate this
+    // jar too — otherwise consumers die with "Missing or wrong version
+    // of dependency .../stage2/QAST.nqp" (bitten by rakudo-j's
+    // Perl6::Grammar, which loads NQPP5QRegex).
+    inputs.files(fileTree(shareLibDir) { include("*.jar"); exclude("NQPP5QRegex.jar") })
     outputs.file(outputJar)
     doLast {
         val proc = ProcessBuilder(
