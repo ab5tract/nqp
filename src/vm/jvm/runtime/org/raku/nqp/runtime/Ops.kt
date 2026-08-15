@@ -4917,8 +4917,43 @@ object Ops {
     }
 
     @JvmStatic
-    fun eqatic(haystack: String?, needle: String?, offset: Long): Long {
-        return string_equal_at(true, haystack, needle, offset)
+    fun eqatic(haystack: String?, needle: String?, offset: Long): Long =
+        foldedEqAt(haystack!!, needle!!, offset, ignoreCase = true, ignoreMark = false)
+
+    @JvmStatic
+    fun eqatim(haystack: String?, needle: String?, offset: Long): Long =
+        foldedEqAt(haystack!!, needle!!, offset, ignoreCase = false, ignoreMark = true)
+
+    @JvmStatic
+    fun eqaticim(haystack: String?, needle: String?, offset: Long): Long =
+        foldedEqAt(haystack!!, needle!!, offset, ignoreCase = true, ignoreMark = true)
+
+    /* Like eqat, but comparing folded text. The offset is an index into the
+     * original haystack, and folding is not length-preserving, so it has to be
+     * carried over to the folded string before the comparison - see
+     * foldWithMap for why. Folding both sides is what makes eqatic('ﬆ', 'st')
+     * and eqatic('st', 'ﬆ') both true. */
+    private fun foldedEqAt(haystack: String, needle: String, offset: Long,
+                           ignoreCase: Boolean, ignoreMark: Boolean): Long {
+        var pos = offset
+        if (pos < 0) {
+            pos += haystack.length
+            if (pos < 0) pos = 0
+        }
+        if (pos > haystack.length) return 0
+
+        val (hay, origin) = foldWithMap(haystack, ignoreCase, ignoreMark)
+        val (pat, _) = foldWithMap(needle, ignoreCase, ignoreMark)
+        if (pat.isEmpty()) return 1
+
+        // The first folded character at or after the requested offset. "At or
+        // after" rather than "at" so that an offset landing on a character
+        // that folding dropped still starts somewhere sensible.
+        var at = 0
+        while (at < origin.size && origin[at] < pos) at++
+        if (at >= origin.size) return 0
+
+        return if (hay.startsWith(pat, at)) 1 else 0
     }
 
     @JvmStatic
