@@ -3184,6 +3184,21 @@ QAST::OperationsJAST.map_classlib_core_op('coerce_is', $TYPE_OPS, 'coerce_is', [
 QAST::OperationsJAST.map_classlib_core_op('coerce_us', $TYPE_OPS, 'coerce_us', [$RT_UINT], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('coerce_ns', $TYPE_OPS, 'coerce_ns', [$RT_NUM], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('coerce_in', $TYPE_OPS, 'coerce_in', [$RT_INT], $RT_NUM, :tc);
+QAST::OperationsJAST.map_classlib_core_op('jvmsyscall', $TYPE_OPS, 'syscall', [$RT_STR, $RT_OBJ], $RT_OBJ, :tc);
+QAST::OperationsJAST.add_core_op('syscall', -> $qastcomp, $op {
+    # The dispatcher-era boot-syscall surface. Desugar
+    # nqp::syscall(name, args...) into a runtime helper taking the
+    # arguments as a list; individual syscalls are implemented (or
+    # rejected by name) in Ops.syscall.
+    my $list := QAST::Op.new( :op('list') );
+    my int $i := 1;
+    my int $n := +@($op);
+    while $i < $n {
+        $list.push($op[$i]);
+        $i++;
+    }
+    $qastcomp.as_jast(QAST::Op.new( :op('jvmsyscall'), $op[0], $list ));
+});
 QAST::OperationsJAST.map_classlib_core_op('coerce_ni', $TYPE_OPS, 'coerce_ni', [$RT_NUM], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('coerce_ui', $TYPE_OPS, 'coerce_ui', [$RT_UINT], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('coerce_iu', $TYPE_OPS, 'coerce_iu', [$RT_INT], $RT_UINT, :tc);
