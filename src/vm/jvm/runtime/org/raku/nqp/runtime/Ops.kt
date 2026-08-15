@@ -4078,7 +4078,7 @@ object Ops {
         if (isnull(obj) == 0L && obj !is TypeObject) {
             val cs = obj!!.st.ContainerSpec
             if (cs is NativeRefContainerSpec)
-                return (obj.st.REPRData as NativeRefREPRData).primitive_type
+                return (obj.st.REPRData as NativeRefREPRData).primitiveType
         }
         return BoxedPrimitive.NONE
     }

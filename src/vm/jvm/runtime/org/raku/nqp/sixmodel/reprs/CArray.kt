@@ -35,61 +35,47 @@ class CArray : REPR() {
     }
 
     private fun fillREPRData(tc: ThreadContext, st: STable) {
-        val data = CArrayREPRData()
         val meth = Ops.findmethodNonFatal(st.WHAT, "of", tc)
         if (Ops.isnull(meth) == 1L)
             ExceptionHandling.dieInternal(tc, "CArray representation expects an 'of' method, specifying the element type")
         Ops.invokeDirect(tc, meth, CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null), arrayOf<Any?>(st.WHAT))
-        data.elem_type = Ops.decont(Ops.result_o(tc.resultFrame()), tc)
-        if (Ops.isnull(data.elem_type) == 1L)
+        val elemType = Ops.decont(Ops.result_o(tc.resultFrame()), tc)
+        if (Ops.isnull(elemType) == 1L)
             ExceptionHandling.dieInternal(tc, "CArray representation expects a non-null return value from the 'of' method, specifying the element type")
-        val elemType = data.elem_type!!
-        val ss = elemType.st.REPR.get_storage_spec(tc, elemType.st)
-        data.elem_size = ss.bits
+
+        val ss = elemType!!.st.REPR.get_storage_spec(tc, elemType.st)
         val pointerBytes = NativeSupport.POINTER_SIZE.toLong()
+        val kind: ElemKind
+        val bytes: Long
+
         if (ss.boxedPrimitive == BoxedPrimitive.INT || ss.boxedPrimitive == BoxedPrimitive.UINT) {
-            when (ss.bits.toInt()) {
-                8, 16, 32, 64 -> data.elem_bytes = ss.bits / 8L
-                else -> ExceptionHandling.dieInternal(tc, "CArray can only handle 8, 16, 32 and 64 bit ints.")
-            }
-            data.elem_kind = ElemKind.INTEGER
+            if (ss.bits.toInt() !in intArrayOf(8, 16, 32, 64))
+                ExceptionHandling.dieInternal(tc, "CArray can only handle 8, 16, 32 and 64 bit ints.")
+            kind = ElemKind.INTEGER
+            bytes = ss.bits / 8L
         }
         else if (ss.boxedPrimitive == BoxedPrimitive.NUM) {
-            when (ss.bits.toInt()) {
-                32, 64 -> data.elem_bytes = ss.bits / 8L
-                else -> ExceptionHandling.dieInternal(tc, "CArray can only handle 32 and 64 bit floats.")
-            }
-            data.elem_kind = ElemKind.NUMERIC
-        }
-        else if (Boxable.STR in ss.canBox) {
-            data.elem_bytes = pointerBytes
-            data.elem_kind = ElemKind.STRING
-        }
-        else if (elemType.st.REPR is CPointer) {
-            data.elem_bytes = pointerBytes
-            data.elem_kind = ElemKind.CPOINTER
-        }
-        else if (elemType.st.REPR is CArray) {
-            data.elem_bytes = pointerBytes
-            data.elem_kind = ElemKind.CARRAY
-        }
-        else if (elemType.st.REPR is CStruct) {
-            data.elem_bytes = pointerBytes
-            data.elem_kind = ElemKind.CSTRUCT
-        }
-        else if (elemType.st.REPR is CPPStruct) {
-            data.elem_bytes = pointerBytes
-            data.elem_kind = ElemKind.CPPSTRUCT
-        }
-        else if (elemType.st.REPR is CUnion) {
-            data.elem_bytes = pointerBytes
-            data.elem_kind = ElemKind.CUNION
+            if (ss.bits.toInt() !in intArrayOf(32, 64))
+                ExceptionHandling.dieInternal(tc, "CArray can only handle 32 and 64 bit floats.")
+            kind = ElemKind.NUMERIC
+            bytes = ss.bits / 8L
         }
         else {
-            /* TODO: Remaining cases. */
-            ExceptionHandling.dieInternal(tc, "CArray only handles ints, nums, strings, CArrays, CPointers, CStructs, CPPStructs and CUnions so far.")
+            kind = when {
+                Boxable.STR in ss.canBox    -> ElemKind.STRING
+                elemType.st.REPR is CPointer   -> ElemKind.CPOINTER
+                elemType.st.REPR is CArray     -> ElemKind.CARRAY
+                elemType.st.REPR is CStruct    -> ElemKind.CSTRUCT
+                elemType.st.REPR is CPPStruct  -> ElemKind.CPPSTRUCT
+                elemType.st.REPR is CUnion     -> ElemKind.CUNION
+                /* TODO: Remaining cases. */
+                else -> throw ExceptionHandling.dieInternal(tc,
+                    "CArray only handles ints, nums, strings, CArrays, CPointers, CStructs, CPPStructs and CUnions so far.")
+            }
+            bytes = pointerBytes
         }
-        st.REPRData = data
+
+        st.REPRData = CArrayREPRData(elemType, kind, ss.bits, bytes)
     }
 
     override fun deserialize_stub(tc: ThreadContext, st: STable): SixModelObject? {
