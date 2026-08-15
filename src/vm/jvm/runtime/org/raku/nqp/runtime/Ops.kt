@@ -4109,9 +4109,17 @@ object Ops {
     }
     @JvmStatic
     fun decont(obj: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        if (isnull(obj) == 1L)
+        /* Deconting our null used to hand back a Java null, which is a
+         * different thing: a Java null in a P6opaque attribute slot is
+         * indistinguishable from "never assigned", so reading the attribute
+         * back auto-vivified it to the attribute's type object. MoarVM's null
+         * is an ordinary object that survives a decont, so nqp::null stored in
+         * an attribute reads back as nqp::null. Only a real Java null stays
+         * one now; the null object falls through the ContainerSpec check
+         * below and is returned as-is. */
+        if (obj == null)
             return null
-        val cs = obj!!.st.ContainerSpec
+        val cs = obj.st.ContainerSpec
         return if (cs == null || obj is TypeObject) obj else cs.fetch(tc, obj)
     }
     @JvmStatic
