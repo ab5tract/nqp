@@ -194,6 +194,7 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
         val className = jastClass.className!!.replace('.', '/')
         val superName = jastClass.superName!!.replace('.', '/')
 
+        indyCount = 0
         val cw = ClassWriter(ClassWriter.COMPUTE_MAXS or ClassWriter.COMPUTE_FRAMES)
         cw.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC + Opcodes.ACC_SUPER, className, null,
                 superName, null)
@@ -229,6 +230,14 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
 
         cw.visitEnd()
         c.bytes = cw.toByteArray()
+
+        /* HotSpot keeps per-class invokedynamic resolution state that is
+         * silently corrupted past 65535 indy instructions (observed on
+         * JDK 25.0.3: aliased callsites under JIT, SIGSEGV under -Xint).
+         * Refuse to emit a class in that regime rather than let it load. */
+        if (indyCount > 65535)
+            throw RuntimeException("Class " + className + " has " + indyCount
+                + " invokedynamic instructions, over the safe per-class limit of 65535")
 
         return c
     }
@@ -763,7 +772,12 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
                 Type.getMethodDescriptor(returnType, *(argumentTypes as Array<Type>)))
     }
 
+    /* Per-class invokedynamic instruction count; see the limit check after
+     * class assembly. */
+    private var indyCount = 0
+
     private fun emitInvokeDynamic(insn: SixModelObject, m: MethodVisitor, tc: ThreadContext) {
+        indyCount++
         val name = Ops.getattr(insn, jastIndy, "\$!name", 0, tc)!!.get_str(tc)
         val argTypesSmo = Ops.getattr(insn, jastIndy, "@!arg_types", 1, tc)
         val retType = processType(Ops.getattr(insn, jastIndy, "\$!ret_type", 2, tc)!!.get_str(tc)!!)
