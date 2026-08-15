@@ -1,22 +1,16 @@
 package org.raku.nqp.runtime
 
+import java.lang.foreign.Arena
+import java.lang.foreign.FunctionDescriptor
+import java.lang.foreign.MemoryLayout
+import java.lang.foreign.MemorySegment
+import java.lang.foreign.ValueLayout
+import java.lang.invoke.MethodHandle
+import java.lang.invoke.MethodHandles
+import java.lang.invoke.MethodType
+
 import java.util.Arrays
 import java.util.HashMap
-
-import com.sun.jna.Callback
-import com.sun.jna.Function
-import com.sun.jna.Native
-import com.sun.jna.NativeLibrary
-import com.sun.jna.NativeLong
-import com.sun.jna.Memory
-import com.sun.jna.Pointer
-import com.sun.jna.Structure
-import com.sun.jna.Union
-
-import org.raku.nqp.jast2bc.BytecodeVersion
-import org.objectweb.asm.ClassWriter
-import org.objectweb.asm.Opcodes
-import org.objectweb.asm.Type
 
 import org.raku.nqp.sixmodel.REPRRegistry
 import org.raku.nqp.sixmodel.StorageSpec
@@ -38,13 +32,12 @@ import org.raku.nqp.sixmodel.reprs.CPointerInstance
 import org.raku.nqp.sixmodel.reprs.CStrInstance
 import org.raku.nqp.sixmodel.reprs.CStruct
 import org.raku.nqp.sixmodel.reprs.CStructInstance
-import org.raku.nqp.sixmodel.reprs.CStructREPRData
 import org.raku.nqp.sixmodel.reprs.CPPStruct
 import org.raku.nqp.sixmodel.reprs.CPPStructInstance
-import org.raku.nqp.sixmodel.reprs.CPPStructREPRData
 import org.raku.nqp.sixmodel.reprs.CUnion
 import org.raku.nqp.sixmodel.reprs.CUnionInstance
-import org.raku.nqp.sixmodel.reprs.CUnionREPRData
+import org.raku.nqp.sixmodel.reprs.CTypeInstance
+import org.raku.nqp.sixmodel.reprs.CTypeREPRData
 import org.raku.nqp.sixmodel.reprs.NativeCall.ArgType
 import org.raku.nqp.sixmodel.reprs.NativeCallInstance
 import org.raku.nqp.sixmodel.reprs.NativeCallBody
@@ -67,17 +60,16 @@ object NativeCallOps {
         try {
             /* Load the library and locate the symbol. */
             /* TODO: Error handling! */
-            val entry_point = Ops.atkey(returns, "entry_point", tc)
-            if (Ops.isnull(entry_point) == 0L) {
+            val given = Ops.atkey(returns, "entry_point", tc)
+            val address = if (Ops.isnull(given) == 0L) {
                 /* TODO: Set the calling convention? */
-                call.entry_point = Function.getFunction(Pointer(Ops.unbox_i(entry_point, tc)))
+                NativeSupport.pointer(Ops.unbox_i(given, tc))
             }
             else {
-                val library = if (libname == null || libname == "")
-                    NativeLibrary.getProcess()
-                else
-                    NativeLibrary.getInstance(libname)
-                call.entry_point = library.getFunction(symbol)
+                NativeSupport.libraryLookup(libname).find(symbol).orElseThrow {
+                    UnsatisfiedLinkError("Cannot find symbol '$symbol'"
+                        + (if (libname.isNullOrEmpty()) " in the running process" else " in library '$libname'"))
+                }
             }
 
             /* TODO: Set the calling convention. */
@@ -98,6 +90,14 @@ object NativeCallOps {
             call.arg_info = argInfo
 
             call.ret_type = getArgType(tc, returns, true)
+
+            call.handle = NativeSupport.LINKER.downcallHandle(address,
+                descriptorFor(tc, call.ret_type!!, call.arg_types!!))
+            call.ctor_handle = null
+            /* Last: a non-null entry point is how Rakudo's !setup decides the
+             * call site is already built, so nothing may be missing once it
+             * is set. */
+            call.entry_point = address
 
             return 1L
         }
@@ -122,64 +122,71 @@ object NativeCallOps {
                 val arg = arguments.at_pos_boxed(tc, i.toLong())
                 /* We need to allocate the struct (THIS) for C++ constructor before passing it along. */
                 if (i == 0 && argTypes[i] == ArgType.CPPSTRUCT && Ops.isconcrete(arg, tc) == 0L) {
-                    val repr_data = returns.st.REPRData as CPPStructREPRData
-                    val structClass = repr_data.structureClass!!
                     val struct = returns.st.REPR.allocate(tc, returns.st) as CPPStructInstance
                     cppstruct = struct
-                    @Suppress("DEPRECATION")
-                    struct.storage = structClass.newInstance() as Structure
                     cArgs[i] = struct.storage
                 }
                 else {
-                    cArgs[i] = toJNAType(tc, arg, argTypes[i], call.arg_info!![i])
+                    cArgs[i] = toNativeType(tc, arg, argTypes[i], call.arg_info!![i])
                 }
+
+                /* C wants to see a null pointer, not a Java null. */
+                if (cArgs[i] == null && isPointerType(argTypes[i]))
+                    cArgs[i] = MemorySegment.NULL
             }
 
             if (cppstruct != null) {
                 /* We are calling a C++ constructor so we hand back the invocant (THIS) we recorded earlier. */
-                call.entry_point!!.invoke(Void::class.java, cArgs)
+                ctorHandle(tc, call).invokeWithArguments(*cArgs)
                 return toNQPType(tc, call.ret_type, returns, cppstruct.storage)
             }
             else {
                 /* The actual foreign function call. */
-                val returned = call.entry_point!!.invoke(javaType(tc, call.ret_type!!, returns), cArgs)
+                val returned = call.handle!!.invokeWithArguments(*cArgs)
 
                 /* Assign to NativeRefs in case the argument is in an 'is rw' param slot, or otherwise call refresh(). */
                 for (i in 0 until arguments.elems(tc).toInt()) {
                     var o = arguments.at_pos_boxed(tc, i.toLong())
+                    val ref = cArgs[i] as? MemorySegment
                     when (argTypes[i]) {
                         ArgType.CHAR_RW ->
-                            (o as NativeRefInstance).store_i(tc, (cArgs[i] as Memory).getByte(0).toLong())
+                            (o as NativeRefInstance).store_i(tc, ref!!.get(ValueLayout.JAVA_BYTE, 0).toLong())
                         ArgType.UCHAR_RW -> {
-                            var bval = (cArgs[i] as Memory).getByte(0).toLong()
+                            var bval = ref!!.get(ValueLayout.JAVA_BYTE, 0).toLong()
                             bval += if (bval < 0) 0x100 else 0
                             (o as NativeRefInstance).store_i(tc, bval)
                         }
                         ArgType.SHORT_RW ->
-                            (o as NativeRefInstance).store_i(tc, (cArgs[i] as Memory).getShort(0).toLong())
+                            (o as NativeRefInstance).store_i(tc, ref!!.get(ValueLayout.JAVA_SHORT, 0).toLong())
                         ArgType.USHORT_RW -> {
-                            var sval = (cArgs[i] as Memory).getShort(0).toLong()
+                            var sval = ref!!.get(ValueLayout.JAVA_SHORT, 0).toLong()
                             sval += if (sval < 0) 0x10000 else 0
                             (o as NativeRefInstance).store_i(tc, sval)
                         }
                         ArgType.INT_RW ->
-                            (o as NativeRefInstance).store_i(tc, (cArgs[i] as Memory).getInt(0).toLong())
+                            (o as NativeRefInstance).store_i(tc, ref!!.get(ValueLayout.JAVA_INT, 0).toLong())
                         ArgType.UINT_RW -> {
-                            var ival = (cArgs[i] as Memory).getInt(0).toLong()
+                            var ival = ref!!.get(ValueLayout.JAVA_INT, 0).toLong()
                             ival += if (ival < 0) 0x100000000L else 0
                             (o as NativeRefInstance).store_i(tc, ival)
                         }
                         ArgType.LONG_RW, ArgType.ULONG_RW ->
-                            (o as NativeRefInstance).store_i(tc, (cArgs[i] as Memory).getNativeLong(0).toLong())
+                            (o as NativeRefInstance).store_i(tc, readCLong(ref!!, 0))
                         ArgType.LONGLONG_RW, ArgType.ULONGLONG_RW ->
-                            (o as NativeRefInstance).store_i(tc, (cArgs[i] as Memory).getLong(0))
+                            (o as NativeRefInstance).store_i(tc, ref!!.get(ValueLayout.JAVA_LONG, 0))
                         ArgType.FLOAT_RW ->
-                            (o as NativeRefInstance).store_n(tc, (cArgs[i] as Memory).getFloat(0).toDouble())
+                            (o as NativeRefInstance).store_n(tc, ref!!.get(ValueLayout.JAVA_FLOAT, 0).toDouble())
                         ArgType.DOUBLE_RW ->
-                            (o as NativeRefInstance).store_n(tc, (cArgs[i] as Memory).getDouble(0))
+                            (o as NativeRefInstance).store_n(tc, ref!!.get(ValueLayout.JAVA_DOUBLE, 0))
                         ArgType.CPOINTER_RW -> {
                             o = Ops.decont(o, tc)
-                            (o as CPointerInstance).set_int(tc, Pointer.nativeValue((cArgs[i] as Memory).getPointer(0)))
+                            (o as CPointerInstance).set_int(tc, NativeSupport.address(ref!!.get(ValueLayout.ADDRESS, 0)))
+                        }
+                        ArgType.VMARRAY -> {
+                            /* The callee wrote through the pointer we handed
+                             * it, so copy the buffer back over the slots. */
+                            vmarrayFromNative(tc, Ops.decont(o, tc), ref)
+                            refresh(o, tc)
                         }
                         else ->
                             refresh(o, tc)
@@ -213,15 +220,15 @@ object NativeCallOps {
         try {
             /* Load the library and locate the symbol. */
             /* TODO: Error handling! */
-            val library = if (libname == null || libname == "")
-                NativeLibrary.getProcess()
-            else
-                NativeLibrary.getInstance(libname)
-            var entry_point = library.getGlobalVariableAddress(symbol)
+            var entry_point = NativeSupport.unbounded(
+                NativeSupport.libraryLookup(libname).find(symbol).orElseThrow {
+                    UnsatisfiedLinkError("Cannot find symbol '$symbol'"
+                        + (if (libname.isNullOrEmpty()) " in the running process" else " in library '$libname'"))
+                })
 
             val ss = target_spec.st.REPR.get_storage_spec(tc, target_spec.st)
             if (ss.boxed_primitive == StorageSpec.BP_STR)
-                entry_point = entry_point.getPointer(0)
+                entry_point = NativeSupport.unbounded(entry_point!!.get(ValueLayout.ADDRESS, 0))
 
             return castNativeCall(tc, target_spec, target_type, entry_point)
         }
@@ -239,23 +246,17 @@ object NativeCallOps {
             StorageSpec.BP_INT, StorageSpec.BP_UINT, StorageSpec.BP_NUM ->
                 return (ss.bits / 8).toLong()
             StorageSpec.BP_STR ->
-                return Native.POINTER_SIZE.toLong()
+                return NativeSupport.POINTER_SIZE.toLong()
             else -> {
                 if (Ops.isconcrete(o, tc) == 0L)
                     o = o!!.st.REPR.allocate(tc, o.st)
                 if (o is CStrInstance
                  || o is CPointerInstance
                  || o is CArrayInstance) {
-                    return Native.POINTER_SIZE.toLong()
+                    return NativeSupport.POINTER_SIZE.toLong()
                 }
-                else if (o is CStructInstance) {
-                    return o.storage!!.size().toLong()
-                }
-                else if (o is CPPStructInstance) {
-                    return o.storage!!.size().toLong()
-                }
-                else if (o is CUnionInstance) {
-                    return o.storage!!.size().toLong()
+                else if (o is CTypeInstance) {
+                    return (o.st.REPRData as CTypeREPRData).size
                 }
                 else {
                     throw ExceptionHandling.dieInternal(tc,
@@ -267,7 +268,7 @@ object NativeCallOps {
 
     @JvmStatic
     fun nativecallcast(target_spec: SixModelObject, target_type: SixModelObject, source: SixModelObject, tc: ThreadContext): SixModelObject? {
-        var o: Pointer? = null
+        var o: MemorySegment? = null
 
         if (source is CPointerInstance) {
             o = source.pointer
@@ -276,16 +277,10 @@ object NativeCallOps {
             /* NOTE: the Java original casts a CArrayInstance to
              * CStructInstance here, which throws ClassCastException;
              * faithfully preserved. */
-            o = (source as CStructInstance).storage!!.getPointer()
+            o = (source as CStructInstance).storage
         }
-        else if (source is CStructInstance) {
-            o = source.storage!!.getPointer()
-        }
-        else if (source is CPPStructInstance) {
-            o = source.storage!!.getPointer()
-        }
-        else if (source is CUnionInstance) {
-            o = source.storage!!.getPointer()
+        else if (source is CTypeInstance) {
+            o = source.storage
         }
         else {
             /* If we got something that is either a CPointer, CArray or CStruct but is not an instance,
@@ -304,7 +299,8 @@ object NativeCallOps {
     }
 
     @JvmStatic
-    fun castNativeCall(tc: ThreadContext, target_spec: SixModelObject, target_type: SixModelObject, o: Pointer?): SixModelObject? {
+    fun castNativeCall(tc: ThreadContext, target_spec: SixModelObject, target_type: SixModelObject, from: MemorySegment?): SixModelObject? {
+        val o = NativeSupport.unbounded(from)
         if (o == null)
             return target_type
 
@@ -314,18 +310,18 @@ object NativeCallOps {
         when (ss.boxed_primitive) {
             StorageSpec.BP_INT, StorageSpec.BP_UINT ->
                 when (ss.bits.toInt()) {
-                    8 -> nqpobj.set_int(tc, o.getByte(0).toLong())
-                    16 -> nqpobj.set_int(tc, o.getShort(0).toLong())
-                    32 -> nqpobj.set_int(tc, o.getInt(0).toLong())
-                    64 -> nqpobj.set_int(tc, o.getLong(0))
+                    8 -> nqpobj.set_int(tc, o.get(ValueLayout.JAVA_BYTE, 0).toLong())
+                    16 -> nqpobj.set_int(tc, o.get(ValueLayout.JAVA_SHORT, 0).toLong())
+                    32 -> nqpobj.set_int(tc, o.get(ValueLayout.JAVA_INT, 0).toLong())
+                    64 -> nqpobj.set_int(tc, o.get(ValueLayout.JAVA_LONG, 0))
                     else ->
                         throw ExceptionHandling.dieInternal(tc,
                             String.format("Cannot cast to %d bits integer", ss.bits))
                 }
             StorageSpec.BP_NUM ->
                 when (ss.bits.toInt()) {
-                    32 -> nqpobj.set_num(tc, o.getFloat(0).toDouble())
-                    64 -> nqpobj.set_num(tc, o.getDouble(0))
+                    32 -> nqpobj.set_num(tc, o.get(ValueLayout.JAVA_FLOAT, 0).toDouble())
+                    64 -> nqpobj.set_num(tc, o.get(ValueLayout.JAVA_DOUBLE, 0))
                     else ->
                         throw ExceptionHandling.dieInternal(tc,
                             String.format("Cannot cast to %d bits number", ss.bits))
@@ -345,17 +341,8 @@ object NativeCallOps {
                     nqpobj.storage = o
                     nqpobj.managed = false
                 }
-                else if (nqpobj is CStructInstance) {
-                    val structClass = (target_type.st.REPRData as CStructREPRData).structureClass!!
-                    nqpobj.storage = Structure.newInstance(structClass.asSubclass(Structure::class.java), o)
-                }
-                else if (nqpobj is CPPStructInstance) {
-                    val structClass = (target_type.st.REPRData as CPPStructREPRData).structureClass!!
-                    nqpobj.storage = Structure.newInstance(structClass.asSubclass(Structure::class.java), o)
-                }
-                else if (nqpobj is CUnionInstance) {
-                    val structClass = (target_type.st.REPRData as CUnionREPRData).structureClass!!
-                    nqpobj.storage = Union.newInstance(structClass.asSubclass(Union::class.java), o) as Union
+                else if (nqpobj is CTypeInstance) {
+                    nqpobj.storage = sizedAs(target_type, o)
                 }
                 else {
                     throw ExceptionHandling.dieInternal(tc,
@@ -389,34 +376,67 @@ object NativeCallOps {
         return call
     }
 
-    private fun javaType(tc: ThreadContext, target: ArgType, smoType: SixModelObject): Class<*> {
-        return when (target) {
-            ArgType.VOID -> Void::class.java
-            ArgType.CHAR -> Byte::class.javaObjectType
-            ArgType.SHORT -> Short::class.javaObjectType
-            ArgType.INT -> Integer::class.java
-            ArgType.LONG -> NativeLong::class.java
-            ArgType.LONGLONG -> Long::class.javaObjectType
-            ArgType.UCHAR -> Byte::class.javaObjectType
-            ArgType.USHORT -> Short::class.javaObjectType
-            ArgType.UINT -> Integer::class.java
-            ArgType.ULONG -> NativeLong::class.java
-            ArgType.ULONGLONG -> Long::class.javaObjectType
-            ArgType.FLOAT -> Float::class.javaObjectType
-            ArgType.DOUBLE -> Double::class.javaObjectType
-            /* TODO: Handle encodings. */
-            ArgType.ASCIISTR, ArgType.UTF8STR, ArgType.UTF16STR -> String::class.java
-            ArgType.CPOINTER, ArgType.CARRAY -> Pointer::class.java
-            ArgType.CSTRUCT -> (smoType.st.REPRData as CStructREPRData).structureClass!!
-            ArgType.CPPSTRUCT -> (smoType.st.REPRData as CPPStructREPRData).structureClass!!
-            ArgType.CUNION -> (smoType.st.REPRData as CUnionREPRData).structureClass!!
-            else ->
-                throw ExceptionHandling.dieInternal(tc, String.format("Don't know correct Java class for %s arguments yet", target))
+    /* Everything that crosses the boundary as a pointer. Structs and unions
+     * are among them: like JNA, we pass and return aggregates by reference,
+     * never by value. */
+    private fun isPointerType(target: ArgType?): Boolean = when (target) {
+        ArgType.ASCIISTR, ArgType.UTF8STR, ArgType.UTF16STR,
+        ArgType.CPOINTER, ArgType.CARRAY, ArgType.CSTRUCT, ArgType.CPPSTRUCT,
+        ArgType.CUNION, ArgType.CALLBACK, ArgType.VMARRAY,
+        ArgType.CHAR_RW, ArgType.UCHAR_RW, ArgType.SHORT_RW, ArgType.USHORT_RW,
+        ArgType.INT_RW, ArgType.UINT_RW, ArgType.LONG_RW, ArgType.ULONG_RW,
+        ArgType.LONGLONG_RW, ArgType.ULONGLONG_RW, ArgType.FLOAT_RW,
+        ArgType.DOUBLE_RW, ArgType.CPOINTER_RW -> true
+        else -> false
+    }
+
+    private fun layoutFor(tc: ThreadContext, target: ArgType): MemoryLayout = when (target) {
+        ArgType.CHAR, ArgType.UCHAR -> ValueLayout.JAVA_BYTE
+        ArgType.SHORT, ArgType.USHORT -> ValueLayout.JAVA_SHORT
+        ArgType.INT, ArgType.UINT -> ValueLayout.JAVA_INT
+        ArgType.LONG, ArgType.ULONG -> NativeSupport.C_LONG
+        ArgType.LONGLONG, ArgType.ULONGLONG -> ValueLayout.JAVA_LONG
+        ArgType.FLOAT -> ValueLayout.JAVA_FLOAT
+        ArgType.DOUBLE -> ValueLayout.JAVA_DOUBLE
+        else ->
+            if (isPointerType(target)) ValueLayout.ADDRESS
+            else throw ExceptionHandling.dieInternal(tc, String.format("Don't know the C type of %s arguments yet", target))
+    }
+
+    private fun descriptorFor(tc: ThreadContext, ret: ArgType, args: Array<ArgType>): FunctionDescriptor {
+        val argLayouts = Array<MemoryLayout>(args.size) { layoutFor(tc, args[it]) }
+        return if (ret == ArgType.VOID) FunctionDescriptor.ofVoid(*argLayouts)
+               else FunctionDescriptor.of(layoutFor(tc, ret), *argLayouts)
+    }
+
+    private fun ctorHandle(tc: ThreadContext, call: NativeCallBody): MethodHandle {
+        var handle = call.ctor_handle
+        if (handle == null) {
+            handle = NativeSupport.LINKER.downcallHandle(call.entry_point,
+                descriptorFor(tc, ArgType.VOID, call.arg_types!!))
+            call.ctor_handle = handle
         }
+        return handle
+    }
+
+    /* A C long is a Java long on LP64 and a Java int on Windows, so it comes
+     * back from a call and sits in memory as whichever of the two it is. */
+    private fun readCLong(seg: MemorySegment, offset: Long): Long =
+        if (NativeSupport.C_LONG_IS_INT) seg.get(ValueLayout.JAVA_INT, offset).toLong()
+        else seg.get(ValueLayout.JAVA_LONG, offset)
+
+    private fun cLong(value: Long): Any =
+        if (NativeSupport.C_LONG_IS_INT) value.toInt() else value
+
+    /* Give a pointer the extent of the aggregate it addresses, so the members
+     * of the value it points at are reachable. */
+    private fun sizedAs(type: SixModelObject?, seg: MemorySegment): MemorySegment {
+        val data = type?.st?.REPRData as? CTypeREPRData
+        return if (data != null && data.size > 0 && seg.byteSize() != data.size) seg.reinterpret(data.size) else seg
     }
 
     @JvmStatic
-    fun toJNAType(tc: ThreadContext, o: SixModelObject?, target: ArgType?, info: SixModelObject?): Any? {
+    fun toNativeType(tc: ThreadContext, o: SixModelObject?, target: ArgType?, info: SixModelObject?): Any? {
         var v = o
         when (target!!) {
         ArgType.CHAR -> {
@@ -437,7 +457,7 @@ object NativeCallOps {
         ArgType.LONG -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return NativeLong(v!!.get_int(tc))
+            return cLong(v!!.get_int(tc))
         }
         ArgType.LONGLONG -> {
             v = Ops.decont(v, tc)
@@ -462,7 +482,7 @@ object NativeCallOps {
         ArgType.ULONG -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return NativeLong(v!!.get_int(tc))
+            return cLong(v!!.get_int(tc))
         }
         ArgType.ULONGLONG -> {
             v = Ops.decont(v, tc)
@@ -490,7 +510,7 @@ object NativeCallOps {
                 return cstr.cstr
             }
             else {
-                return v!!.get_str(tc)
+                return NativeSupport.toCString(v!!.get_str(tc))
             }
         }
         ArgType.CPOINTER -> {
@@ -521,108 +541,80 @@ object NativeCallOps {
         ArgType.CALLBACK -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            return callbackHandlerFor(v!!, info!!, tc)
+            return callbackStubFor(v!!, info!!, tc)
         }
         ArgType.VMARRAY -> {
             v = Ops.decont(v, tc)
             if (Ops.isconcrete(v, tc) == 0L) return null
-            if (v is VMArrayInstance_i) {
-                return v.slots
-            }
-            if (v is VMArrayInstance_i8) {
-                return v.slots
-            }
-            else if (v is VMArrayInstance_i16) {
-                return v.slots
-            }
-            else if (v is VMArrayInstance_i32) {
-                return v.slots
-            }
-            else if (v is VMArrayInstance_n) {
-                return v.slots
-            }
-            else if (v is VMArrayInstance_s) {
-                return v.slots
-            }
-            else if (v is VMArrayInstance_u8) {
-                return v.slots
-            }
-            else if (v is VMArrayInstance_u16) {
-                return v.slots
-            }
-            else if (v is VMArrayInstance_u32) {
-                return v.slots
-            }
-            return (v as VMArrayInstance).slots
+            return vmarrayToNative(tc, v!!)
         }
         ArgType.CHAR_RW, ArgType.UCHAR_RW -> {
             if (Ops.iscont_i(v) == 0L)
                 throw ExceptionHandling.dieInternal(tc,
                     String.format("Native call expected argument that references a native integer, but got %s", v))
-            val m = Memory(java.lang.Byte.SIZE.toLong())
-            m.setByte(0, (v as NativeRefInstance).fetch_i(tc).toByte())
+            val m = NativeSupport.allocate(1)
+            m.set(ValueLayout.JAVA_BYTE, 0, (v as NativeRefInstance).fetch_i(tc).toByte())
             return m
         }
         ArgType.SHORT_RW, ArgType.USHORT_RW -> {
             if (Ops.iscont_i(v) == 0L)
                 throw ExceptionHandling.dieInternal(tc,
                     String.format("Native call expected argument that references a native integer, but got %s", v))
-            val m = Memory(java.lang.Short.SIZE.toLong())
-            m.setShort(0, (v as NativeRefInstance).fetch_i(tc).toShort())
+            val m = NativeSupport.allocate(2)
+            m.set(ValueLayout.JAVA_SHORT, 0, (v as NativeRefInstance).fetch_i(tc).toShort())
             return m
         }
         ArgType.INT_RW, ArgType.UINT_RW -> {
             if (Ops.iscont_i(v) == 0L)
                 throw ExceptionHandling.dieInternal(tc,
                     String.format("Native call expected argument that references a native integer, but got %s", v))
-            val m = Memory(Integer.SIZE.toLong())
-            m.setInt(0, (v as NativeRefInstance).fetch_i(tc).toInt())
+            val m = NativeSupport.allocate(4)
+            m.set(ValueLayout.JAVA_INT, 0, (v as NativeRefInstance).fetch_i(tc).toInt())
             return m
         }
         ArgType.LONG_RW, ArgType.ULONG_RW -> {
             if (Ops.iscont_i(v) == 0L)
                 throw ExceptionHandling.dieInternal(tc,
                     String.format("Native call expected argument that references a native integer, but got %s", v))
-            val m = Memory(NativeLong.SIZE.toLong())
-            m.setNativeLong(0, NativeLong((v as NativeRefInstance).fetch_i(tc)))
+            val m = NativeSupport.allocate(NativeSupport.C_LONG_SIZE.toLong())
+            val value = (v as NativeRefInstance).fetch_i(tc)
+            if (NativeSupport.C_LONG_IS_INT) m.set(ValueLayout.JAVA_INT, 0, value.toInt())
+            else m.set(ValueLayout.JAVA_LONG, 0, value)
             return m
         }
         ArgType.LONGLONG_RW, ArgType.ULONGLONG_RW -> {
             if (Ops.iscont_i(v) == 0L)
                 throw ExceptionHandling.dieInternal(tc,
                     String.format("Native call expected argument that references a native integer, but got %s", v))
-            val m = Memory(java.lang.Long.SIZE.toLong())
-            m.setLong(0, (v as NativeRefInstance).fetch_i(tc))
+            val m = NativeSupport.allocate(8)
+            m.set(ValueLayout.JAVA_LONG, 0, (v as NativeRefInstance).fetch_i(tc))
             return m
         }
         ArgType.FLOAT_RW -> {
             if (Ops.iscont_n(v) == 0L)
                 throw ExceptionHandling.dieInternal(tc,
                     String.format("Native call expected argument that references a native number, but got %s", v))
-            val m = Memory(java.lang.Float.SIZE.toLong())
-            m.setFloat(0, (v as NativeRefInstance).fetch_n(tc).toFloat())
+            val m = NativeSupport.allocate(4)
+            m.set(ValueLayout.JAVA_FLOAT, 0, (v as NativeRefInstance).fetch_n(tc).toFloat())
             return m
         }
         ArgType.DOUBLE_RW -> {
             if (Ops.iscont_n(v) == 0L)
                 throw ExceptionHandling.dieInternal(tc,
                     String.format("Native call expected argument that references a native number, but got %s", v))
-            val m = Memory(java.lang.Double.SIZE.toLong())
-            m.setDouble(0, (v as NativeRefInstance).fetch_n(tc))
+            val m = NativeSupport.allocate(8)
+            m.set(ValueLayout.JAVA_DOUBLE, 0, (v as NativeRefInstance).fetch_n(tc))
             return m
         }
         ArgType.CPOINTER_RW -> {
-            val m = Memory(Native.POINTER_SIZE.toLong())
+            val m = NativeSupport.allocate(NativeSupport.POINTER_SIZE.toLong())
             v = Ops.decont(v, tc)
             val ptr = (v as CPointerInstance).get_int(tc)
-            if (ptr > 0)
-                m.setPointer(0, Pointer.createConstant(ptr))
-            else
-                m.setPointer(0, null)
+            m.set(ValueLayout.ADDRESS, 0, NativeSupport.orNull(if (ptr > 0) NativeSupport.pointer(ptr) else null))
             return m
         }
         else ->
-            throw ExceptionHandling.dieInternal(tc, String.format("Don't know how to convert %s arguments to JNA yet", target))
+            throw ExceptionHandling.dieInternal(tc, String.format("Don't know how to convert %s arguments to C yet", target))
         }
     }
 
@@ -650,7 +642,7 @@ object NativeCallOps {
         }
         ArgType.LONG -> {
             nqpobj = type!!.st.REPR.allocate(tc, type.st)
-            val value = (o as NativeLong).toLong()
+            val value = (o as Number).toLong()
             nqpobj.set_int(tc, value)
         }
         ArgType.LONGLONG -> {
@@ -682,7 +674,7 @@ object NativeCallOps {
         ArgType.ULONG -> {
             /* TODO: handle unsignedness properly. */
             nqpobj = type!!.st.REPR.allocate(tc, type.st)
-            val value = (o as NativeLong).toLong()
+            val value = (o as Number).toLong()
             nqpobj.set_int(tc, value)
         }
         ArgType.ULONGLONG -> {
@@ -701,43 +693,38 @@ object NativeCallOps {
             val value = (o as Double)
             nqpobj.set_num(tc, value)
         }
-        ArgType.ASCIISTR, ArgType.UTF8STR, ArgType.UTF16STR ->
+        ArgType.ASCIISTR, ArgType.UTF8STR, ArgType.UTF16STR -> {
             /* TODO: Handle encodings. */
-            if (o != null) {
+            val value = if (o is MemorySegment) NativeSupport.fromCString(o) else o as String?
+            if (value != null) {
                 nqpobj = type!!.st.REPR.allocate(tc, type.st)
-                nqpobj.set_str(tc, o as String)
+                nqpobj.set_str(tc, value)
             }
-        ArgType.CPOINTER ->
-            if (o != null) {
+        }
+        ArgType.CPOINTER -> {
+            val ptr = NativeSupport.unbounded(o as MemorySegment?)
+            if (ptr != null) {
                 nqpobj = type!!.st.REPR.allocate(tc, type.st)
                 val cpointer = nqpobj as CPointerInstance
-                cpointer.pointer = o as Pointer
+                cpointer.pointer = ptr
             }
-        ArgType.CARRAY ->
-            if (o != null) {
+        }
+        ArgType.CARRAY -> {
+            val ptr = NativeSupport.unbounded(o as MemorySegment?)
+            if (ptr != null) {
                 nqpobj = type!!.st.REPR.allocate(tc, type.st)
                 val carray = nqpobj as CArrayInstance
-                carray.storage = o as Pointer
+                carray.storage = ptr
                 carray.managed = false
             }
-        ArgType.CSTRUCT ->
-            if (o != null) {
+        }
+        ArgType.CSTRUCT, ArgType.CPPSTRUCT, ArgType.CUNION -> {
+            val ptr = o as MemorySegment?
+            if (ptr != null && ptr.address() != 0L) {
                 nqpobj = type!!.st.REPR.allocate(tc, type.st)
-                val cstruct = nqpobj as CStructInstance
-                cstruct.storage = o as Structure
+                (nqpobj as CTypeInstance).storage = sizedAs(type, ptr)
             }
-        ArgType.CPPSTRUCT ->
-            if (o != null) {
-                nqpobj = type!!.st.REPR.allocate(tc, type.st)
-                val cppstruct = nqpobj as CPPStructInstance
-                cppstruct.storage = o as Structure
-            }
-        ArgType.CUNION ->
-            if (o != null) {
-                nqpobj = type!!.st.REPR.allocate(tc, type.st)
-                val cunion = nqpobj as CUnionInstance
-                cunion.storage = o as Union
-            }
+        }
         else ->
             throw ExceptionHandling.dieInternal(tc, String.format("Don't know how to convert %s arguments to NQP yet", target))
         }
@@ -767,171 +754,118 @@ object NativeCallOps {
         return type
     }
 
-    @JvmField var typeId = 0
-    @JvmField var handlerName: String = Type.getInternalName(CallbackHandler::class.java)
-    private val callbackHandlers = HashMap<SixModelObject, CallbackHandler>()
-    private val callbackClasses = HashMap<String, Class<CallbackHandler>>()
+    /**
+     * An nqp native array travels as a pointer to a copy of its slots, which
+     * we hand back over the slots once the call returns.
+     *
+     * NOTE: the whole slot buffer goes out, spare capacity and all, and the
+     * array's start offset is ignored -- which is what the callee saw when
+     * JNA marshalled the Java array for us, so it stays that way.
+     */
+    private fun vmarrayToNative(tc: ThreadContext, v: SixModelObject): MemorySegment {
+        val arena = Arena.ofAuto()
+        when (v) {
+            is VMArrayInstance_i8, is VMArrayInstance_u8 -> {
+                val slots = (if (v is VMArrayInstance_i8) v.slots else (v as VMArrayInstance_u8).slots)
+                    ?: return MemorySegment.NULL
+                return arena.allocateFrom(ValueLayout.JAVA_BYTE, *slots)
+            }
+            is VMArrayInstance_i16, is VMArrayInstance_u16 -> {
+                val slots = (if (v is VMArrayInstance_i16) v.slots else (v as VMArrayInstance_u16).slots)
+                    ?: return MemorySegment.NULL
+                return arena.allocateFrom(ValueLayout.JAVA_SHORT, *slots)
+            }
+            is VMArrayInstance_i32, is VMArrayInstance_u32 -> {
+                val slots = (if (v is VMArrayInstance_i32) v.slots else (v as VMArrayInstance_u32).slots)
+                    ?: return MemorySegment.NULL
+                return arena.allocateFrom(ValueLayout.JAVA_INT, *slots)
+            }
+            is VMArrayInstance_i ->
+                return arena.allocateFrom(ValueLayout.JAVA_LONG, *(v.slots ?: return MemorySegment.NULL))
+            is VMArrayInstance_n ->
+                return arena.allocateFrom(ValueLayout.JAVA_DOUBLE, *(v.slots ?: return MemorySegment.NULL))
+            is VMArrayInstance_s -> {
+                val slots = v.slots ?: return MemorySegment.NULL
+                val seg = arena.allocate(ValueLayout.ADDRESS, slots.size.toLong())
+                for (i in slots.indices) {
+                    val s = slots[i]
+                    seg.setAtIndex(ValueLayout.ADDRESS, i.toLong(),
+                        if (s == null) MemorySegment.NULL else arena.allocateFrom(s))
+                }
+                return seg
+            }
+            else ->
+                throw ExceptionHandling.dieInternal(tc,
+                    String.format("Don't know how to pass a %s as a native array", v))
+        }
+    }
 
-    private fun callbackHandlerFor(function: SixModelObject, infos: SixModelObject, tc: ThreadContext): CallbackHandler {
-        val existing = callbackHandlers.get(function)
+    private fun vmarrayFromNative(tc: ThreadContext, v: SixModelObject?, seg: MemorySegment?) {
+        if (seg == null || seg.address() == 0L) return
+        when (v) {
+            is VMArrayInstance_i8 -> MemorySegment.copy(seg, ValueLayout.JAVA_BYTE, 0L, v.slots!!, 0, v.slots!!.size)
+            is VMArrayInstance_u8 -> MemorySegment.copy(seg, ValueLayout.JAVA_BYTE, 0L, v.slots!!, 0, v.slots!!.size)
+            is VMArrayInstance_i16 -> MemorySegment.copy(seg, ValueLayout.JAVA_SHORT, 0L, v.slots!!, 0, v.slots!!.size)
+            is VMArrayInstance_u16 -> MemorySegment.copy(seg, ValueLayout.JAVA_SHORT, 0L, v.slots!!, 0, v.slots!!.size)
+            is VMArrayInstance_i32 -> MemorySegment.copy(seg, ValueLayout.JAVA_INT, 0L, v.slots!!, 0, v.slots!!.size)
+            is VMArrayInstance_u32 -> MemorySegment.copy(seg, ValueLayout.JAVA_INT, 0L, v.slots!!, 0, v.slots!!.size)
+            is VMArrayInstance_i -> MemorySegment.copy(seg, ValueLayout.JAVA_LONG, 0L, v.slots!!, 0, v.slots!!.size)
+            is VMArrayInstance_n -> MemorySegment.copy(seg, ValueLayout.JAVA_DOUBLE, 0L, v.slots!!, 0, v.slots!!.size)
+            /* Strings went out as a copy; JNA didn't read them back either. */
+            else -> {}
+        }
+    }
+
+    private val callbackStubs = HashMap<SixModelObject, MemorySegment>()
+    private val CALL_FUNCTION: MethodHandle = MethodHandles.lookup().findVirtual(
+        CallbackHandler::class.java, "callFunction",
+        MethodType.methodType(Any::class.java, Array<Any?>::class.java))
+
+    /**
+     * An upcall stub the foreign side can call, which routes into the NQP
+     * function it was built for. The linker binds a MethodHandle, so one
+     * handle onto CallbackHandler.callFunction, adapted to the signature at
+     * hand, serves every callback.
+     */
+    private fun callbackStubFor(function: SixModelObject, infos: SixModelObject, tc: ThreadContext): MemorySegment {
+        val existing = callbackStubs.get(function)
         if (existing != null) return existing
 
-        /* Extract the information we need from the list of infos. The first
-         * element of the list is the return type and any following items are
-         * the argument types. We process the arguments first, since a JVM
-         * method signature has the form "($arguments)$returns".
-         *
-         * At the same time, we collect the data needed for the callback when
-         * it's time to call back into NQP: type objects for argument and
-         * return types, and the ArgTypes for all of them.
-         */
+        /* The first element of the list is the return type and any following
+         * items are the argument types. We collect the data needed when it's
+         * time to call back into NQP: type objects for argument and return
+         * types, and the ArgTypes for all of them. */
         val num_info = infos.elems(tc).toInt()
         val argumentTypes = arrayOfNulls<SixModelObject>(num_info - 1)
         val argumentInfo = arrayOfNulls<ArgType>(num_info - 1)
-        val isVoid = infos.at_pos_boxed(tc, 0L)!!.at_key_boxed(tc, "type")!!.get_str(tc) == "void"
-        val sb = StringBuilder("(")
         for (i in 1 until num_info) {
             val info = infos.at_pos_boxed(tc, i.toLong())!!
-            val type = info.at_key_boxed(tc, "typeobj")
-            sb.append(Type.getDescriptor(javaType(tc, getArgType(tc, info, false), type!!)))
-            argumentTypes[i - 1] = type
+            argumentTypes[i - 1] = info.at_key_boxed(tc, "typeobj")
             argumentInfo[i - 1] = getArgType(tc, info, false)
         }
-        sb.append(")")
 
         val info = infos.at_pos_boxed(tc, 0L)!!
-        val returnType = info.at_key_boxed(tc, "typeobj")
         val returnInfo = getArgType(tc, info, true)
-        var javaReturn: Class<*>? = null
-        if (!isVoid) javaReturn = javaType(tc, getArgType(tc, info, true), returnType!!)
-        sb.append(if (isVoid) "V" else Type.getDescriptor(javaReturn))
-        val sig = sb.toString()
-        var handlerClass = callbackClasses.get(sig)
 
-        if (handlerClass == null) {
-            val typeNo = typeId++
+        @Suppress("UNCHECKED_CAST")
+        val handler = CallbackHandler(tc.gc, function, returnInfo, argumentTypes, argumentInfo as Array<ArgType>)
+        val descriptor = descriptorFor(tc, returnInfo, argumentInfo as Array<ArgType>)
+        val target = CALL_FUNCTION.bindTo(handler)
+            .asCollector(Array<Any?>::class.java, num_info - 1)
+            .asType(descriptor.toMethodType())
 
-            /* We need to generate two separate pieces two work with callbacks
-             * in JNA: an interface, which specifies which method to call and
-             * its signature, and a class implementing that interface that
-             * does the actual work.
-             *
-             * To keep codegen to a minimum, we'll only ever have a single
-             * class implementing each interface (one for each type signature
-             * used), with the classes delegating to the correct NQP function.
-             */
-
-            val ifaceWriter = ClassWriter(ClassWriter.COMPUTE_MAXS or ClassWriter.COMPUTE_FRAMES)
-            val ifaceName = "__CallbackInterface__$typeNo"
-
-            // public interface $interfaceName extends com.sun.jna.Callback { ... }
-            ifaceWriter.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT or Opcodes.ACC_INTERFACE,
-                    ifaceName, null, "java/lang/Object", arrayOf(Type.getInternalName(Callback::class.java)))
-            // public $sig[0] callback($sig[1..*]);
-            val ifaceMeth = ifaceWriter.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT, "callback", sig, null, null)
-            ifaceMeth.visitEnd()
-
-            ifaceWriter.visitEnd()
-            val ifaceCompiled = ifaceWriter.toByteArray()
-            val iface = tc.gc.byteClassLoader.defineClass(ifaceName, ifaceCompiled)
-
-            val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS or ClassWriter.COMPUTE_FRAMES)
-            val className = "__CallbackHandler__$typeNo"
-
-            // public class $className extends CallbackHandler implements $ifaceName { ... }
-            classWriter.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER, className, null,
-                    handlerName, arrayOf(Type.getInternalName(iface)))
-
-            // public $className(GlobalContext gc, SixModelObject function) { super(gc, function); }
-            //String ctorSig = "(Lorg/raku/nqp/runtime/GlobalContext;Lorg/raku/nqp/sixmodel/SixModelObject;)V";
-            val ctorSig = String.format("(%s%s%s%s%s)V",
-                    Type.getDescriptor(GlobalContext::class.java), Type.getDescriptor(SixModelObject::class.java),
-                    Type.getDescriptor(ArgType::class.java),
-                    Type.getDescriptor(Array<SixModelObject>::class.java), Type.getDescriptor(Array<ArgType>::class.java))
-            val constructor = classWriter.visitMethod(Opcodes.ACC_PUBLIC, "<init>", ctorSig, null, null)
-            constructor.visitCode()
-            constructor.visitVarInsn(Opcodes.ALOAD, 0)
-            constructor.visitVarInsn(Opcodes.ALOAD, 1)
-            constructor.visitVarInsn(Opcodes.ALOAD, 2)
-            constructor.visitVarInsn(Opcodes.ALOAD, 3)
-            constructor.visitVarInsn(Opcodes.ALOAD, 4)
-            constructor.visitVarInsn(Opcodes.ALOAD, 5)
-            @Suppress("DEPRECATION")
-            constructor.visitMethodInsn(Opcodes.INVOKESPECIAL, handlerName, "<init>", ctorSig)
-            constructor.visitInsn(Opcodes.RETURN)
-            constructor.visitMaxs(6, 6)
-            constructor.visitEnd()
-
-            // public $sig[0] callback($sig[1..*]) { ... }
-            val callback = classWriter.visitMethod(Opcodes.ACC_PUBLIC, "callback", sig, null, null)
-            //   Object[] args = new Object[$argCount];
-            callback.visitLdcInsn(num_info - 1)
-            callback.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object")
-
-            //  args[$i] = $sig[$i+1];
-            for (i in 0 until num_info - 1) {
-                callback.visitInsn(Opcodes.DUP) // Dup the array, since we'll store to it
-                callback.visitLdcInsn(i)
-                callback.visitVarInsn(Opcodes.ALOAD, i + 1)
-                callback.visitInsn(Opcodes.AASTORE)
-            }
-
-            //  callFunction(args);
-            callback.visitVarInsn(Opcodes.ALOAD, 0)
-            callback.visitInsn(Opcodes.SWAP)
-            @Suppress("DEPRECATION")
-            callback.visitMethodInsn(Opcodes.INVOKEVIRTUAL, className, "callFunction", "([Ljava/lang/Object;)Ljava/lang/Object;")
-
-            if (isVoid) {
-                callback.visitInsn(Opcodes.POP)
-                callback.visitInsn(Opcodes.RETURN)
-            }
-            else {
-                callback.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(javaReturn))
-                callback.visitInsn(Opcodes.ARETURN)
-            }
-
-            callback.visitMaxs(4, num_info)
-            callback.visitEnd()
-
-            classWriter.visitEnd()
-            val classCompiled = classWriter.toByteArray()
-            /* Uncomment to dump generated class to file:
-            try {
-                java.io.FileOutputStream fos = new java.io.FileOutputStream(new java.io.File(className + ".class"));
-                fos.write(classCompiled);
-                fos.close();
-            } catch (java.io.IOException e) {
-            }
-            */
-            @Suppress("UNCHECKED_CAST")
-            handlerClass = tc.gc.byteClassLoader.defineClass(className, classCompiled) as Class<CallbackHandler>
-            callbackClasses.put(sig, handlerClass)
-        }
-
-        val handler: CallbackHandler
-        try {
-            val ctor = handlerClass.getConstructor(GlobalContext::class.java, SixModelObject::class.java,
-                    ArgType::class.java,
-                    Array<SixModelObject>::class.java, Array<ArgType>::class.java)
-            handler = ctor.newInstance(tc.gc, function,
-                    returnInfo,
-                    argumentTypes, argumentInfo)
-        }
-        catch (e: Exception) {
-            throw ExceptionHandling.dieInternal(tc, e)
-        }
-        callbackHandlers.put(function, handler)
-        return handler
+        val stub = NativeSupport.LINKER.upcallStub(target, descriptor, Arena.ofAuto())
+        callbackStubs.put(function, stub)
+        return stub
     }
 
-    abstract class CallbackHandler protected constructor(
+    class CallbackHandler(
         @JvmField var gc: GlobalContext,
         @JvmField var function: SixModelObject,
         @JvmField var returnInfo: ArgType,
-        @JvmField var argumentTypes: Array<SixModelObject>,
+        @JvmField var argumentTypes: Array<SixModelObject?>,
         @JvmField var argumentInfo: Array<ArgType>,
-    ) : Callback {
+    ) {
         @JvmField var callsite: CallSiteDescriptor
 
         init {
@@ -940,7 +874,7 @@ object NativeCallOps {
             this.callsite = CallSiteDescriptor(desc, null)
         }
 
-        protected fun callFunction(vararg args: Any?): Any? {
+        fun callFunction(args: Array<Any?>): Any? {
             val tc = gc.getCurrentThreadContext()!!
 
             /* TODO: Make sure args.length == argumentTypes.length */
@@ -955,7 +889,7 @@ object NativeCallOps {
                 return null
             }
             else {
-                return toJNAType(tc, Ops.decont(Ops.result_o(tc.resultFrame()), tc), returnInfo, null)
+                return toNativeType(tc, Ops.decont(Ops.result_o(tc.resultFrame()), tc), returnInfo, null)
             }
         }
     }
