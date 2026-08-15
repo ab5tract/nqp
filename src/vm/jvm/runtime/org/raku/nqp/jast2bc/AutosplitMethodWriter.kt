@@ -243,7 +243,7 @@ internal class AutosplitMethodWriter(
         var taken = 0
         while (taken < insnList.size) {
             if (calcFragmentSize(taken, taken + 1) > MAX_FRAGMENT)
-                throw RuntimeException("cannot take even one more instruction at $taken")
+                throw RuntimeException(describeUnsplittable(taken))
             val takeable = bite(taken, 1, insnList.size - taken)
 
             if (DEBUG_FRAGMENT) System.out.printf("fragment: %d - %d (max %d bytes)\n", taken, taken + takeable - 1, calcFragmentSize(taken, taken + takeable))
@@ -261,6 +261,24 @@ internal class AutosplitMethodWriter(
 
         becomeWrapper()
         accept(target)
+    }
+
+    /* A single instruction that will not fit in a fragment is always the
+     * trampolines, never the instruction: entry and exit code is emitted per
+     * live stack slot per crossing edge, so a point with a deep stack or a lot
+     * of edges over it costs far more than the instruction itself. Say which,
+     * because "cannot take even one more instruction at 6366" on its own gives
+     * nobody anywhere to start. */
+    private fun describeUnsplittable(at: Int): String {
+        val ee = nonlocalEntryExit(at, at + 1)
+        val insn = insnList[at]
+        val frame = types[at]
+        return "cannot take even one more instruction at $at" +
+            " of method $name$desc in $tgtype" +
+            " (opcode ${insn.opcode}, type ${insn.getType()}," +
+            " stack depth ${frame?.sp ?: -1}, locals $nlocal," +
+            " ${ee[0].size} entry and ${ee[1].size} exit edges," +
+            " fragment ${calcFragmentSize(at, at + 1)} bytes > $MAX_FRAGMENT)"
     }
 
     private fun bite(from: Int, min_takeIn: Int, max_takeIn: Int): Int { /* min_take is known good */
@@ -1028,10 +1046,52 @@ internal class AutosplitMethodWriter(
         return arrayOf(entryPts, exitPts)
     }
 
+    /* The locals a fragment actually reads or writes.
+     *
+     * Fragments hand state to each other in an Object[], unpacking it into
+     * real locals on entry and packing it back on exit. Doing that for every
+     * local of the original method costs around twenty bytes per local per
+     * fragment, in both directions - so a compilation unit mainline with a few
+     * thousand lexicals spends more than the 64KB a method may occupy purely
+     * on trampolines, and then not even a single instruction fits in a
+     * fragment and the split fails outright.
+     *
+     * A local the fragment never touches does not need to make the round trip:
+     * it can sit in the carrier array, put there by whichever earlier fragment
+     * wrote it and picked up by whichever later fragment reads it. So only
+     * unpack and repack what this fragment names. Both the size estimate and
+     * the emitted code have to agree on that set, or the estimate stops
+     * matching the bytecode. */
+    private fun usedLocals(from: Int, to: Int): BooleanArray {
+        val used = BooleanArray(nlocal)
+        for (i in from until to) {
+            when (val insn = insnList[i]) {
+                is VarInsnNode -> {
+                    val slot = insn.`var`
+                    if (slot in 0 until nlocal) used[slot] = true
+                    // A long or double occupies its slot and the next one,
+                    // whose frame entry is the "T" upper half.
+                    val opc = insn.getOpcode()
+                    if ((opc == Opcodes.LLOAD || opc == Opcodes.DLOAD ||
+                         opc == Opcodes.LSTORE || opc == Opcodes.DSTORE) &&
+                            slot + 1 < nlocal)
+                        used[slot + 1] = true
+                }
+                is IincInsnNode -> {
+                    val slot = insn.`var`
+                    if (slot in 0 until nlocal) used[slot] = true
+                }
+                else -> { /* touches no local */ }
+            }
+        }
+        return used
+    }
+
     private fun calcFragmentSize(from: Int, to: Int): Int {
         // we have to include the instructions
         val base = baselineSize[to] - baselineSize[from]
 
+        val used = usedLocals(from, to)
         val ee = nonlocalEntryExit(from, to)
         val entryPts = ee[0]
         val exitPts = ee[1]
@@ -1044,6 +1104,7 @@ internal class AutosplitMethodWriter(
 
         var centry = 2
         for (i in commonEntry.indices) {
+            if (i < nlocal && !used[i]) continue
             centry += localEntrySize(i, commonEntry[i])
         }
         centry += 13 // swap+tswitch
@@ -1055,7 +1116,9 @@ internal class AutosplitMethodWriter(
             uentry += 4 // dispatch vector
             val f = types[ept]!!
             for (j in 0 until f.sp) {
-                if (j < commonEntry.size && commonEntry[j] == f.stack[j]) {
+                if (j < nlocal && !used[j]) {
+                    /* stays in the carrier array */
+                } else if (j < commonEntry.size && commonEntry[j] == f.stack[j]) {
                     /* no action */
                 } else if (j < nlocal) {
                     uentry += localEntrySize(j, f.stack[j])
@@ -1074,7 +1137,9 @@ internal class AutosplitMethodWriter(
         for (pt in exitPts) {
             val f = types[pt]!!
             for (j in 0 until f.sp) {
-                if (j < commonExit.size && commonExit[j] == f.stack[j]) {
+                if (j < nlocal && !used[j]) {
+                    /* stays in the carrier array */
+                } else if (j < commonExit.size && commonExit[j] == f.stack[j]) {
                     /* no action */
                 } else if (j < nlocal) {
                     uexit += localExitSize(j, f.stack[j])
@@ -1090,6 +1155,7 @@ internal class AutosplitMethodWriter(
         // common exit code
         var cexit = 1 // swap
         for (i in commonExit.indices) {
+            if (i < nlocal && !used[i]) continue
             cexit += localExitSize(i, commonExit[i])
         }
         cexit += 2 // pop; ireturn
@@ -1198,6 +1264,7 @@ internal class AutosplitMethodWriter(
         val v = target.visitMethod(Opcodes.ACC_STATIC or Opcodes.ACC_PRIVATE or Opcodes.ACC_SYNTHETIC, name + "\$f" + fno, "(I[Ljava/lang/Object;)I", null, null)
         v.visitCode()
 
+        val used = usedLocals(begin, end)
         val ee = nonlocalEntryExit(begin, end)
         val entryPts = ee[0]
         val exitPts = ee[1]
@@ -1220,6 +1287,7 @@ internal class AutosplitMethodWriter(
         v.visitVarInsn(Opcodes.ALOAD, 1)
 
         for (i in commonEntry.indices) {
+            if (i < nlocal && !used[i]) continue
             localEntryCode(v, i, commonEntry[i])
         }
         v.visitInsn(Opcodes.SWAP)
@@ -1246,6 +1314,8 @@ internal class AutosplitMethodWriter(
             v.visitLabel(entryTrampolineLabels[jumpNoMap[ept] - firstj])
             val f = types[ept]!!
             for (j in 0 until nlocal) {
+                if (!used[j])
+                    continue
                 if (j < commonEntry.size && commonEntry[j] == f.stack[j])
                     continue
                 localEntryCode(v, j, f.stack[j])
@@ -1293,6 +1363,8 @@ internal class AutosplitMethodWriter(
             }
             v.visitVarInsn(Opcodes.ALOAD, stash)
             for (j in 0 until nlocal) {
+                if (!used[j])
+                    continue
                 if (j < commonExit.size && commonExit[j] == f.stack[j])
                     continue
 
@@ -1307,6 +1379,7 @@ internal class AutosplitMethodWriter(
             v.visitLabel(commonExitLabel)
             v.visitInsn(Opcodes.SWAP)
             for (i in commonExit.indices) {
+                if (i < nlocal && !used[i]) continue
                 localExitCode(v, i, commonExit[i])
             }
             v.visitInsn(Opcodes.POP)
