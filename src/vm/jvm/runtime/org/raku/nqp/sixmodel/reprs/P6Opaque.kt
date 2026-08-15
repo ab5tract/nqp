@@ -21,6 +21,9 @@ import org.objectweb.asm.Type
 import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
+import org.raku.nqp.sixmodel.Boxable
+import org.raku.nqp.sixmodel.BoxedPrimitive
+import org.raku.nqp.sixmodel.Inlining
 import org.raku.nqp.sixmodel.REPR
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SerializationReader
@@ -119,7 +122,7 @@ class P6Opaque : REPR() {
                     indexes.put(attrName, curAttr)
                     val info = AttrInfo()
                     info.st = attrType!!.st
-                    if (attrType.st.REPR.get_storage_spec(tc, attrType.st).inlineable == StorageSpec.INLINED)
+                    if (attrType.st.REPR.get_storage_spec(tc, attrType.st).inlining == Inlining.INLINED)
                         flattenedSTables.add(attrType.st)
                     else
                         flattenedSTables.add(null)
@@ -133,14 +136,14 @@ class P6Opaque : REPR() {
                     attrInfoList.add(info)
 
                     if (info.boxTarget) {
-                        when (info.st.REPR.get_storage_spec(tc, info.st).boxed_primitive) {
-                            StorageSpec.BP_INT ->
+                        when (info.st.REPR.get_storage_spec(tc, info.st).boxedPrimitive) {
+                            BoxedPrimitive.INT ->
                                 reprData.unboxIntSlot = curAttr
-                            //StorageSpec.BP_UINT ->
+                            //BoxedPrimitive.UINT ->
                             //    reprData.unboxUIntSlot = curAttr
-                            StorageSpec.BP_NUM ->
+                            BoxedPrimitive.NUM ->
                                 reprData.unboxNumSlot = curAttr
-                            StorageSpec.BP_STR ->
+                            BoxedPrimitive.STR ->
                                 reprData.unboxStrSlot = curAttr
                             else ->
                                 reprData.unboxObjSlot = curAttr
@@ -225,7 +228,7 @@ class P6Opaque : REPR() {
             if (attr.assDelegate) sigBuilder.append('a')
 
             val ss = attr.st.REPR.get_storage_spec(tc, attr.st)
-            if (ss.inlineable != StorageSpec.REFERENCE) {
+            if (ss.inlining != Inlining.REFERENCE) {
                 sigBuilder.append('I')
                 sigBuilder.append(attr.st.REPR.name)
                 sigBuilder.append('(')
@@ -421,7 +424,7 @@ class P6Opaque : REPR() {
 
             /* Is it a reference type or not? */
             val ss = attr.st.REPR.get_storage_spec(tc, attr.st)
-            if (ss.inlineable == StorageSpec.REFERENCE) {
+            if (ss.inlining == Inlining.REFERENCE) {
                 /* Add field. */
                 val field = "field_$i"
                 val desc = "Lorg/raku/nqp/sixmodel/SixModelObject;"
@@ -518,7 +521,7 @@ class P6Opaque : REPR() {
              * methods.
              */
             if (attr.boxTarget) {
-                if (ss.inlineable == StorageSpec.REFERENCE)
+                if (ss.inlining == Inlining.REFERENCE)
                     throw ExceptionHandling.dieInternal(tc, "A box_target must not have a reference type attribute")
                 attr.st.REPR.generateBoxingMethods(tc, attr.st, cw, className, "field_$i")
             }
@@ -708,14 +711,12 @@ class P6Opaque : REPR() {
 
     override fun get_storage_spec(tc: ThreadContext, st: STable): StorageSpec {
         val rd = st.REPRData as P6OpaqueREPRData
-        val ss = StorageSpec()
-        if (rd.unboxIntSlot >= 0)
-            ss.can_box = (ss.can_box + StorageSpec.CAN_BOX_INT).toShort()
-        if (rd.unboxNumSlot >= 0)
-            ss.can_box = (ss.can_box + StorageSpec.CAN_BOX_NUM).toShort()
-        if (rd.unboxStrSlot >= 0)
-            ss.can_box = (ss.can_box + StorageSpec.CAN_BOX_STR).toShort()
-        return ss
+        val canBox = buildSet<Boxable> {
+            if (rd.unboxIntSlot >= 0) add(Boxable.INT)
+            if (rd.unboxNumSlot >= 0) add(Boxable.NUM)
+            if (rd.unboxStrSlot >= 0) add(Boxable.STR)
+        }
+        return StorageSpec(canBox = canBox)
     }
 
     override fun hint_for(tc: ThreadContext, st: STable, class_handle: SixModelObject?, name: String?): Long {

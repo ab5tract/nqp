@@ -509,18 +509,18 @@ class SerializationWriter(
              * string heap, a plain VMArray will be created in deserialize_stub.
              * So we cheat and add a suffix to the real REPR name. */
             val ss = reprData.ss!!
-            when (ss.boxed_primitive) {
-                StorageSpec.BP_INT, StorageSpec.BP_UINT ->
+            when (ss.boxedPrimitive) {
+                BoxedPrimitive.INT, BoxedPrimitive.UINT ->
                     reprNameForSerialization = when (ss.bits.toInt()) {
                         64 -> "VMArray_i"
-                        8 -> if (ss.is_unsigned.toInt() == 0) "VMArray_i8" else "VMArray_u8"
-                        16 -> if (ss.is_unsigned.toInt() == 0) "VMArray_i16" else "VMArray_u16"
-                        32 -> if (ss.is_unsigned.toInt() == 0) "VMArray_i32" else "VMArray_u32"
+                        8 -> if (!ss.isUnsigned) "VMArray_i8" else "VMArray_u8"
+                        16 -> if (!ss.isUnsigned) "VMArray_i16" else "VMArray_u16"
+                        32 -> if (!ss.isUnsigned) "VMArray_i32" else "VMArray_u32"
                         else -> "VMArray_i"
                     }
-                StorageSpec.BP_NUM ->
+                BoxedPrimitive.NUM ->
                     reprNameForSerialization = "VMArray_n"
-                StorageSpec.BP_STR ->
+                BoxedPrimitive.STR ->
                     reprNameForSerialization = "VMArray_s"
                 else ->
                     throw ExceptionHandling.dieInternal(tc, "Invalid REPR data for VMArray")

@@ -1,5 +1,7 @@
 package org.raku.nqp.sixmodel.reprs
 
+import org.raku.nqp.sixmodel.BoxedPrimitive
+
 class NativeRefREPRData {
     companion object {
         /* Kinds of reference. */
@@ -9,9 +11,8 @@ class NativeRefREPRData {
         const val REF_MULTIDIM: Short = 4
     }
 
-    /* The primitive type of native reference this is (one of the values that
-     * is valid for StorageSpec.boxed_primitive). */
-    @JvmField var primitive_type: Short = 0
+    /* The primitive type of native reference this is. */
+    @JvmField var primitive_type: BoxedPrimitive = BoxedPrimitive.NONE
 
     /* The kind of reference this is. */
     @JvmField var ref_kind: Short = 0
