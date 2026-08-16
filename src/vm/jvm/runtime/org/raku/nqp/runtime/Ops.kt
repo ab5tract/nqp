@@ -4160,9 +4160,17 @@ object Ops {
     }
     @JvmStatic
     fun assign(cont: SixModelObject?, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        val cs = cont!!.st.ContainerSpec
-        if (cs != null)
-            cs.store(tc, cont, decont(value, tc)!!)
+        /* A bare `!!` here reports both a missing container and a missing
+         * value as the same bare NullPointerException, with nothing to say
+         * which side was null. Say which. */
+        if (cont == null)
+            throw ExceptionHandling.dieInternal(tc, "Cannot assign: the container is null")
+        val cs = cont.st.ContainerSpec
+        if (cs != null) {
+            val v = decont(value, tc)
+                ?: throw ExceptionHandling.dieInternal(tc, "Cannot assign: the value is null")
+            cs.store(tc, cont, v)
+        }
         else
             ExceptionHandling.dieInternal(tc, "Cannot assign to an immutable value")
         return cont
