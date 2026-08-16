@@ -3847,6 +3847,25 @@ class QAST::CompilerJAST {
                     $cu.repo_conflict_resolver()));
             }
 
+            # Deserialization pairs the serialized code refs with this class's
+            # methods by block id, so every block in the code ref table needs a
+            # method, including one the tree never mentioned: a thunk that only
+            # ever ran at BEGIN time leaves its block registered but unreached.
+            # Compile the leftovers here, which is what the MoarVM backend gets
+            # from hanging the whole code ref table off its list_b.
+            if $cu.code_ref_blocks() {
+                my $orphans := QAST::Block.new( :blocktype('immediate') );
+                for $cu.code_ref_blocks() {
+                    unless $*CODEREFS.know_cuid($_.cuid) {
+                        # Only the method matters; make sure referencing it
+                        # cannot call it or take a closure over it.
+                        $_.blocktype('declaration_static');
+                        $orphans.push($_);
+                    }
+                }
+                $block.push($orphans) if nqp::elems($orphans.list);
+            }
+
             # Add code object fixups.
             if $cu.code_ref_blocks() {
                 my $cur_pd_block := QAST::Block.new( :blocktype('immediate') );
