@@ -43,6 +43,13 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
             catch (e: Exception) {
                 if (!split && isMethodTooLarge(e))
                     return buildClass(jast, jastNodes, true, tc)
+                /* "Class too large: <hash>" says nothing about how far over
+                 * the 65535-entry constant pool the unit went, which is the
+                 * one number that tells you whether trimming is plausible. */
+                if (e is org.objectweb.asm.ClassTooLargeException)
+                    throw RuntimeException(
+                        "Class too large: constant pool has "
+                            + e.getConstantPoolCount() + " entries, limit is 65535", e)
                 throw RuntimeException(e)
             }
         }
@@ -195,6 +202,7 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
         val superName = jastClass.superName!!.replace('.', '/')
 
         indyCount = 0
+        indyByBsm.clear()
         val cw = ClassWriter(ClassWriter.COMPUTE_MAXS or ClassWriter.COMPUTE_FRAMES)
         cw.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC + Opcodes.ACC_SUPER, className, null,
                 superName, null)
@@ -237,7 +245,11 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
          * Refuse to emit a class in that regime rather than let it load. */
         if (indyCount > 65535)
             throw RuntimeException("Class " + className + " has " + indyCount
-                + " invokedynamic instructions, over the safe per-class limit of 65535")
+                + " invokedynamic instructions, over the safe per-class limit of 65535"
+                + " (by bootstrap method: "
+                + indyByBsm.entries.sortedByDescending { it.value }
+                    .joinToString(", ") { it.key + "=" + it.value }
+                + ")")
 
         return c
     }
@@ -776,6 +788,11 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
      * class assembly. */
     private var indyCount = 0
 
+    /* Which bootstrap methods the indy sites go to, so an over-limit class can
+     * say where its call sites actually come from. */
+    private val indyByBsm = HashMap<String, Int>()
+
+
     private fun emitInvokeDynamic(insn: SixModelObject, m: MethodVisitor, tc: ThreadContext) {
         indyCount++
         val name = Ops.getattr(insn, jastIndy, "\$!name", 0, tc)!!.get_str(tc)
@@ -783,6 +800,7 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
         val retType = processType(Ops.getattr(insn, jastIndy, "\$!ret_type", 2, tc)!!.get_str(tc)!!)
         val bsmType = Ops.getattr(insn, jastIndy, "\$!bsm_type", 3, tc)!!.get_str(tc)
         val bsmName = Ops.getattr(insn, jastIndy, "\$!bsm_name", 4, tc)!!.get_str(tc)
+        indyByBsm.merge(bsmName ?: "?", 1, Int::plus)
         val extraArgsSmo = Ops.getattr(insn, jastIndy, "@!extra_args", 5, tc)
 
         val numArgs = argTypesSmo!!.elems(tc).toInt()

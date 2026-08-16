@@ -92,6 +92,25 @@ class SerializationReader(
 
         // Put code refs in place.
         for (i in 0 until crCount) {
+            @Suppress("SENSELESS_COMPARISON")
+            if (cr[i] == null) {
+                var nulls = 0
+                val firstFew = StringBuilder()
+                for (j in cr.indices) {
+                    if (cr[j] == null) {
+                        nulls++
+                        if (nulls <= 8) {
+                            if (nulls > 1) firstFew.append(",")
+                            firstFew.append(j)
+                        }
+                    }
+                }
+                throw RuntimeException(
+                    "Serialized code ref " + i + " of " + crCount
+                        + " has no compiled method in this compilation unit"
+                        + " (code ref table has " + cr.size + " entries, "
+                        + nulls + " of them empty, first at " + firstFew + ")")
+            }
             cr[i].isStaticCodeRef = true
             cr[i].sc = sc
             sc.addCodeRef(cr[i])
