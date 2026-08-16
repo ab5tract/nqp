@@ -535,7 +535,14 @@ class HLL::Compiler does HLL::Backend::Default {
                 $result := %adverbs<profile-stage> eq $_
                     ?? $!backend.run_profiled(&run, %adverbs<profile-filename> || %adverbs<profile-compile>, %adverbs<profile-kind>)
                     !! run();
-                CATCH { $caught := $_ }
+                # $_ here is the `for @stages` loop variable, not the
+                # exception -- an NQP CATCH block does not rebind it. Reading
+                # it left $caught null, so a stage that threw was silently
+                # skipped and the next stage ran on the previous stage's
+                # result: a failing parse would hand the raw source text to
+                # the AST stage and, with a target of 'jar' or 'mbc', write
+                # the source out as the compiled output.
+                CATCH { $caught := nqp::exception() }
             }
             last if !nqp::isnull($caught);
 
