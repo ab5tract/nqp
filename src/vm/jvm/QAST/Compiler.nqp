@@ -4057,6 +4057,23 @@ class QAST::CompilerJAST {
     my $ARG_EXP_NO_ARGS    := 1;
     my $ARG_EXP_OBJ        := 2;
     my $ARG_EXP_OBJ_OBJ    := 3;
+    # The children of a param node are the extra work its binding implies: a
+    # type check, or the code that moves the bound value where the body wants
+    # it. MoarVM runs them right after taking the parameter, and a block whose
+    # only use of its argument is one of these tasks - a regex thunk binding
+    # its cursor to `self`, say - never sees the argument at all without them.
+    method emit_param_tasks($il, $block, $var) {
+        for $var.list {
+            if nqp::istype($_, QAST::ParamTypeCheck) {
+                nqp::die('QAST::ParamTypeCheck is not supported on the JVM backend');
+            }
+            my $*BLOCK := $block;
+            my $task := self.as_jast($_, :want($RT_VOID));
+            $il.append($task.jast);
+            $*STACK.obtain($il, $task);
+        }
+    }
+
     method try_setup_args_expectation($jmeth, $block, $il) {
         # Needing an args array forces the binder.
         if $*NEED_ARGS_ARRAY {
@@ -4088,6 +4105,7 @@ class QAST::CompilerJAST {
                             'bindlex_o', $TYPE_SMO, $TYPE_SMO, $TYPE_CF, 'Integer' ));
                         $il.append($POP);
                     }
+                    self.emit_param_tasks($il, $block, $param);
                     $jmeth.args_expectation($ARG_EXP_OBJ);
                     return $ARG_EXP_OBJ;
                 }
@@ -4122,6 +4140,7 @@ class QAST::CompilerJAST {
                             'bindlex_o', $TYPE_SMO, $TYPE_SMO, $TYPE_CF, 'Integer' ));
                         $il.append($POP);
                     }
+                    self.emit_param_tasks($il, $block, $_);
                     $i++;
                 }
                 $jmeth.args_expectation($ARG_EXP_OBJ_OBJ);
@@ -4322,6 +4341,7 @@ class QAST::CompilerJAST {
                             'bindlex_' ~ typechar($type), $jtype, $jtype, $TYPE_CF, 'Integer' ));
                         $il.append(pop_ins($type));
                     }
+                    self.emit_param_tasks($il, $block, $_);
                     $param_idx++;
                 }
             }
