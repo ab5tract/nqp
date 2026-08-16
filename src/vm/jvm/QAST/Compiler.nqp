@@ -4615,9 +4615,14 @@ class QAST::CompilerJAST {
             else {
                 $last_res := self.as_jast($_);
             }
-            # variables with fallback can have side effects and cannot be elided
+            # variables with fallback can have side effects and cannot be elided,
+            # nor can a local contvar declaration: unlike a lexical one, which
+            # the frame sets up from its lex-value table, it is initialized by
+            # the code compiled for the declaration itself
             $il.append($last_res.jast)
-                unless $void && nqp::istype($_, QAST::Var) && !nqp::istype($_, QAST::VarWithFallback);
+                unless $void && nqp::istype($_, QAST::Var)
+                    && !nqp::istype($_, QAST::VarWithFallback)
+                    && !($_.decl eq 'contvar' && $_.scope eq 'local');
             $*STACK.obtain($il, $last_res);
             if !$all_void && $resultchild == $i && $resultchild != $n - 1 {
                 $res_type := $last_res.type;
@@ -4729,8 +4734,26 @@ class QAST::CompilerJAST {
                 $*BLOCK.add_lexical($node, :is_static);
             }
             elsif $decl eq 'contvar' {
-                if $scope ne 'lexical' {
-                    nqp::die("Can only use 'contvar' decl with scope 'lexical'");
+                if $scope eq 'local' {
+                    # A lexical contvar is set up from the block's lex-value
+                    # table when the frame is entered; a local has no such
+                    # table, so clone the prototype container where the
+                    # declaration itself appears. Emitters put these in the
+                    # block's declaration prologue, ahead of any use.
+                    $*BLOCK.add_local($node);
+                    return self.as_jast(QAST::Op.new(
+                        :op('bind'),
+                        QAST::Var.new( :name($node.name), :scope('local') ),
+                        QAST::Op.new(
+                            # clone_nd, not clone: the prototype *is* a
+                            # container, and clone decontainerizes first.
+                            :op('clone_nd'),
+                            QAST::WVal.new( :value($node.value) )
+                        )
+                    ), :want($RT_OBJ));
+                }
+                elsif $scope ne 'lexical' {
+                    nqp::die("Can only use 'contvar' decl with scope 'lexical' or 'local', got scope '$scope'");
                 }
                 $*BLOCK.add_lexical($node, :is_cont);
             }
