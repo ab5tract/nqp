@@ -3042,6 +3042,29 @@ QAST::OperationsJAST.add_core_op('setup_blv', -> $qastcomp, $op {
     }
 
     my $il := JAST::InstructionList.new();
+
+    # One string constant per block would be two constant-pool entries per
+    # block, and the core setting has tens of thousands of them -- enough on
+    # its own to push the unit past the 65535-entry limit. Batch the blocks
+    # into as few strings as a constant-pool Utf8 entry can hold (its length
+    # is a u2 in bytes, so stay well under 65535 to leave room for non-ASCII
+    # lexical names). Each block contributes a qbid, a lexical count, and
+    # four fields per lexical.
+    my int $CHUNK-CHARS := 20000;
+    my @chunk;
+    my int $chunk-chars;
+    my sub flush() {
+        if nqp::elems(@chunk) {
+            $il.append($ALOAD_0);
+            $il.append($ALOAD_1);
+            $il.append(JAST::PushSVal.new( :value(nqp::join("\0", @chunk)) ));
+            $il.append(JAST::Instruction.new( :op('invokevirtual'),
+                $TYPE_CU, 'setLexValuesBulk', 'Void', $TYPE_TC, $TYPE_STR ));
+            @chunk := [];
+            $chunk-chars := 0;
+        }
+    }
+
     for $op[0] {
         my $cuid := $_.key;
         my @bits;
@@ -3052,13 +3075,16 @@ QAST::OperationsJAST.add_core_op('setup_blv', -> $qastcomp, $op {
             nqp::push(@bits, ~nqp::scgetobjidx($sc, @lex[1]));
             nqp::push(@bits, ~@lex[2]);
         }
-        $il.append($ALOAD_0);
-        $il.append($ALOAD_1);
-        $il.append(JAST::PushIndex.new( :value($qastcomp.cuid_to_qbid($cuid)) ));
-        $il.append(JAST::PushSVal.new( :value(nqp::join("\0", @bits)) ));
-        $il.append(JAST::Instruction.new( :op('invokevirtual'),
-            $TYPE_CU, 'setLexValues', 'Void', $TYPE_TC, 'I', $TYPE_STR ));
+        nqp::push(@chunk, ~$qastcomp.cuid_to_qbid($cuid));
+        nqp::push(@chunk, ~nqp::div_i(nqp::elems(@bits), 4));
+        $chunk-chars := $chunk-chars + 16;
+        for @bits {
+            nqp::push(@chunk, $_);
+            $chunk-chars := $chunk-chars + nqp::chars($_) + 1;
+        }
+        flush() if $chunk-chars >= $CHUNK-CHARS;
     }
+    flush();
 
     $il.append($ACONST_NULL);
     result($il, $RT_OBJ)
