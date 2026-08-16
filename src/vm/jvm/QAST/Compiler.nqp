@@ -3219,6 +3219,7 @@ class QAST::CompilerJAST {
         has int $!cur_idx;
         has %!cuid_to_idx;
         has @!jastmeth_names;
+        has @!jastmeths;
         has @!cuids;
         has @!callsites;
         has %!callsite_map;
@@ -3227,6 +3228,7 @@ class QAST::CompilerJAST {
             $!cur_idx := 0;
             %!cuid_to_idx := {};
             @!jastmeth_names := [];
+            @!jastmeths := [];
             @!cuids := [];
             @!callsites := [];
             %!callsite_map := {};
@@ -3235,6 +3237,7 @@ class QAST::CompilerJAST {
         method register_method($jastmeth, $cuid) {
             %!cuid_to_idx{$cuid} := $!cur_idx;
             nqp::push(@!jastmeth_names, $jastmeth.name);
+            nqp::push(@!jastmeths, $jastmeth);
             nqp::push(@!cuids, $cuid);
             $!cur_idx := $!cur_idx + 1;
         }
@@ -3251,6 +3254,13 @@ class QAST::CompilerJAST {
 
         method cuid_to_jastmethname($cuid) {
             @!jastmeth_names[self.cuid_to_idx($cuid)]
+        }
+
+        # What the already-emitted method for this cuid actually takes. The
+        # JAST::Method is mutable and its args expectation is only settled
+        # after register_method, so keep the object and ask it.
+        method cuid_to_args_expectation($cuid) {
+            @!jastmeths[self.cuid_to_idx($cuid)].args_expectation
         }
 
         method get_callsite_idx(@arg_types, @arg_names) {
@@ -4085,7 +4095,7 @@ class QAST::CompilerJAST {
         # Do block compilation in a nested block, so we can produce a result based on
         # the containing block's stack.
         my int $args_expectation;
-        unless $*CODEREFS.know_cuid($node.cuid) {
+        if !$*CODEREFS.know_cuid($node.cuid) {
             # Block gets fresh BlockInfo.
             my $*BINDVAL  := 0;
             my $outer     := $*BLOCK;
@@ -4502,6 +4512,14 @@ class QAST::CompilerJAST {
 
             # Finalize method and add it to the class.
             $*JCLASS.add_method($*JMETH);
+        }
+        else {
+            # A block already compiled into this unit still has to be called
+            # with the descriptor its method really has: an immediate call
+            # below picks the signature from $args_expectation, and leaving it
+            # at the default would emit a call to an overload that does not
+            # exist.
+            $args_expectation := $*CODEREFS.cuid_to_args_expectation($node.cuid);
         }
 
         # Now go by block type for producing a result; also need to special-case
