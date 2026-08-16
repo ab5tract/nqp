@@ -1735,7 +1735,15 @@ object Ops {
     fun ctxcallerskipthunks(ctx: SixModelObject?, tc: ThreadContext): SixModelObject? {
         if (ctx is ContextRefInstance) {
             var caller = ctx.context!!.caller
-            while (caller != null && caller.codeRef.staticInfo.isThunk)
+            /* A compiler stub stands in for a routine that has not been
+             * compiled yet, so its frame is an artifact of compilation and
+             * not something the caller wrote - skip it as well, which is what
+             * ExceptionHandling already does when it walks a backtrace.
+             * Rakudo asks for the caller here to find the `$/` a smartmatch
+             * should bind; stopping on the stub bound the match to the stub's
+             * frame and left the real caller's `$/` unset. */
+            while (caller != null
+                    && (caller.codeRef.staticInfo.isThunk || caller.codeRef.isCompilerStub))
                 caller = caller.caller
             if (caller == null)
                 return createNull(tc)
