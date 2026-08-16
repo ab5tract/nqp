@@ -97,7 +97,15 @@ abstract class CompilationUnit {
         var codeRefsFound = false
 
         val mlist = if (shared) codeInfoStash.get(javaClass) else getCodeInfo(javaClass)
-        val qbidToCodeRef = arrayOfNulls<CodeRef>(mlist.size)
+        /* Sized by the highest qbid, not by the number of methods: a qbid is
+         * also handed out for a block that registered static lexical values
+         * but was not compiled into this unit, so the ids are sparse and the
+         * highest one can exceed the method count. */
+        var maxQbid = -1
+        for (m in mlist)
+            if (m.qbid > maxQbid) maxQbid = m.qbid
+        val qbidToCodeRef = arrayOfNulls<CodeRef>(
+            if (maxQbid + 1 > mlist.size) maxQbid + 1 else mlist.size)
         this.qbidToCodeRef = qbidToCodeRef
 
         for (m in mlist) {
@@ -250,7 +258,46 @@ abstract class CompilationUnit {
      * never execute.
      */
     open fun setLexValues(tc: ThreadContext, localId: Int, toParse: String) {
-        setLexValues(tc, qbidToCodeRef!![localId]!!, toParse)
+        /* A qbid with no method in this unit has nothing to set up. */
+        val cr = qbidToCodeRef!!.getOrNull(localId) ?: return
+        setLexValues(tc, cr, toParse)
+    }
+
+    /**
+     * Static lexical setup for many blocks in one string. A string constant
+     * per block costs two constant-pool entries each, which the core setting
+     * cannot afford, so code generation batches them and calls this instead.
+     * Layout, all NUL-separated: per block a qbid, a count of lexicals, and
+     * then that many groups of (name, sc handle, sc index, flags).
+     */
+    open fun setLexValuesBulk(tc: ThreadContext, toParse: String) {
+        val bits = toParse.split("\u0000")
+        var i = 0
+        while (i < bits.size) {
+            val cr = qbidToCodeRef!!.getOrNull(Integer.parseInt(bits[i]))
+            val n = Integer.parseInt(bits[i + 1])
+            i += 2
+            if (cr == null) {
+                /* No method for this qbid in this unit; skip its records. */
+                i += 4 * n
+                continue
+            }
+            var j = 0
+            while (j < n) {
+                val lexName = bits[i]
+                val handle = bits[i + 1]
+                val scIdx = Integer.parseInt(bits[i + 2])
+                val flags = Integer.parseInt(bits[i + 3])
+                i += 4
+                j++
+                val idx = cr.staticInfo.oTryGetLexicalIdx(lexName)
+                /* Matches setLexValues: an unknown name is skipped. */
+                if (idx == -1)
+                    continue
+                cr.staticInfo.oLexStatic!![idx] = tc.gc.scs.get(handle)!!.getObject(scIdx)
+                cr.staticInfo.oLexStaticFlags!![idx] = flags.toByte()
+            }
+        }
     }
 
     private fun setLexValues(tc: ThreadContext, cr: CodeRef, toParse: String) {
