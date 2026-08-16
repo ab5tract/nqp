@@ -806,8 +806,14 @@ class P6Opaque : REPR() {
         for (i in 0 until numAttributes) {
             val info = AttrInfo()
             val flattened = flattenedSTables[i]
-            if (flattened != null)
+            if (flattened != null) {
+                /* installJVMType below asks each flattened type for its
+                 * storage spec, and for a native type that is repr data its
+                 * own deserialize fills in. The STable table is not in
+                 * dependency order, so make sure it has been read. */
+                reader.forceSTable(flattened)
                 info.st = flattened
+            }
             else
                 info.st = tc.gc.KnowHOW!!.st // Any reference type will do
             info.boxTarget = i == REPRData.unboxIntSlot || i == REPRData.unboxNumSlot ||
