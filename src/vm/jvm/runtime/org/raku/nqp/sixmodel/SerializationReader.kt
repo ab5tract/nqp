@@ -47,9 +47,19 @@ class SerializationReader(
         private const val REFVAR_VM_HASH_STR_VAR: Short    = 10
         private const val REFVAR_STATIC_CODEREF: Short     = 11
         private const val REFVAR_CLONED_CODEREF: Short     = 12
+
+        /* How far along an STable of this SC is, for forceSTable. */
+        private const val ST_UNREAD  = 0
+        private const val ST_READING = 1
+        private const val ST_READ    = 2
     }
 
     private lateinit var contexts: Array<CallFrame?>
+
+    /* Per-STable progress, and the way back from an STable to its index, so a
+     * REPR can ask for one it depends on out of table order. */
+    private var stableState = IntArray(0)
+    private val stableIndex = java.util.IdentityHashMap<STable, Int>()
 
     /* The version of the serialization format we're currently reading. */
     @JvmField var version = 0
@@ -92,6 +102,25 @@ class SerializationReader(
 
         // Put code refs in place.
         for (i in 0 until crCount) {
+            @Suppress("SENSELESS_COMPARISON")
+            if (cr[i] == null) {
+                var nulls = 0
+                val firstFew = StringBuilder()
+                for (j in cr.indices) {
+                    if (cr[j] == null) {
+                        nulls++
+                        if (nulls <= 8) {
+                            if (nulls > 1) firstFew.append(",")
+                            firstFew.append(j)
+                        }
+                    }
+                }
+                throw RuntimeException(
+                    "Serialized code ref " + i + " of " + crCount
+                        + " has no compiled method in this compilation unit"
+                        + " (code ref table has " + cr.size + " entries, "
+                        + nulls + " of them empty, first at " + firstFew + ")")
+            }
             cr[i].isStaticCodeRef = true
             cr[i].sc = sc
             sc.addCodeRef(cr[i])
@@ -328,6 +357,10 @@ class SerializationReader(
             st.sc = sc
             sc.setSTable(i, st)
         }
+
+        stableState = IntArray(stTableEntries)
+        for (i in 0 until stTableEntries)
+            stableIndex[sc.getSTable(i)!!] = i
     }
 
     private fun stubObjects() {
@@ -380,106 +413,148 @@ class SerializationReader(
     }
 
     private fun deserializeSTables() {
-        for (i in 0 until stTableEntries) {
-            // Seek to the right position in the data chunk.
-            orig.position(stTableOffset + i * STABLES_TABLE_ENTRY_SIZE + 4)
-            orig.position(stDataOffset + orig.getInt())
+        for (i in 0 until stTableEntries)
+            deserializeSTable(i)
+    }
 
-            // Get the STable we need to deserialize into.
-            val st = sc.getSTable(i)!!
-
-            // Read the HOW, WHAT and WHO.
-            st.HOW = readObjRef()
-            st.WHAT = readObjRef()
-            st.WHO = readRef()
-
-            /* Method cache and v-table. */
-            val methodCache = readRef()
-            if (Ops.isnull(methodCache) == 0L)
-                st.MethodCache = (methodCache as VMHashInstance).storage
-            val vTable = arrayOfNulls<SixModelObject>(orig.getLong().toInt())
-            st.VTable = vTable
-            for (j in vTable.indices)
-                vTable[j] = readRef()
-
-            /* Type check cache. */
-            val tcCacheSize = orig.getLong().toInt()
-            if (tcCacheSize > 0) {
-                val typeCheckCache = arrayOfNulls<SixModelObject>(tcCacheSize)
-                st.TypeCheckCache = typeCheckCache
-                for (j in typeCheckCache.indices)
-                    typeCheckCache[j] = readRef()
-            }
-
-            /* Mode flags. */
-            st.ModeFlags = orig.getLong().toInt()
-
-            /* Boolification spec. */
-            if (orig.getLong() != 0L) {
-                val boolSpec = BoolificationSpec()
-                st.BoolificationSpec = boolSpec
-                boolSpec.Mode = orig.getLong().toInt()
-                boolSpec.Method = readRef()
-            }
-
-            /* Container spec. */
-            if (orig.getLong() != 0L) {
-                if (version >= 5) {
-                    val ccName = readStr()
-                    val cc = tc.gc.contConfigs[ccName]
-                        ?: throw RuntimeException("Unknown container config $ccName")
-                    cc.setContainerSpec(tc, st)
-                    st.ContainerSpec!!.deserialize(tc, st, this)
-                } else {
-                    throw RuntimeException("Unable to deserialize old container spec format")
-                }
-            }
-
-            /* Invocation spec. */
-            if (version >= 5) {
-                if (orig.getLong() != 0L) {
-                    val invSpec = InvocationSpec()
-                    st.InvocationSpec = invSpec
-                    invSpec.ClassHandle = readRef()
-                    invSpec.AttrName = lookupString(orig.getInt())
-                    invSpec.Hint = orig.getLong().toInt().toLong()
-                    invSpec.InvocationHandler = readRef()
-                }
-            }
-
-            /* HLL stuff. */
-            if (version >= 6) {
-                st.hllOwner = tc.gc.getHLLConfigFor(readStr()!!)
-                st.hllRole = orig.getLong()
-            }
-
-            /* Type parametricity. */
-            if (version >= 9) {
-                val paraFlag = orig.getLong()
-                /* If it's a parametric type... */
-                if (paraFlag == 1L) {
-                    val pt = ParametricType()
-                    pt.parameterizer = readRef()
-                    pt.lookup = ArrayList()
-                    st.parametricity = pt
-                } else if (paraFlag == 2L) {
-                    val pt = ParameterizedType()
-                    pt.parametricType = readObjRef()
-                    val BOOTArray = tc.gc.BOOTArray!!
-                    val parameters = BOOTArray.st.REPR.allocate(tc, BOOTArray.st)
-                    pt.parameters = parameters
-                    val elems = orig.getInt()
-                    for (j in 0 until elems)
-                        parameters.bind_pos_boxed(tc, j.toLong(), readRef())
-                    st.parametricity = pt
-                } else if (paraFlag != 0L) {
-                    throw RuntimeException("Unknown STable parametricity flag")
-                }
-            }
-
-            /* If the REPR has a function to deserialize representation data, call it. */
-            st.REPR.deserialize_repr_data(tc, st, this)
+    /* A REPR reading its own data may need another STable of this SC to be
+     * finished already - P6opaque asks each flattened attribute type for its
+     * storage spec, which for P6int is repr data that its own deserialize
+     * fills in. The table is not in dependency order, so let a REPR say which
+     * STables it needs and deserialize those first. MoarVM calls the same
+     * thing MVM_serialization_force_stable. */
+    fun forceSTable(st: STable?) {
+        if (st == null)
+            return
+        /* Not one of ours means it came from a dependency, already whole. */
+        val idx = stableIndex[st] ?: return
+        if (stableState[idx] != ST_UNREAD)
+            return
+        /* The caller is midway through reading its own data from the shared
+         * buffer, so put the position back before returning to it. */
+        val savedPos = orig.position()
+        try {
+            deserializeSTable(idx)
         }
+        finally {
+            orig.position(savedPos)
+        }
+    }
+
+    private fun deserializeSTable(i: Int) {
+        /* A cycle between two STables' repr data would come back here while
+         * this one is still being read; the partly built STable is the best
+         * that can be offered, which is what leaving it in progress does. */
+        if (stableState[i] != ST_UNREAD)
+            return
+        stableState[i] = ST_READING
+        try {
+            deserializeSTableInner(i)
+        }
+        finally {
+            stableState[i] = ST_READ
+        }
+    }
+
+    private fun deserializeSTableInner(i: Int) {
+        // Seek to the right position in the data chunk.
+        orig.position(stTableOffset + i * STABLES_TABLE_ENTRY_SIZE + 4)
+        orig.position(stDataOffset + orig.getInt())
+
+        // Get the STable we need to deserialize into.
+        val st = sc.getSTable(i)!!
+
+        // Read the HOW, WHAT and WHO.
+        st.HOW = readObjRef()
+        st.WHAT = readObjRef()
+        st.WHO = readRef()
+
+        /* Method cache and v-table. */
+        val methodCache = readRef()
+        if (Ops.isnull(methodCache) == 0L)
+            st.MethodCache = (methodCache as VMHashInstance).storage
+        val vTable = arrayOfNulls<SixModelObject>(orig.getLong().toInt())
+        st.VTable = vTable
+        for (j in vTable.indices)
+            vTable[j] = readRef()
+
+        /* Type check cache. */
+        val tcCacheSize = orig.getLong().toInt()
+        if (tcCacheSize > 0) {
+            val typeCheckCache = arrayOfNulls<SixModelObject>(tcCacheSize)
+            st.TypeCheckCache = typeCheckCache
+            for (j in typeCheckCache.indices)
+                typeCheckCache[j] = readRef()
+        }
+
+        /* Mode flags. */
+        st.ModeFlags = orig.getLong().toInt()
+
+        /* Boolification spec. */
+        if (orig.getLong() != 0L) {
+            val boolSpec = BoolificationSpec()
+            st.BoolificationSpec = boolSpec
+            boolSpec.Mode = orig.getLong().toInt()
+            boolSpec.Method = readRef()
+        }
+
+        /* Container spec. */
+        if (orig.getLong() != 0L) {
+            if (version >= 5) {
+                val ccName = readStr()
+                val cc = tc.gc.contConfigs[ccName]
+                    ?: throw RuntimeException("Unknown container config $ccName")
+                cc.setContainerSpec(tc, st)
+                st.ContainerSpec!!.deserialize(tc, st, this)
+            } else {
+                throw RuntimeException("Unable to deserialize old container spec format")
+            }
+        }
+
+        /* Invocation spec. */
+        if (version >= 5) {
+            if (orig.getLong() != 0L) {
+                val invSpec = InvocationSpec()
+                st.InvocationSpec = invSpec
+                invSpec.ClassHandle = readRef()
+                invSpec.AttrName = lookupString(orig.getInt())
+                invSpec.Hint = orig.getLong().toInt().toLong()
+                invSpec.InvocationHandler = readRef()
+            }
+        }
+
+        /* HLL stuff. */
+        if (version >= 6) {
+            st.hllOwner = tc.gc.getHLLConfigFor(readStr()!!)
+            st.hllRole = orig.getLong()
+        }
+
+        /* Type parametricity. */
+        if (version >= 9) {
+            val paraFlag = orig.getLong()
+            /* If it's a parametric type... */
+            if (paraFlag == 1L) {
+                val pt = ParametricType()
+                pt.parameterizer = readRef()
+                pt.lookup = ArrayList()
+                st.parametricity = pt
+            } else if (paraFlag == 2L) {
+                val pt = ParameterizedType()
+                pt.parametricType = readObjRef()
+                val BOOTArray = tc.gc.BOOTArray!!
+                val parameters = BOOTArray.st.REPR.allocate(tc, BOOTArray.st)
+                pt.parameters = parameters
+                val elems = orig.getInt()
+                for (j in 0 until elems)
+                    parameters.bind_pos_boxed(tc, j.toLong(), readRef())
+                st.parametricity = pt
+            } else if (paraFlag != 0L) {
+                throw RuntimeException("Unknown STable parametricity flag")
+            }
+        }
+
+        /* If the REPR has a function to deserialize representation data, call it. */
+        st.REPR.deserialize_repr_data(tc, st, this)
     }
 
     private fun deserializeObjects() {
