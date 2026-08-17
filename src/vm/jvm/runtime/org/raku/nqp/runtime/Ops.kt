@@ -2330,7 +2330,7 @@ object Ops {
     fun captureposarg(obj: SixModelObject?, idx: Long, tc: ThreadContext): SixModelObject? {
         if (obj is CallCaptureInstance) {
             val i = idx.toInt()
-            when (obj.descriptor!!.argFlags[i]) {
+            when (argType(obj.descriptor!!.argFlags[i])) {
             CallSiteDescriptor.ARG_OBJ ->
                 return obj.args!![i] as SixModelObject?
             CallSiteDescriptor.ARG_INT ->
@@ -2474,10 +2474,20 @@ object Ops {
             throw ExceptionHandling.dieInternal(tc, "capturehasnameds requires a CallCapture")
         }
     }
+    /**
+     * The type an argument flag names, with the named and flat bits taken off.
+     * A capture is indexed across all its arguments, positional and named
+     * alike, and a named one carries those bits alongside its type.
+     */
+    @JvmStatic
+    fun argType(flag: Byte): Byte =
+        (flag.toInt() and (CallSiteDescriptor.ARG_NAMED.toInt() or
+            CallSiteDescriptor.ARG_FLAT.toInt()).inv()).toByte()
+
     @JvmStatic
     fun captureposprimspec(obj: SixModelObject?, idx: Long, tc: ThreadContext): Long {
         if (obj is CallCaptureInstance) {
-            when (obj.descriptor!!.argFlags[idx.toInt()]) {
+            when (argType(obj.descriptor!!.argFlags[idx.toInt()])) {
             CallSiteDescriptor.ARG_INT ->
                 return BoxedPrimitive.INT.spec.toLong()
             CallSiteDescriptor.ARG_UINT ->
