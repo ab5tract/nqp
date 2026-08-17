@@ -2869,6 +2869,12 @@ object Ops {
     fun isinvokable(obj: SixModelObject?, tc: ThreadContext): Long {
         return if (obj is CodeRef || obj!!.st.InvocationSpec != null) 1 else 0
     }
+    /* The role a type plays in its language: one of the HLL_ROLE_*
+     * constants, which is how hllization decides what to map. */
+    @JvmStatic
+    fun gettypehllrole(obj: SixModelObject?, tc: ThreadContext): Long {
+        return if (obj == null || !obj.stInitialized) 0L else obj.st.hllRole
+    }
     /* Is this a VM level code handle, as opposed to something a language
      * wrapped around one? */
     @JvmStatic
