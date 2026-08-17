@@ -1806,6 +1806,11 @@ object Ops {
         if (positionals < required || positionals > accepted && accepted != -1)
             throw ExceptionHandling.dieInternal(cf.tc, "Wrong number of arguments passed; expected " +
                 required + ".." + accepted + ", but got " + positionals)
+        /* Keep the arguments on the frame. A parameter bound here can still
+         * fail a check the HLL wants to report against the original
+         * arguments, and this route is the only place they survive. */
+        cf.csd = callSite
+        cf.args = cf.tc.flatArgs
         return callSite
     }
 
@@ -7212,6 +7217,8 @@ object Ops {
             config.slurpyArrayType = configHash.at_key_boxed(tc, "slurpy_array")
         if (configHash.exists_key(tc, "slurpy_hash") != 0L)
             config.slurpyHashType = configHash.at_key_boxed(tc, "slurpy_hash")
+        if (configHash.exists_key(tc, "bind_error") != 0L)
+            config.bindError = configHash.at_key_boxed(tc, "bind_error")
         if (configHash.exists_key(tc, "array_iter") != 0L)
             config.arrayIteratorType = configHash.at_key_boxed(tc, "array_iter")
         if (configHash.exists_key(tc, "hash_iter") != 0L)
