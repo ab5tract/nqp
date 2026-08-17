@@ -74,6 +74,7 @@ import org.raku.nqp.io.SocketHandle
 import org.raku.nqp.io.StandardReadHandle
 import org.raku.nqp.io.StandardWriteHandle
 import org.raku.nqp.jast2bc.JASTCompiler
+import org.raku.nqp.dispatch.BindFailure
 import org.raku.nqp.sixmodel.BoolificationSpec
 import org.raku.nqp.sixmodel.Boxable
 import org.raku.nqp.sixmodel.BoxedPrimitive
@@ -1805,6 +1806,11 @@ object Ops {
         if (positionals < required || positionals > accepted && accepted != -1)
             throw ExceptionHandling.dieInternal(cf.tc, "Wrong number of arguments passed; expected " +
                 required + ".." + accepted + ", but got " + positionals)
+        /* Keep the arguments on the frame. A parameter bound here can still
+         * fail a check the HLL wants to report against the original
+         * arguments, and this route is the only place they survive. */
+        cf.csd = callSite
+        cf.args = cf.tc.flatArgs
         return callSite
     }
 
@@ -2324,7 +2330,7 @@ object Ops {
     fun captureposarg(obj: SixModelObject?, idx: Long, tc: ThreadContext): SixModelObject? {
         if (obj is CallCaptureInstance) {
             val i = idx.toInt()
-            when (obj.descriptor!!.argFlags[i]) {
+            when (argType(obj.descriptor!!.argFlags[i])) {
             CallSiteDescriptor.ARG_OBJ ->
                 return obj.args!![i] as SixModelObject?
             CallSiteDescriptor.ARG_INT ->
@@ -2468,10 +2474,20 @@ object Ops {
             throw ExceptionHandling.dieInternal(tc, "capturehasnameds requires a CallCapture")
         }
     }
+    /**
+     * The type an argument flag names, with the named and flat bits taken off.
+     * A capture is indexed across all its arguments, positional and named
+     * alike, and a named one carries those bits alongside its type.
+     */
+    @JvmStatic
+    fun argType(flag: Byte): Byte =
+        (flag.toInt() and (CallSiteDescriptor.ARG_NAMED.toInt() or
+            CallSiteDescriptor.ARG_FLAT.toInt()).inv()).toByte()
+
     @JvmStatic
     fun captureposprimspec(obj: SixModelObject?, idx: Long, tc: ThreadContext): Long {
         if (obj is CallCaptureInstance) {
-            when (obj.descriptor!!.argFlags[idx.toInt()]) {
+            when (argType(obj.descriptor!!.argFlags[idx.toInt()])) {
             CallSiteDescriptor.ARG_INT ->
                 return BoxedPrimitive.INT.spec.toLong()
             CallSiteDescriptor.ARG_UINT ->
@@ -2869,6 +2885,16 @@ object Ops {
     fun isinvokable(obj: SixModelObject?, tc: ThreadContext): Long {
         return if (obj is CodeRef || obj!!.st.InvocationSpec != null) 1 else 0
     }
+    /* Assert that a signature bind check passed. A failure either becomes a
+     * resumption of the dispatch that invoked us, if it asked for that, or an
+     * error. */
+    @JvmStatic
+    fun assertparamcheck(ok: Long, tc: ThreadContext): SixModelObject? {
+        if (ok == 0L)
+            BindFailure.failed(tc)
+        return null
+    }
+
     /* The role a type plays in its language: one of the HLL_ROLE_*
      * constants, which is how hllization decides what to map. */
     @JvmStatic
@@ -7201,6 +7227,8 @@ object Ops {
             config.slurpyArrayType = configHash.at_key_boxed(tc, "slurpy_array")
         if (configHash.exists_key(tc, "slurpy_hash") != 0L)
             config.slurpyHashType = configHash.at_key_boxed(tc, "slurpy_hash")
+        if (configHash.exists_key(tc, "bind_error") != 0L)
+            config.bindError = configHash.at_key_boxed(tc, "bind_error")
         if (configHash.exists_key(tc, "array_iter") != 0L)
             config.arrayIteratorType = configHash.at_key_boxed(tc, "array_iter")
         if (configHash.exists_key(tc, "hash_iter") != 0L)

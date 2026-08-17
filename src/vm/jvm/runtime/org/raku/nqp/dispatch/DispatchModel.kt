@@ -356,8 +356,23 @@ class ResumptionLevel(
     val requireNoFurther: Boolean,
 )
 
-/** Where a resuming dispatch looks for the dispatch it resumes. */
-enum class ResumeKind { NONE, TOPMOST, CALLER }
+/**
+ * Where a resuming dispatch looks for the dispatch it resumes, expressed as how
+ * many frames of the callstack to pass over first. We never resume a dispatch
+ * made by the frame we are in; asking for the caller's passes over one more.
+ */
+enum class ResumeKind(val framesToSkip: Int) {
+    NONE(0),
+    TOPMOST(1),
+    CALLER(2),
+
+    /**
+     * A resumption entered because a frame the dispatch invoked failed to bind
+     * its signature. That frame is already gone, so there is nothing to pass
+     * over: the dispatch to resume is the innermost one from here.
+     */
+    BIND_FAILURE(0),
+}
 
 /**
  * A compiled dispatch program: the conditions under which it applies and what
@@ -375,6 +390,13 @@ class DispatchProgram(
     /** How a bind failure of an invocation maps to a resumption, if it does. */
     val bindControl: BindControl?,
 ) {
+    /**
+     * The program recorded for the resumption that a bind failure of this
+     * program's invocation led to, once one has been. Kept here rather than at
+     * the callsite of the bind check, so that it is keyed by the dispatch.
+     */
+    @Volatile var bindFailureProgram: DispatchProgram? = null
+
     /** Does this program apply to the arguments in the given context? */
     fun guardsMatch(ctx: DispatchContext): Boolean {
         for (guard in guards)
