@@ -1600,7 +1600,7 @@ my $call_codegen := sub ($qastcomp, $node) {
 }
 QAST::OperationsJAST.add_core_op('call', :!inlinable, $call_codegen);
 QAST::OperationsJAST.add_core_op('callstatic', :!inlinable, $call_codegen);
-QAST::OperationsJAST.add_core_op('callmethod', -> $qastcomp, $node {
+my $callmethod_codegen := sub ($qastcomp, $node) {
     my $il := JAST::InstructionList.new();
 
     # Ensure we have an invocant.
@@ -1609,17 +1609,30 @@ QAST::OperationsJAST.add_core_op('callmethod', -> $qastcomp, $node {
     }
     my @children := nqp::clone(@($node));
 
-    # lang-meth-call takes the invocant and the name as its first two
-    # arguments, and resolves through the MRO rather than a method cache.
+    # lang-meth-call takes the decontainerized invocant, the method name, and
+    # then the invocant again followed by the arguments: resolution drops the
+    # first two and puts the method it found in their place, leaving the
+    # invocant to be the method's first argument. Bind the invocant to a local
+    # on the way past so the expression is evaluated once and not twice.
     if nqp::getenvhash()<NQP_JVM_LANG_CALL> {
-        my @dispatch-args := nqp::clone(@children);
-        if $node.name ne '' {
-            nqp::splice(@dispatch-args,
-                [QAST::SVal.new( :value($node.name) )], 1, 0);
-        }
-        elsif nqp::elems(@dispatch-args) < 2 {
-            nqp::die("Method call must either supply a name or have a child node that evaluates to the name");
-        }
+        my @rest := nqp::clone(@children);
+        my $inv  := nqp::shift(@rest);
+        my $name := $node.name ne ''
+            ?? QAST::SVal.new( :value($node.name) )
+            !! nqp::elems(@rest)
+                ?? nqp::shift(@rest)
+                !! nqp::die("Method call must either supply a name or have a child node that evaluates to the name");
+
+        my str $inv-local := QAST::Node.unique('__meth_inv');
+        my @dispatch-args := [
+            QAST::Op.new( :op('decont'),
+                QAST::Op.new( :op('bind'),
+                    QAST::Var.new( :name($inv-local), :scope('local'), :decl('var') ),
+                    $inv ) ),
+            $name,
+            QAST::Var.new( :name($inv-local), :scope('local') )
+        ];
+        nqp::push(@dispatch-args, $_) for @rest;
         return emit_dispatch($qastcomp, $node, 'lang-meth-call', @dispatch-args);
     }
 
@@ -1676,7 +1689,8 @@ QAST::OperationsJAST.add_core_op('callmethod', -> $qastcomp, $node {
     }
 
     result_from_cf($il, rttype_from_typeobj($node.returns));
-});
+}
+QAST::OperationsJAST.add_core_op('callmethod', $callmethod_codegen);
 
 # Dispatching. All of these are sugar over a dispatch: the dispatcher to use
 # is a compile-time constant, and everything else travels in the callsite, so
