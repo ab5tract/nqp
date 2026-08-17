@@ -450,8 +450,8 @@ class DispatchRecord(
                 level.newState, level.noNextResumption)
         }
 
-        return DispatchProgram(guardsAtLevel(-1), settled.outcome, resumptions, resumeKind,
-            resumeLevels, bindControl)
+        return DispatchProgram(descriptor, guardsAtLevel(-1), settled.outcome, resumptions,
+            resumeKind, resumeLevels, bindControl)
     }
 
     private fun emitGuards(source: ValueSource, guards: ValueGuards, into: MutableList<Guard>) {

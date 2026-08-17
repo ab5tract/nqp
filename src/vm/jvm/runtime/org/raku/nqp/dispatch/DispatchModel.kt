@@ -382,6 +382,15 @@ enum class ResumeKind(val framesToSkip: Int) {
  * program a plain description of the dispatch.
  */
 class DispatchProgram(
+    /**
+     * The (post-flattening) callsite the program was recorded against. A
+     * callsite whose static descriptor has flattening produces a different
+     * flattened shape per invocation, so a program only applies when the
+     * shapes agree; the value sources index arguments by position. MoarVM
+     * gets the same check by interning flattened callsites and comparing
+     * them by pointer.
+     */
+    val descriptor: CallSiteDescriptor,
     val guards: List<Guard>,
     val outcome: Outcome,
     val resumptions: List<ResumptionSpec>,
