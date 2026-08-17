@@ -3,6 +3,7 @@ package org.raku.nqp.dispatch
 import org.raku.nqp.runtime.CallSiteDescriptor
 import org.raku.nqp.runtime.ControlException
 import org.raku.nqp.runtime.ExceptionHandling
+import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
 
 /**
@@ -31,11 +32,40 @@ object BindFailure {
         val record = frame.dispatchRecord
         val control = record?.program?.bindControl
         if (record == null || control == null)
-            throw ExceptionHandling.dieInternal(tc, "Bind check failed")
+            reportToHLL(tc)
 
         /* NOTE: MoarVM returns from the frame without running its exit
          * handlers here. On this backend the frames are left by unwinding a
          * control exception, which does run them. */
         throw BindFailureException(record, control.failureFlag)
     }
+
+    /**
+     * No dispatch wanted the failure, so it is an error. Hand the arguments
+     * the frame was entered with to the language's bind_error handler, which
+     * re-runs the binder to say which parameter did not match and why. Only
+     * frames that take an args array keep their arguments, which is why a
+     * parameter that can fail a check forces that route.
+     */
+    private fun reportToHLL(tc: ThreadContext): Nothing {
+        val frame = tc.frame
+        val config = frame.codeRef.staticInfo.compUnit.hllConfig
+        val handler = config.bindError
+        val csd = frame.csd
+        val args = frame.args
+        val code = frame.codeRef.codeObject
+        if (handler != null && csd != null && args != null && code != null) {
+            Ops.invokeDirect(tc, handler, captureCallSite,
+                arrayOf<Any?>(Ops.savecapture(tc, csd, args), code))
+        }
+        throw ExceptionHandling.dieInternal(tc, "Bind check failed")
+    }
+
+    /**
+     * The bind_error handler takes the capture and the code object whose
+     * binding failed. MoarVM passes only the capture and has the handler dig
+     * the routine out of the caller; handing it over is less to go wrong.
+     */
+    private val captureCallSite = CallSiteDescriptor(
+        byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_OBJ), null)
 }

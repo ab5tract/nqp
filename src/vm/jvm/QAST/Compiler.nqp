@@ -4128,10 +4128,26 @@ class QAST::CompilerJAST {
         }
     }
 
+    # Does binding this parameter run a check that can fail? Reporting such a
+    # failure means handing the arguments to the HLL, which only the args
+    # array route keeps hold of.
+    method param_can_bind_fail($var) {
+        for $var.list {
+            return 1 if nqp::istype($_, QAST::ParamTypeCheck);
+        }
+        0
+    }
+
     method try_setup_args_expectation($jmeth, $block, $il) {
         # Needing an args array forces the binder.
         if $*NEED_ARGS_ARRAY {
             return $ARG_EXP_USE_BINDER;
+        }
+
+        # So does a parameter whose binding can fail, since the arguments have
+        # to survive for the failure to be reported against.
+        for $block.params {
+            return $ARG_EXP_USE_BINDER if self.param_can_bind_fail($_);
         }
 
         # Otherwise, go by arity, then look at particular cases.
