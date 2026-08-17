@@ -136,7 +136,7 @@ class KnowHOWMethods : CompilationUnit() {
                 nameObj.set_str(tc, attribute.name)
                 attrInfo.bind_key_boxed(tc, "name", nameObj)
                 attrInfo.bind_key_boxed(tc, "type", attribute.type)
-                if (attribute.box_target != 0) {
+                if (attribute.boxTarget != 0) {
                     /* Merely having the key serves as a "yes". */
                     attrInfo.bind_key_boxed(tc, "box_target", attrInfo)
                 }
@@ -233,7 +233,7 @@ class KnowHOWMethods : CompilationUnit() {
             /* Populate it. */
             obj.name = nameArg
             obj.type = if (Ops.isnull(typeArg) == 0L) typeArg else tc.gc.KnowHOW
-            obj.box_target = if (btArg == 0L) 0 else 1
+            obj.boxTarget = if (btArg == 0L) 0 else 1
 
             /* Return produced object. */
             Ops.return_o(obj, cf)
@@ -288,7 +288,7 @@ class KnowHOWMethods : CompilationUnit() {
             val csd = Ops.checkarity(cf, csd0, args0, 1, 1)
             val args = tc.flatArgs!!
             val self = Ops.posparam_o(cf, csd, args, 0)
-            Ops.return_i((self as KnowHOWAttributeInstance).box_target.toLong(), cf)
+            Ops.return_i((self as KnowHOWAttributeInstance).boxTarget.toLong(), cf)
         }
         finally {
             cf.leave()

@@ -31,8 +31,8 @@ abstract class CTypeInstance(private val kind: String) : SixModelObject(), Refre
      * from being collected while it does. */
     private val pinned = HashMap<String, MemorySegment>()
 
-    override fun bind_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long, value: SixModelObject?) {
-        val data = class_handle!!.st.REPRData as CTypeREPRData
+    override fun bind_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?, name: String?, hint: Long, value: SixModelObject?) {
+        val data = classHandle!!.st.REPRData as CTypeREPRData
         val info = data.fieldTypes[name]!!
         /* XXX: This'll break if we try to set a callback member. OTOH, it's
          * broken on Parrot too, so it's not a NativeCall regression as
@@ -53,45 +53,45 @@ abstract class CTypeInstance(private val kind: String) : SixModelObject(), Refre
         memberCache.put(name!!, value)
     }
 
-    override fun bind_attribute_native(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long) {
-        val data = class_handle!!.st.REPRData as CTypeREPRData
+    override fun bind_attribute_native(tc: ThreadContext, classHandle: SixModelObject?, name: String?, hint: Long) {
+        val data = classHandle!!.st.REPRData as CTypeREPRData
         val info = data.fieldTypes[name]!!
         val seg = storage!!
         when (info.argType) {
             ArgType.CHAR, ArgType.UCHAR -> {
-                tc.native_type = ThreadContext.NATIVE_INT
-                seg.set(ValueLayout.JAVA_BYTE, info.offset, tc.native_i.toByte())
+                tc.nativeType = ThreadContext.NATIVE_INT
+                seg.set(ValueLayout.JAVA_BYTE, info.offset, tc.nativeI.toByte())
             }
             ArgType.SHORT, ArgType.USHORT -> {
-                tc.native_type = ThreadContext.NATIVE_INT
-                seg.set(ValueLayout.JAVA_SHORT, info.offset, tc.native_i.toShort())
+                tc.nativeType = ThreadContext.NATIVE_INT
+                seg.set(ValueLayout.JAVA_SHORT, info.offset, tc.nativeI.toShort())
             }
             ArgType.INT, ArgType.UINT -> {
-                tc.native_type = ThreadContext.NATIVE_INT
-                seg.set(ValueLayout.JAVA_INT, info.offset, tc.native_i.toInt())
+                tc.nativeType = ThreadContext.NATIVE_INT
+                seg.set(ValueLayout.JAVA_INT, info.offset, tc.nativeI.toInt())
             }
             ArgType.LONG, ArgType.ULONG -> {
-                tc.native_type = ThreadContext.NATIVE_INT
-                seg.set(ValueLayout.JAVA_LONG, info.offset, tc.native_i)
+                tc.nativeType = ThreadContext.NATIVE_INT
+                seg.set(ValueLayout.JAVA_LONG, info.offset, tc.nativeI)
             }
             ArgType.FLOAT -> {
-                tc.native_type = ThreadContext.NATIVE_NUM
-                seg.set(ValueLayout.JAVA_FLOAT, info.offset, tc.native_n.toFloat())
+                tc.nativeType = ThreadContext.NATIVE_NUM
+                seg.set(ValueLayout.JAVA_FLOAT, info.offset, tc.nativeN.toFloat())
             }
             ArgType.DOUBLE -> {
-                tc.native_type = ThreadContext.NATIVE_NUM
-                seg.set(ValueLayout.JAVA_DOUBLE, info.offset, tc.native_n)
+                tc.nativeType = ThreadContext.NATIVE_NUM
+                seg.set(ValueLayout.JAVA_DOUBLE, info.offset, tc.nativeN)
             }
             else ->
                 ExceptionHandling.dieInternal(tc, String.format("%s.bind_attribute_native: Can't handle %s", kind, info.argType))
         }
     }
 
-    override fun get_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long): SixModelObject? {
+    override fun get_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?, name: String?, hint: Long): SixModelObject? {
         var member = memberCache[name!!]
         if (Ops.isnull(member) == 0L) return member
 
-        val data = class_handle!!.st.REPRData as CTypeREPRData
+        val data = classHandle!!.st.REPRData as CTypeREPRData
         val info = data.fieldTypes[name]!!
 
         member = NativeCallOps.toNQPType(tc, info.argType, info.type, readMember(tc, storage!!, info))
@@ -99,61 +99,61 @@ abstract class CTypeInstance(private val kind: String) : SixModelObject(), Refre
         return member
     }
 
-    override fun get_attribute_native(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long) {
-        val data = class_handle!!.st.REPRData as CTypeREPRData
+    override fun get_attribute_native(tc: ThreadContext, classHandle: SixModelObject?, name: String?, hint: Long) {
+        val data = classHandle!!.st.REPRData as CTypeREPRData
         val info = data.fieldTypes[name]!!
         val seg = storage!!
 
         when (info.argType) {
             ArgType.CHAR -> {
-                tc.native_type = ThreadContext.NATIVE_INT
-                tc.native_i = seg.get(ValueLayout.JAVA_BYTE, info.offset).toLong()
+                tc.nativeType = ThreadContext.NATIVE_INT
+                tc.nativeI = seg.get(ValueLayout.JAVA_BYTE, info.offset).toLong()
             }
             ArgType.SHORT -> {
-                tc.native_type = ThreadContext.NATIVE_INT
-                tc.native_i = seg.get(ValueLayout.JAVA_SHORT, info.offset).toLong()
+                tc.nativeType = ThreadContext.NATIVE_INT
+                tc.nativeI = seg.get(ValueLayout.JAVA_SHORT, info.offset).toLong()
             }
             ArgType.INT -> {
-                tc.native_type = ThreadContext.NATIVE_INT
-                tc.native_i = seg.get(ValueLayout.JAVA_INT, info.offset).toLong()
+                tc.nativeType = ThreadContext.NATIVE_INT
+                tc.nativeI = seg.get(ValueLayout.JAVA_INT, info.offset).toLong()
             }
             ArgType.LONG -> {
-                tc.native_type = ThreadContext.NATIVE_INT
-                tc.native_i = seg.get(ValueLayout.JAVA_LONG, info.offset)
+                tc.nativeType = ThreadContext.NATIVE_INT
+                tc.nativeI = seg.get(ValueLayout.JAVA_LONG, info.offset)
             }
             ArgType.UCHAR -> {
-                tc.native_type = ThreadContext.NATIVE_INT
+                tc.nativeType = ThreadContext.NATIVE_INT
                 var value = seg.get(ValueLayout.JAVA_BYTE, info.offset).toLong()
                 if (value < 0)
                     value += 0x100
-                tc.native_i = value
+                tc.nativeI = value
             }
             ArgType.USHORT -> {
-                tc.native_type = ThreadContext.NATIVE_INT
+                tc.nativeType = ThreadContext.NATIVE_INT
                 var value = seg.get(ValueLayout.JAVA_SHORT, info.offset).toLong()
                 if (value < 0)
                     value += 0x10000
-                tc.native_i = value
+                tc.nativeI = value
             }
             ArgType.UINT -> {
-                tc.native_type = ThreadContext.NATIVE_INT
+                tc.nativeType = ThreadContext.NATIVE_INT
                 var value = seg.get(ValueLayout.JAVA_INT, info.offset).toLong()
                 if (value < 0)
                     value += 0x100000000L
-                tc.native_i = value
+                tc.nativeI = value
             }
             ArgType.ULONG -> {
                 /* TODO: handle unsignedness properly. */
-                tc.native_type = ThreadContext.NATIVE_INT
-                tc.native_i = seg.get(ValueLayout.JAVA_LONG, info.offset)
+                tc.nativeType = ThreadContext.NATIVE_INT
+                tc.nativeI = seg.get(ValueLayout.JAVA_LONG, info.offset)
             }
             ArgType.FLOAT -> {
-                tc.native_type = ThreadContext.NATIVE_NUM
-                tc.native_n = seg.get(ValueLayout.JAVA_FLOAT, info.offset).toDouble()
+                tc.nativeType = ThreadContext.NATIVE_NUM
+                tc.nativeN = seg.get(ValueLayout.JAVA_FLOAT, info.offset).toDouble()
             }
             ArgType.DOUBLE -> {
-                tc.native_type = ThreadContext.NATIVE_NUM
-                tc.native_n = seg.get(ValueLayout.JAVA_DOUBLE, info.offset)
+                tc.nativeType = ThreadContext.NATIVE_NUM
+                tc.nativeN = seg.get(ValueLayout.JAVA_DOUBLE, info.offset)
             }
             else ->
                 ExceptionHandling.dieInternal(tc, String.format("%s.get_attribute_native: Can't handle %s", kind, info.argType))
@@ -161,11 +161,11 @@ abstract class CTypeInstance(private val kind: String) : SixModelObject(), Refre
     }
 
     override fun refresh(tc: ThreadContext) {
-        val repr_data = st.REPRData as CTypeREPRData
+        val reprData = st.REPRData as CTypeREPRData
 
         // Recursively refresh our members.
         for ((key, child) in memberCache) {
-            val argType = repr_data.fieldTypes[key]!!.argType
+            val argType = reprData.fieldTypes[key]!!.argType
             if (argType == ArgType.CARRAY
              || argType == ArgType.CSTRUCT
              || argType == ArgType.CPPSTRUCT

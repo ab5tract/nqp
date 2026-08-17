@@ -43,8 +43,8 @@ class NativeRef : REPR() {
         return obj
     }
 
-    override fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {
-        val info = repr_info.at_key_boxed(tc, "nativeref")
+    override fun compose(tc: ThreadContext, st: STable, reprInfo: SixModelObject) {
+        val info = reprInfo.at_key_boxed(tc, "nativeref")
         if (Ops.isnull(info) == 0L) {
             val type = info!!.at_key_boxed(tc, "type")
             val prim = type!!.st.REPR.get_storage_spec(tc, type.st).boxedPrimitive

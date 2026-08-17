@@ -13,7 +13,7 @@ class ProcessChannel : ByteChannel, Runnable {
     // Raw public fields, read by Ops (the `in` channel is re-wrapped when
     // piping process output).
     @JvmField var out: WritableByteChannel? = null
-    @JvmField var out_stream: OutputStream? = null
+    @JvmField var outStream: OutputStream? = null
     @JvmField var `in`: ReadableByteChannel? = null
     @JvmField var process: Process? = null
 
@@ -24,7 +24,7 @@ class ProcessChannel : ByteChannel, Runnable {
             while (read > 0) {
                 read = `in`!!.read(bb)
                 if (read > 0)
-                    out_stream!!.write(bb.array(), 0, read)
+                    outStream!!.write(bb.array(), 0, read)
             }
         } catch (e: Exception) {
             throw RuntimeException("Broken pipe", e)
@@ -36,7 +36,7 @@ class ProcessChannel : ByteChannel, Runnable {
 
     constructor(process: Process, out: OutputStream, input: ReadableByteChannel) {
         this.out = Channels.newChannel(out)
-        this.out_stream = out
+        this.outStream = out
         this.`in` = input
         this.process = process
     }

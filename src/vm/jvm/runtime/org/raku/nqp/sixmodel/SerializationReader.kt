@@ -693,7 +693,7 @@ class SerializationReader(
                 resArray.bind_pos_boxed(tc, i.toLong(), readRef())
             if (Ops.isnull(this.curObject) == 0L) {
                 resArray.sc = sc
-                sc.owned_objects[resArray] = this.curObject!!
+                sc.ownedObjects[resArray] = this.curObject!!
             }
             return resArray
         }
@@ -702,7 +702,7 @@ class SerializationReader(
             val resArray = BOOTStrArray.st.REPR.allocate(tc, BOOTStrArray.st)
             val elems = orig.getInt()
             for (i in 0 until elems) {
-                tc.native_s = readStr()
+                tc.nativeS = readStr()
                 resArray.bind_pos_native(tc, i.toLong())
             }
             return resArray
@@ -712,7 +712,7 @@ class SerializationReader(
             val resArray = BOOTIntArray.st.REPR.allocate(tc, BOOTIntArray.st)
             val elems = orig.getInt()
             for (i in 0 until elems) {
-                tc.native_i = readLong()
+                tc.nativeI = readLong()
                 resArray.bind_pos_native(tc, i.toLong())
             }
             return resArray
@@ -727,7 +727,7 @@ class SerializationReader(
             }
             if (Ops.isnull(this.curObject) == 0L) {
                 resHash.sc = sc
-                sc.owned_objects[resHash] = this.curObject!!
+                sc.ownedObjects[resHash] = this.curObject!!
             }
             return resHash
         }

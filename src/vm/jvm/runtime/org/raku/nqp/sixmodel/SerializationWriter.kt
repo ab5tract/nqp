@@ -452,7 +452,7 @@ class SerializationWriter(
         /* Put repossessions table in place, and set location/rows in header. */
         output.position(56)
         output.putInt(offset)
-        output.putInt(sc.rep_scs.size)
+        output.putInt(sc.repScs.size)
         output.position(offset)
         outputs[REPOS].flip()
         output.put(outputs[REPOS])
@@ -796,16 +796,16 @@ class SerializationWriter(
     /* Goes through the list of repossessions and serializes them all. */
     private fun serializeRepossessions() {
         /* Allocate table space, provided we've actually something to do. */
-        val numRepos = sc.rep_indexes.size
+        val numRepos = sc.repIndexes.size
         if (numRepos == 0)
             return
         growToHold(REPOS, numRepos * REPOS_TABLE_ENTRY_SIZE)
 
         /* Make entries. */
         for (i in 0 until numRepos) {
-            val objIdx = sc.rep_indexes.getInt(i) shr 1
-            val isST = sc.rep_indexes.getInt(i) and 1
-            val origSC = sc.rep_scs[i]
+            val objIdx = sc.repIndexes.getInt(i) shr 1
+            val isST = sc.repIndexes.getInt(i) and 1
+            val origSC = sc.repScs[i]
 
             /* Work out original object's SC location. */
             val origSCIdx = getSCId(origSC)

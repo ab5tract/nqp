@@ -75,10 +75,10 @@ object ExceptionHandling {
         dieInternal(tc, msg, null)
 
     /* Finds and executes a handler, using dynamic scope to find it. */
-    /* die_s_return causes handlerDynamic to return the exception message instead of the exception object. */
+    /* dieSReturn causes handlerDynamic to return the exception message instead of the exception object. */
     @JvmStatic
     fun handlerDynamic(tc: ThreadContext, category: Long,
-                       die_s_return: Boolean, exObj: VMExceptionInstance?) {
+                       dieSReturn: Boolean, exObj: VMExceptionInstance?) {
         if (tc.gc.shuttingDown)
             throw death
 
@@ -118,7 +118,7 @@ object ExceptionHandling {
             f = f.caller
         }
         if (handler != null)
-            invokeHandler(tc, handler, category, f, die_s_return, exObj, null)
+            invokeHandler(tc, handler, category, f, dieSReturn, exObj, null)
         else
             panic(tc, category, exObj)
     }
@@ -194,19 +194,19 @@ object ExceptionHandling {
 
     @JvmStatic
     private fun invokeHandler(tc0: ThreadContext, handlerInfo0: LongArray?,
-                              category: Long, handlerFrame0: CallFrame?, die_s_return0: Boolean,
+                              category: Long, handlerFrame0: CallFrame?, dieSReturn0: Boolean,
                               exObj0: VMExceptionInstance?, resume: ResumeStatus.Frame?) {
         var tc = tc0
         var handlerInfo = handlerInfo0
         var handlerFrame = handlerFrame0
-        var die_s_return = die_s_return0
+        var dieSReturn = dieSReturn0
         var exObj = exObj0
         if (resume != null) {
             val bits = resume.saveSpace
             tc = resume.tc
             handlerInfo = bits[0] as LongArray
             handlerFrame = bits[1] as CallFrame
-            die_s_return = bits[2] as Boolean
+            dieSReturn = bits[2] as Boolean
             exObj = bits[3] as VMExceptionInstance?
         }
 
@@ -238,8 +238,8 @@ object ExceptionHandling {
                             Ops.emptyCallSite, false, Ops.emptyArgList)
                 }
                 catch (e: ResumeException) {
-                    tc.frame.retType = (if (die_s_return) CallFrame.RET_STR else CallFrame.RET_OBJ).toByte()
-                    if (die_s_return)
+                    tc.frame.retType = (if (dieSReturn) CallFrame.RET_STR else CallFrame.RET_OBJ).toByte()
+                    if (dieSReturn)
                         tc.frame.sRet = exObj!!.message
                     else
                         tc.frame.oRet = exObj
@@ -247,7 +247,7 @@ object ExceptionHandling {
                 }
                 catch (sse: SaveStackException) {
                     throw sse.pushFrame(0, invokeHandlerReenter,
-                        arrayOf<Any?>(handlerInfo, handlerFrame, die_s_return, exObj), null)
+                        arrayOf<Any?>(handlerInfo, handlerFrame, dieSReturn, exObj), null)
                 }
                 catch (re: RuntimeException) {
                     throw re

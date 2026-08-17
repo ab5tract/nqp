@@ -46,8 +46,8 @@ class VMArray : REPR() {
         return obj
     }
 
-    override fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {
-        val arrayInfo = repr_info.at_key_boxed(tc, "array")
+    override fun compose(tc: ThreadContext, st: STable, reprInfo: SixModelObject) {
+        val arrayInfo = reprInfo.at_key_boxed(tc, "array")
         if (Ops.isnull(arrayInfo) == 0L) {
             val type = arrayInfo!!.at_key_boxed(tc, "type")
             val ss = type!!.st.REPR.get_storage_spec(tc, type.st)
@@ -69,7 +69,7 @@ class VMArray : REPR() {
         val obj: SixModelObject
         if (st.REPRData == null) {
             // Either a real VMArray or REPRData not yet known.
-            obj = when (st.REPR.subtype_name) {
+            obj = when (st.REPR.subtypeName) {
                 "VMArray" -> VMArrayInstance()
                 "VMArray_i8" -> VMArrayInstance_i8()
                 "VMArray_u8" -> VMArrayInstance_u8()
@@ -113,9 +113,9 @@ class VMArray : REPR() {
             val boxPrim = (st.REPRData as VMArrayREPRData).ss!!.boxedPrimitive
             for (i in 0 until elems.toLong()) {
                 when (boxPrim) {
-                    BoxedPrimitive.INT, BoxedPrimitive.UINT -> tc.native_i = reader.readLong()
-                    BoxedPrimitive.NUM -> tc.native_n = reader.readDouble()
-                    BoxedPrimitive.STR -> tc.native_s = reader.readStr()
+                    BoxedPrimitive.INT, BoxedPrimitive.UINT -> tc.nativeI = reader.readLong()
+                    BoxedPrimitive.NUM -> tc.nativeN = reader.readDouble()
+                    BoxedPrimitive.STR -> tc.nativeS = reader.readStr()
                     else -> throw ExceptionHandling.dieInternal(tc, "Invalid REPR data for VMArray in deserialize_finish")
                 }
                 obj.bind_pos_native(tc, i)
@@ -135,9 +135,9 @@ class VMArray : REPR() {
             for (i in 0 until elems.toLong()) {
                 obj.at_pos_native(tc, i)
                 when (boxPrim) {
-                    BoxedPrimitive.INT, BoxedPrimitive.UINT -> writer.writeInt(tc.native_i)
-                    BoxedPrimitive.NUM -> writer.writeNum(tc.native_n)
-                    BoxedPrimitive.STR -> writer.writeStr(tc.native_s)
+                    BoxedPrimitive.INT, BoxedPrimitive.UINT -> writer.writeInt(tc.nativeI)
+                    BoxedPrimitive.NUM -> writer.writeNum(tc.nativeN)
+                    BoxedPrimitive.STR -> writer.writeStr(tc.nativeS)
                     else -> throw ExceptionHandling.dieInternal(tc, "Invalid REPR data for VMArray in serialize")
                 }
             }
