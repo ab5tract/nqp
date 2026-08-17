@@ -148,7 +148,9 @@ object BootDispatchers {
             return
         }
 
-        /* Guard the name, drop the invocant and name, and call the method. */
+        /* Guard the name, drop the invocant and name, and call the method.
+         * The capture carries the invocant again after the name, so dropping
+         * both still leaves it as the method's first argument. */
         record.guardLiteral(record.trackArg(capture, 1).source!!)
         val shape = record.shapeOf(capture).drop(tc, 0).drop(tc, 0)
             .insert(tc, 0, ValueSource.Literal(ArgKind.OBJ, method), ArgKind.OBJ)
