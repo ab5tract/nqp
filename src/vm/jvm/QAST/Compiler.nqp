@@ -2939,6 +2939,7 @@ QAST::OperationsJAST.map_classlib_core_op('objprimunsigned', $TYPE_OPS, 'objprim
 QAST::OperationsJAST.map_classlib_core_op('objprimbits', $TYPE_OPS, 'objprimbits', [$RT_OBJ], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('isinvokable', $TYPE_OPS, 'isinvokable', [$RT_OBJ], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('iscoderef', $TYPE_OPS, 'iscoderef', [$RT_OBJ], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('gettypehllrole', $TYPE_OPS, 'gettypehllrole', [$RT_OBJ], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('setinvokespec', $TYPE_OPS, 'setinvokespec', [$RT_OBJ, $RT_OBJ, $RT_STR, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('setparameterizer', $TYPE_OPS, 'setparameterizer', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('parameterizetype', $TYPE_OPS, 'parameterizetype', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);

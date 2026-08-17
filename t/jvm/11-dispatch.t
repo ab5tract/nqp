@@ -906,13 +906,27 @@ skip('not yet supported on the JVM backend', 5);
     ok(lang-call(80) == 99, 'lang-call works with deferring to NQP dispatcher (run)');
 }
 
-# lang-call on an object that is not a VM code handle needs the nqp
-# call dispatcher, which is not registered on this backend yet.
-skip('not yet supported on the JVM backend', 3);
+{
+    my $foo := nqp::create(NQPRoutine);
+    nqp::bindattr($foo, NQPRoutine, '$!do', -> $x { $x + 19 });
+    sub lang-call($i) {
+        nqp::dispatch('lang-call', $foo, $i);
+    }
+    ok($foo.HOW.name($foo) eq 'NQPRoutine', 'Really are testing lang-call on NQPRoutine');
+    ok(lang-call(23) == 42, 'lang-call works with deferring to NQP dispatcher (record)');
+    ok(lang-call(80) == 99, 'lang-call works with deferring to NQP dispatcher (run)');
+}
 
-# lang-meth-call on an NQP class needs the nqp method call dispatcher,
-# which is not registered on this backend yet.
-skip('not yet supported on the JVM backend', 2);
+{
+    my class C { method m($name) { "Axiom $name" } }
+    sub lang-meth-call($name) {
+        nqp::dispatch('lang-meth-call', C, 'm', C, $name)
+    }
+    ok(lang-meth-call('Greek Fire') eq 'Axiom Greek Fire',
+        'lang-meth-call on an NQP class works (record)');
+    ok(lang-meth-call('Queen Vaccine') eq 'Axiom Queen Vaccine',
+        'lang-meth-call on an NQP class works (run)');
+}
 
 {
     my $type := nqp::knowhow().new_type(:name('DispTest'));
