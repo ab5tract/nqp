@@ -140,7 +140,9 @@ object BootDispatchers {
         record.guardType(source)
         val methods = knowHowMethods(tc, invocant)
             ?: throw ExceptionHandling.dieInternal(tc,
-                "lang-meth-call cannot work out how to dispatch on this type")
+                "lang-meth-call cannot work out how to dispatch on this type" +
+                " ('${Ops.typeName(invocant, tc)}' calling" +
+                " '${methodName(tc, capture, 1, "lang-meth-call")}')")
         val name = methodName(tc, capture, 1, "lang-meth-call")
         val method = methods.get(name)
         if (method == null || !Guard.isConcrete(method)) {
