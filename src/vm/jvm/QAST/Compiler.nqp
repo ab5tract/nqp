@@ -1442,7 +1442,7 @@ QAST::OperationsJAST.add_core_op('for', -> $qastcomp, $op {
 });
 
 # Calling
-sub process_args_onto_stack($qastcomp, @children, $il, :$obj_first, :$inv_first, :$name_first, :$obj_second) {
+sub process_args_onto_stack($qastcomp, @children, $il, :$obj_first, :$inv_first, :$name_first, :$obj_second, :$str_second) {
     # Make sure we do positionals before nameds.
     my @pos;
     my @named;
@@ -1465,6 +1465,11 @@ sub process_args_onto_stack($qastcomp, @children, $il, :$obj_first, :$inv_first,
             $arg_res := $qastcomp.as_jast(@order[$i], :want($RT_OBJ));
         }
         elsif $i == 0 && $name_first {
+            $arg_res := $qastcomp.as_jast(@order[$i], :want($RT_STR));
+        }
+        elsif $i == 1 && $str_second {
+            # A method name in a dispatch capture must be a native str, the
+            # way MoarVM compiles it with :want(MVM_reg_str).
             $arg_res := $qastcomp.as_jast(@order[$i], :want($RT_STR));
         }
         else {
@@ -1505,7 +1510,57 @@ sub process_args_onto_stack($qastcomp, @children, $il, :$obj_first, :$inv_first,
     # Return callsite index (which may create it if needed).
     return [$*CODEREFS.get_callsite_idx(@callsite, @argnames), @arg_results, @arg_jtypes];
 }
+# Emit a dispatch on @args, the way the 'dispatch' op does: the dispatcher
+# name and callsite index ride along as extra arguments, using the fact that
+# the stack was spilled to sneak the ThreadContext in.
+sub emit_dispatch($qastcomp, $node, str $dispatcher, @args, :$str_second) {
+    my $il := JAST::InstructionList.new();
+    my @argstuff := process_args_onto_stack($qastcomp, @args, $il, :$str_second);
+    my $cs_idx := @argstuff[0];
+    $*STACK.spill_to_locals($il);
+
+    nqp::unshift(@argstuff[2], 'I');
+    nqp::unshift(@argstuff[2], $TYPE_STR);
+    $il.append(JAST::PushSVal.new( :value($dispatcher) ));
+    $il.append(JAST::PushIndex.new( :value($cs_idx) ));
+    $il.append($ALOAD_1);
+    $*STACK.obtain($il, |@argstuff[1]) if @argstuff[1];
+    $il.append(savesite(JAST::InvokeDynamic.new(
+        'dispatch_noa', 'V', @argstuff[2],
+        'org/raku/nqp/dispatch/DispatchBootstrap', 'dispatch_noa'
+    )));
+
+    result_from_cf($il, rttype_from_typeobj($node.returns));
+}
+
 my $call_codegen := sub ($qastcomp, $node) {
+    # Calls go through the language's call dispatcher, which lang-call looks
+    # up from the HLL of what is being invoked. The callee is its first
+    # argument, so a named call resolves the name lexically first -- the same
+    # lookup the invokedynamic call path did at its callsite. Set
+    # NQP_JVM_NO_LANG_CALL to compile the old invokedynamic paths instead,
+    # for chasing a dispatch bug back under its rock.
+    unless nqp::getenvhash()<NQP_JVM_NO_LANG_CALL> {
+        # The callee is decontainerized at the callsite, the same as MoarVM's
+        # call emission: lang-call goes on the callee's type and a container
+        # would defeat both the delegation and the callsite's type guard.
+        my @dispatch-args := nqp::clone(@($node));
+        if $node.name ne "" {
+            nqp::unshift(@dispatch-args, QAST::Op.new( :op('decont'),
+                QAST::Var.new( :name($node.name), :scope('lexical') ) ));
+        }
+        elsif nqp::elems(@dispatch-args) {
+            my $callee := nqp::shift(@dispatch-args);
+            $callee := QAST::Op.new( :op('decont'), $callee )
+                unless nqp::istype($callee, QAST::WVal) && !nqp::iscont($callee.value);
+            nqp::unshift(@dispatch-args, $callee);
+        }
+        else {
+            nqp::die("A 'call' node must have a name or at least one child");
+        }
+        return emit_dispatch($qastcomp, $node, 'lang-call', @dispatch-args);
+    }
+
     my $il := JAST::InstructionList.new();
 
     # If it's a direct call, then use invokedynamic to resolve the name in
@@ -1559,7 +1614,7 @@ my $call_codegen := sub ($qastcomp, $node) {
 }
 QAST::OperationsJAST.add_core_op('call', :!inlinable, $call_codegen);
 QAST::OperationsJAST.add_core_op('callstatic', :!inlinable, $call_codegen);
-QAST::OperationsJAST.add_core_op('callmethod', -> $qastcomp, $node {
+my $callmethod_codegen := sub ($qastcomp, $node) {
     my $il := JAST::InstructionList.new();
 
     # Ensure we have an invocant.
@@ -1567,6 +1622,33 @@ QAST::OperationsJAST.add_core_op('callmethod', -> $qastcomp, $node {
         nqp::die("A 'callmethod' node must have at least one child");
     }
     my @children := nqp::clone(@($node));
+
+    # lang-meth-call takes the decontainerized invocant, the method name, and
+    # then the invocant again followed by the arguments: resolution drops the
+    # first two and puts the method it found in their place, leaving the
+    # invocant to be the method's first argument. Bind the invocant to a local
+    # on the way past so the expression is evaluated once and not twice.
+    unless nqp::getenvhash()<NQP_JVM_NO_LANG_CALL> {
+        my @rest := nqp::clone(@children);
+        my $inv  := nqp::shift(@rest);
+        my $name := $node.name ne ''
+            ?? QAST::SVal.new( :value($node.name) )
+            !! nqp::elems(@rest)
+                ?? nqp::shift(@rest)
+                !! nqp::die("Method call must either supply a name or have a child node that evaluates to the name");
+
+        my str $inv-local := QAST::Node.unique('__meth_inv');
+        my @dispatch-args := [
+            QAST::Op.new( :op('decont'),
+                QAST::Op.new( :op('bind'),
+                    QAST::Var.new( :name($inv-local), :scope('local'), :decl('var') ),
+                    $inv ) ),
+            $name,
+            QAST::Var.new( :name($inv-local), :scope('local') )
+        ];
+        nqp::push(@dispatch-args, $_) for @rest;
+        return emit_dispatch($qastcomp, $node, 'lang-meth-call', @dispatch-args, :str_second);
+    }
 
     # If it's a direct call, we can get invokedynamic to do something smart
     # with guard clauses for us.
@@ -1621,7 +1703,8 @@ QAST::OperationsJAST.add_core_op('callmethod', -> $qastcomp, $node {
     }
 
     result_from_cf($il, rttype_from_typeobj($node.returns));
-});
+}
+QAST::OperationsJAST.add_core_op('callmethod', $callmethod_codegen);
 
 # Dispatching. All of these are sugar over a dispatch: the dispatcher to use
 # is a compile-time constant, and everything else travels in the callsite, so
@@ -2941,6 +3024,7 @@ QAST::OperationsJAST.map_classlib_core_op('isinvokable', $TYPE_OPS, 'isinvokable
 QAST::OperationsJAST.map_classlib_core_op('iscoderef', $TYPE_OPS, 'iscoderef', [$RT_OBJ], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('gettypehllrole', $TYPE_OPS, 'gettypehllrole', [$RT_OBJ], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('assertparamcheck', $TYPE_OPS, 'assertparamcheck', [$RT_INT], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('bindcomplete', $TYPE_OPS, 'bindcomplete', [], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('setinvokespec', $TYPE_OPS, 'setinvokespec', [$RT_OBJ, $RT_OBJ, $RT_STR, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('setparameterizer', $TYPE_OPS, 'setparameterizer', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('parameterizetype', $TYPE_OPS, 'parameterizetype', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
