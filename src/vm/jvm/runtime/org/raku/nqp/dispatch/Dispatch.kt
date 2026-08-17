@@ -100,13 +100,26 @@ object Dispatch {
 
     /* ----- recording ----- */
 
-    private fun record(tc: ThreadContext, dispatcher: Dispatcher, descriptor: CallSiteDescriptor,
-                       args: Array<Any?>, site: DispatchCallSite?) {
+    private fun record(tc: ThreadContext, dispatcher: Dispatcher?, descriptor: CallSiteDescriptor,
+                       args: Array<Any?>, site: DispatchCallSite?,
+                       bindFailureOf: DispatchRecord? = null) {
         val record = DispatchRecord(tc, dispatcher, descriptor, args, tc.curFrame, site)
         tc.dispatchRecords.add(record)
         try {
-            var callback = dispatcher.dispatch
+            var callback: DispatchCallback
             var capture: SixModelObject = record.initialCapture
+            if (bindFailureOf != null) {
+                /* We are here because what the dispatch invoked failed to bind
+                 * its signature; resume that dispatch, passing the flag it
+                 * asked to be resumed with. */
+                val resumed = innermostResumption(tc, bindFailureOf)
+                record.startResume(resumed, ResumeKind.BIND_FAILURE)
+                record.currentDispatcher = resumed.spec.dispatcher
+                callback = resumeCallback(tc, resumed.spec.dispatcher)
+            }
+            else {
+                callback = dispatcher!!.dispatch
+            }
             while (true) {
                 record.currentCapture = capture
                 record.outcome = null
@@ -145,7 +158,10 @@ object Dispatch {
             record.endRecording()
             val program = record.compile()
             record.program = program
-            if (site != null && !record.doNotInstall) site.install(program)
+            if (bindFailureOf != null)
+                bindFailureOf.program!!.bindFailureProgram = program
+            else if (site != null && !record.doNotInstall)
+                site.install(program)
             realize(tc, record, program.outcome)
         }
         finally {
@@ -183,13 +199,15 @@ object Dispatch {
      * which case nothing has been done.
      */
     private fun run(tc: ThreadContext, program: DispatchProgram, descriptor: CallSiteDescriptor,
-                    args: Array<Any?>, site: DispatchCallSite?): Boolean {
+                    args: Array<Any?>, site: DispatchCallSite?,
+                    bindFailureOf: DispatchRecord? = null): Boolean {
         val record = DispatchRecord(tc, null, descriptor, args, tc.curFrame, site)
         record.program = program
         record.endRecording()
 
         if (!program.guardsMatch(record)) return false
-        if (program.isResuming && !enterResumptions(tc, record, program)) return false
+        if (program.isResuming && !enterResumptions(tc, record, program, bindFailureOf))
+            return false
 
         tc.dispatchRecords.add(record)
         try {
@@ -207,9 +225,14 @@ object Dispatch {
      * the guards it recorded there hold.
      */
     private fun enterResumptions(tc: ThreadContext, record: DispatchRecord,
-                                 program: DispatchProgram): Boolean {
+                                 program: DispatchProgram,
+                                 bindFailureOf: DispatchRecord?): Boolean {
         for ((index, level) in program.resumeLevels.withIndex()) {
-            val found = findResumption(tc, program.resumeKind, index) ?: return false
+            val found = if (index == 0 && bindFailureOf != null)
+                    innermostResumption(tc, bindFailureOf)
+                else
+                    findResumption(tc, program.resumeKind, index)
+            if (found == null) return false
             if (found.spec.dispatcher !== level.dispatcher) return false
             if (!Captures.sameShape(found.spec.initArgs.descriptor, level.initDescriptor))
                 return false
@@ -239,13 +262,13 @@ object Dispatch {
             is Outcome.InvokeCode -> {
                 val callee = outcome.callee.evaluate(record).obj
                 val args = outcome.args.evaluate(record)
-                /* NOTE: a program may ask for a bind failure of this call to be
-                 * mapped to a resumption (dispatcher-resume-on-bind-failure).
-                 * The request is recorded on the program, but this backend has
-                 * no assertparamcheck to raise it, so nothing acts on it yet. */
                 tc.pendingDispatch = record
                 try {
                     Ops.invokeDirect(tc, callee, outcome.args.descriptor, args)
+                }
+                catch (failure: BindFailureException) {
+                    if (failure.record !== record) throw failure
+                    resumeAfterBindFailure(tc, record, failure.flag)
                 }
                 finally {
                     tc.pendingDispatch = null
@@ -285,41 +308,72 @@ object Dispatch {
     /* ----- finding a dispatch to resume ----- */
 
     /**
-     * Looks down the callstack for a dispatch that can be resumed, skipping the
-     * given number of resumptions that have already been used up.
+     * Looks down the callstack for a dispatch that can be resumed, passing over
+     * the given number of resumptions that have already been used up.
      *
-     * The stack we walk is the frames together with the dispatches that invoked
-     * them: a frame reached as the outcome of a dispatch has that dispatch
-     * immediately below it. We never consider the frame we are in (nor, for a
-     * caller resumption, the one below that).
+     * MoarVM walks one stack with frames and dispatch records interleaved on
+     * it. Here the two live apart, so the interleaving is reconstructed: a
+     * dispatch sits immediately above the frame its instruction is in, so
+     * before visiting a frame we visit the dispatches whose instruction is in
+     * it, innermost first. That puts a dispatch between the frame it invoked
+     * and the frame it was made from, which is the order MoarVM sees.
+     *
+     * The frame we are in is never a place to resume from, and asking for the
+     * caller's resumption passes over one frame more.
      */
     @JvmStatic
     fun findResumption(tc: ThreadContext, kind: ResumeKind, exhausted: Int): FoundResumption? {
-        var toSkip = if (kind == ResumeKind.CALLER) 2 else 1
+        val records = tc.dispatchRecords
+        var next = records.size - 1
+        var toSkip = kind.framesToSkip
         var remaining = exhausted
         var frame = tc.curFrame
         while (frame != null) {
-            if (toSkip > 0) toSkip--
-            val record = frame.dispatchRecord
-            if (record != null && toSkip == 0) {
-                val program = record.program
-                if (program != null) {
-                    if (program.resumptions.size > remaining) {
-                        val states = record.ensureResumeStates()
-                        return FoundResumption(record, program.resumptions[remaining],
-                            states[remaining])
+            while (next >= 0 && records[next].callerFrame === frame) {
+                val record = records[next--]
+                if (toSkip == 0) {
+                    val program = record.program
+                    if (program != null) {
+                        if (program.resumptions.size > remaining)
+                            return FoundResumption(record, program.resumptions[remaining],
+                                record.ensureResumeStates()[remaining])
+                        remaining -= program.resumptions.size
                     }
-                    remaining -= program.resumptions.size
+                    /* A dispatch with resumptions of its own that we did not
+                     * use is as far as we look. Ones with none, and ones that
+                     * are themselves resuming something, are looked past. */
+                    if (!(program == null || program.resumptions.isEmpty() ||
+                            program.isResuming))
+                        return null
                 }
-                /* A dispatch with resumptions that we did not use is as far as
-                 * we look; only ones with none of their own, or ones that are
-                 * themselves resuming something, are looked past. */
-                if (!(program == null || program.resumptions.isEmpty() || program.isResuming))
-                    return null
             }
+            if (toSkip > 0) toSkip--
             frame = frame.caller
         }
         return null
+    }
+
+    /**
+     * A frame a dispatch invoked failed to bind its signature, and the dispatch
+     * asked for that to become a resumption. Resume it with the flag it named.
+     */
+    @JvmStatic
+    fun resumeAfterBindFailure(tc: ThreadContext, failed: DispatchRecord, flag: Long) {
+        val args = arrayOf<Any?>(flag)
+        val cached = failed.program!!.bindFailureProgram
+        if (cached != null &&
+                run(tc, cached, BindFailure.flagCallSite, args, null, failed))
+            return
+        record(tc, null, BindFailure.flagCallSite, args, null, failed)
+    }
+
+    /** The first resumption a dispatch set up, which is the one to resume. */
+    private fun innermostResumption(tc: ThreadContext, record: DispatchRecord): FoundResumption {
+        val program = record.program
+        if (program == null || program.resumptions.isEmpty())
+            throw ExceptionHandling.dieInternal(tc,
+                "A dispatch that asked to resume on bind failure set up no resumption")
+        return FoundResumption(record, program.resumptions[0], record.ensureResumeStates()[0])
     }
 
     /** Starts a resumption of the innermost resumable dispatch out from here. */

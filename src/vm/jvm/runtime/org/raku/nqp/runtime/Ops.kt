@@ -74,6 +74,7 @@ import org.raku.nqp.io.SocketHandle
 import org.raku.nqp.io.StandardReadHandle
 import org.raku.nqp.io.StandardWriteHandle
 import org.raku.nqp.jast2bc.JASTCompiler
+import org.raku.nqp.dispatch.BindFailure
 import org.raku.nqp.sixmodel.BoolificationSpec
 import org.raku.nqp.sixmodel.Boxable
 import org.raku.nqp.sixmodel.BoxedPrimitive
@@ -2869,6 +2870,16 @@ object Ops {
     fun isinvokable(obj: SixModelObject?, tc: ThreadContext): Long {
         return if (obj is CodeRef || obj!!.st.InvocationSpec != null) 1 else 0
     }
+    /* Assert that a signature bind check passed. A failure either becomes a
+     * resumption of the dispatch that invoked us, if it asked for that, or an
+     * error. */
+    @JvmStatic
+    fun assertparamcheck(ok: Long, tc: ThreadContext): SixModelObject? {
+        if (ok == 0L)
+            BindFailure.failed(tc)
+        return null
+    }
+
     /* The role a type plays in its language: one of the HLL_ROLE_*
      * constants, which is how hllization decides what to map. */
     @JvmStatic
