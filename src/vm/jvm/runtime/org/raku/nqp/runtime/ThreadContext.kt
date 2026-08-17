@@ -58,11 +58,11 @@ class ThreadContext(
      * following set of slots, along with a flag indicating value
      * type, provide a way to do that.
      */
-    @JvmField var native_i = 0L
-    @JvmField var native_n = 0.0
-    @JvmField var native_s: String? = null
-    @JvmField var native_j: Any? = null
-    @JvmField var native_type = 0
+    @JvmField var nativeI = 0L
+    @JvmField var nativeN = 0.0
+    @JvmField var nativeS: String? = null
+    @JvmField var nativeJ: Any? = null
+    @JvmField var nativeType = 0
 
     /**
      * The current unwind exception.

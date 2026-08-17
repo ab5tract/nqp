@@ -263,15 +263,15 @@ class VMArrayInstance : VMArrayInstanceBase() {
 
         /* now copy C<from>'s elements into SELF */
         if (elems1 > 0) {
-            val from_pos = (start + offset).toInt()
+            val fromPos = (start + offset).toInt()
             for (i in 0 until elems1.toInt()) {
-                slots!![from_pos + i] = from.at_pos_boxed(tc, i.toLong())
+                slots!![fromPos + i] = from.at_pos_boxed(tc, i.toLong())
             }
         }
     }
 
-    private fun memmove(slots: Array<SixModelObject?>, dest_start: Long, src_start: Long, l_n: Long) {
-        System.arraycopy(slots, src_start.toInt(), slots, dest_start.toInt(), l_n.toInt())
+    private fun memmove(slots: Array<SixModelObject?>, destStart: Long, srcStart: Long, count: Long) {
+        System.arraycopy(slots, srcStart.toInt(), slots, destStart.toInt(), count.toInt())
     }
 
     override fun clone(tc: ThreadContext): SixModelObject {

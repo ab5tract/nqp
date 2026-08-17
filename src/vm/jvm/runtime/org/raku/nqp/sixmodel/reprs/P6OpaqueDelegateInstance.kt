@@ -4,23 +4,23 @@ import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.SixModelObject
 
 class P6OpaqueDelegateInstance : P6OpaqueBaseInstance() {
-    override fun get_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    override fun get_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
                                      name: String?, hint: Long): SixModelObject? {
-        return delegate!!.get_attribute_boxed(tc, class_handle, name, hint)
+        return delegate!!.get_attribute_boxed(tc, classHandle, name, hint)
     }
-    override fun get_attribute_native(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long) {
-        delegate!!.get_attribute_native(tc, class_handle, name, hint)
+    override fun get_attribute_native(tc: ThreadContext, classHandle: SixModelObject?, name: String?, hint: Long) {
+        delegate!!.get_attribute_native(tc, classHandle, name, hint)
     }
-    override fun bind_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    override fun bind_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
                                       name: String?, hint: Long, value: SixModelObject?) {
-        delegate!!.bind_attribute_boxed(tc, class_handle, name, hint, value)
+        delegate!!.bind_attribute_boxed(tc, classHandle, name, hint, value)
     }
-    override fun bind_attribute_native(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long) {
-        delegate!!.bind_attribute_native(tc, class_handle, name, hint)
+    override fun bind_attribute_native(tc: ThreadContext, classHandle: SixModelObject?, name: String?, hint: Long) {
+        delegate!!.bind_attribute_native(tc, classHandle, name, hint)
     }
-    override fun is_attribute_initialized(tc: ThreadContext, class_handle: SixModelObject?,
+    override fun is_attribute_initialized(tc: ThreadContext, classHandle: SixModelObject?,
                                           name: String?, hint: Long): Long {
-        return delegate!!.is_attribute_initialized(tc, class_handle, name, hint)
+        return delegate!!.is_attribute_initialized(tc, classHandle, name, hint)
     }
     override fun set_int(tc: ThreadContext, value: Long) {
         delegate!!.set_int(tc, value)

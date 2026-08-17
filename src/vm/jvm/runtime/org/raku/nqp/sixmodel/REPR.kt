@@ -28,7 +28,7 @@ abstract class REPR {
      * Can be left unset for most representations, but is used to detect
      * native VMArrays during deserialization.
      */
-    @JvmField var subtype_name: String? = null
+    @JvmField var subtypeName: String? = null
 
     /**
      * Creates a new type object of this representation, and associates it
@@ -44,14 +44,14 @@ abstract class REPR {
     /**
      * Composes the representation; typically performed at type composition time.
      */
-    open fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {
+    open fun compose(tc: ThreadContext, st: STable, reprInfo: SixModelObject) {
         // By default, nothing to do.
     }
 
     /**
      * Gets attribute access hint for the representation.
      */
-    open fun hint_for(tc: ThreadContext, st: STable, class_handle: SixModelObject?, name: String?): Long {
+    open fun hint_for(tc: ThreadContext, st: STable, classHandle: SixModelObject?, name: String?): Long {
         return STable.NO_HINT
     }
 

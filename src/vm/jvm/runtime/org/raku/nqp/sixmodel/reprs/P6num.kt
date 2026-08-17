@@ -33,8 +33,8 @@ class P6num : REPR() {
         return st.WHAT
     }
 
-    override fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {
-        val floatInfo = repr_info.at_key_boxed(tc, "float")
+    override fun compose(tc: ThreadContext, st: STable, reprInfo: SixModelObject) {
+        val floatInfo = reprInfo.at_key_boxed(tc, "float")
         if (Ops.isnull(floatInfo) == 0L) {
             val bits = floatInfo!!.at_key_boxed(tc, "bits")
             if (Ops.isnull(bits) == 0L) {
@@ -68,10 +68,10 @@ class P6num : REPR() {
     override fun inlineBind(tc: ThreadContext, st: STable, mv: MethodVisitor, className: String, prefix: String) {
         mv.visitVarInsn(Opcodes.ALOAD, 1)
         mv.visitInsn(Opcodes.ICONST_0 + ThreadContext.NATIVE_NUM)
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "native_type", "I")
+        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeType", "I")
         mv.visitVarInsn(Opcodes.ALOAD, 0)
         mv.visitVarInsn(Opcodes.ALOAD, 1)
-        mv.visitFieldInsn(Opcodes.GETFIELD, "org/raku/nqp/runtime/ThreadContext", "native_n", "D")
+        mv.visitFieldInsn(Opcodes.GETFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeN", "D")
         mv.visitFieldInsn(Opcodes.PUTFIELD, className, prefix, "D")
         mv.visitInsn(Opcodes.RETURN)
     }
@@ -80,10 +80,10 @@ class P6num : REPR() {
         mv.visitVarInsn(Opcodes.ALOAD, 1)
         mv.visitInsn(Opcodes.DUP)
         mv.visitInsn(Opcodes.ICONST_0 + ThreadContext.NATIVE_NUM)
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "native_type", "I")
+        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeType", "I")
         mv.visitVarInsn(Opcodes.ALOAD, 0)
         mv.visitFieldInsn(Opcodes.GETFIELD, className, prefix, "D")
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "native_n", "D")
+        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeN", "D")
         mv.visitInsn(Opcodes.RETURN)
     }
 

@@ -60,8 +60,8 @@ class MultiDimArray : REPR() {
         }
     }
 
-    override fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {
-        val arrayInfo = repr_info.at_key_boxed(tc, "array")
+    override fun compose(tc: ThreadContext, st: STable, reprInfo: SixModelObject) {
+        val arrayInfo = reprInfo.at_key_boxed(tc, "array")
         if (Ops.isnull(arrayInfo) == 0L) {
             val reprData = MultiDimArrayREPRData()
             val dims = arrayInfo!!.at_key_boxed(tc, "dimensions")

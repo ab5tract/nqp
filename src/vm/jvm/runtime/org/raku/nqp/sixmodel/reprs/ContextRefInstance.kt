@@ -17,20 +17,20 @@ class ContextRefInstance : SixModelObject() {
     override fun at_key_native(tc: ThreadContext, key: String?) {
         var idx = context.codeRef.staticInfo.iTryGetLexicalIdx(key!!)
         if (idx != -1) {
-            tc.native_i = context.iLex!![idx]
-            tc.native_type = ThreadContext.NATIVE_INT
+            tc.nativeI = context.iLex!![idx]
+            tc.nativeType = ThreadContext.NATIVE_INT
             return
         }
         idx = context.codeRef.staticInfo.nTryGetLexicalIdx(key)
         if (idx != -1) {
-            tc.native_n = context.nLex!![idx]
-            tc.native_type = ThreadContext.NATIVE_NUM
+            tc.nativeN = context.nLex!![idx]
+            tc.nativeType = ThreadContext.NATIVE_NUM
             return
         }
         idx = context.codeRef.staticInfo.sTryGetLexicalIdx(key)
         if (idx != -1) {
-            tc.native_s = context.sLex!![idx]
-            tc.native_type = ThreadContext.NATIVE_STR
+            tc.nativeS = context.sLex!![idx]
+            tc.nativeType = ThreadContext.NATIVE_STR
             return
         }
         throw ExceptionHandling.dieInternal(tc, "No lexical $key in this lexpad")
@@ -46,20 +46,20 @@ class ContextRefInstance : SixModelObject() {
     override fun bind_key_native(tc: ThreadContext, key: String?) {
         var idx = context.codeRef.staticInfo.iTryGetLexicalIdx(key!!)
         if (idx != -1) {
-            context.iLex!![idx] = tc.native_i
-            tc.native_type = ThreadContext.NATIVE_INT
+            context.iLex!![idx] = tc.nativeI
+            tc.nativeType = ThreadContext.NATIVE_INT
             return
         }
         idx = context.codeRef.staticInfo.nTryGetLexicalIdx(key)
         if (idx != -1) {
-            context.nLex!![idx] = tc.native_n
-            tc.native_type = ThreadContext.NATIVE_NUM
+            context.nLex!![idx] = tc.nativeN
+            tc.nativeType = ThreadContext.NATIVE_NUM
             return
         }
         idx = context.codeRef.staticInfo.sTryGetLexicalIdx(key)
         if (idx != -1) {
-            context.sLex!![idx] = tc.native_s
-            tc.native_type = ThreadContext.NATIVE_STR
+            context.sLex!![idx] = tc.nativeS
+            tc.nativeType = ThreadContext.NATIVE_STR
             return
         }
         throw ExceptionHandling.dieInternal(tc, "No lexical $key in this lexpad")

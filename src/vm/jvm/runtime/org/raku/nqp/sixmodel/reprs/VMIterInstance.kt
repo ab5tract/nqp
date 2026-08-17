@@ -60,21 +60,21 @@ class VMIterInstance : SixModelObject() {
                 if (idx >= limit)
                     throw ExceptionHandling.dieInternal(tc, "Iteration past end of iterator")
                 target.at_pos_native(tc, idx)
-                return Ops.box_i(tc.native_i, tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)
+                return Ops.box_i(tc.nativeI, tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)
             }
             MODE_ARRAY_NUM -> {
                 idx++
                 if (idx >= limit)
                     throw ExceptionHandling.dieInternal(tc, "Iteration past end of iterator")
                 target.at_pos_native(tc, idx)
-                return Ops.box_n(tc.native_n, tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc)
+                return Ops.box_n(tc.nativeN, tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc)
             }
             MODE_ARRAY_STR -> {
                 idx++
                 if (idx >= limit)
                     throw ExceptionHandling.dieInternal(tc, "Iteration past end of iterator")
                 target.at_pos_native(tc, idx)
-                return Ops.box_s(tc.native_s, tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
+                return Ops.box_s(tc.nativeS, tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
             }
             MODE_HASH -> {
                 if (!hashKeyIter!!.hasNext()) {
