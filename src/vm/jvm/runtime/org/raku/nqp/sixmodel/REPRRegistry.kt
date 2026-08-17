@@ -90,5 +90,6 @@ object REPRRegistry {
         addREPR("NativeRef", NativeRef())
         addREPR("MultiDimArray", MultiDimArray())
         addREPR("Decoder", Decoder())
+        addREPR("Tracked", Tracked())
     }
 }

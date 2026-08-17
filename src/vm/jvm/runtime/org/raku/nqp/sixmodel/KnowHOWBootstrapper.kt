@@ -24,6 +24,7 @@ object KnowHOWBootstrapper {
         tc.gc.SCRef = bootType(tc, "SCRef", "SCRef")
         tc.gc.ContextRef = bootType(tc, "ContextRef", "ContextRef")
         tc.gc.CallCapture = bootType(tc, "CallCapture", "CallCapture")
+        tc.gc.Tracked = bootType(tc, "Tracked", "Tracked")
         tc.gc.BOOTException = bootType(tc, "BOOTException", "VMException")
         tc.gc.BOOTIO = bootType(tc, "BOOTIO", "IOHandle")
         tc.gc.VMNull = bootType(tc, "VMNull", "VMNull")
