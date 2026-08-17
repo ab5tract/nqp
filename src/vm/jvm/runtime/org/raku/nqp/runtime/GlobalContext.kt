@@ -8,6 +8,7 @@ import java.util.HashMap
 import java.util.Timer
 import java.util.WeakHashMap
 
+import org.raku.nqp.dispatch.DispatchRegistry
 import org.raku.nqp.sixmodel.CodePairContainerConfigurer
 import org.raku.nqp.sixmodel.ContainerConfigurer
 import org.raku.nqp.sixmodel.KnowHOWBootstrapper
@@ -87,6 +88,18 @@ class GlobalContext {
      * CallCapture type; a basic, method-less type with the CallContext REPR.
      */
     @JvmField var CallCapture: SixModelObject? = null
+
+    /**
+     * Tracked type; a basic, method-less type with the Tracked REPR, used for
+     * the values a dispatcher tracks while recording a dispatch program.
+     */
+    @JvmField var Tracked: SixModelObject? = null
+
+    /**
+     * The dispatchers this program can reach; the boot dispatchers are always
+     * in there and a language registers its own.
+     */
+    @JvmField val dispatchers = DispatchRegistry()
 
     /**
      * VMNull type; a basic, method-less type with the VMNull REPR.
