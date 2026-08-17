@@ -253,6 +253,15 @@ ok(nqp::eqaddr(nqp::hllboolfor(7, 'true_and_false'), TrueValue), 'hllboolfor wit
             $hash
         }
     }
+    # The transform calls a method on the foreign object, and with the
+    # new-dispatch calling convention a method call on an object routes
+    # through its language's registered method dispatcher, so the made-up
+    # language needs one.
+    nqp::sethllconfig('Raku', nqp::hash(
+        'call_dispatcher',        'nqp-call',
+        'method_call_dispatcher', 'nqp-meth-call',
+        'find_method_dispatcher', 'nqp-find-meth',
+    ));
     nqp::settypehll(Hash, "Raku");
     nqp::settypehllrole(Hash, 5);
     ok(nqp::eqaddr(nqp::hllize(nqp::create(Hash)), $hash), 'Foreign Hash transformed');
