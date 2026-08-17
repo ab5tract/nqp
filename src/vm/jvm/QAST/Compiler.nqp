@@ -4114,11 +4114,15 @@ class QAST::CompilerJAST {
     # its cursor to `self`, say - never sees the argument at all without them.
     method emit_param_tasks($il, $block, $var) {
         for $var.list {
-            if nqp::istype($_, QAST::ParamTypeCheck) {
-                nqp::die('QAST::ParamTypeCheck is not supported on the JVM backend');
-            }
             my $*BLOCK := $block;
-            my $task := self.as_jast($_, :want($RT_VOID));
+            # A type check evaluates to a flag that assertparamcheck turns
+            # into a bind failure rather than a throw, so a multi can try the
+            # next candidate. MoarVM compiles the node the same way.
+            my $task := self.as_jast(
+                nqp::istype($_, QAST::ParamTypeCheck)
+                    ?? QAST::Op.new( :op('assertparamcheck'), $_[0] )
+                    !! $_,
+                :want($RT_VOID));
             $il.append($task.jast);
             $*STACK.obtain($il, $task);
         }
