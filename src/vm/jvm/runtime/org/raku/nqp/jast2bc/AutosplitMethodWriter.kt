@@ -281,17 +281,17 @@ internal class AutosplitMethodWriter(
             " fragment ${calcFragmentSize(at, at + 1)} bytes > $MAX_FRAGMENT)"
     }
 
-    private fun bite(from: Int, min_takeIn: Int, max_takeIn: Int): Int { /* min_take is known good */
-        var min_take = min_takeIn
-        var max_take = max_takeIn
+    private fun bite(from: Int, minTakeIn: Int, maxTakeIn: Int): Int { /* minTake is known good */
+        var minTake = minTakeIn
+        var maxTake = maxTakeIn
         while (true) {
-            if (min_take == max_take) return min_take
-            val mid_take = (min_take + max_take + 1) / 2
+            if (minTake == maxTake) return minTake
+            val midTake = (minTake + maxTake + 1) / 2
 
-            if (calcFragmentSize(from, from + mid_take) <= MAX_FRAGMENT) {
-                min_take = mid_take
+            if (calcFragmentSize(from, from + midTake) <= MAX_FRAGMENT) {
+                minTake = midTake
             } else {
-                max_take = mid_take - 1
+                maxTake = midTake - 1
             }
         }
     }
@@ -1018,13 +1018,13 @@ internal class AutosplitMethodWriter(
         val exitDedup = BooleanArray(insnList.size)
 
         for (ce in controlEdges) {
-            val from_this = (ce.from >= from && ce.from < to)
-            val to_this = (ce.to >= from && ce.to < to)
-            if (!from_this && to_this && !entryDedup[ce.to - from]) {
+            val fromThis = (ce.from >= from && ce.from < to)
+            val toThis = (ce.to >= from && ce.to < to)
+            if (!fromThis && toThis && !entryDedup[ce.to - from]) {
                 entryDedup[ce.to - from] = true
                 entryPts[entryCt++] = ce.to
             }
-            if (from_this && !to_this && !exitDedup[ce.to]) {
+            if (fromThis && !toThis && !exitDedup[ce.to]) {
                 exitDedup[ce.to] = true
                 exitPts[exitCt++] = ce.to
             }
@@ -1389,8 +1389,8 @@ internal class AutosplitMethodWriter(
         v.visitEnd()
     }
 
-    private val box_types = arrayOf("java/lang/Integer", "java/lang/Long", "java/lang/Float", "java/lang/Double")
-    private val box_descs = arrayOf("(I)V", "(J)V", "(F)V", "(D)V")
+    private val boxTypes = arrayOf("java/lang/Integer", "java/lang/Long", "java/lang/Float", "java/lang/Double")
+    private val boxDescs = arrayOf("(I)V", "(J)V", "(F)V", "(D)V")
 
     private fun emitFragmentInsn(v: MethodVisitor, iix: Int, begin: Int, insnLabels: Array<Label>, exitTrampolineLabels: Int2ObjectOpenHashMap<Label>, spilledUTypes: Set<String>) {
         v.visitLabel(insnLabels[iix - begin])
@@ -1410,10 +1410,10 @@ internal class AutosplitMethodWriter(
             v.visitVarInsn(Opcodes.ALOAD, nlocal)
             v.visitInsn(Opcodes.ICONST_0)
             if (opc != Opcodes.ARETURN) {
-                v.visitTypeInsn(Opcodes.NEW, box_types[t])
+                v.visitTypeInsn(Opcodes.NEW, boxTypes[t])
                 v.visitInsn(Opcodes.DUP)
                 v.visitVarInsn(Opcodes.ILOAD + t, nlocal + 1)
-                v.visitMethodInsn(Opcodes.INVOKESPECIAL, box_types[t], "<init>", box_descs[t])
+                v.visitMethodInsn(Opcodes.INVOKESPECIAL, boxTypes[t], "<init>", boxDescs[t])
             } else {
                 v.visitVarInsn(Opcodes.ILOAD + t, nlocal + 1)
             }
@@ -1675,16 +1675,16 @@ internal class AutosplitMethodWriter(
         instructions.add(loop)
 
         for (i in firstJump.size - 1 downTo 0) {
-            val not_my_problem = LabelNode()
+            val notMyProblem = LabelNode()
             instructions.add(VarInsnNode(Opcodes.ILOAD, 1))
             instructions.add(intNode(firstJump.getInt(i)))
-            instructions.add(JumpInsnNode(Opcodes.IF_ICMPLT, not_my_problem))
+            instructions.add(JumpInsnNode(Opcodes.IF_ICMPLT, notMyProblem))
             instructions.add(VarInsnNode(Opcodes.ILOAD, 1))
             instructions.add(VarInsnNode(Opcodes.ALOAD, 0))
             instructions.add(MethodInsnNode(Opcodes.INVOKESTATIC, tgtype, name + "\$f" + i, "(I[Ljava/lang/Object;)I"))
             instructions.add(VarInsnNode(Opcodes.ISTORE, 1))
             instructions.add(JumpInsnNode(Opcodes.GOTO, loop))
-            instructions.add(not_my_problem)
+            instructions.add(notMyProblem)
         }
 
         // time for return

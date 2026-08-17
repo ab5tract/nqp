@@ -5,25 +5,25 @@ import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
 
 open class TypeObject : SixModelObject() {
-    override fun get_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    override fun get_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
                                      name: String?, hint: Long): SixModelObject {
         throw ExceptionHandling.dieInternal(tc, "Cannot look up attributes in a type object")
     }
 
-    override fun get_attribute_native(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long) {
+    override fun get_attribute_native(tc: ThreadContext, classHandle: SixModelObject?, name: String?, hint: Long) {
         throw ExceptionHandling.dieInternal(tc, "Cannot look up attributes in a type object")
     }
 
-    override fun bind_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    override fun bind_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
                                       name: String?, hint: Long, value: SixModelObject?) {
         throw ExceptionHandling.dieInternal(tc, "Cannot look up attributes in a type object")
     }
 
-    override fun bind_attribute_native(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long) {
+    override fun bind_attribute_native(tc: ThreadContext, classHandle: SixModelObject?, name: String?, hint: Long) {
         throw ExceptionHandling.dieInternal(tc, "Cannot look up attributes in a type object")
     }
 
-    override fun is_attribute_initialized(tc: ThreadContext, class_handle: SixModelObject?,
+    override fun is_attribute_initialized(tc: ThreadContext, classHandle: SixModelObject?,
                                           name: String?, hint: Long): Long {
         throw ExceptionHandling.dieInternal(tc, "Cannot look up attributes in a type object")
     }

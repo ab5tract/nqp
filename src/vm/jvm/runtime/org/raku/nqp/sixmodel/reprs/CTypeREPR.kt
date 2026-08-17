@@ -39,14 +39,14 @@ abstract class CTypeREPR(
         return st.WHAT
     }
 
-    override fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {
-        val attr_info = repr_info.at_key_boxed(tc, "attribute")!!
-        val repr_data = newREPRData()
+    override fun compose(tc: ThreadContext, st: STable, reprInfo: SixModelObject) {
+        val attrInfo = reprInfo.at_key_boxed(tc, "attribute")!!
+        val reprData = newREPRData()
 
-        val mroLength = attr_info.elems(tc)
+        val mroLength = attrInfo.elems(tc)
         val attrInfos = ArrayList<CAttrInfo>()
         for (i in mroLength - 1 downTo 0) {
-            val entry = attr_info.at_pos_boxed(tc, i)!!
+            val entry = attrInfo.at_pos_boxed(tc, i)!!
             val attrs = entry.at_pos_boxed(tc, 1)!!
             val parents = entry.at_pos_boxed(tc, 2)!!.elems(tc)
 
@@ -60,7 +60,7 @@ abstract class CTypeREPR(
                     info.inlined = attrHash.at_key_boxed(tc, "inlined")!!.get_int(tc).toShort()
                     val spec = info.type!!.st.REPR.get_storage_spec(tc, info.type!!.st)
                     info.bits = spec.bits
-                    repr_data.fieldTypes.put(info.name!!, info)
+                    reprData.fieldTypes.put(info.name!!, info)
 
                     if (info.type == null) {
                         ExceptionHandling.dieInternal(tc, "$kind representation requires the types of all attributes to be specified")
@@ -74,7 +74,7 @@ abstract class CTypeREPR(
             }
         }
 
-        st.REPRData = repr_data
+        st.REPRData = reprData
         computeLayout(tc, st, attrInfos)
     }
 
@@ -82,9 +82,9 @@ abstract class CTypeREPR(
         /* TODO: Die if someone tries to allocate one of these before it's
          * been composed. */
         val obj = newInstance()
-        val repr_data = st.REPRData as CTypeREPRData
+        val reprData = st.REPRData as CTypeREPRData
         obj.st = st
-        obj.storage = NativeSupport.allocate(repr_data.size)
+        obj.storage = NativeSupport.allocate(reprData.size)
         return obj
     }
 
@@ -100,7 +100,7 @@ abstract class CTypeREPR(
     }
 
     private fun computeLayout(tc: ThreadContext, st: STable, attrs: List<CAttrInfo>) {
-        val repr_data = st.REPRData as CTypeREPRData
+        val reprData = st.REPRData as CTypeREPRData
 
         if (requireAttributes && attrs.isEmpty()) {
             ExceptionHandling.dieInternal(tc,
@@ -130,9 +130,9 @@ abstract class CTypeREPR(
             }
         }
 
-        repr_data.attrs = attrs
-        repr_data.alignment = alignment
-        repr_data.size = roundUp(size, alignment)
+        reprData.attrs = attrs
+        reprData.alignment = alignment
+        reprData.size = roundUp(size, alignment)
     }
 
     private fun roundUp(value: Long, alignment: Long): Long =

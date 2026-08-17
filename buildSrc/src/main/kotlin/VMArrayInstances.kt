@@ -25,7 +25,7 @@ data class VMArrayVariant(
     /** Constructor-ish prefix allocating a slots array: "LongArray" or
      *  "arrayOfNulls<String>"; rendered as `$arrayCtor(<size expr>)`. */
     val arrayCtor: String,
-    /** ThreadContext native slot name: native_i / native_n / native_s. */
+    /** ThreadContext native slot name: nativeI / nativeN / nativeS. */
     val nativeSlot: String,
     /** ThreadContext.NATIVE_* constant name. */
     val nativeType: String,
@@ -49,28 +49,28 @@ data class VMArrayVariant(
      *  widened/sign-extended long (or double/String), matching the Java
      *  originals: unsigned variants write widen(slot), reads narrow back. */
     val serWriter get() = when (nativeSlot) {
-        "native_i" -> "writeInt"
-        "native_n" -> "writeNum"
+        "nativeI" -> "writeInt"
+        "nativeN" -> "writeNum"
         else -> "writeStr"
     }
     val serReader get() = when (nativeSlot) {
-        "native_i" -> "readLong"
-        "native_n" -> "readDouble"
+        "nativeI" -> "readLong"
+        "nativeN" -> "readDouble"
         else -> "readStr"
     }
 }
 
 object VMArrayInstances {
     val variants = listOf(
-        VMArrayVariant("i",   "LongArray",      "LongArray",   "native_i", "NATIVE_INT", empty = "0"),
-        VMArrayVariant("i8",  "ByteArray",      "ByteArray",   "native_i", "NATIVE_INT", ".toByte()",  ".toLong()", empty = "0"),
-        VMArrayVariant("i16", "ShortArray",     "ShortArray",  "native_i", "NATIVE_INT", ".toShort()", ".toLong()", empty = "0"),
-        VMArrayVariant("i32", "IntArray",       "IntArray",    "native_i", "NATIVE_INT", ".toInt()",   ".toLong()", empty = "0"),
-        VMArrayVariant("u8",  "ByteArray",      "ByteArray",   "native_i", "NATIVE_INT", ".toByte()",  widen = "Byte" to "1L shl 8",   empty = "0"),
-        VMArrayVariant("u16", "ShortArray",     "ShortArray",  "native_i", "NATIVE_INT", ".toShort()", widen = "Short" to "1L shl 16", empty = "0"),
-        VMArrayVariant("u32", "IntArray",       "IntArray",    "native_i", "NATIVE_INT", ".toInt()",   widen = "Int" to "1L shl 32",   empty = "0"),
-        VMArrayVariant("n",   "DoubleArray",    "DoubleArray", "native_n", "NATIVE_NUM", empty = "0.0"),
-        VMArrayVariant("s",   "Array<String?>", "arrayOfNulls<String>", "native_s", "NATIVE_STR", empty = "null"),
+        VMArrayVariant("i",   "LongArray",      "LongArray",   "nativeI", "NATIVE_INT", empty = "0"),
+        VMArrayVariant("i8",  "ByteArray",      "ByteArray",   "nativeI", "NATIVE_INT", ".toByte()",  ".toLong()", empty = "0"),
+        VMArrayVariant("i16", "ShortArray",     "ShortArray",  "nativeI", "NATIVE_INT", ".toShort()", ".toLong()", empty = "0"),
+        VMArrayVariant("i32", "IntArray",       "IntArray",    "nativeI", "NATIVE_INT", ".toInt()",   ".toLong()", empty = "0"),
+        VMArrayVariant("u8",  "ByteArray",      "ByteArray",   "nativeI", "NATIVE_INT", ".toByte()",  widen = "Byte" to "1L shl 8",   empty = "0"),
+        VMArrayVariant("u16", "ShortArray",     "ShortArray",  "nativeI", "NATIVE_INT", ".toShort()", widen = "Short" to "1L shl 16", empty = "0"),
+        VMArrayVariant("u32", "IntArray",       "IntArray",    "nativeI", "NATIVE_INT", ".toInt()",   widen = "Int" to "1L shl 32",   empty = "0"),
+        VMArrayVariant("n",   "DoubleArray",    "DoubleArray", "nativeN", "NATIVE_NUM", empty = "0.0"),
+        VMArrayVariant("s",   "Array<String?>", "arrayOfNulls<String>", "nativeS", "NATIVE_STR", empty = "null"),
     )
 
     fun render(v: VMArrayVariant): String {
@@ -106,12 +106,12 @@ object VMArrayInstances {
         |                throw ExceptionHandling.dieInternal(tc, "VMArray: Index out of bounds")
         |        }
         |        else if (index >= elems) {
-        |            tc.native_type = ThreadContext.${v.nativeType}
+        |            tc.nativeType = ThreadContext.${v.nativeType}
         |            tc.${v.nativeSlot} = ${v.empty}
         |            return
         |        }
         |
-        |        tc.native_type = ThreadContext.${v.nativeType}
+        |        tc.nativeType = ThreadContext.${v.nativeType}
         |        tc.${v.nativeSlot} = ${v.read("start + index.toInt()")}
         |    }
         |
@@ -192,7 +192,7 @@ object VMArrayInstances {
         |        else if (index >= elems)
         |            set_size_internal(tc, index + 1)
         |
-        |        tc.native_type = ThreadContext.${v.nativeType}
+        |        tc.nativeType = ThreadContext.${v.nativeType}
         |        slots!![start + index.toInt()] = tc.${v.nativeSlot}${v.writeConv}
         |    }
         |
@@ -204,7 +204,7 @@ object VMArrayInstances {
         |
         |    override fun push_native(tc: ThreadContext) {
         |        set_size_internal(tc, (elems + 1).toLong())
-        |        tc.native_type = ThreadContext.${v.nativeType}
+        |        tc.nativeType = ThreadContext.${v.nativeType}
         |        slots!![start + elems - 1] = tc.${v.nativeSlot}${v.writeConv}
         |    }
         |
@@ -212,7 +212,7 @@ object VMArrayInstances {
         |        if (elems < 1)
         |            throw ExceptionHandling.dieInternal(tc, "VMArray: Can't pop from an empty array")
         |        elems--
-        |        tc.native_type = ThreadContext.${v.nativeType}
+        |        tc.nativeType = ThreadContext.${v.nativeType}
         |        tc.${v.nativeSlot} = ${v.read("start + elems")}
         |    }
         |
@@ -238,7 +238,7 @@ object VMArrayInstances {
         |
         |        /* Now do the unshift */
         |        start--
-        |        tc.native_type = ThreadContext.${v.nativeType}
+        |        tc.nativeType = ThreadContext.${v.nativeType}
         |        slots!![start] = tc.${v.nativeSlot}${v.writeConv}
         |        elems++
         |    }
@@ -247,7 +247,7 @@ object VMArrayInstances {
         |        if (elems < 1)
         |            throw ExceptionHandling.dieInternal(tc, "VMArray: Can't shift from an empty array")
         |
-        |        tc.native_type = ThreadContext.${v.nativeType}
+        |        tc.nativeType = ThreadContext.${v.nativeType}
         |        tc.${v.nativeSlot} = ${v.read("start")}
         |        start++
         |        elems--
@@ -402,12 +402,12 @@ object VMArrayInstances {
         |    }
         |
         |    override fun at_pos_multidim_native(tc: ThreadContext, indices: LongArray) {
-        |        tc.native_type = ThreadContext.${v.nativeType}
+        |        tc.nativeType = ThreadContext.${v.nativeType}
         |        tc.${v.nativeSlot} = ${v.read("indicesToFlatIndex(tc, indices)")}
         |    }
         |
         |    override fun bind_pos_multidim_native(tc: ThreadContext, indices: LongArray) {
-        |        tc.native_type = ThreadContext.${v.nativeType}
+        |        tc.nativeType = ThreadContext.${v.nativeType}
         |        slots!![indicesToFlatIndex(tc, indices)] = tc.${v.nativeSlot}${v.writeConv}
         |    }
         |

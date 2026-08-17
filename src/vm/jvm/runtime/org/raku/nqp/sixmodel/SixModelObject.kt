@@ -40,29 +40,29 @@ abstract class SixModelObject : Cloneable {
      * Attribute access functions. The native variants load the value into
      * or store a value from the Thread Context.
      */
-    open fun get_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    open fun get_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
             name: String?, hint: Long): SixModelObject? {
         throw ExceptionHandling.dieInternal(tc, this.st.REPR.name + " representation does not support attributes")
     }
-    open fun get_attribute_native(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long) {
+    open fun get_attribute_native(tc: ThreadContext, classHandle: SixModelObject?, name: String?, hint: Long) {
         throw ExceptionHandling.dieInternal(tc, this.st.REPR.name + " representation does not support natively typed attributes")
     }
-    open fun bind_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    open fun bind_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
             name: String?, hint: Long, value: SixModelObject?) {
         throw ExceptionHandling.dieInternal(tc, this.st.REPR.name + " representation does not support attributes")
     }
-    open fun bind_attribute_native(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long) {
+    open fun bind_attribute_native(tc: ThreadContext, classHandle: SixModelObject?, name: String?, hint: Long) {
         throw ExceptionHandling.dieInternal(tc, this.st.REPR.name + " representation does not support natively typed attributes")
     }
-    open fun is_attribute_initialized(tc: ThreadContext, class_handle: SixModelObject?,
+    open fun is_attribute_initialized(tc: ThreadContext, classHandle: SixModelObject?,
             name: String?, hint: Long): Long {
         throw ExceptionHandling.dieInternal(tc, this.st.REPR.name + " representation does not support attributes")
     }
-    open fun cas_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    open fun cas_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
             name: String?, expected: SixModelObject?, value: SixModelObject?): SixModelObject? {
         throw ExceptionHandling.dieInternal(tc, this.st.REPR.name + " representation does not support cas of attributes")
     }
-    open fun atomic_bind_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    open fun atomic_bind_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
             name: String?, value: SixModelObject?) {
         throw ExceptionHandling.dieInternal(tc, this.st.REPR.name + " representation does not support atomic binding to attributes")
     }

@@ -46,10 +46,10 @@ class P6bigint : REPR() {
         val bigIntegerIN = Type.getType(BigInteger::class.java).internalName
         mv.visitVarInsn(Opcodes.ALOAD, 1)
         mv.visitInsn(Opcodes.ICONST_0 + ThreadContext.NATIVE_JVM_OBJ)
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "native_type", "I")
+        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeType", "I")
         mv.visitVarInsn(Opcodes.ALOAD, 0)
         mv.visitVarInsn(Opcodes.ALOAD, 1)
-        mv.visitFieldInsn(Opcodes.GETFIELD, "org/raku/nqp/runtime/ThreadContext", "native_j",
+        mv.visitFieldInsn(Opcodes.GETFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeJ",
             Type.getType(Any::class.java).descriptor)
         mv.visitTypeInsn(Opcodes.CHECKCAST, bigIntegerIN)
         mv.visitFieldInsn(Opcodes.PUTFIELD, className, prefix, bigIntegerType)
@@ -60,11 +60,11 @@ class P6bigint : REPR() {
         mv.visitVarInsn(Opcodes.ALOAD, 1)
         mv.visitInsn(Opcodes.DUP)
         mv.visitInsn(Opcodes.ICONST_0 + ThreadContext.NATIVE_JVM_OBJ)
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "native_type", "I")
+        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeType", "I")
         mv.visitVarInsn(Opcodes.ALOAD, 0)
         mv.visitFieldInsn(Opcodes.GETFIELD, className, prefix,
             Type.getType(BigInteger::class.java).descriptor)
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "native_j",
+        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeJ",
             Type.getType(Any::class.java).descriptor)
         mv.visitInsn(Opcodes.RETURN)
     }

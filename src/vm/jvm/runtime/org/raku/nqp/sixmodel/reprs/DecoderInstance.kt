@@ -22,7 +22,7 @@ class DecoderInstance : SixModelObject() {
     private var toDecode: MutableList<ByteBuffer>? = null
     private var decoded: MutableList<CharBuffer>? = null
     private var lineSeps: MutableList<String>? = null
-    private var translate_newlines = false
+    private var translateNewlines = false
 
     fun configure(tc: ThreadContext, encoding: String, config: SixModelObject) {
         if (decoder == null) {
@@ -33,7 +33,7 @@ class DecoderInstance : SixModelObject() {
             lineSeps!!.add("\n")
             lineSeps!!.add("\r\n")
             if (config.exists_key(tc, "translate_newlines") != 0L)
-                translate_newlines = config.at_key_boxed(tc, "translate_newlines")!!.get_int(tc) != 0L
+                translateNewlines = config.at_key_boxed(tc, "translate_newlines")!!.get_int(tc) != 0L
         }
         else {
             throw ExceptionHandling.dieInternal(tc, "Decoder already configured")
@@ -49,7 +49,7 @@ class DecoderInstance : SixModelObject() {
         val numSeps = seps.elems(tc)
         for (i in 0 until numSeps) {
             seps.at_pos_native(tc, i)
-            lineSeps!!.add(tc.native_s!!)
+            lineSeps!!.add(tc.nativeS!!)
         }
     }
 
@@ -70,7 +70,7 @@ class DecoderInstance : SixModelObject() {
 
     @Synchronized
     fun maybe_translate_newlines(tc: ThreadContext, str: String): String {
-        return if (translate_newlines) str.replace("\r\n", "\n") else str
+        return if (translateNewlines) str.replace("\r\n", "\n") else str
     }
 
     @Synchronized
