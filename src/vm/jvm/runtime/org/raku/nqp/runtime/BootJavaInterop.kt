@@ -15,7 +15,6 @@ import java.util.HashMap
 import org.raku.nqp.sixmodel.BoxedPrimitive
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
-import org.raku.nqp.sixmodel.StorageSpec
 import org.raku.nqp.sixmodel.reprs.JavaObjectWrapper
 
 import org.raku.nqp.jast2bc.BytecodeVersion
@@ -78,20 +77,20 @@ open class BootJavaInterop(gc: GlobalContext) {
     }
 
     /** Get interop table for a class. */
-    open fun getInteropForClass(c: Class<*>): SixModelObject? {
-        return cache.get(c).interop
+    open fun getInteropForClass(clazz: Class<*>): SixModelObject? {
+        return cache.get(clazz).interop
     }
 
     /** Main entry point for OO-ish callouts. */
     open fun typeForName(name: String): SixModelObject? {
-        val syscl = ClassLoader.getSystemClassLoader()
-        val klass = try {
-            syscl.loadClass(name)
+        val classLoader = ClassLoader.getSystemClassLoader()
+        val clazz = try {
+            classLoader.loadClass(name)
         }
-        catch (cnfe: ClassNotFoundException) {
-            throw ExceptionHandling.dieInternal(gc.getCurrentThreadContext()!!, cnfe)
+        catch (cnfException: ClassNotFoundException) {
+            throw ExceptionHandling.dieInternal(gc.getCurrentThreadContext()!!, cnfException)
         }
-        return getSTableForClass(klass)!!.WHAT
+        return getSTableForClass(clazz)!!.WHAT
     }
 
     /** Convenience methods for NQP coding. */
@@ -687,14 +686,14 @@ open class BootJavaInterop(gc: GlobalContext) {
                 for (i in 0 until size) {
                     `in`.at_pos_native(tc, i.toLong())
                     var value: Any?
-                    if (tc.native_type == ThreadContext.NATIVE_NUM) {
-                        value = tc.native_n
+                    if (tc.nativeType == ThreadContext.NATIVE_NUM) {
+                        value = tc.nativeN
                     }
-                    else if (tc.native_type == ThreadContext.NATIVE_STR) {
-                        value = tc.native_s
+                    else if (tc.nativeType == ThreadContext.NATIVE_STR) {
+                        value = tc.nativeS
                     }
-                    else if (tc.native_type == ThreadContext.NATIVE_INT) {
-                        value = tc.native_i
+                    else if (tc.nativeType == ThreadContext.NATIVE_INT) {
+                        value = tc.nativeI
                     }
                     else {
                         val cur = Ops.atpos(`in`, i.toLong(), tc)
@@ -713,23 +712,23 @@ open class BootJavaInterop(gc: GlobalContext) {
                 // we've hopefully been called from a subclass, so we rely on them for casting and just unbox
                 for (i in 0 until size) {
                     `in`.at_pos_native(tc, i.toLong())
-                    if (tc.native_type == ThreadContext.NATIVE_NUM) {
+                    if (tc.nativeType == ThreadContext.NATIVE_NUM) {
                         if (out == null)
                             out = arrayOfNulls<Double>(size)
                         @Suppress("UNCHECKED_CAST")
-                        (out as Array<Double?>)[i] = tc.native_n
+                        (out as Array<Double?>)[i] = tc.nativeN
                     }
-                    else if (tc.native_type == ThreadContext.NATIVE_STR) {
+                    else if (tc.nativeType == ThreadContext.NATIVE_STR) {
                         if (out == null)
                             out = arrayOfNulls<String>(size)
                         @Suppress("UNCHECKED_CAST")
-                        (out as Array<String?>)[i] = tc.native_s
+                        (out as Array<String?>)[i] = tc.nativeS
                     }
-                    else if (tc.native_type == ThreadContext.NATIVE_INT) {
+                    else if (tc.nativeType == ThreadContext.NATIVE_INT) {
                         if (out == null)
                             out = arrayOfNulls<Long>(size)
                         @Suppress("UNCHECKED_CAST")
-                        (out as Array<Long?>)[i] = tc.native_i
+                        (out as Array<Long?>)[i] = tc.nativeI
                     }
                     else {
                         val cur = Ops.atpos(`in`, i.toLong(), tc)
@@ -1063,8 +1062,8 @@ open class BootJavaInterop(gc: GlobalContext) {
     }
 
     /** Produce an interface instance using a cached class, in the style of (but not using) [java.lang.reflect.Proxy]. */
-    open fun proxy(iface_smo: SixModelObject, methods: SixModelObject): SixModelObject {
-        val iface = unboxClass(iface_smo)
+    open fun proxy(ifaceSmo: SixModelObject, methods: SixModelObject): SixModelObject {
+        val iface = unboxClass(ifaceSmo)
         val tc = gc.getCurrentThreadContext()!!
         val methodImpl = proxyGetMethods(tc, iface, methods)
         val proxy: Any?
