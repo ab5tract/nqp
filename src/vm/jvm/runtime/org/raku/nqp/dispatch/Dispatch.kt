@@ -61,6 +61,13 @@ object Dispatch {
      */
     const val MAX_PROGRAMS = 32
 
+    /**
+     * Set NQP_DISPATCH_TRACE to have each recorded dispatch reported, as the
+     * chain of dispatchers it went through and the outcome it reached. Only
+     * recordings are reported, so a callsite that has settled down goes quiet.
+     */
+    private val trace = System.getenv("NQP_DISPATCH_TRACE") != null
+
     /* ----- entry points ----- */
 
     /**
@@ -104,6 +111,7 @@ object Dispatch {
                        args: Array<Any?>, site: DispatchCallSite?,
                        bindFailureOf: DispatchRecord? = null) {
         val record = DispatchRecord(tc, dispatcher, descriptor, args, tc.curFrame, site)
+        val chain = if (trace) ArrayList<String>() else null
         tc.dispatchRecords.add(record)
         try {
             var callback: DispatchCallback
@@ -121,6 +129,7 @@ object Dispatch {
                 callback = dispatcher!!.dispatch
             }
             while (true) {
+                chain?.add(record.currentDispatcher?.id ?: "?")
                 record.currentCapture = capture
                 record.outcome = null
                 invokeCallback(tc, record, callback, capture)
@@ -158,6 +167,7 @@ object Dispatch {
             record.endRecording()
             val program = record.compile()
             record.program = program
+            if (chain != null) report(chain, program)
             if (bindFailureOf != null)
                 bindFailureOf.program!!.bindFailureProgram = program
             else if (site != null && !record.doNotInstall)
@@ -167,6 +177,18 @@ object Dispatch {
         finally {
             tc.dispatchRecords.removeAt(tc.dispatchRecords.size - 1)
         }
+    }
+
+    private fun report(chain: List<String>, program: DispatchProgram) {
+        val outcome = when (val o = program.outcome) {
+            is Outcome.Value -> "value"
+            is Outcome.InvokeCode -> "invoke"
+            is Outcome.InvokeSyscall -> "syscall ${o.syscall.name}"
+        }
+        val guards = if (program.guards.isEmpty()) ""
+                     else " (${program.guards.size} guards)"
+        System.err.println("[dispatch] " + chain.joinToString(" -> ") + " => " +
+            outcome + guards)
     }
 
     private fun resumeCallback(tc: ThreadContext, dispatcher: Dispatcher): DispatchCallback =
