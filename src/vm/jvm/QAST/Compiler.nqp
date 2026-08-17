@@ -1609,6 +1609,20 @@ QAST::OperationsJAST.add_core_op('callmethod', -> $qastcomp, $node {
     }
     my @children := nqp::clone(@($node));
 
+    # lang-meth-call takes the invocant and the name as its first two
+    # arguments, and resolves through the MRO rather than a method cache.
+    if nqp::getenvhash()<NQP_JVM_LANG_CALL> {
+        my @dispatch-args := nqp::clone(@children);
+        if $node.name ne '' {
+            nqp::splice(@dispatch-args,
+                [QAST::SVal.new( :value($node.name) )], 1, 0);
+        }
+        elsif nqp::elems(@dispatch-args) < 2 {
+            nqp::die("Method call must either supply a name or have a child node that evaluates to the name");
+        }
+        return emit_dispatch($qastcomp, $node, 'lang-meth-call', @dispatch-args);
+    }
+
     # If it's a direct call, we can get invokedynamic to do something smart
     # with guard clauses for us.
     if $node.name ne '' {
