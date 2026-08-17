@@ -2,6 +2,7 @@ package org.raku.nqp.runtime
 
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap
 
+import org.raku.nqp.dispatch.DispatchRecord
 import org.raku.nqp.sixmodel.SerializationContext
 import org.raku.nqp.sixmodel.SixModelObject
 
@@ -106,6 +107,13 @@ class CallFrame : Cloneable {
      */
     @JvmField var args: Array<Any?>? = null
 
+    /**
+     * The dispatch that invoked this frame, if a dispatch did. Walking the
+     * caller chain and reading this at each step gives the interleaving of
+     * frames and dispatches that a resumption is looked for in.
+     */
+    @JvmField var dispatchRecord: DispatchRecord? = null
+
     // Empty constructor for things that want to fake one up.
     constructor()
 
@@ -114,6 +122,13 @@ class CallFrame : Cloneable {
         this.tc = tc
         this.codeRef = cr
         this.caller = tc.curFrame
+
+        // Claim the dispatch that is invoking us, if one is.
+        val pendingDispatch = tc.pendingDispatch
+        if (pendingDispatch != null) {
+            this.dispatchRecord = pendingDispatch
+            tc.pendingDispatch = null
+        }
 
         // Set outer; if it's explicitly in the code ref, use that. If not,
         // go hunting for one. Fall back to outer's prior invocation.
