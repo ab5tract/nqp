@@ -140,7 +140,9 @@ object BootDispatchers {
         record.guardType(source)
         val methods = knowHowMethods(tc, invocant)
             ?: throw ExceptionHandling.dieInternal(tc,
-                "lang-meth-call cannot work out how to dispatch on this type")
+                "lang-meth-call cannot work out how to dispatch on this type" +
+                " ('${Ops.typeName(invocant, tc)}' calling" +
+                " '${methodName(tc, capture, 1, "lang-meth-call")}')")
         val name = methodName(tc, capture, 1, "lang-meth-call")
         val method = methods.get(name)
         if (method == null || !Guard.isConcrete(method)) {
@@ -148,7 +150,9 @@ object BootDispatchers {
             return
         }
 
-        /* Guard the name, drop the invocant and name, and call the method. */
+        /* Guard the name, drop the invocant and name, and call the method.
+         * The capture carries the invocant again after the name, so dropping
+         * both still leaves it as the method's first argument. */
         record.guardLiteral(record.trackArg(capture, 1).source!!)
         val shape = record.shapeOf(capture).drop(tc, 0).drop(tc, 0)
             .insert(tc, 0, ValueSource.Literal(ArgKind.OBJ, method), ArgKind.OBJ)

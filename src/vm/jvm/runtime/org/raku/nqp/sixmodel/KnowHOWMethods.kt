@@ -97,6 +97,22 @@ class KnowHOWMethods : CompilationUnit() {
         }
     }
 
+    fun find_method(tc: ThreadContext, cr: CodeRef, csd0: CallSiteDescriptor, args0: Array<Any?>) {
+        val cf = CallFrame(tc, cr)
+        try {
+            val csd = Ops.checkarity(cf, csd0, args0, 3, 3)
+            val args = tc.flatArgs!!
+            val self = Ops.posparam_o(cf, csd, args, 0)
+            val name = Ops.posparam_s(cf, csd, args, 2)
+            if (Ops.isnull(self) == 1L || self !is KnowHOWREPRInstance)
+                throw ExceptionHandling.dieInternal(tc, "KnowHOW methods must be called on object instance with REPR KnowHOWREPR")
+            Ops.return_o(self.methods!![name!!] ?: Ops.createNull(tc), cf)
+        }
+        finally {
+            cf.leave()
+        }
+    }
+
     fun compose(tc: ThreadContext, cr: CodeRef, csd0: CallSiteDescriptor, args0: Array<Any?>) {
         val cf = CallFrame(tc, cr)
         try {
@@ -296,7 +312,7 @@ class KnowHOWMethods : CompilationUnit() {
     }
 
     override fun getCodeRefs(): Array<CodeRef> {
-        val refs = arrayOfNulls<CodeRef>(12)  // every slot is filled below
+        val refs = arrayOfNulls<CodeRef>(13)  // every slot is filled below
         val snull: Array<String>? = null
         val hnull = arrayOf<LongArray>()
         val mt = MethodType.methodType(Void.TYPE, ThreadContext::class.java,
@@ -327,6 +343,8 @@ class KnowHOWMethods : CompilationUnit() {
                 "type", "attr_type", snull, snull, snull, snull, hnull, 0.toShort())
             refs[11] = CodeRef(this, l.findVirtual(KnowHOWMethods::class.java, "attr_box_target", mt).bindTo(this),
                 "box_target", "attr_box_target", snull, snull, snull, snull, hnull, 0.toShort())
+            refs[12] = CodeRef(this, l.findVirtual(KnowHOWMethods::class.java, "find_method", mt).bindTo(this),
+                "find_method", "find_method", snull, snull, snull, snull, hnull, 0.toShort())
         }
         catch (e: Exception) {
             throw RuntimeException(e)

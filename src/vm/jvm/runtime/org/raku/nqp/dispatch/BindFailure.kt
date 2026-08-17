@@ -41,6 +41,22 @@ object BindFailure {
     }
 
     /**
+     * Called by the bindcomplete op when a frame's signature binding has
+     * succeeded. A no-op unless the dispatch that invoked the frame asked
+     * (with dispatcher-resume-after-bind) for bind success to become a
+     * resumption too, in which case the frame is abandoned -- its body never
+     * runs -- and the dispatch resumes with the success flag, the same road
+     * a bind failure travels with the failure flag.
+     */
+    @JvmStatic
+    fun complete(tc: ThreadContext) {
+        val record = tc.frame.dispatchRecord ?: return
+        val control = record.program?.bindControl ?: return
+        if (control.onSuccessToo)
+            throw BindFailureException(record, control.successFlag!!)
+    }
+
+    /**
      * No dispatch wanted the failure, so it is an error. Hand the arguments
      * the frame was entered with to the language's bind_error handler, which
      * re-runs the binder to say which parameter did not match and why. Only
