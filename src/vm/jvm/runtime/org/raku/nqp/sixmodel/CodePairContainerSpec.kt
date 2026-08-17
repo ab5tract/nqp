@@ -38,15 +38,15 @@ open class CodePairContainerSpec : ContainerSpec() {
     }
 
     override fun store_i(tc: ThreadContext, cont: SixModelObject, value: Long) {
-        Ops.invokeDirect(tc, storeCode, Ops.storeCallSite_i, arrayOf<Any?>(cont, value))
+        Ops.invokeDirect(tc, storeCode, Ops.storeCallSiteI, arrayOf<Any?>(cont, value))
     }
 
     override fun store_n(tc: ThreadContext, cont: SixModelObject, value: Double) {
-        Ops.invokeDirect(tc, storeCode, Ops.storeCallSite_n, arrayOf<Any?>(cont, value))
+        Ops.invokeDirect(tc, storeCode, Ops.storeCallSiteN, arrayOf<Any?>(cont, value))
     }
 
     override fun store_s(tc: ThreadContext, cont: SixModelObject, value: String?) {
-        Ops.invokeDirect(tc, storeCode, Ops.storeCallSite_s, arrayOf<Any?>(cont, value))
+        Ops.invokeDirect(tc, storeCode, Ops.storeCallSiteS, arrayOf<Any?>(cont, value))
     }
 
     /* Stores a value in a container, without any checking of it (this

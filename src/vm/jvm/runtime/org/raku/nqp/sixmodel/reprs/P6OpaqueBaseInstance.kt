@@ -78,47 +78,47 @@ open class P6OpaqueBaseInstance : SixModelObject() {
         throw BadReferenceRuntimeException("Cannot access a native attribute as a reference attribute")
     }
 
-    override fun get_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    override fun get_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
                                      name: String?, hint: Long): SixModelObject? {
         if (Ops.isnull(this.delegate) == 0L)
-            return this.delegate!!.get_attribute_boxed(tc, class_handle, name, hint)
+            return this.delegate!!.get_attribute_boxed(tc, classHandle, name, hint)
         else
-            return super.get_attribute_boxed(tc, class_handle, name, hint)
+            return super.get_attribute_boxed(tc, classHandle, name, hint)
     }
-    override fun get_attribute_native(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long) {
+    override fun get_attribute_native(tc: ThreadContext, classHandle: SixModelObject?, name: String?, hint: Long) {
         if (Ops.isnull(this.delegate) == 0L)
-            this.delegate!!.get_attribute_native(tc, class_handle, name, hint)
+            this.delegate!!.get_attribute_native(tc, classHandle, name, hint)
         else
-            super.get_attribute_native(tc, class_handle, name, hint)
+            super.get_attribute_native(tc, classHandle, name, hint)
     }
-    override fun bind_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    override fun bind_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
                                       name: String?, hint: Long, value: SixModelObject?) {
         if (Ops.isnull(this.delegate) == 0L)
-            this.delegate!!.bind_attribute_boxed(tc, class_handle, name, hint, value)
+            this.delegate!!.bind_attribute_boxed(tc, classHandle, name, hint, value)
         else
-            super.bind_attribute_boxed(tc, class_handle, name, hint, value)
+            super.bind_attribute_boxed(tc, classHandle, name, hint, value)
     }
-    override fun bind_attribute_native(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long) {
+    override fun bind_attribute_native(tc: ThreadContext, classHandle: SixModelObject?, name: String?, hint: Long) {
         if (Ops.isnull(this.delegate) == 0L)
-            this.delegate!!.bind_attribute_native(tc, class_handle, name, hint)
+            this.delegate!!.bind_attribute_native(tc, classHandle, name, hint)
         else
-            super.bind_attribute_native(tc, class_handle, name, hint)
+            super.bind_attribute_native(tc, classHandle, name, hint)
     }
-    override fun is_attribute_initialized(tc: ThreadContext, class_handle: SixModelObject?,
+    override fun is_attribute_initialized(tc: ThreadContext, classHandle: SixModelObject?,
                                           name: String?, hint: Long): Long {
         if (Ops.isnull(this.delegate) == 0L)
-            return this.delegate!!.is_attribute_initialized(tc, class_handle, name, hint)
+            return this.delegate!!.is_attribute_initialized(tc, classHandle, name, hint)
         else
-            return super.is_attribute_initialized(tc, class_handle, name, hint)
+            return super.is_attribute_initialized(tc, classHandle, name, hint)
     }
 
     /* Atomic access to the reflectively-named field_N slots of the
      * runtime-generated P6Opaque subclasses, via VarHandle (formerly
      * sun.misc.Unsafe field offsets). */
-    private fun attributeVarHandle(class_handle: SixModelObject?, name: String?): VarHandle {
+    private fun attributeVarHandle(classHandle: SixModelObject?, name: String?): VarHandle {
         try {
             val field: Field = this.javaClass.getDeclaredField(
-                "field_" + resolveAttribute(class_handle, name))
+                "field_" + resolveAttribute(classHandle, name))
             field.setAccessible(true)
             return MethodHandles.lookup().unreflectVarHandle(field)
         }
@@ -127,18 +127,18 @@ open class P6OpaqueBaseInstance : SixModelObject() {
         }
     }
 
-    override fun cas_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    override fun cas_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
                                      name: String?, expected: SixModelObject?, value: SixModelObject?): SixModelObject? {
-        val vh = attributeVarHandle(class_handle, name)
+        val vh = attributeVarHandle(classHandle, name)
         return if (vh.compareAndSet(this, expected, value))
             expected
         else
             vh.getVolatile(this) as SixModelObject?
     }
 
-    override fun atomic_bind_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    override fun atomic_bind_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
                                              name: String?, value: SixModelObject?) {
-        attributeVarHandle(class_handle, name).setVolatile(this, value)
+        attributeVarHandle(classHandle, name).setVolatile(this, value)
     }
 
     open fun posDelegate(): SixModelObject {
