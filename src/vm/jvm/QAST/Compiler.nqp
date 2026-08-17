@@ -184,7 +184,11 @@ my @pop_ins := [
     $POP2,
 ];
 sub pop_ins($type) {
-    @pop_ins[$type]
+    # A void result left nothing on the stack; $RT_VOID is -1 and a negative
+    # index would wrap around to the end of the table and pop2 thin air.
+    $type == $RT_VOID
+        ?? JAST::InstructionList.new()
+        !! @pop_ins[$type]
 }
 
 # Mapping of QAST::Want type identifiers to $RT_*.

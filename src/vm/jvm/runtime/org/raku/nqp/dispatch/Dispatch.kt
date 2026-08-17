@@ -77,17 +77,31 @@ object Dispatch {
     @JvmStatic
     fun dispatch(site: DispatchCallSite, name: String, csIdx: Int, tc: ThreadContext,
                  args: Array<Any?>) {
-        val descriptor = descriptorFor(tc, csIdx)
+        var descriptor = descriptorFor(tc, csIdx)
+        var theArgs = args
+        /* Flattening is exploded before the dispatch runs, as MoarVM does at
+         * its dispatch instructions: the program inspects arguments by
+         * position, which only means anything on the flattened form. */
+        if (descriptor.hasFlattening) {
+            descriptor = descriptor.explodeFlattening(tc.curFrame!!, theArgs)
+            theArgs = tc.flatArgs!!
+        }
         for (program in site.programs)
-            if (run(tc, program, descriptor, args, site)) return
-        record(tc, tc.gc.dispatchers.find(tc, name), descriptor, args, site)
+            if (run(tc, program, descriptor, theArgs, site)) return
+        record(tc, tc.gc.dispatchers.find(tc, name), descriptor, theArgs, site)
     }
 
     /** A dispatch with no callsite to install anything at. */
     @JvmStatic
     fun dispatchUncached(tc: ThreadContext, name: String, descriptor: CallSiteDescriptor,
                         args: Array<Any?>) {
-        record(tc, tc.gc.dispatchers.find(tc, name), descriptor, args, null)
+        var theCsd = descriptor
+        var theArgs = args
+        if (theCsd.hasFlattening) {
+            theCsd = theCsd.explodeFlattening(tc.curFrame!!, theArgs)
+            theArgs = tc.flatArgs!!
+        }
+        record(tc, tc.gc.dispatchers.find(tc, name), theCsd, theArgs, null)
     }
 
     private fun descriptorFor(tc: ThreadContext, csIdx: Int): CallSiteDescriptor =
@@ -227,6 +241,7 @@ object Dispatch {
         record.program = program
         record.endRecording()
 
+        if (!Captures.sameShape(program.descriptor, descriptor)) return false
         if (!program.guardsMatch(record)) return false
         if (program.isResuming && !enterResumptions(tc, record, program, bindFailureOf))
             return false

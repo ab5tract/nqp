@@ -327,7 +327,13 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
                 throw Exception(e.key + " used but not defined in " + method.name)
         }
 
-        m.visitMaxs(0, 0)
+        try {
+            m.visitMaxs(0, 0)
+        }
+        catch (e: Exception) {
+            throw Exception("Bytecode assembly failed for method '" +
+                method.crName + "' (" + method.name + ") in " + className, e)
+        }
         m.visitEnd()
     }
 
