@@ -1,5 +1,5 @@
-# Tests for the dispatch mechanism. A copy of t/moar/53-dispatch.t, with the
-# blocks this backend cannot run yet replaced by a skip; keep the two in step.
+# Tests for the dispatch mechanism. A copy of t/moar/53-dispatch.t; keep the
+# two in step.
 
 plan(160);
 
@@ -891,10 +891,39 @@ class Exhausted {};
         'Can handle resumptions creating further resumable dispatchers (run)');
 }
 
-# Test bind fail via assertparamcheck can lead to a boot-resume.
-# nqp::assertparamcheck, and with it mapping a bind failure to a
-# resumption, is not implemented on this backend yet.
-skip('not yet supported on the JVM backend', 5);
+# Test bind fail via assertparamcheck can lead to a boot-resume
+{
+    sub first($x) { nqp::assertparamcheck($x == 0); "first $x" }
+    sub second($x) { "second $x" }
+    nqp::register('test-resume-on-bind-fail',
+        # Dispatch
+        -> $capture {
+            nqp::syscall('dispatcher-set-resume-init-args', $capture);
+            nqp::syscall('dispatcher-resume-on-bind-failure', 42);
+            nqp::delegate('boot-code-constant',
+                nqp::syscall('dispatcher-insert-arg-literal-obj',
+                    $capture, 0, &first));
+        },
+        # Resume
+        -> $capture {
+            # Check we got the expected argument.
+            ok(nqp::captureposarg_i($capture, 0) == 42, 'Correct argument to resume');
+
+            # Call second function with original args.
+            my $init-args := nqp::syscall('dispatcher-get-resume-init-args');
+            nqp::delegate('boot-code-constant',
+                nqp::syscall('dispatcher-insert-arg-literal-obj',
+                    $init-args, 0, &second));
+        });
+
+    sub test-call($arg) {
+        nqp::dispatch('test-resume-on-bind-fail', $arg)
+    }
+    ok(test-call(0) eq 'first 0', 'Case where bind check is OK just runs function (record)');
+    ok(test-call(1) eq 'second 1', 'Case where bind check fails runs second function (record)');
+    ok(test-call(0) eq 'first 0', 'Case where bind check is OK just runs function (run)');
+    ok(test-call(1) eq 'second 1', 'Case where bind check fails runs second function (run)');
+}
 
 {
     my $foo := -> $x { $x + 19 }

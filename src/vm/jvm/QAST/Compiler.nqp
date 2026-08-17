@@ -2940,6 +2940,7 @@ QAST::OperationsJAST.map_classlib_core_op('objprimbits', $TYPE_OPS, 'objprimbits
 QAST::OperationsJAST.map_classlib_core_op('isinvokable', $TYPE_OPS, 'isinvokable', [$RT_OBJ], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('iscoderef', $TYPE_OPS, 'iscoderef', [$RT_OBJ], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('gettypehllrole', $TYPE_OPS, 'gettypehllrole', [$RT_OBJ], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('assertparamcheck', $TYPE_OPS, 'assertparamcheck', [$RT_INT], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('setinvokespec', $TYPE_OPS, 'setinvokespec', [$RT_OBJ, $RT_OBJ, $RT_STR, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('setparameterizer', $TYPE_OPS, 'setparameterizer', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('parameterizetype', $TYPE_OPS, 'parameterizetype', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
@@ -4113,20 +4114,40 @@ class QAST::CompilerJAST {
     # its cursor to `self`, say - never sees the argument at all without them.
     method emit_param_tasks($il, $block, $var) {
         for $var.list {
-            if nqp::istype($_, QAST::ParamTypeCheck) {
-                nqp::die('QAST::ParamTypeCheck is not supported on the JVM backend');
-            }
             my $*BLOCK := $block;
-            my $task := self.as_jast($_, :want($RT_VOID));
+            # A type check evaluates to a flag that assertparamcheck turns
+            # into a bind failure rather than a throw, so a multi can try the
+            # next candidate. MoarVM compiles the node the same way.
+            my $task := self.as_jast(
+                nqp::istype($_, QAST::ParamTypeCheck)
+                    ?? QAST::Op.new( :op('assertparamcheck'), $_[0] )
+                    !! $_,
+                :want($RT_VOID));
             $il.append($task.jast);
             $*STACK.obtain($il, $task);
         }
+    }
+
+    # Does binding this parameter run a check that can fail? Reporting such a
+    # failure means handing the arguments to the HLL, which only the args
+    # array route keeps hold of.
+    method param_can_bind_fail($var) {
+        for $var.list {
+            return 1 if nqp::istype($_, QAST::ParamTypeCheck);
+        }
+        0
     }
 
     method try_setup_args_expectation($jmeth, $block, $il) {
         # Needing an args array forces the binder.
         if $*NEED_ARGS_ARRAY {
             return $ARG_EXP_USE_BINDER;
+        }
+
+        # So does a parameter whose binding can fail, since the arguments have
+        # to survive for the failure to be reported against.
+        for $block.params {
+            return $ARG_EXP_USE_BINDER if self.param_can_bind_fail($_);
         }
 
         # Otherwise, go by arity, then look at particular cases.
@@ -4873,15 +4894,27 @@ class QAST::CompilerJAST {
                     # declaration itself appears. Emitters put these in the
                     # block's declaration prologue, ahead of any use.
                     $*BLOCK.add_local($node);
+                    # Only when nothing has put a container there already.
+                    # Parameters are bound in the frame prologue, ahead of the
+                    # body this declaration sits in, so a lowered parameter's
+                    # local arrives holding the argument -- overwriting it with
+                    # a fresh container would throw the argument away. Locals
+                    # start out null, so anything else still vivifies.
                     return self.as_jast(QAST::Op.new(
-                        :op('bind'),
-                        QAST::Var.new( :name($node.name), :scope('local') ),
+                        :op('if'),
+                        QAST::Op.new( :op('isnull'),
+                            QAST::Var.new( :name($node.name), :scope('local') ) ),
                         QAST::Op.new(
-                            # clone_nd, not clone: the prototype *is* a
-                            # container, and clone decontainerizes first.
-                            :op('clone_nd'),
-                            QAST::WVal.new( :value($node.value) )
-                        )
+                            :op('bind'),
+                            QAST::Var.new( :name($node.name), :scope('local') ),
+                            QAST::Op.new(
+                                # clone_nd, not clone: the prototype *is* a
+                                # container, and clone decontainerizes first.
+                                :op('clone_nd'),
+                                QAST::WVal.new( :value($node.value) )
+                            )
+                        ),
+                        QAST::Var.new( :name($node.name), :scope('local') )
                     ), :want($RT_OBJ));
                 }
                 elsif $scope ne 'lexical' {
