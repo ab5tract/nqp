@@ -43,7 +43,7 @@ object KnowHOWBootstrapper {
         tc.gc.Continuation = bootType(tc, "Continuation", "Continuation")
         tc.gc.BOOTJava = bootType(tc, "BOOTJavaObject", "JavaWrap")
 
-        // fixup missing STable for knowhow_how methods
+        // fixup missing STable for knowhowHow methods
         for (cr in (tc.gc.KnowHOW!!.st.HOW as KnowHOWREPRInstance).methods!!.entries) {
             cr.value!!.st = tc.gc.BOOTCode!!.st
         }
@@ -70,12 +70,12 @@ object KnowHOWBootstrapper {
          * that, which closes the model up. */
         val st = STable(repr, null)
         st.WHAT = knowhow
-        val knowhow_how = repr.allocate(tc, st) as KnowHOWREPRInstance
-        st.HOW = knowhow_how
-        knowhow_how.st = st
+        val knowhowHow = repr.allocate(tc, st) as KnowHOWREPRInstance
+        st.HOW = knowhowHow
+        knowhowHow.st = st
 
         /* Add various methods to the KnowHOW's HOW. */
-        val methods = knowhow_how.methods!!
+        val methods = knowhowHow.methods!!
         methods["new_type"] = knowhowUnit.lookupCodeRef("new_type")!!
         methods["add_method"] = knowhowUnit.lookupCodeRef("add_method")!!
         methods["add_attribute"] = knowhowUnit.lookupCodeRef("add_attribute")!!
@@ -85,17 +85,17 @@ object KnowHOWBootstrapper {
         methods["name"] = knowhowUnit.lookupCodeRef("name")!!
 
         /* Set name KnowHOW for the KnowHOW's HOW. */
-        knowhow_how.name = "KnowHOW"
+        knowhowHow.name = "KnowHOW"
 
         /* Set this built up HOW as the KnowHOW's HOW. */
-        knowhow.st.HOW = knowhow_how
+        knowhow.st.HOW = knowhowHow
 
         /* Give it an authoritative method cache; this in turn will make the
          * method dispatch bottom out. */
         knowhow.st.MethodCache = methods
         knowhow.st.ModeFlags = STable.METHOD_CACHE_AUTHORITATIVE
-        knowhow_how.st.MethodCache = methods
-        knowhow_how.st.ModeFlags = STable.METHOD_CACHE_AUTHORITATIVE
+        knowhowHow.st.MethodCache = methods
+        knowhowHow.st.ModeFlags = STable.METHOD_CACHE_AUTHORITATIVE
 
         /* Associate the created objects with the initial core serialization
          * context. */
@@ -103,12 +103,12 @@ object KnowHOWBootstrapper {
         tc.gc.scs["__6MODEL_CORE__"] = sc
         sc.addObject(knowhow)
         knowhow.sc = sc
-        sc.addObject(knowhow_how)
-        knowhow_how.sc = sc
+        sc.addObject(knowhowHow)
+        knowhowHow.sc = sc
         sc.addSTable(knowhow.st)
         knowhow.st.sc = sc
-        sc.addSTable(knowhow_how.st)
-        knowhow_how.st.sc = sc
+        sc.addSTable(knowhowHow.st)
+        knowhowHow.st.sc = sc
 
         /* Stash the created KnowHOW. */
         tc.gc.KnowHOW = knowhow
@@ -116,11 +116,11 @@ object KnowHOWBootstrapper {
 
     private fun bootstrapKnowHOWAttribute(tc: ThreadContext, knowhowUnit: CompilationUnit) {
         /* Create meta-object. */
-        val knowhow_how = tc.gc.KnowHOW!!.st.HOW!!
-        val meta_obj = knowhow_how.st.REPR.allocate(tc, knowhow_how.st) as KnowHOWREPRInstance
+        val knowhowHow = tc.gc.KnowHOW!!.st.HOW!!
+        val metaObj = knowhowHow.st.REPR.allocate(tc, knowhowHow.st) as KnowHOWREPRInstance
 
         /* Add methods. */
-        val methods = meta_obj.methods!!
+        val methods = metaObj.methods!!
         methods["new"] = knowhowUnit.lookupCodeRef("attr_new")!!
         methods["compose"] = knowhowUnit.lookupCodeRef("attr_compose")!!
         methods["name"] = knowhowUnit.lookupCodeRef("attr_name")!!
@@ -128,54 +128,54 @@ object KnowHOWBootstrapper {
         methods["box_target"] = knowhowUnit.lookupCodeRef("attr_box_target")!!
 
         /* Set name. */
-        meta_obj.name = "KnowHOWAttribute"
+        metaObj.name = "KnowHOWAttribute"
 
         /* Create a new type object with the correct REPR. */
         val repr = REPRRegistry.getByName("KnowHOWAttribute")
-        val type_obj = repr.type_object_for(tc, meta_obj)
+        val typeObj = repr.type_object_for(tc, metaObj)
 
         /* Set up method dispatch cache. */
-        type_obj.st.MethodCache = methods
-        type_obj.st.ModeFlags = STable.METHOD_CACHE_AUTHORITATIVE
+        typeObj.st.MethodCache = methods
+        typeObj.st.ModeFlags = STable.METHOD_CACHE_AUTHORITATIVE
 
         /* Associate the created object with the intial core serialization
          * context. */
         val sc = tc.gc.scs["__6MODEL_CORE__"]!!
-        sc.addObject(type_obj)
-        type_obj.sc = sc
-        sc.addSTable(type_obj.st)
-        type_obj.st.sc = sc
+        sc.addObject(typeObj)
+        typeObj.sc = sc
+        sc.addSTable(typeObj.st)
+        typeObj.st.sc = sc
 
         /* Stash the created type object. */
-        tc.gc.KnowHOWAttribute = type_obj
+        tc.gc.KnowHOWAttribute = typeObj
     }
 
     private fun bootType(tc: ThreadContext, typeName: String, reprName: String): SixModelObject {
-        val knowhow_how = tc.gc.KnowHOW!!.st.HOW!!
-        val meta_obj = knowhow_how.st.REPR.allocate(tc, knowhow_how.st) as KnowHOWREPRInstance
-        meta_obj.name = typeName
+        val knowhowHow = tc.gc.KnowHOW!!.st.HOW!!
+        val metaObj = knowhowHow.st.REPR.allocate(tc, knowhowHow.st) as KnowHOWREPRInstance
+        metaObj.name = typeName
         val repr = REPRRegistry.getByName(reprName)
-        val type_obj = repr.type_object_for(tc, meta_obj)
-        type_obj.st.MethodCache = meta_obj.methods
-        type_obj.st.ModeFlags = STable.METHOD_CACHE_AUTHORITATIVE
+        val typeObj = repr.type_object_for(tc, metaObj)
+        typeObj.st.MethodCache = metaObj.methods
+        typeObj.st.ModeFlags = STable.METHOD_CACHE_AUTHORITATIVE
         val sc = tc.gc.scs["__6MODEL_CORE__"]!!
-        sc.addObject(type_obj)
-        type_obj.sc = sc
-        sc.addObject(type_obj.st.HOW)
-        type_obj.st.HOW!!.sc = sc
-        sc.addSTable(type_obj.st)
-        type_obj.st.sc = sc
-        return type_obj
+        sc.addObject(typeObj)
+        typeObj.sc = sc
+        sc.addObject(typeObj.st.HOW)
+        typeObj.st.HOW!!.sc = sc
+        sc.addSTable(typeObj.st)
+        typeObj.st.sc = sc
+        return typeObj
     }
 
     private fun bootTypedArray(tc: ThreadContext, name: String, type: SixModelObject): SixModelObject {
         val booted = bootType(tc, name, "VMArray")
         val BOOTHash = tc.gc.BOOTHash!!
-        val repr_info = BOOTHash.st.REPR.allocate(tc, BOOTHash.st)
-        val repr_array_info = BOOTHash.st.REPR.allocate(tc, BOOTHash.st)
-        repr_array_info.bind_key_boxed(tc, "type", type)
-        repr_info.bind_key_boxed(tc, "array", repr_array_info)
-        booted.st.REPR.compose(tc, booted.st, repr_info)
+        val reprInfo = BOOTHash.st.REPR.allocate(tc, BOOTHash.st)
+        val reprArrayInfo = BOOTHash.st.REPR.allocate(tc, BOOTHash.st)
+        reprArrayInfo.bind_key_boxed(tc, "type", type)
+        reprInfo.bind_key_boxed(tc, "array", reprArrayInfo)
+        booted.st.REPR.compose(tc, booted.st, reprInfo)
         return booted
     }
 }

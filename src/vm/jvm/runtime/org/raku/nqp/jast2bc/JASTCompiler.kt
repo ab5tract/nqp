@@ -377,21 +377,21 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
             }
             // bandaid for rakudo: reduce number of constant pool entries
             else if (value > java.lang.Short.MAX_VALUE) {
-                var value_remain = value - java.lang.Short.MAX_VALUE
+                var valueRemain = value - java.lang.Short.MAX_VALUE
                 m.visitIntInsn(Opcodes.SIPUSH, java.lang.Short.MAX_VALUE.toInt())
-                while (value_remain > java.lang.Short.MAX_VALUE) {
-                    value_remain = value_remain - java.lang.Short.MAX_VALUE
+                while (valueRemain > java.lang.Short.MAX_VALUE) {
+                    valueRemain = valueRemain - java.lang.Short.MAX_VALUE
                     m.visitIntInsn(Opcodes.SIPUSH, java.lang.Short.MAX_VALUE.toInt())
                     m.visitInsn(Opcodes.IADD)
                 }
-                if (value_remain <= 5) {
-                    m.visitInsn(Opcodes.ICONST_0 + value_remain)
+                if (valueRemain <= 5) {
+                    m.visitInsn(Opcodes.ICONST_0 + valueRemain)
                 }
-                else if (value_remain <= java.lang.Byte.MAX_VALUE) {
-                    m.visitIntInsn(Opcodes.BIPUSH, value_remain)
+                else if (valueRemain <= java.lang.Byte.MAX_VALUE) {
+                    m.visitIntInsn(Opcodes.BIPUSH, valueRemain)
                 }
                 else {
-                    m.visitIntInsn(Opcodes.SIPUSH, value_remain)
+                    m.visitIntInsn(Opcodes.SIPUSH, valueRemain)
                 }
                 m.visitInsn(Opcodes.IADD)
             }

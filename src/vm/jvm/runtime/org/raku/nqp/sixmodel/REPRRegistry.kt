@@ -33,7 +33,7 @@ object REPRRegistry {
              * field. We can set the correct name (VMArray) at this point, since
              * lookup will be done from reprIdMap, which knows the long name.
              */
-            repr.subtype_name = name
+            repr.subtypeName = name
             name = "VMArray"
         }
         repr.name = name

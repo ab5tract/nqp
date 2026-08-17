@@ -76,13 +76,13 @@ class NFA : REPR() {
                     when (s.act and 0xff) {
                         EDGE_FATE, EDGE_CODEPOINT_LL, EDGE_CODEPOINT, EDGE_CODEPOINT_NEG,
                         EDGE_CHARCLASS, EDGE_CHARCLASS_NEG ->
-                            s.arg_i = reader.readLong().toInt()
+                            s.argI = reader.readLong().toInt()
                         EDGE_CHARLIST, EDGE_CHARLIST_NEG ->
-                            s.arg_s = reader.readStr()
+                            s.argS = reader.readStr()
                         EDGE_CODEPOINT_I_LL, EDGE_CODEPOINT_I, EDGE_CODEPOINT_I_NEG,
                         EDGE_CHARRANGE, EDGE_CHARRANGE_NEG -> {
-                            s.arg_lc = reader.readLong().toInt().toChar()
-                            s.arg_uc = reader.readLong().toInt().toChar()
+                            s.argLc = reader.readLong().toInt().toChar()
+                            s.argUc = reader.readLong().toInt().toChar()
                         }
                     }
                     s
@@ -110,13 +110,13 @@ class NFA : REPR() {
                 when (s.act and 0xff) {
                     EDGE_FATE, EDGE_CODEPOINT_LL, EDGE_CODEPOINT, EDGE_CODEPOINT_NEG,
                     EDGE_CHARCLASS, EDGE_CHARCLASS_NEG ->
-                        writer.writeInt(s.arg_i.toLong())
+                        writer.writeInt(s.argI.toLong())
                     EDGE_CHARLIST, EDGE_CHARLIST_NEG ->
-                        writer.writeStr(s.arg_s)
+                        writer.writeStr(s.argS)
                     EDGE_CODEPOINT_I_LL, EDGE_CODEPOINT_I, EDGE_CODEPOINT_I_NEG,
                     EDGE_CHARRANGE, EDGE_CHARRANGE_NEG -> {
-                        writer.writeInt(s.arg_lc.code.toLong())
-                        writer.writeInt(s.arg_uc.code.toLong())
+                        writer.writeInt(s.argLc.code.toLong())
+                        writer.writeInt(s.argUc.code.toLong())
                     }
                 }
             }
