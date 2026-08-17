@@ -2895,6 +2895,15 @@ object Ops {
         return null
     }
 
+    /* Signature binding in the current frame completed successfully. A no-op
+     * unless the invoking dispatch asked for bind success to be a
+     * resumption. */
+    @JvmStatic
+    fun bindcomplete(tc: ThreadContext): SixModelObject? {
+        BindFailure.complete(tc)
+        return null
+    }
+
     /* The role a type plays in its language: one of the HLL_ROLE_*
      * constants, which is how hllization decides what to map. */
     @JvmStatic
