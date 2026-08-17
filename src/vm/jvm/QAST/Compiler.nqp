@@ -1505,7 +1505,48 @@ sub process_args_onto_stack($qastcomp, @children, $il, :$obj_first, :$inv_first,
     # Return callsite index (which may create it if needed).
     return [$*CODEREFS.get_callsite_idx(@callsite, @argnames), @arg_results, @arg_jtypes];
 }
+# Emit a dispatch on @args, the way the 'dispatch' op does: the dispatcher
+# name and callsite index ride along as extra arguments, using the fact that
+# the stack was spilled to sneak the ThreadContext in.
+sub emit_dispatch($qastcomp, $node, str $dispatcher, @args) {
+    my $il := JAST::InstructionList.new();
+    my @argstuff := process_args_onto_stack($qastcomp, @args, $il);
+    my $cs_idx := @argstuff[0];
+    $*STACK.spill_to_locals($il);
+
+    nqp::unshift(@argstuff[2], 'I');
+    nqp::unshift(@argstuff[2], $TYPE_STR);
+    $il.append(JAST::PushSVal.new( :value($dispatcher) ));
+    $il.append(JAST::PushIndex.new( :value($cs_idx) ));
+    $il.append($ALOAD_1);
+    $*STACK.obtain($il, |@argstuff[1]) if @argstuff[1];
+    $il.append(savesite(JAST::InvokeDynamic.new(
+        'dispatch_noa', 'V', @argstuff[2],
+        'org/raku/nqp/dispatch/DispatchBootstrap', 'dispatch_noa'
+    )));
+
+    result_from_cf($il, rttype_from_typeobj($node.returns));
+}
+
 my $call_codegen := sub ($qastcomp, $node) {
+    # Calls go through the language's call dispatcher, which lang-call looks
+    # up from the HLL of what is being invoked. The callee is its first
+    # argument, so a named call resolves the name lexically first -- the same
+    # lookup the invokedynamic call path did at its callsite.
+    # Not yet the default: compiling the setting this way reaches a method
+    # call on a mixin type whose method cache does not have the method, which
+    # needs callmethod on lang-meth-call to resolve through the MRO.
+    if nqp::getenvhash()<NQP_JVM_LANG_CALL> {
+        my @dispatch-args := nqp::clone(@($node));
+        if $node.name ne "" {
+            nqp::unshift(@dispatch-args, QAST::Var.new( :name($node.name), :scope('lexical') ));
+        }
+        elsif !nqp::elems(@dispatch-args) {
+            nqp::die("A 'call' node must have a name or at least one child");
+        }
+        return emit_dispatch($qastcomp, $node, 'lang-call', @dispatch-args);
+    }
+
     my $il := JAST::InstructionList.new();
 
     # If it's a direct call, then use invokedynamic to resolve the name in
