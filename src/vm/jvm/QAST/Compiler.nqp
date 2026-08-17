@@ -4894,15 +4894,27 @@ class QAST::CompilerJAST {
                     # declaration itself appears. Emitters put these in the
                     # block's declaration prologue, ahead of any use.
                     $*BLOCK.add_local($node);
+                    # Only when nothing has put a container there already.
+                    # Parameters are bound in the frame prologue, ahead of the
+                    # body this declaration sits in, so a lowered parameter's
+                    # local arrives holding the argument -- overwriting it with
+                    # a fresh container would throw the argument away. Locals
+                    # start out null, so anything else still vivifies.
                     return self.as_jast(QAST::Op.new(
-                        :op('bind'),
-                        QAST::Var.new( :name($node.name), :scope('local') ),
+                        :op('if'),
+                        QAST::Op.new( :op('isnull'),
+                            QAST::Var.new( :name($node.name), :scope('local') ) ),
                         QAST::Op.new(
-                            # clone_nd, not clone: the prototype *is* a
-                            # container, and clone decontainerizes first.
-                            :op('clone_nd'),
-                            QAST::WVal.new( :value($node.value) )
-                        )
+                            :op('bind'),
+                            QAST::Var.new( :name($node.name), :scope('local') ),
+                            QAST::Op.new(
+                                # clone_nd, not clone: the prototype *is* a
+                                # container, and clone decontainerizes first.
+                                :op('clone_nd'),
+                                QAST::WVal.new( :value($node.value) )
+                            )
+                        ),
+                        QAST::Var.new( :name($node.name), :scope('local') )
                     ), :want($RT_OBJ));
                 }
                 elsif $scope ne 'lexical' {
