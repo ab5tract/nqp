@@ -15,7 +15,6 @@ import java.util.HashMap
 import org.raku.nqp.sixmodel.BoxedPrimitive
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
-import org.raku.nqp.sixmodel.StorageSpec
 import org.raku.nqp.sixmodel.reprs.JavaObjectWrapper
 
 import org.raku.nqp.jast2bc.BytecodeVersion
@@ -78,20 +77,20 @@ open class BootJavaInterop(gc: GlobalContext) {
     }
 
     /** Get interop table for a class. */
-    open fun getInteropForClass(c: Class<*>): SixModelObject? {
-        return cache.get(c).interop
+    open fun getInteropForClass(clazz: Class<*>): SixModelObject? {
+        return cache.get(clazz).interop
     }
 
     /** Main entry point for OO-ish callouts. */
     open fun typeForName(name: String): SixModelObject? {
-        val syscl = ClassLoader.getSystemClassLoader()
-        val klass = try {
-            syscl.loadClass(name)
+        val classLoader = ClassLoader.getSystemClassLoader()
+        val clazz = try {
+            classLoader.loadClass(name)
         }
-        catch (cnfe: ClassNotFoundException) {
-            throw ExceptionHandling.dieInternal(gc.getCurrentThreadContext()!!, cnfe)
+        catch (cnfException: ClassNotFoundException) {
+            throw ExceptionHandling.dieInternal(gc.getCurrentThreadContext()!!, cnfException)
         }
-        return getSTableForClass(klass)!!.WHAT
+        return getSTableForClass(clazz)!!.WHAT
     }
 
     /** Convenience methods for NQP coding. */
