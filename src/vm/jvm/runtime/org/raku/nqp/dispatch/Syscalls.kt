@@ -291,6 +291,16 @@ object Syscalls {
                 bool(true)
             }
         }
+        /**
+         * Will a bind failure in the frame we are in be turned into a
+         * resumption of the dispatch that invoked it? A routine asks this to
+         * decide whether to report a bind failure or leave it to the dispatch.
+         */
+        define("bind-will-resume-on-failure") { args ->
+            val record = args.tc.frame.dispatchRecord
+            bool(record != null &&
+                (record.program?.bindControl ?: record.bindControl) != null)
+        }
         define("dispatcher-resume-on-bind-failure", INT) { args ->
             args.recording.setBindControl(BindControl(args.int(0), null, false))
             void

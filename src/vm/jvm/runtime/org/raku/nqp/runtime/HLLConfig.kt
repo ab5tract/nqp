@@ -42,6 +42,13 @@ class HLLConfig {
     /** The type to use for slurpy hashes. */
     @JvmField var slurpyHashType: SixModelObject? = null
 
+    /**
+     * Invoked with a capture of the arguments when binding a parameter fails
+     * and no dispatch asked to resume on that. The language uses it to report
+     * the failure in its own terms; without one the failure is a plain error.
+     */
+    @JvmField var bindError: SixModelObject? = null
+
     /** The type to use for array iteration (should have VMIter REPR). */
     @JvmField var arrayIteratorType: SixModelObject? = null
 

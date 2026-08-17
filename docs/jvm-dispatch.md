@@ -89,14 +89,21 @@ next thing (this is how `callsame` and method deferral work).
 
 MoarVM finds the dispatch to resume by walking its callstack, which has frames
 and dispatch records interleaved on it. The JVM has no such unified stack, so
-the interleaving is reconstructed: `ThreadContext.dispatchRecords` holds the
-dispatches in progress, and `CallFrame.dispatchRecord` says which dispatch
-invoked a frame, if one did. Walking the caller chain and reading that field at
-each step visits frames and dispatches in the same order MoarVM's callstack
-iterator does — see `Dispatch.findResumption`, which follows
-`MVM_disp_resume_find_topmost`/`find_caller` including the `exhausted` count
-and the rule about not looking past a dispatch that had resumptions of its own
-that were not used.
+the interleaving is reconstructed. `ThreadContext.dispatchRecords` holds the
+dispatches in progress, each knowing the frame its instruction is in; since a
+dispatch sits immediately above that frame, visiting the dispatches belonging
+to a frame before the frame itself puts each dispatch between the frame it
+invoked and the frame it was made from. That is the order MoarVM's callstack
+iterator sees, so `Dispatch.findResumption` can follow
+`MVM_disp_resume_find_topmost`/`find_caller` closely, including the `exhausted`
+count and the rule about not looking past a dispatch that had resumptions of
+its own that were not used.
+
+How many frames to pass over first is a property of the resume kind
+(`ResumeKind.framesToSkip`): a `boot-resume` never resumes a dispatch made by
+the frame it is in, `boot-resume-caller` passes over one frame more, and a
+resumption entered because of a bind failure passes over none, the frame in
+question having already been left.
 
 A record stays in `dispatchRecords` while whatever the dispatch invoked is
 running (a `finally` pops it), which gives it the same lifetime it has on
@@ -108,15 +115,29 @@ that was current at the time. MoarVM does this with the counting-down loop in
 `emit_resume_inits`; getting it wrong is invisible until a dispatch has two
 resumptions and one falls back to the other.
 
+## Bind failure
+
+A dispatch can ask, with `dispatcher-resume-on-bind-failure`, for the case
+where what it invoked fails to bind its signature to come back as a resumption
+rather than an error; that is how a multiple dispatch moves on to its next
+candidate. `nqp::assertparamcheck` reports the failure, and this backend raises
+it as `BindFailureException`, a control exception, so that the frames it passes
+through leave cleanly (MoarVM instead returns from the frame without running
+its exit handlers, which is a small divergence: exit handlers do run here).
+
+The resumption that follows is not installed at the dispatch callsite — the
+guards there say nothing about whether a bind will succeed. It is cached on the
+`DispatchProgram` that invoked, in `bindFailureProgram`, which is keyed by the
+dispatch rather than by the bind check as MoarVM's is.
+
 ## Not done yet
 
-- `nqp::assertparamcheck` does not exist on this backend, so
-  `dispatcher-resume-on-bind-failure` and `dispatcher-resume-after-bind` are
-  recorded onto the program but nothing raises them.
-- The language-sensitive dispatchers are in place, but nqp's own dispatcher
-  set (`src/core/dispatchers.nqp`) is still `#?if moar`, so nothing registers
-  `nqp-call`, `nqp-meth-call` and friends here yet.
+- Calls and method calls in compiled code still go through the invokedynamic
+  paths rather than `lang-call` and `lang-meth-call`, so a language's method
+  dispatchers are reachable by name but are not yet on the ordinary call path.
 - `boot-boolify` and the boolification syscalls are not implemented.
+- `dispatcher-resume-after-bind`, which asks to be resumed on bind success as
+  well as failure, is recorded but only the failure half is acted upon.
 - Guards are checked by walking a list. A natural next step on this backend is
   to compile them into a `MethodHandles.guardWithTest` chain and set that as
   the callsite target, which is what the indy callsite is there for.
