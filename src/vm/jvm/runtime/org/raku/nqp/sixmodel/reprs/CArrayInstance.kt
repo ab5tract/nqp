@@ -18,7 +18,7 @@ import org.raku.nqp.sixmodel.reprs.CArrayREPRData.ElemKind
 
 class CArrayInstance : SixModelObject(), Refreshable {
     @JvmField var storage: MemorySegment? = null
-    @JvmField var child_objs: Array<SixModelObject?>? = null
+    @JvmField var childObjs: Array<SixModelObject?>? = null
     @JvmField var managed = false
     @JvmField var allocated: Long = 0
     @JvmField var elems: Long = 0
@@ -27,16 +27,16 @@ class CArrayInstance : SixModelObject(), Refreshable {
     private val pinned = HashMap<Long, MemorySegment>()
 
     override fun at_pos_native(tc: ThreadContext, index: Long) {
-        val repr_data = st.REPRData as CArrayREPRData
+        val reprData = st.REPRData as CArrayREPRData
 
         if (managed && index >= elems) {
-            if (repr_data.elemKind == ElemKind.INTEGER) {
-                tc.native_type = ThreadContext.NATIVE_INT
-                tc.native_i = 0
+            if (reprData.elemKind == ElemKind.INTEGER) {
+                tc.nativeType = ThreadContext.NATIVE_INT
+                tc.nativeI = 0
             }
-            else if (repr_data.elemKind == ElemKind.NUMERIC) {
-                tc.native_type = ThreadContext.NATIVE_NUM
-                tc.native_n = 0.0
+            else if (reprData.elemKind == ElemKind.NUMERIC) {
+                tc.nativeType = ThreadContext.NATIVE_NUM
+                tc.nativeN = 0.0
             }
             else {
                 ExceptionHandling.dieInternal(tc, "CArray can only at_pos_native with ints and nums.")
@@ -44,21 +44,21 @@ class CArrayInstance : SixModelObject(), Refreshable {
             return
         }
 
-        val offset = index * repr_data.elemBytes
-        if (repr_data.elemKind == ElemKind.INTEGER) {
-            tc.native_type = ThreadContext.NATIVE_INT
-            when (repr_data.elemSize.toInt()) {
-                8 -> tc.native_i = storage!!.get(ValueLayout.JAVA_BYTE, offset).toLong()
-                16 -> tc.native_i = storage!!.get(ValueLayout.JAVA_SHORT, offset).toLong()
-                32 -> tc.native_i = storage!!.get(ValueLayout.JAVA_INT, offset).toLong()
-                64 -> tc.native_i = storage!!.get(ValueLayout.JAVA_LONG, offset)
+        val offset = index * reprData.elemBytes
+        if (reprData.elemKind == ElemKind.INTEGER) {
+            tc.nativeType = ThreadContext.NATIVE_INT
+            when (reprData.elemSize.toInt()) {
+                8 -> tc.nativeI = storage!!.get(ValueLayout.JAVA_BYTE, offset).toLong()
+                16 -> tc.nativeI = storage!!.get(ValueLayout.JAVA_SHORT, offset).toLong()
+                32 -> tc.nativeI = storage!!.get(ValueLayout.JAVA_INT, offset).toLong()
+                64 -> tc.nativeI = storage!!.get(ValueLayout.JAVA_LONG, offset)
             }
         }
-        else if (repr_data.elemKind == ElemKind.NUMERIC) {
-            tc.native_type = ThreadContext.NATIVE_NUM
-            when (repr_data.elemSize.toInt()) {
-                32 -> tc.native_n = storage!!.get(ValueLayout.JAVA_FLOAT, offset).toDouble()
-                64 -> tc.native_n = storage!!.get(ValueLayout.JAVA_DOUBLE, offset)
+        else if (reprData.elemKind == ElemKind.NUMERIC) {
+            tc.nativeType = ThreadContext.NATIVE_NUM
+            when (reprData.elemSize.toInt()) {
+                32 -> tc.nativeN = storage!!.get(ValueLayout.JAVA_FLOAT, offset).toDouble()
+                64 -> tc.nativeN = storage!!.get(ValueLayout.JAVA_DOUBLE, offset)
             }
         }
         else {
@@ -67,48 +67,48 @@ class CArrayInstance : SixModelObject(), Refreshable {
     }
 
     override fun at_pos_boxed(tc: ThreadContext, index: Long): SixModelObject? {
-        val repr_data = st.REPRData as CArrayREPRData
+        val reprData = st.REPRData as CArrayREPRData
         val intidx = index.toInt()
 
         /* TODO: Die if this is a NUMERIC/INTEGER CArray. */
 
         if (managed && index >= elems)
-            return repr_data.elemType
+            return reprData.elemType
         else if (index >= allocated)
             expand(tc, index + 1)
 
-        if (Ops.isnull(child_objs!![intidx]) == 0L) {
-            return child_objs!![intidx]
+        if (Ops.isnull(childObjs!![intidx]) == 0L) {
+            return childObjs!![intidx]
         }
         else {
-            val obj = makeObject(tc, storage!!.get(ValueLayout.ADDRESS, index * repr_data.elemBytes))
-            child_objs!![intidx] = obj
+            val obj = makeObject(tc, storage!!.get(ValueLayout.ADDRESS, index * reprData.elemBytes))
+            childObjs!![intidx] = obj
             return obj
         }
     }
 
     override fun bind_pos_native(tc: ThreadContext, index: Long) {
-        val repr_data = st.REPRData as CArrayREPRData
+        val reprData = st.REPRData as CArrayREPRData
 
         if (index >= allocated) {
             expand(tc, index + 1)
         }
 
-        val offset = index * repr_data.elemBytes
-        if (repr_data.elemKind == ElemKind.INTEGER) {
-            tc.native_type = ThreadContext.NATIVE_INT
-            when (repr_data.elemSize.toInt()) {
-                8 -> storage!!.set(ValueLayout.JAVA_BYTE, offset, tc.native_i.toByte())
-                16 -> storage!!.set(ValueLayout.JAVA_SHORT, offset, tc.native_i.toShort())
-                32 -> storage!!.set(ValueLayout.JAVA_INT, offset, tc.native_i.toInt())
-                64 -> storage!!.set(ValueLayout.JAVA_LONG, offset, tc.native_i)
+        val offset = index * reprData.elemBytes
+        if (reprData.elemKind == ElemKind.INTEGER) {
+            tc.nativeType = ThreadContext.NATIVE_INT
+            when (reprData.elemSize.toInt()) {
+                8 -> storage!!.set(ValueLayout.JAVA_BYTE, offset, tc.nativeI.toByte())
+                16 -> storage!!.set(ValueLayout.JAVA_SHORT, offset, tc.nativeI.toShort())
+                32 -> storage!!.set(ValueLayout.JAVA_INT, offset, tc.nativeI.toInt())
+                64 -> storage!!.set(ValueLayout.JAVA_LONG, offset, tc.nativeI)
             }
         }
-        else if (repr_data.elemKind == ElemKind.NUMERIC) {
-            tc.native_type = ThreadContext.NATIVE_NUM
-            when (repr_data.elemSize.toInt()) {
-                32 -> storage!!.set(ValueLayout.JAVA_FLOAT, offset, tc.native_n.toFloat())
-                64 -> storage!!.set(ValueLayout.JAVA_DOUBLE, offset, tc.native_n)
+        else if (reprData.elemKind == ElemKind.NUMERIC) {
+            tc.nativeType = ThreadContext.NATIVE_NUM
+            when (reprData.elemSize.toInt()) {
+                32 -> storage!!.set(ValueLayout.JAVA_FLOAT, offset, tc.nativeN.toFloat())
+                64 -> storage!!.set(ValueLayout.JAVA_DOUBLE, offset, tc.nativeN)
             }
         }
         else {
@@ -117,7 +117,7 @@ class CArrayInstance : SixModelObject(), Refreshable {
     }
 
     override fun bind_pos_boxed(tc: ThreadContext, index: Long, value: SixModelObject?) {
-        val repr_data = st.REPRData as CArrayREPRData
+        val reprData = st.REPRData as CArrayREPRData
         val intidx = index.toInt()
         val deconted = Ops.decont(value, tc)
 
@@ -127,7 +127,7 @@ class CArrayInstance : SixModelObject(), Refreshable {
 
         var ptr: MemorySegment? = null
         if (Ops.isconcrete(deconted, tc) != 0L) {
-            when (repr_data.elemKind) {
+            when (reprData.elemKind) {
                 ElemKind.STRING -> {
                     /* TODO: Handle encodings. */
                     ptr = NativeSupport.toCString(deconted!!.get_str(tc))
@@ -143,42 +143,42 @@ class CArrayInstance : SixModelObject(), Refreshable {
                     ExceptionHandling.dieInternal(tc, "CArray.bind_pos_boxed reached its default case. This should never happen.")
             }
         }
-        else if (repr_data.elemKind == ElemKind.STRING) {
+        else if (reprData.elemKind == ElemKind.STRING) {
             pinned.remove(index)
         }
 
-        child_objs!![intidx] = deconted
-        storage!!.set(ValueLayout.ADDRESS, index * repr_data.elemBytes, NativeSupport.orNull(ptr))
+        childObjs!![intidx] = deconted
+        storage!!.set(ValueLayout.ADDRESS, index * reprData.elemBytes, NativeSupport.orNull(ptr))
     }
 
-    private fun expand(tc: ThreadContext, new_size: Long) {
-        val repr_data = st.REPRData as CArrayREPRData
+    private fun expand(tc: ThreadContext, newSize: Long) {
+        val reprData = st.REPRData as CArrayREPRData
 
         if (managed) {
-            val new_storage = NativeSupport.allocate(new_size * repr_data.elemBytes)
-            val old_storage = storage
-            if (old_storage != null)
-                MemorySegment.copy(old_storage, 0L, new_storage, 0L, allocated * repr_data.elemBytes)
-            storage = new_storage
+            val newStorage = NativeSupport.allocate(newSize * reprData.elemBytes)
+            val oldStorage = storage
+            if (oldStorage != null)
+                MemorySegment.copy(oldStorage, 0L, newStorage, 0L, allocated * reprData.elemBytes)
+            storage = newStorage
         }
 
-        val complex = repr_data.elemKind == ElemKind.CARRAY
-            || repr_data.elemKind == ElemKind.CPOINTER
-            || repr_data.elemKind == ElemKind.CSTRUCT
-            || repr_data.elemKind == ElemKind.CPPSTRUCT
-            || repr_data.elemKind == ElemKind.CUNION
-            || repr_data.elemKind == ElemKind.STRING
+        val complex = reprData.elemKind == ElemKind.CARRAY
+            || reprData.elemKind == ElemKind.CPOINTER
+            || reprData.elemKind == ElemKind.CSTRUCT
+            || reprData.elemKind == ElemKind.CPPSTRUCT
+            || reprData.elemKind == ElemKind.CUNION
+            || reprData.elemKind == ElemKind.STRING
 
         if (complex) {
-            val existing = child_objs
-            child_objs = if (existing == null)
-                arrayOfNulls(new_size.toInt())
+            val existing = childObjs
+            childObjs = if (existing == null)
+                arrayOfNulls(newSize.toInt())
             else
-                Arrays.copyOf(existing, new_size.toInt())
+                Arrays.copyOf(existing, newSize.toInt())
         }
 
-        elems = new_size
-        allocated = new_size
+        elems = newSize
+        allocated = newSize
     }
 
     override fun elems(tc: ThreadContext): Long {
@@ -186,25 +186,25 @@ class CArrayInstance : SixModelObject(), Refreshable {
     }
 
     private fun makeObject(tc: ThreadContext, raw: MemorySegment?): SixModelObject? {
-        val repr_data = st.REPRData as CArrayREPRData
+        val reprData = st.REPRData as CArrayREPRData
         val ptr = NativeSupport.unbounded(raw)
 
         if (ptr == null)
-            return repr_data.elemType
+            return reprData.elemType
 
-        when (repr_data.elemKind) {
+        when (reprData.elemKind) {
             ElemKind.STRING ->
-                return NativeCallOps.toNQPType(tc, NativeCall.ArgType.UTF8STR, repr_data.elemType, NativeSupport.fromCString(ptr))
+                return NativeCallOps.toNQPType(tc, NativeCall.ArgType.UTF8STR, reprData.elemType, NativeSupport.fromCString(ptr))
             ElemKind.CARRAY ->
-                return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CARRAY, repr_data.elemType, ptr)
+                return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CARRAY, reprData.elemType, ptr)
             ElemKind.CPOINTER ->
-                return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CPOINTER, repr_data.elemType, ptr)
+                return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CPOINTER, reprData.elemType, ptr)
             ElemKind.CSTRUCT ->
-                return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CSTRUCT, repr_data.elemType, ptr)
+                return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CSTRUCT, reprData.elemType, ptr)
             ElemKind.CPPSTRUCT ->
-                return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CPPSTRUCT, repr_data.elemType, ptr)
+                return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CPPSTRUCT, reprData.elemType, ptr)
             ElemKind.CUNION ->
-                return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CUNION, repr_data.elemType, ptr)
+                return NativeCallOps.toNQPType(tc, NativeCall.ArgType.CUNION, reprData.elemType, ptr)
             else ->
                 ExceptionHandling.dieInternal(tc, "CArray can only makeObject strings, arrays, structs and pointers")
         }
@@ -214,15 +214,15 @@ class CArrayInstance : SixModelObject(), Refreshable {
     }
 
     override fun refresh(tc: ThreadContext) {
-        val repr_data = st.REPRData as CArrayREPRData
+        val reprData = st.REPRData as CArrayREPRData
 
         // No need to refresh if we don't have any cached children.
-        if (child_objs == null) return
+        if (childObjs == null) return
 
-        if (repr_data.elemKind == ElemKind.CARRAY
-         || repr_data.elemKind == ElemKind.CSTRUCT
-         || repr_data.elemKind == ElemKind.CPPSTRUCT
-         || repr_data.elemKind == ElemKind.CUNION) {
+        if (reprData.elemKind == ElemKind.CARRAY
+         || reprData.elemKind == ElemKind.CSTRUCT
+         || reprData.elemKind == ElemKind.CPPSTRUCT
+         || reprData.elemKind == ElemKind.CUNION) {
             refreshComplex(tc)
         }
         else {
@@ -234,7 +234,7 @@ class CArrayInstance : SixModelObject(), Refreshable {
      * Refresh logic for CArray of complex (CArray or CStruct) types.
      */
     private fun refreshComplex(tc: ThreadContext) {
-        val children = child_objs!!
+        val children = childObjs!!
         for (i in children.indices) {
             val child = children[i]
 
@@ -254,7 +254,7 @@ class CArrayInstance : SixModelObject(), Refreshable {
      * Refresh logic for CArray of simple (CPointer) types.
      */
     private fun refreshSimple(tc: ThreadContext) {
-        val children = child_objs!!
+        val children = childObjs!!
         for (i in children.indices) {
             val child = children[i]
 

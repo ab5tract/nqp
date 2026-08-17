@@ -44,16 +44,16 @@ abstract class MultiDimArrayInstanceBase : SixModelObject() {
             var multiplier = 1L
             var result = 0L
             for (i in dimensions.size - 1 downTo 0) {
-                val dim_size = dimensions[i]
+                val dimSize = dimensions[i]
                 val index = indices[i]
-                if (index >= 0 && index < dim_size) {
+                if (index >= 0 && index < dimSize) {
                     result += index * multiplier
-                    multiplier *= dim_size
+                    multiplier *= dimSize
                 }
                 else {
                     throw ExceptionHandling.dieInternal(tc, String.format(
                         "Index %d for dimension %d out of range (must be 0..%d)",
-                        index, i + 1, dim_size - 1))
+                        index, i + 1, dimSize - 1))
                 }
             }
             return result.toInt()

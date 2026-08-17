@@ -87,18 +87,18 @@ object NativeCallOps {
                     argInfo[i] = info.at_key_boxed(tc, "callback_args")
             }
             @Suppress("UNCHECKED_CAST")
-            call.arg_types = argTypes as Array<ArgType>
-            call.arg_info = argInfo
+            call.argTypes = argTypes as Array<ArgType>
+            call.argInfo = argInfo
 
-            call.ret_type = getArgType(tc, returns, true)
+            call.retType = getArgType(tc, returns, true)
 
             call.handle = NativeSupport.LINKER.downcallHandle(address,
-                descriptorFor(tc, call.ret_type!!, call.arg_types!!))
-            call.ctor_handle = null
+                descriptorFor(tc, call.retType!!, call.argTypes!!))
+            call.ctorHandle = null
             /* Last: a non-null entry point is how Rakudo's !setup decides the
              * call site is already built, so nothing may be missing once it
              * is set. */
-            call.entry_point = address
+            call.entryPoint = address
 
             return 1L
         }
@@ -112,12 +112,12 @@ object NativeCallOps {
         val call = getNativeCallBody(tc, callObject)
 
         try {
-            val argTypes = call.arg_types!!
+            val argTypes = call.argTypes!!
             /* C++ structure invocant, in case we hit a C++ constructor. */
             var cppstruct: CPPStructInstance? = null
             /* Convert arguments into array of appropriate objects. */
             val n = arguments.elems(tc).toInt()
-            /* TODO: Make sure n == call.arg_types.length? */
+            /* TODO: Make sure n == call.argTypes.length? */
             val cArgs = arrayOfNulls<Any>(n)
             for (i in 0 until n) {
                 val arg = arguments.at_pos_boxed(tc, i.toLong())
@@ -128,7 +128,7 @@ object NativeCallOps {
                     cArgs[i] = struct.storage
                 }
                 else {
-                    cArgs[i] = toNativeType(tc, arg, argTypes[i], call.arg_info!![i])
+                    cArgs[i] = toNativeType(tc, arg, argTypes[i], call.argInfo!![i])
                 }
 
                 /* C wants to see a null pointer, not a Java null. */
@@ -139,7 +139,7 @@ object NativeCallOps {
             if (cppstruct != null) {
                 /* We are calling a C++ constructor so we hand back the invocant (THIS) we recorded earlier. */
                 ctorHandle(tc, call).invokeWithArguments(*cArgs)
-                return toNQPType(tc, call.ret_type, returns, cppstruct.storage)
+                return toNQPType(tc, call.retType, returns, cppstruct.storage)
             }
             else {
                 /* The actual foreign function call. */
@@ -195,7 +195,7 @@ object NativeCallOps {
                 }
 
                 /* Wrap returned in the appropriate REPR type. */
-                return toNQPType(tc, call.ret_type, returns, returned)
+                return toNQPType(tc, call.retType, returns, returned)
             }
         }
         catch (e: ControlException) {
@@ -217,21 +217,21 @@ object NativeCallOps {
     }
 
     @JvmStatic
-    fun nativecallglobal(libname: String?, symbol: String, target_spec: SixModelObject, target_type: SixModelObject, tc: ThreadContext): SixModelObject? {
+    fun nativecallglobal(libname: String?, symbol: String, targetSpec: SixModelObject, targetType: SixModelObject, tc: ThreadContext): SixModelObject? {
         try {
             /* Load the library and locate the symbol. */
             /* TODO: Error handling! */
-            var entry_point = NativeSupport.unbounded(
+            var entryPoint = NativeSupport.unbounded(
                 NativeSupport.libraryLookup(libname).find(symbol).orElseThrow {
                     UnsatisfiedLinkError("Cannot find symbol '$symbol'"
                         + (if (libname.isNullOrEmpty()) " in the running process" else " in library '$libname'"))
                 })
 
-            val ss = target_spec.st.REPR.get_storage_spec(tc, target_spec.st)
+            val ss = targetSpec.st.REPR.get_storage_spec(tc, targetSpec.st)
             if (ss.boxedPrimitive == BoxedPrimitive.STR)
-                entry_point = NativeSupport.unbounded(entry_point!!.get(ValueLayout.ADDRESS, 0))
+                entryPoint = NativeSupport.unbounded(entryPoint!!.get(ValueLayout.ADDRESS, 0))
 
-            return castNativeCall(tc, target_spec, target_type, entry_point)
+            return castNativeCall(tc, targetSpec, targetType, entryPoint)
         }
         catch (t: Throwable) {
             throw ExceptionHandling.dieInternal(tc, t)
@@ -268,7 +268,7 @@ object NativeCallOps {
     }
 
     @JvmStatic
-    fun nativecallcast(target_spec: SixModelObject, target_type: SixModelObject, source: SixModelObject, tc: ThreadContext): SixModelObject? {
+    fun nativecallcast(targetSpec: SixModelObject, targetType: SixModelObject, source: SixModelObject, tc: ThreadContext): SixModelObject? {
         var o: MemorySegment? = null
 
         if (source is CPointerInstance) {
@@ -296,17 +296,17 @@ object NativeCallOps {
             }
         }
 
-        return castNativeCall(tc, target_spec, target_type, o)
+        return castNativeCall(tc, targetSpec, targetType, o)
     }
 
     @JvmStatic
-    fun castNativeCall(tc: ThreadContext, target_spec: SixModelObject, target_type: SixModelObject, from: MemorySegment?): SixModelObject? {
+    fun castNativeCall(tc: ThreadContext, targetSpec: SixModelObject, targetType: SixModelObject, from: MemorySegment?): SixModelObject? {
         val o = NativeSupport.unbounded(from)
         if (o == null)
-            return target_type
+            return targetType
 
-        val nqpobj = target_type.st.REPR.allocate(tc, target_type.st)
-        val ss = target_spec.st.REPR.get_storage_spec(tc, target_spec.st)
+        val nqpobj = targetType.st.REPR.allocate(tc, targetType.st)
+        val ss = targetSpec.st.REPR.get_storage_spec(tc, targetSpec.st)
 
         when (ss.boxedPrimitive) {
             BoxedPrimitive.INT, BoxedPrimitive.UINT ->
@@ -331,7 +331,7 @@ object NativeCallOps {
                 /* TODO: Handle encodings. */
                 nqpobj.set_str(tc, o.getString(0))
             else -> {
-                if (target_type is CStrInstance) {
+                if (targetType is CStrInstance) {
                     /* TODO: Handle encodings. */
                     nqpobj.set_str(tc, o.getString(0))
                 }
@@ -343,7 +343,7 @@ object NativeCallOps {
                     nqpobj.managed = false
                 }
                 else if (nqpobj is CTypeInstance) {
-                    nqpobj.storage = sizedAs(target_type, o)
+                    nqpobj.storage = sizedAs(targetType, o)
                 }
                 else {
                     throw ExceptionHandling.dieInternal(tc,
@@ -411,11 +411,11 @@ object NativeCallOps {
     }
 
     private fun ctorHandle(tc: ThreadContext, call: NativeCallBody): MethodHandle {
-        var handle = call.ctor_handle
+        var handle = call.ctorHandle
         if (handle == null) {
-            handle = NativeSupport.LINKER.downcallHandle(call.entry_point,
-                descriptorFor(tc, ArgType.VOID, call.arg_types!!))
-            call.ctor_handle = handle
+            handle = NativeSupport.LINKER.downcallHandle(call.entryPoint,
+                descriptorFor(tc, ArgType.VOID, call.argTypes!!))
+            call.ctorHandle = handle
         }
         return handle
     }
@@ -734,18 +734,18 @@ object NativeCallOps {
     }
 
     private fun getArgType(tc: ThreadContext, info: SixModelObject, isReturn: Boolean): ArgType {
-        var type_name = info.at_key_boxed(tc, "type")!!.get_str(tc)!!
+        var typeName = info.at_key_boxed(tc, "type")!!.get_str(tc)!!
 
         val rw = info.at_key_boxed(tc, "rw")
         if (rw != null && rw.get_int(tc) == 1L)
-            type_name += "_RW"
+            typeName += "_RW"
 
         var type = ArgType.VOID
         try {
-            type = java.lang.Enum.valueOf(ArgType::class.java, type_name.uppercase())
+            type = java.lang.Enum.valueOf(ArgType::class.java, typeName.uppercase())
         }
         catch (e: IllegalArgumentException) {
-            throw ExceptionHandling.dieInternal(tc, String.format("Unknown type '%s' used for native call", type_name))
+            throw ExceptionHandling.dieInternal(tc, String.format("Unknown type '%s' used for native call", typeName))
         }
 
         if (!isReturn && type == ArgType.VOID) {
@@ -836,10 +836,10 @@ object NativeCallOps {
          * items are the argument types. We collect the data needed when it's
          * time to call back into NQP: type objects for argument and return
          * types, and the ArgTypes for all of them. */
-        val num_info = infos.elems(tc).toInt()
-        val argumentTypes = arrayOfNulls<SixModelObject>(num_info - 1)
-        val argumentInfo = arrayOfNulls<ArgType>(num_info - 1)
-        for (i in 1 until num_info) {
+        val numInfo = infos.elems(tc).toInt()
+        val argumentTypes = arrayOfNulls<SixModelObject>(numInfo - 1)
+        val argumentInfo = arrayOfNulls<ArgType>(numInfo - 1)
+        for (i in 1 until numInfo) {
             val info = infos.at_pos_boxed(tc, i.toLong())!!
             argumentTypes[i - 1] = info.at_key_boxed(tc, "typeobj")
             argumentInfo[i - 1] = getArgType(tc, info, false)
@@ -852,7 +852,7 @@ object NativeCallOps {
         val handler = CallbackHandler(tc.gc, function, returnInfo, argumentTypes, argumentInfo as Array<ArgType>)
         val descriptor = descriptorFor(tc, returnInfo, argumentInfo as Array<ArgType>)
         val target = CALL_FUNCTION.bindTo(handler)
-            .asCollector(Array<Any?>::class.java, num_info - 1)
+            .asCollector(Array<Any?>::class.java, numInfo - 1)
             .asType(descriptor.toMethodType())
 
         val stub = NativeSupport.LINKER.upcallStub(target, descriptor, Arena.ofAuto())

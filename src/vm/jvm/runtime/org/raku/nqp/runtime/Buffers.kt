@@ -27,7 +27,7 @@ object Buffers {
             else -> {
                 res.set_elems(tc, elems.toLong())
                 for (i in 0 until elems) {
-                    tc.native_i = bytes[i].toLong()
+                    tc.nativeI = bytes[i].toLong()
                     res.bind_pos_native(tc, i.toLong())
                 }
             }
@@ -47,7 +47,7 @@ object Buffers {
             val bb = ByteBuffer.allocate(n)
             for (i in 0 until n) {
                 buf.at_pos_native(tc, i.toLong())
-                bb.put(tc.native_i.toByte())
+                bb.put(tc.nativeI.toByte())
             }
             bb.rewind()
             bb
