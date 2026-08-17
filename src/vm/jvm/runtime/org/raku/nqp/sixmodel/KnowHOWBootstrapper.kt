@@ -44,8 +44,13 @@ object KnowHOWBootstrapper {
         tc.gc.Continuation = bootType(tc, "Continuation", "Continuation")
         tc.gc.BOOTJava = bootType(tc, "BOOTJavaObject", "JavaWrap")
 
-        // fixup missing STable for knowhowHow methods
+        // fixup missing STable for knowhowHow and KnowHOWAttribute methods;
+        // the dispatch program recorder reads a callee's STable, so every
+        // code ref reachable through a method table needs one
         for (cr in (tc.gc.KnowHOW!!.st.HOW as KnowHOWREPRInstance).methods!!.entries) {
+            cr.value!!.st = tc.gc.BOOTCode!!.st
+        }
+        for (cr in (tc.gc.KnowHOWAttribute!!.st.HOW as KnowHOWREPRInstance).methods!!.entries) {
             cr.value!!.st = tc.gc.BOOTCode!!.st
         }
 
@@ -79,6 +84,7 @@ object KnowHOWBootstrapper {
         val methods = knowhowHow.methods!!
         methods["new_type"] = knowhowUnit.lookupCodeRef("new_type")!!
         methods["add_method"] = knowhowUnit.lookupCodeRef("add_method")!!
+        methods["find_method"] = knowhowUnit.lookupCodeRef("find_method")!!
         methods["add_attribute"] = knowhowUnit.lookupCodeRef("add_attribute")!!
         methods["compose"] = knowhowUnit.lookupCodeRef("compose")!!
         methods["attributes"] = knowhowUnit.lookupCodeRef("attributes")!!
