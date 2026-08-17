@@ -173,7 +173,15 @@ object Syscalls {
         }
         define("dispatcher-index-tracked-lookup-table", OBJ, OBJ) { args ->
             val record = args.recording
-            obj(record.trackLookup(record.sourceOf(args.obj(0)), args.obj(1)))
+            /* Type and concreteness guards on the table itself, as MoarVM
+             * enforces: the table is read anew each run (an attribute of the
+             * invocant's HOW, typically), and a run that reads a null or
+             * not-yet-built table must be a guard miss, not a crash inside
+             * the lookup. */
+            val table = record.sourceOf(args.obj(0))
+            record.guardType(table)
+            record.guardConcreteness(table)
+            obj(record.trackLookup(table, args.obj(1)))
         }
 
         /* ----- what a dispatch relied upon ----- */
