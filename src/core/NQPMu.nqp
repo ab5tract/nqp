@@ -125,7 +125,7 @@ nqp::sethllconfig('nqp', nqp::hash(
         # BOOTHashes don't actually need transformation
         nqp::ishash($hash) ?? $hash !! $hash.FLATTENABLE_HASH
     },
-#?if moar
+#?if !js
     'call_dispatcher',        'nqp-call',
     'method_call_dispatcher', 'nqp-meth-call',
     'find_method_dispatcher', 'nqp-find-meth',
@@ -135,7 +135,7 @@ nqp::sethllconfig('nqp', nqp::hash(
 #?endif
 ));
 
-#?if moar
+#?if !js
 nqp::register('nqp-hllize', -> $capture {
     nqp::guard('type', nqp::track('arg', $capture, 0));
     my $obj := nqp::captureposarg($capture, 0);
