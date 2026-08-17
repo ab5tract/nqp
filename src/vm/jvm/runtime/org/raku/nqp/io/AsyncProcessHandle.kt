@@ -125,8 +125,11 @@ class AsyncProcessHandle(
             val message = boxError(t.toString())
             /* Report exception message and hard-coded exit code -1. */
             config["error"]?.let { send(it, message, boxInt(-1 shl 8)) }
-            config["stdout_bytes"]?.let { send(it, intBoxType, strBoxType, message) }
-            config["stderr_bytes"]?.let { send(it, intBoxType, strBoxType, message) }
+            /* Every reader that would have been launched above waits for a
+             * report of its own; a merged stream is fed by one pipe here, so
+             * it hears about the failure under the key it reads from. */
+            for (key in arrayOf("merge_bytes", "stdout_bytes", "stderr_bytes"))
+                config[key]?.let { send(it, intBoxType, strBoxType, message) }
         }
     }
 
