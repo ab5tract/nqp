@@ -1623,7 +1623,69 @@ QAST::OperationsJAST.add_core_op('callmethod', -> $qastcomp, $node {
     result_from_cf($il, rttype_from_typeobj($node.returns));
 });
 
-QAST::OperationsJAST.map_classlib_core_op('dispatch', $TYPE_OPS, 'dispatch', [$RT_STR, $RT_STR, $RT_STR, $RT_OBJ], $RT_OBJ, :tc);
+# Dispatching. All of these are sugar over a dispatch: the dispatcher to use
+# is a compile-time constant, and everything else travels in the callsite, so
+# one code path serves them all.
+sub add_dispatcher_op($qastcomp, $op, str $prefix) {
+    my @args := nqp::clone($op.list);
+    if $prefix eq 'boot-syscall' {
+        nqp::unshift(@args, QAST::SVal.new( :value($prefix) ));
+    }
+    elsif $prefix eq 'dispatcher-register' || $prefix eq 'dispatcher-delegate' {
+        nqp::unshift(@args, QAST::SVal.new( :value($prefix) ));
+        nqp::unshift(@args, QAST::SVal.new( :value('boot-syscall') ));
+    }
+    elsif $prefix eq 'dispatcher-track-' || $prefix eq 'dispatcher-guard-' {
+        my $what := nqp::shift(@args);
+        nqp::die("First operand of a '" ~ $op.op ~ "' op must be a constant string")
+            unless nqp::istype($what, QAST::SVal);
+        nqp::unshift(@args, QAST::SVal.new( :value($prefix ~ $what.value) ));
+        nqp::unshift(@args, QAST::SVal.new( :value('boot-syscall') ));
+    }
+
+    my $name_qast := nqp::shift(@args);
+    nqp::die('First node of a dispatch op must be a constant string naming the dispatcher')
+        unless nqp::istype($name_qast, QAST::SVal);
+
+    # Compile the arguments and form a callsite, exactly as for a call; the
+    # dispatcher name and callsite index ride along as extra arguments, using
+    # the fact that the stack was spilled to sneak the ThreadContext in.
+    my $il := JAST::InstructionList.new();
+    my @argstuff := process_args_onto_stack($qastcomp, @args, $il);
+    my $cs_idx := @argstuff[0];
+    $*STACK.spill_to_locals($il);
+
+    nqp::unshift(@argstuff[2], 'I');
+    nqp::unshift(@argstuff[2], $TYPE_STR);
+    $il.append(JAST::PushSVal.new( :value($name_qast.value) ));
+    $il.append(JAST::PushIndex.new( :value($cs_idx) ));
+    $il.append($ALOAD_1);
+    $*STACK.obtain($il, |@argstuff[1]) if @argstuff[1];
+    $il.append(savesite(JAST::InvokeDynamic.new(
+        'dispatch_noa', 'V', @argstuff[2],
+        'org/raku/nqp/dispatch/DispatchBootstrap', 'dispatch_noa'
+    )));
+
+    result_from_cf($il, rttype_from_typeobj($op.returns));
+}
+QAST::OperationsJAST.add_core_op('dispatch', :!inlinable, -> $qastcomp, $op {
+    add_dispatcher_op($qastcomp, $op, '');
+});
+QAST::OperationsJAST.add_core_op('syscall', :!inlinable, -> $qastcomp, $op {
+    add_dispatcher_op($qastcomp, $op, 'boot-syscall');
+});
+QAST::OperationsJAST.add_core_op('register', :!inlinable, -> $qastcomp, $op {
+    add_dispatcher_op($qastcomp, $op, 'dispatcher-register');
+});
+QAST::OperationsJAST.add_core_op('delegate', :!inlinable, -> $qastcomp, $op {
+    add_dispatcher_op($qastcomp, $op, 'dispatcher-delegate');
+});
+QAST::OperationsJAST.add_core_op('track', :!inlinable, -> $qastcomp, $op {
+    add_dispatcher_op($qastcomp, $op, 'dispatcher-track-');
+});
+QAST::OperationsJAST.add_core_op('guard', :!inlinable, -> $qastcomp, $op {
+    add_dispatcher_op($qastcomp, $op, 'dispatcher-guard-');
+});
 
 # Binding
 QAST::OperationsJAST.add_core_op('bind', -> $qastcomp, $op {
@@ -2876,6 +2938,7 @@ QAST::OperationsJAST.map_classlib_core_op('objprimspec', $TYPE_OPS, 'objprimspec
 QAST::OperationsJAST.map_classlib_core_op('objprimunsigned', $TYPE_OPS, 'objprimunsigned', [$RT_OBJ], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('objprimbits', $TYPE_OPS, 'objprimbits', [$RT_OBJ], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('isinvokable', $TYPE_OPS, 'isinvokable', [$RT_OBJ], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('iscoderef', $TYPE_OPS, 'iscoderef', [$RT_OBJ], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('setinvokespec', $TYPE_OPS, 'setinvokespec', [$RT_OBJ, $RT_OBJ, $RT_STR, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('setparameterizer', $TYPE_OPS, 'setparameterizer', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('parameterizetype', $TYPE_OPS, 'parameterizetype', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
@@ -3217,21 +3280,6 @@ QAST::OperationsJAST.map_classlib_core_op('coerce_is', $TYPE_OPS, 'coerce_is', [
 QAST::OperationsJAST.map_classlib_core_op('coerce_us', $TYPE_OPS, 'coerce_us', [$RT_UINT], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('coerce_ns', $TYPE_OPS, 'coerce_ns', [$RT_NUM], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('coerce_in', $TYPE_OPS, 'coerce_in', [$RT_INT], $RT_NUM, :tc);
-QAST::OperationsJAST.map_classlib_core_op('jvmsyscall', $TYPE_OPS, 'syscall', [$RT_STR, $RT_OBJ], $RT_OBJ, :tc);
-QAST::OperationsJAST.add_core_op('syscall', -> $qastcomp, $op {
-    # The dispatcher-era boot-syscall surface. Desugar
-    # nqp::syscall(name, args...) into a runtime helper taking the
-    # arguments as a list; individual syscalls are implemented (or
-    # rejected by name) in Ops.syscall.
-    my $list := QAST::Op.new( :op('list') );
-    my int $i := 1;
-    my int $n := +@($op);
-    while $i < $n {
-        $list.push($op[$i]);
-        $i++;
-    }
-    $qastcomp.as_jast(QAST::Op.new( :op('jvmsyscall'), $op[0], $list ));
-});
 QAST::OperationsJAST.map_classlib_core_op('coerce_ni', $TYPE_OPS, 'coerce_ni', [$RT_NUM], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('coerce_ui', $TYPE_OPS, 'coerce_ui', [$RT_UINT], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('coerce_iu', $TYPE_OPS, 'coerce_iu', [$RT_INT], $RT_UINT, :tc);

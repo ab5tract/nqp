@@ -2578,25 +2578,6 @@ object Ops {
             throw ExceptionHandling.dieInternal(tc, "invokewithcapture requires a CallCapture")
         }
     }
-    @JvmStatic
-    fun dispatch(dispatcher: String, syscall: String, key: String, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        if (dispatcher != "boot-syscall")
-            throw ExceptionHandling.dieInternal(tc,
-                "Unknown dispatcher '" + dispatcher + "' called")
-        if (syscall != "set-cur-hll-config-key")
-            throw ExceptionHandling.dieInternal(tc,
-                "Unknown syscall '" + syscall + "' called")
-        if (key != "uint_box")
-            throw ExceptionHandling.dieInternal(tc,
-                "Tried to set unsupported config key '" + key + "'")
-
-        val hllName = tc.frame.codeRef.staticInfo.compUnit.hllName()
-        val config = tc.gc.getHLLConfigFor(hllName)
-        config.uintBoxType = value
-
-        return null
-    }
-
     /* Multi-dispatch cache. */
     @JvmStatic
     fun multicacheadd(cache: SixModelObject?, capture: SixModelObject?, result: SixModelObject?, tc: ThreadContext): SixModelObject {
@@ -2887,6 +2868,12 @@ object Ops {
     @JvmStatic
     fun isinvokable(obj: SixModelObject?, tc: ThreadContext): Long {
         return if (obj is CodeRef || obj!!.st.InvocationSpec != null) 1 else 0
+    }
+    /* Is this a VM level code handle, as opposed to something a language
+     * wrapped around one? */
+    @JvmStatic
+    fun iscoderef(obj: SixModelObject?, tc: ThreadContext): Long {
+        return if (obj is CodeRef) 1 else 0
     }
     @JvmStatic
     fun istype(obj: SixModelObject?, type: SixModelObject?, tc: ThreadContext): Long {
@@ -7276,6 +7263,25 @@ object Ops {
             config.strMultidimRef = configHash.at_key_boxed(tc, "str_multidim_ref")
         if (configHash.exists_key(tc, "lexical_handler_not_found_error") != 0L)
             config.lexicalHandlerNotFoundError = configHash.at_key_boxed(tc, "lexical_handler_not_found_error")
+
+        /* The dispatchers this language wants the language-sensitive boot
+         * dispatchers to hand over to; named, not code objects. */
+        if (configHash.exists_key(tc, "call_dispatcher") != 0L)
+            config.callDispatcher = unbox_s(configHash.at_key_boxed(tc, "call_dispatcher"), tc)
+        if (configHash.exists_key(tc, "method_call_dispatcher") != 0L)
+            config.methodCallDispatcher = unbox_s(configHash.at_key_boxed(tc, "method_call_dispatcher"), tc)
+        if (configHash.exists_key(tc, "find_method_dispatcher") != 0L)
+            config.findMethodDispatcher = unbox_s(configHash.at_key_boxed(tc, "find_method_dispatcher"), tc)
+        if (configHash.exists_key(tc, "hllize_dispatcher") != 0L)
+            config.hllizeDispatcher = unbox_s(configHash.at_key_boxed(tc, "hllize_dispatcher"), tc)
+        if (configHash.exists_key(tc, "istype_dispatcher") != 0L)
+            config.istypeDispatcher = unbox_s(configHash.at_key_boxed(tc, "istype_dispatcher"), tc)
+        if (configHash.exists_key(tc, "isinvokable_dispatcher") != 0L)
+            config.isinvokableDispatcher = unbox_s(configHash.at_key_boxed(tc, "isinvokable_dispatcher"), tc)
+        if (configHash.exists_key(tc, "resume_error_dispatcher") != 0L)
+            config.resumeErrorDispatcher = unbox_s(configHash.at_key_boxed(tc, "resume_error_dispatcher"), tc)
+        if (configHash.exists_key(tc, "method_not_found_error") != 0L)
+            config.methodNotFoundError = configHash.at_key_boxed(tc, "method_not_found_error")
         return configHash
     }
     @JvmStatic
@@ -8654,31 +8660,6 @@ object Ops {
     @JvmStatic
     fun coerce_si(s: String?, tc: ThreadContext): Long {
         return java.lang.Long.parseLong(s)
-    }
-
-    /* The dispatcher-era boot-syscall surface (nqp::syscall). MoarVM
-     * implements these through new-disp; here they are a plain by-name
-     * dispatch, implemented as rakudo's CORE demands them and rejected
-     * loudly otherwise. */
-    @JvmStatic
-    fun syscall(name: String?, args: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        when (name) {
-            "set-cur-hll-config-key" -> {
-                val key = unbox_s(args!!.at_pos_boxed(tc, 0), tc)
-                val value = args.at_pos_boxed(tc, 1)
-                val hllName = tc.frame.codeRef.staticInfo.compUnit.hllName()
-                val config = tc.gc.getHLLConfigFor(hllName)
-                when (key) {
-                    "uint_box" -> config.uintBoxType = value
-                    else -> throw ExceptionHandling.dieInternal(tc,
-                        "Unsupported config key '" + key + "' for set-cur-hll-config-key on the JVM backend")
-                }
-                return null
-            }
-            else ->
-                throw ExceptionHandling.dieInternal(tc,
-                    "nqp::syscall('" + name + "') is not implemented on the JVM backend")
-        }
     }
 
     /* int<->num and int<->uint coercions, present on MoarVM since long
