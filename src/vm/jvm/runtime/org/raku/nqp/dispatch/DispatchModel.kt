@@ -60,6 +60,9 @@ interface DispatchContext {
     /** An argument of the resume initialization state at the given nesting level. */
     fun resumeInitArg(level: Int, index: Int): DispatchValue
 
+    /** As resumeInitArg, but just the value; the kind is fixed by the level's descriptor. */
+    fun resumeInitArgRaw(level: Int, index: Int): Any? = resumeInitArg(level, index).value
+
     /** The mutable resume state at the given nesting level. */
     fun resumeState(level: Int): SixModelObject?
 }
@@ -77,57 +80,76 @@ interface DispatchContext {
 sealed interface ValueSource {
     fun evaluate(ctx: DispatchContext): DispatchValue
 
+    /**
+     * The bare value, without the DispatchValue box. This is the replay hot
+     * path: guards and outcome arguments only need the value, and the kind a
+     * source produces is fixed once the callsite shape has been checked, so
+     * nothing is lost by not carrying it.
+     */
+    fun evaluateRaw(ctx: DispatchContext): Any?
+
     /** An argument of the capture the dispatch was invoked with. */
     data class Arg(val index: Int) : ValueSource {
         override fun evaluate(ctx: DispatchContext) = DispatchValue(
             ArgKind.ofFlag(ctx.descriptor.argFlags[index]), ctx.args[index])
+
+        override fun evaluateRaw(ctx: DispatchContext): Any? = ctx.args[index]
     }
 
     /** An argument of the resume initialization state of a resumption. */
     data class ResumeInitArg(val level: Int, val index: Int) : ValueSource {
         override fun evaluate(ctx: DispatchContext) = ctx.resumeInitArg(level, index)
+
+        override fun evaluateRaw(ctx: DispatchContext): Any? = ctx.resumeInitArgRaw(level, index)
     }
 
     /** A constant, which the recording fixed in place. */
     data class Literal(val kind: ArgKind, val value: Any?) : ValueSource {
         override fun evaluate(ctx: DispatchContext) = DispatchValue(kind, value)
+
+        override fun evaluateRaw(ctx: DispatchContext): Any? = value
     }
 
     /** An attribute read from another value. */
     data class Attribute(val from: ValueSource, val classHandle: SixModelObject?,
                          val name: String, val kind: ArgKind) : ValueSource {
-        override fun evaluate(ctx: DispatchContext): DispatchValue {
-            val obj = from.evaluate(ctx).obj
+        override fun evaluate(ctx: DispatchContext) = DispatchValue(kind, evaluateRaw(ctx))
+
+        override fun evaluateRaw(ctx: DispatchContext): Any? {
+            val obj = from.evaluateRaw(ctx) as SixModelObject?
                 ?: throw ExceptionHandling.dieInternal(ctx.tc,
                     "Dispatch program read an attribute of a null value")
-            return DispatchValue(kind, readAttribute(ctx.tc, obj, classHandle, name, kind))
+            return readAttribute(ctx.tc, obj, classHandle, name, kind)
         }
     }
 
     /** The meta-object of another value. */
     data class How(val from: ValueSource) : ValueSource {
-        override fun evaluate(ctx: DispatchContext): DispatchValue {
-            val obj = from.evaluate(ctx).obj
-            return DispatchValue(ArgKind.OBJ, if (obj == null) null else obj.st.HOW)
-        }
+        override fun evaluate(ctx: DispatchContext) =
+            DispatchValue(ArgKind.OBJ, evaluateRaw(ctx))
+
+        override fun evaluateRaw(ctx: DispatchContext): Any? =
+            (from.evaluateRaw(ctx) as SixModelObject?)?.st?.HOW
     }
 
     /** A native value unboxed out of another value. */
     data class Unbox(val from: ValueSource, val kind: ArgKind) : ValueSource {
-        override fun evaluate(ctx: DispatchContext): DispatchValue {
-            val obj = from.evaluate(ctx).obj
-            return DispatchValue(kind, unbox(ctx.tc, obj, kind))
-        }
+        override fun evaluate(ctx: DispatchContext) = DispatchValue(kind, evaluateRaw(ctx))
+
+        override fun evaluateRaw(ctx: DispatchContext): Any? =
+            unbox(ctx.tc, from.evaluateRaw(ctx) as SixModelObject?, kind)
     }
 
     /** The result of looking a tracked string key up in a hash. */
     data class Lookup(val table: ValueSource, val key: ValueSource) : ValueSource {
-        override fun evaluate(ctx: DispatchContext): DispatchValue {
-            val hash = table.evaluate(ctx).obj
-            val name = key.evaluate(ctx).value as String?
-            val found = if (hash == null || name == null) null
-                        else hash.at_key_boxed(ctx.tc, name)
-            return DispatchValue(ArgKind.OBJ, found)
+        override fun evaluate(ctx: DispatchContext) =
+            DispatchValue(ArgKind.OBJ, evaluateRaw(ctx))
+
+        override fun evaluateRaw(ctx: DispatchContext): Any? {
+            val hash = table.evaluateRaw(ctx) as SixModelObject?
+            val name = key.evaluateRaw(ctx) as String?
+            return if (hash == null || name == null) null
+                   else hash.at_key_boxed(ctx.tc, name)
         }
     }
 
@@ -135,6 +157,8 @@ sealed interface ValueSource {
     data class ResumeState(val level: Int) : ValueSource {
         override fun evaluate(ctx: DispatchContext) =
             DispatchValue(ArgKind.OBJ, ctx.resumeState(level))
+
+        override fun evaluateRaw(ctx: DispatchContext): Any? = ctx.resumeState(level)
     }
 
     companion object {
@@ -194,29 +218,42 @@ sealed interface Guard {
 
     fun check(ctx: DispatchContext): Boolean
 
+    /* The checks read values through evaluateRaw: the kind a source produces
+     * is fixed once the program's callsite shape has matched, so the kind
+     * comparisons the boxed helpers do are settled at recording time and only
+     * the value itself needs looking at. */
+
     /** The value has exactly this type. */
     data class OfType(override val on: ValueSource, val type: STable?) : Guard {
-        override fun check(ctx: DispatchContext) = typeOf(on.evaluate(ctx)) === type
+        override fun check(ctx: DispatchContext) =
+            (on.evaluateRaw(ctx) as? SixModelObject)?.st === type
     }
 
     /** The value is (or is not) a concrete object rather than a type object. */
     data class Concreteness(override val on: ValueSource, val concrete: Boolean) : Guard {
-        override fun check(ctx: DispatchContext) = isConcrete(on.evaluate(ctx).value) == concrete
+        override fun check(ctx: DispatchContext) = isConcrete(on.evaluateRaw(ctx)) == concrete
     }
 
     /** The value is this exact value. */
     data class Literal(override val on: ValueSource, val expected: DispatchValue) : Guard {
-        override fun check(ctx: DispatchContext) = sameValue(on.evaluate(ctx), expected)
+        override fun check(ctx: DispatchContext): Boolean {
+            val got = on.evaluateRaw(ctx)
+            return when (expected.kind) {
+                ArgKind.OBJ -> got === expected.value
+                else -> got == expected.value
+            }
+        }
     }
 
     /** The value is anything but this object. */
     data class NotLiteralObj(override val on: ValueSource, val rejected: SixModelObject?) : Guard {
-        override fun check(ctx: DispatchContext) = on.evaluate(ctx).value !== rejected
+        override fun check(ctx: DispatchContext) = on.evaluateRaw(ctx) !== rejected
     }
 
     /** The value belongs to this language. */
     data class OfHll(override val on: ValueSource, val hll: HLLConfig?) : Guard {
-        override fun check(ctx: DispatchContext) = hllOf(on.evaluate(ctx)) === hll
+        override fun check(ctx: DispatchContext) =
+            (on.evaluateRaw(ctx) as? SixModelObject)?.st?.hllOwner === hll
     }
 
     companion object {
@@ -233,15 +270,6 @@ sealed interface Guard {
 
         fun isConcrete(value: Any?): Boolean =
             value != null && value !is TypeObject
-
-        fun sameValue(got: DispatchValue, expected: DispatchValue): Boolean {
-            if (got.kind != expected.kind) return false
-            return when (expected.kind) {
-                ArgKind.OBJ -> got.value === expected.value
-                ArgKind.STR -> got.value == expected.value
-                else -> got.value == expected.value
-            }
-        }
     }
 }
 
@@ -273,7 +301,7 @@ class CaptureShape(val sources: List<ValueSource>, val descriptor: CallSiteDescr
     fun evaluate(ctx: DispatchContext): Array<Any?> {
         val out = arrayOfNulls<Any>(sources.size)
         for (i in sources.indices)
-            out[i] = sources[i].evaluate(ctx).value
+            out[i] = sources[i].evaluateRaw(ctx)
         return out
     }
 
