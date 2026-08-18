@@ -1,3 +1,3 @@
 package org.raku.nqp.runtime
 
-abstract class ControlException : RuntimeException(null, null, false, false)
+abstract class ControlException @JvmOverloads constructor(cause: Throwable? = null) : RuntimeException(null, cause, false, false)
