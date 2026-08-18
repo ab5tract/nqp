@@ -7308,8 +7308,10 @@ object Ops {
                 if (te.frame!!.codeRef.staticInfo.isThunk)
                     continue
                 val annots = Hash.st.REPR.allocate(tc, Hash.st)
-                annots.bind_key_boxed(tc, "file", box_s(if (te.file == null) "" else te.file, Str, tc))
-                annots.bind_key_boxed(tc, "line", box_i(if (te.line < 0) 1 else te.line.toLong(), Int, tc))
+                val file = te.mappedFile
+                val line = te.mappedLine
+                annots.bind_key_boxed(tc, "file", box_s(if (file == null) "" else file, Str, tc))
+                annots.bind_key_boxed(tc, "line", box_i(if (line < 0) 1 else line.toLong(), Int, tc))
                 val row = Hash.st.REPR.allocate(tc, Hash.st)
                 row.bind_key_boxed(tc, "sub", te.frame!!.codeRef)
                 row.bind_key_boxed(tc, "annotations", annots)

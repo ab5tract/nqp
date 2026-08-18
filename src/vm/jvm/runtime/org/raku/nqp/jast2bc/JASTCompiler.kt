@@ -303,6 +303,13 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
             method.crFile?.let {
                 av.visit("sourceFile", it)
                 av.visit("sourceLine", method.crLine)
+                /* Stored as a delta: it is constant per #line-directive
+                 * section, so the constant pool interns a handful of values
+                 * rather than one integer per method (which overflowed the
+                 * setting's 64K pool), and zero -- every non-directive file
+                 * -- costs nothing at all. */
+                val delta = method.crRawLine - method.crLine
+                if (delta != 0) av.visit("sourceLineDelta", delta)
             }
             av.visitEnd()
         }

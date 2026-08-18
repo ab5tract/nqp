@@ -107,6 +107,11 @@ class StaticCodeInfo(
     @JvmField var sourceFile: String? = null
     @JvmField var sourceLine = -1
 
+    /** rawLine - sourceLine of the block's declaration: the constant shift
+     * a #line directive puts between the raw compiled source (which the
+     * LineNumberTable rows use) and sourceFile's numbering. */
+    @JvmField var sourceLineDelta = 0
+
     fun oTryGetLexicalIdx(name: String): Int {
         val names = oLexicalNames
         if (names != null) {
