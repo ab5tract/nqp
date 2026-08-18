@@ -7536,7 +7536,7 @@ object Ops {
     @JvmStatic
     fun hllize(obj: SixModelObject?, tc: ThreadContext): SixModelObject? {
         val wanted = tc.frame.codeRef.staticInfo.compUnit.hllConfig
-        if (isnull(obj) == 0L && obj!!.st.hllOwner === wanted)
+        if (isnull(obj) == 0L && obj!!.stInitialized && obj.st.hllOwner === wanted)
             return obj
         else
             return hllizeInternal(obj, wanted, tc)
@@ -7544,7 +7544,7 @@ object Ops {
     @JvmStatic
     fun hllizefor(obj: SixModelObject?, language: String, tc: ThreadContext): SixModelObject? {
         val wanted = tc.gc.getHLLConfigFor(language)
-        if (isnull(obj) == 0L && obj!!.st.hllOwner === wanted)
+        if (isnull(obj) == 0L && obj!!.stInitialized && obj.st.hllOwner === wanted)
             return obj
         else
             return hllizeInternal(obj, wanted, tc)
@@ -7563,6 +7563,12 @@ object Ops {
         /* Map nulls to the language's designated null value. */
         if (isnull(obj) == 1L)
             return wanted.nullValue
+
+        /* An internal carrier with no STable (EvalResult and friends) has no
+         * HLL identity to map; on MoarVM every object has an STable and these
+         * fall through as role NONE, so pass them through here too. */
+        if (!obj!!.stInitialized)
+            return obj
 
         /* Go by what role the object plays. */
         when (obj!!.st.hllRole.toInt()) {
