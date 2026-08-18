@@ -104,6 +104,16 @@ object Dispatch {
         record(tc, tc.gc.dispatchers.find(tc, name), descriptor, theArgs, site)
     }
 
+    /** A dispatch from a callsite too wide for an invokedynamic MethodType
+     * (the JVM caps a method descriptor at 255 parameter slots): the compiled
+     * code builds the argument array itself, and with no per-instruction
+     * callsite every dispatch records. Sites this wide are giant literal
+     * argument lists that run once, so the missing cache costs nothing. */
+    @JvmStatic
+    fun dispatchWide(name: String, csIdx: Int, tc: ThreadContext, args: Array<Any?>) {
+        dispatchUncached(tc, name, descriptorFor(tc, csIdx), args)
+    }
+
     /** A dispatch with no callsite to install anything at. */
     @JvmStatic
     fun dispatchUncached(tc: ThreadContext, name: String, descriptor: CallSiteDescriptor,
