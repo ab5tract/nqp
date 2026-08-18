@@ -1498,6 +1498,21 @@ object Ops {
         ref.idx = idx
         return ref
     }
+    /** Notes the declared width of the lexical a fresh native reference
+     * points at, from the compiler's knowledge: the long slots themselves
+     * are unsized, so a sized store could not truncate without this. The low
+     * byte of the spec is the bit width, +256 marks unsigned, 32 alone marks
+     * num32; 0 never gets here. */
+    @JvmStatic
+    fun sizedref(ref: SixModelObject?, spec: Long, tc: ThreadContext): SixModelObject? {
+        when (ref) {
+            is NativeRefInstanceIntLex -> ref.sizeSpec = spec.toInt()
+            is NativeRefInstanceNumLex -> ref.sizeSpec = spec.toInt()
+            else -> { }
+        }
+        return ref
+    }
+
     @JvmStatic
     fun getlexref_i(name: String, tc: ThreadContext): SixModelObject {
         var cf = tc.curFrame
