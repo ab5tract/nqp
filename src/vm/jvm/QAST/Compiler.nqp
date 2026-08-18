@@ -184,7 +184,11 @@ my @pop_ins := [
     $POP2,
 ];
 sub pop_ins($type) {
-    @pop_ins[$type]
+    # A void result left nothing on the stack; $RT_VOID is -1 and a negative
+    # index would wrap around to the end of the table and pop2 thin air.
+    $type == $RT_VOID
+        ?? JAST::InstructionList.new()
+        !! @pop_ins[$type]
 }
 
 # Mapping of QAST::Want type identifiers to $RT_*.
@@ -510,34 +514,30 @@ my $chain_codegen := sub ($qastcomp, $op) {
         $*STACK.obtain($il, $bres);
         $il.append(JAST::Instruction.new( :op('astore'), $btmp ));
 
-        my $indy_meth;
-        my @argTypes := [$TYPE_SMO, $TYPE_SMO];
-        my $calltmp  := 0;
-        if $c_ast.name {
-            $indy_meth := $c_ast.op eq 'chainstatic' ?? 'subcallstatic_noa' !! 'subcall_noa';
-            @argTypes  := [$TYPE_STR, 'I', $TYPE_TC, $TYPE_SMO, $TYPE_SMO];
-        }
-        else {
-            my $callres := $qastcomp.as_jast($c_ast[0], :want($RT_OBJ));
-            $calltmp    := $*TA.fresh_o();
-            $il.append($callres.jast);
-            $*STACK.obtain($il, $callres);
-            $il.append(JAST::Instruction.new( :op('astore'), $calltmp ));
-            $indy_meth := 'indcall_noa';
-            @argTypes  := ['I', $TYPE_TC, $TYPE_SMO, $TYPE_SMO, $TYPE_SMO];
-        }
+        # The link is a lang-call dispatch on the (decontainerized) callee,
+        # the same as MoarVM's chain emission.
+        my $callee_qast := $c_ast.name
+            ?? QAST::Op.new( :op('decont'),
+                 QAST::Var.new( :name($c_ast.name), :scope('lexical') ) )
+            !! QAST::Op.new( :op('decont'), $c_ast[0] );
+        my $callres := $qastcomp.as_jast($callee_qast, :want($RT_OBJ));
+        my $calltmp := $*TA.fresh_o();
+        $il.append($callres.jast);
+        $*STACK.obtain($il, $callres);
+        $il.append(JAST::Instruction.new( :op('astore'), $calltmp ));
 
         $*STACK.spill_to_locals($il);
-        my $cs_idx := $*CODEREFS.get_callsite_idx([$ARG_OBJ, $ARG_OBJ], []);
+        my $cs_idx := $*CODEREFS.get_callsite_idx([$ARG_OBJ, $ARG_OBJ, $ARG_OBJ], []);
 
-        $il.append(JAST::PushSVal.new( :value($c_ast.name) )) if $c_ast.name;
+        $il.append(JAST::PushSVal.new( :value('lang-call') ));
         $il.append(JAST::PushIndex.new( :value($cs_idx) ));
         $il.append($ALOAD_1);
-        $il.append(JAST::Instruction.new( :op('aload'), $calltmp )) if $calltmp;
+        $il.append(JAST::Instruction.new( :op('aload'), $calltmp ));
         $il.append(JAST::Instruction.new( :op('aload'), $atmp ));
         $il.append(JAST::Instruction.new( :op('aload'), $btmp ));
         $il.append(savesite(JAST::InvokeDynamic.new(
-            $indy_meth, 'V', @argTypes, 'org/raku/nqp/runtime/IndyBootstrap', $indy_meth,
+            'dispatch_noa', 'V', [$TYPE_STR, 'I', $TYPE_TC, $TYPE_SMO, $TYPE_SMO, $TYPE_SMO],
+            'org/raku/nqp/dispatch/DispatchBootstrap', 'dispatch_noa'
         )));
         $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
         $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
@@ -871,14 +871,19 @@ for <if unless with without> -> $op_name {
             my $cond_temp := $*TA.fresh_o();
             $il.append(JAST::Instruction.new( :op('astore'), $meth_temp));
             $il.append(JAST::Instruction.new( :op('astore'), $cond_temp));
-            my $cs_idx := $*CODEREFS.get_callsite_idx([$ARG_OBJ], []);
-            my @argTypes := ['I', $TYPE_TC, $TYPE_SMO, $TYPE_SMO];
+            # Through lang-call, not a raw invocation: the resolved method
+            # can be a multi's proto, whose {*} resumes the dispatch that
+            # invoked it.
+            my $cs_idx := $*CODEREFS.get_callsite_idx([$ARG_OBJ, $ARG_OBJ], []);
+            my @argTypes := [$TYPE_STR, 'I', $TYPE_TC, $TYPE_SMO, $TYPE_SMO];
+            $il.append(JAST::PushSVal.new( :value('lang-call') ));
             $il.append(JAST::PushIndex.new( :value($cs_idx) ));
             $il.append($ALOAD_1);
             $il.append(JAST::Instruction.new( :op('aload'), $meth_temp ));
             $il.append(JAST::Instruction.new( :op('aload'), $cond_temp ));
             $il.append(savesite(JAST::InvokeDynamic.new(
-                'indcall_noa', 'V', @argTypes, 'org/raku/nqp/runtime/IndyBootstrap', 'indcall_noa'
+                'dispatch_noa', 'V', @argTypes,
+                'org/raku/nqp/dispatch/DispatchBootstrap', 'dispatch_noa'
             )));
             $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
             $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
