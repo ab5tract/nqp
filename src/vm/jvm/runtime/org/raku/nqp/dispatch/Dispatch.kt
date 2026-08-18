@@ -95,8 +95,12 @@ object Dispatch {
             descriptor = descriptor.explodeFlattening(tc.curFrame!!, theArgs)
             theArgs = tc.flatArgs!!
         }
-        for (program in site.programs)
-            if (run(tc, program, descriptor, theArgs, site)) return
+        val programs = site.programs
+        if (programs.isNotEmpty()) {
+            val ctx = GuardCheckContext(tc, descriptor, theArgs)
+            for (program in programs)
+                if (run(tc, ctx, program, site)) return
+        }
         record(tc, tc.gc.dispatchers.find(tc, name), descriptor, theArgs, site)
     }
 
@@ -239,19 +243,41 @@ object Dispatch {
     /* ----- running an installed program ----- */
 
     /**
+     * The arguments of a dispatch, packaged so that a program's applicability
+     * can be checked before anything is allocated for actually running it. Only
+     * the guards recorded before any resumption level was entered are checked
+     * this way, and those cannot reach resumption state.
+     */
+    private class GuardCheckContext(
+        override val tc: ThreadContext,
+        override val descriptor: CallSiteDescriptor,
+        override val args: Array<Any?>,
+    ) : DispatchContext {
+        override fun resumeInitArg(level: Int, index: Int): DispatchValue =
+            throw ExceptionHandling.dieInternal(tc,
+                "Resumption state is not available while checking dispatch guards")
+
+        override fun resumeState(level: Int): SixModelObject? =
+            throw ExceptionHandling.dieInternal(tc,
+                "Resumption state is not available while checking dispatch guards")
+    }
+
+    /**
      * Tries to run a program: checks that it applies to these arguments and, if
      * it does, carries out its outcome. Returns false if a guard failed, in
-     * which case nothing has been done.
+     * which case nothing has been done. The dispatch record — needed for as
+     * long as the outcome runs, so that the dispatch can be resumed — is only
+     * made once the program's shape and guards have matched, so an attempt
+     * that fails allocates nothing.
      */
-    private fun run(tc: ThreadContext, program: DispatchProgram, descriptor: CallSiteDescriptor,
-                    args: Array<Any?>, site: DispatchCallSite?,
-                    bindFailureOf: DispatchRecord? = null): Boolean {
-        val record = DispatchRecord(tc, null, descriptor, args, tc.curFrame, site)
+    private fun run(tc: ThreadContext, ctx: GuardCheckContext, program: DispatchProgram,
+                    site: DispatchCallSite?, bindFailureOf: DispatchRecord? = null): Boolean {
+        if (!Captures.sameShape(program.descriptor, ctx.descriptor)) return false
+        if (!program.guardsMatch(ctx)) return false
+
+        val record = DispatchRecord(tc, null, ctx.descriptor, ctx.args, tc.curFrame, site)
         record.program = program
         record.endRecording()
-
-        if (!Captures.sameShape(program.descriptor, descriptor)) return false
-        if (!program.guardsMatch(record)) return false
         if (program.isResuming && !enterResumptions(tc, record, program, bindFailureOf))
             return false
 
@@ -287,7 +313,7 @@ object Dispatch {
                 if (!guard.check(record)) return false
             val newState = level.newState
             if (newState != null)
-                found.state.state = newState.evaluate(record).obj
+                found.state.state = newState.evaluateRaw(record) as SixModelObject?
             if (level.requireNoFurther && findResumption(tc, program.resumeKind, index + 1) != null)
                 return false
         }
@@ -306,7 +332,7 @@ object Dispatch {
                     outcome.syscall.call(tc, outcome.args.descriptor, args))
             }
             is Outcome.InvokeCode -> {
-                val callee = outcome.callee.evaluate(record).obj
+                val callee = outcome.callee.evaluateRaw(record) as SixModelObject?
                 val args = outcome.args.evaluate(record)
                 tc.pendingDispatch = record
                 try {
@@ -408,7 +434,8 @@ object Dispatch {
         val args = arrayOf<Any?>(flag)
         val cached = failed.program!!.bindFailureProgram
         if (cached != null &&
-                run(tc, cached, BindFailure.flagCallSite, args, null, failed))
+                run(tc, GuardCheckContext(tc, BindFailure.flagCallSite, args), cached,
+                    null, failed))
             return
         record(tc, null, BindFailure.flagCallSite, args, null, failed)
     }
