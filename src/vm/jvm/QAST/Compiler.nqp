@@ -265,6 +265,12 @@ class QAST::OperationsJAST {
         self.set_core_op_inlinability($op, $inlinable);
     }
 
+    # Is there a handler for this core op? HLL code asks through the
+    # backend's supports-op to decide between implementation strategies.
+    method core_op_supported($op) {
+        nqp::existskey(%core_ops, $op)
+    }
+
     # Adds a HLL op handler.
     method add_hll_op($hll, $op, $handler, :$inlinable = 1) {
         %hll_ops{$hll} := {} unless nqp::existskey(%hll_ops, $hll);
@@ -1515,6 +1521,54 @@ sub process_args_onto_stack($qastcomp, @children, $il, :$obj_first, :$inv_first,
     # Return callsite index (which may create it if needed).
     return [$*CODEREFS.get_callsite_idx(@callsite, @argnames), @arg_results, @arg_jtypes];
 }
+# A JVM method descriptor is capped at 255 parameter slots (longs and
+# doubles take two), so a callsite wider than that cannot be an
+# invokedynamic MethodType. Count the slots a dispatch would need; past the
+# limit the args are packed into an Object[] by emit_wide_dispatch instead.
+sub dispatch_arg_slots(@arg_results) {
+    my int $slots := 3;   # ThreadContext + dispatcher name + callsite index
+    for @arg_results {
+        my int $t := $_.type;
+        $slots := $slots + ($t == $RT_INT || $t == $RT_UINT || $t == $RT_NUM ?? 2 !! 1);
+    }
+    $slots
+}
+
+# The wide-callsite fallback: build the argument array directly, boxing
+# natives the way the invokedynamic path's asType adapter does, and dispatch
+# through a plain invokestatic with no per-instruction cache. The array is
+# filled back to front because the stack tracker releases results from its
+# tail; the args were already evaluated in order by process_args_onto_stack.
+sub emit_wide_dispatch($il, str $dispatcher, $cs_idx, @arg_results) {
+    my int $nargs := +@arg_results;
+    $il.append(JAST::PushSVal.new( :value($dispatcher) ));
+    $il.append(JAST::PushIndex.new( :value($cs_idx) ));
+    $il.append($ALOAD_1);
+    $il.append(JAST::PushIndex.new( :value($nargs) ));
+    $il.append(JAST::Instruction.new( :op('anewarray'), $TYPE_OBJ ));
+    my int $i := $nargs - 1;
+    while $i >= 0 {
+        my $res := @arg_results[$i];
+        $il.append($DUP);
+        $il.append(JAST::PushIndex.new( :value($i) ));
+        $*STACK.obtain($il, $res);
+        my int $type := $res.type;
+        if $type == $RT_INT || $type == $RT_UINT {
+            $il.append(JAST::Instruction.new( :op('invokestatic'),
+                $TYPE_LONG, 'valueOf', $TYPE_LONG, 'Long' ));
+        }
+        elsif $type == $RT_NUM {
+            $il.append(JAST::Instruction.new( :op('invokestatic'),
+                $TYPE_DOUBLE, 'valueOf', $TYPE_DOUBLE, 'Double' ));
+        }
+        $il.append($AASTORE);
+        $i := $i - 1;
+    }
+    $il.append(savesite(JAST::Instruction.new( :op('invokestatic'),
+        'Lorg/raku/nqp/dispatch/Dispatch;', 'dispatchWide', 'Void',
+        $TYPE_STR, 'Integer', $TYPE_TC, "[$TYPE_OBJ" )));
+}
+
 # Emit a dispatch on @args, the way the 'dispatch' op does: the dispatcher
 # name and callsite index ride along as extra arguments, using the fact that
 # the stack was spilled to sneak the ThreadContext in.
@@ -1523,6 +1577,11 @@ sub emit_dispatch($qastcomp, $node, str $dispatcher, @args, :$str_second) {
     my @argstuff := process_args_onto_stack($qastcomp, @args, $il, :$str_second);
     my $cs_idx := @argstuff[0];
     $*STACK.spill_to_locals($il);
+
+    if dispatch_arg_slots(@argstuff[1]) > 250 {
+        emit_wide_dispatch($il, $dispatcher, $cs_idx, @argstuff[1]);
+        return result_from_cf($il, rttype_from_typeobj($node.returns));
+    }
 
     nqp::unshift(@argstuff[2], 'I');
     nqp::unshift(@argstuff[2], $TYPE_STR);
@@ -1742,6 +1801,11 @@ sub add_dispatcher_op($qastcomp, $op, str $prefix) {
     my @argstuff := process_args_onto_stack($qastcomp, @args, $il);
     my $cs_idx := @argstuff[0];
     $*STACK.spill_to_locals($il);
+
+    if dispatch_arg_slots(@argstuff[1]) > 250 {
+        emit_wide_dispatch($il, $name_qast.value, $cs_idx, @argstuff[1]);
+        return result_from_cf($il, rttype_from_typeobj($op.returns));
+    }
 
     nqp::unshift(@argstuff[2], 'I');
     nqp::unshift(@argstuff[2], $TYPE_STR);
