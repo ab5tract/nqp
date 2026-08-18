@@ -305,9 +305,11 @@ object ExceptionHandling {
             if (name == null || name == "")
                 name = "<anon>"
 
+            val file = e.mappedFile
+            val line = e.mappedLine
             result.add("  in " + name +
-                (if (e.file == null) ""
-                 else " (" + e.file + (if (e.line >= 0) ":" + e.line else "") + ")"))
+                (if (file == null) ""
+                 else " (" + file + (if (line >= 0) ":" + line else "") + ")"))
         }
         return result
     }
@@ -316,7 +318,22 @@ object ExceptionHandling {
         @JvmField val frame: CallFrame,
         @JvmField val file: String?,
         @JvmField val line: Int,
-    )
+    ) {
+        /* The declared source file of the frame's code, when the compiler
+         * recorded one; #line-directive-mapped (SETTING::src/... for
+         * setting code). */
+        val mappedFile: String?
+            get() = frame.codeRef.staticInfo.sourceFile ?: file
+        /* The line in mappedFile's numbering: the raw LineNumberTable line
+         * shifted by the block's raw-to-mapped offset. */
+        val mappedLine: Int
+            get() {
+                val si = frame.codeRef.staticInfo
+                return if (si.sourceFile != null && line >= 0)
+                    line - si.sourceLineDelta
+                else line
+            }
+    }
 
     @JvmStatic
     fun backtrace(ex: VMExceptionInstance): List<TraceElement> {

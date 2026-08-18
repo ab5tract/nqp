@@ -20,4 +20,5 @@ annotation class CodeRefAnnotation(
     val isThunk: Boolean = false,
     val sourceFile: String = "",
     val sourceLine: Int = -1,
+    val sourceLineDelta: Int = 0,
 )
