@@ -1850,6 +1850,23 @@ object Ops {
         }
     }
     @JvmStatic
+    fun posparam_u(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, idx: Int): Long {
+        when (cs.argFlags[idx]) {
+        CallSiteDescriptor.ARG_INT ->
+            return args[idx] as Long
+        CallSiteDescriptor.ARG_UINT ->
+            return args[idx] as Long
+        CallSiteDescriptor.ARG_NUM ->
+            throw ExceptionHandling.dieInternal(cf.tc, "Expected native uint argument, but got num")
+        CallSiteDescriptor.ARG_STR ->
+            throw ExceptionHandling.dieInternal(cf.tc, "Expected native uint argument, but got str")
+        CallSiteDescriptor.ARG_OBJ ->
+            return decont(args[idx] as SixModelObject?, cf.tc)!!.get_int(cf.tc)
+        else ->
+            throw ExceptionHandling.dieInternal(cf.tc, "Error in argument processing")
+        }
+    }
+    @JvmStatic
     fun posparam_n(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, idx: Int): Double {
         when (cs.argFlags[idx]) {
         CallSiteDescriptor.ARG_NUM ->
@@ -1898,6 +1915,17 @@ object Ops {
     }
     @JvmStatic
     fun posparam_opt_i(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, idx: Int): Long {
+        if (idx < cs.numPositionals) {
+            cf.tc.lastParameterExisted = 1
+            return posparam_i(cf, cs, args, idx)
+        }
+        else {
+            cf.tc.lastParameterExisted = 0
+            return 0
+        }
+    }
+    @JvmStatic
+    fun posparam_opt_u(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, idx: Int): Long {
         if (idx < cs.numPositionals) {
             cf.tc.lastParameterExisted = 1
             return posparam_i(cf, cs, args, idx)
@@ -2007,6 +2035,30 @@ object Ops {
             throw ExceptionHandling.dieInternal(cf.tc, "Required named argument '" + name + "' not passed")
     }
     @JvmStatic
+    fun namedparam_u(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, name: String): Long {
+        if (cf.workingNameMap == null)
+            cf.workingNameMap = Object2IntOpenHashMap<String>(cs.nameMap)
+        if (cf.workingNameMap!!.containsKey(name)) {
+            val lookup = cf.workingNameMap!!.removeInt(name)
+            when ((lookup and 7).toByte()) {
+            CallSiteDescriptor.ARG_INT ->
+                return args[lookup shr 6] as Long
+            CallSiteDescriptor.ARG_UINT ->
+                return args[lookup shr 6] as Long
+            CallSiteDescriptor.ARG_NUM ->
+                throw ExceptionHandling.dieInternal(cf.tc, "Expected native int argument, but got num")
+            CallSiteDescriptor.ARG_STR ->
+                throw ExceptionHandling.dieInternal(cf.tc, "Expected native int argument, but got str")
+            CallSiteDescriptor.ARG_OBJ ->
+                return decont(args[lookup shr 6] as SixModelObject?, cf.tc)!!.get_int(cf.tc)
+            else ->
+                throw ExceptionHandling.dieInternal(cf.tc, "Error in argument processing")
+            }
+        }
+        else
+            throw ExceptionHandling.dieInternal(cf.tc, "Required named argument '" + name + "' not passed")
+    }
+    @JvmStatic
     fun namedparam_n(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, name: String): Double {
         if (cf.workingNameMap == null)
             cf.workingNameMap = Object2IntOpenHashMap<String>(cs.nameMap)
@@ -2085,6 +2137,33 @@ object Ops {
     }
     @JvmStatic
     fun namedparam_opt_i(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, name: String): Long {
+        if (cf.workingNameMap == null)
+            cf.workingNameMap = Object2IntOpenHashMap<String>(cs.nameMap)
+        if (cf.workingNameMap!!.containsKey(name)) {
+            val lookup = cf.workingNameMap!!.removeInt(name)
+            cf.tc.lastParameterExisted = 1
+            when ((lookup and 7).toByte()) {
+            CallSiteDescriptor.ARG_INT ->
+                return args[lookup shr 6] as Long
+            CallSiteDescriptor.ARG_UINT ->
+                return args[lookup shr 6] as Long
+            CallSiteDescriptor.ARG_NUM ->
+                throw ExceptionHandling.dieInternal(cf.tc, "Expected native int argument, but got num")
+            CallSiteDescriptor.ARG_STR ->
+                throw ExceptionHandling.dieInternal(cf.tc, "Expected native int argument, but got str")
+            CallSiteDescriptor.ARG_OBJ ->
+                return decont(args[lookup shr 6] as SixModelObject?, cf.tc)!!.get_int(cf.tc)
+            else ->
+                throw ExceptionHandling.dieInternal(cf.tc, "Error in argument processing")
+            }
+        }
+        else {
+            cf.tc.lastParameterExisted = 0
+            return 0
+        }
+    }
+    @JvmStatic
+    fun namedparam_opt_u(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, name: String): Long {
         if (cf.workingNameMap == null)
             cf.workingNameMap = Object2IntOpenHashMap<String>(cs.nameMap)
         if (cf.workingNameMap!!.containsKey(name)) {
@@ -7209,7 +7288,8 @@ object Ops {
             ExceptionHandling.handlerDynamic(tc, obj.category, false, obj)
         }
         else {
-            throw ExceptionHandling.dieInternal(tc, "rethrow needs an object with VMException representation")
+            throw ExceptionHandling.dieInternal(tc, "rethrow needs an object with VMException representation, got " +
+                (if (obj == null) "null" else typeName(obj, tc) + " (repr " + reprname(obj, tc) + ")"))
         }
     }
     private val theResumer = ResumeException()
