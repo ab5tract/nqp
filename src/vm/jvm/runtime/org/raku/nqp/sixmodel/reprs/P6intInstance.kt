@@ -7,7 +7,7 @@ class P6intInstance : SixModelObject() {
     @JvmField var value = 0L
 
     override fun set_int(tc: ThreadContext, value: Long) {
-        this.value = value
+        this.value = P6int.sizedValue(st.REPRData as? org.raku.nqp.sixmodel.StorageSpec, value)
     }
 
     override fun get_int(tc: ThreadContext): Long = value

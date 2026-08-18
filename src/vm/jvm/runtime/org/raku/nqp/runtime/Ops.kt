@@ -105,6 +105,7 @@ import org.raku.nqp.sixmodel.reprs.MultiCacheInstance
 import org.raku.nqp.sixmodel.reprs.NFA
 import org.raku.nqp.sixmodel.reprs.NFAInstance
 import org.raku.nqp.sixmodel.reprs.NFAStateInfo
+import org.raku.nqp.sixmodel.reprs.NativeRefInstance
 import org.raku.nqp.sixmodel.reprs.NativeRefInstanceAttribute
 import org.raku.nqp.sixmodel.reprs.NativeRefInstanceIntLex
 import org.raku.nqp.sixmodel.reprs.NativeRefInstanceMultidim
@@ -1497,6 +1498,21 @@ object Ops {
         ref.idx = idx
         return ref
     }
+    /** Notes the declared width of the lexical a fresh native reference
+     * points at, from the compiler's knowledge: the long slots themselves
+     * are unsized, so a sized store could not truncate without this. The low
+     * byte of the spec is the bit width, +256 marks unsigned, 32 alone marks
+     * num32; 0 never gets here. */
+    @JvmStatic
+    fun sizedref(ref: SixModelObject?, spec: Long, tc: ThreadContext): SixModelObject? {
+        when (ref) {
+            is NativeRefInstanceIntLex -> ref.sizeSpec = spec.toInt()
+            is NativeRefInstanceNumLex -> ref.sizeSpec = spec.toInt()
+            else -> { }
+        }
+        return ref
+    }
+
     @JvmStatic
     fun getlexref_i(name: String, tc: ThreadContext): SixModelObject {
         var cf = tc.curFrame
@@ -6542,6 +6558,19 @@ object Ops {
             throw ExceptionHandling.dieInternal(tc, "getcodename can only be used with a CodeRef")
     }
     @JvmStatic
+    fun getcodelocation(code: SixModelObject?, tc: ThreadContext): SixModelObject {
+        if (code !is CodeRef)
+            throw ExceptionHandling.dieInternal(tc, "getcodelocation can only be used with a CodeRef")
+        val hllConfig = tc.frame.codeRef.staticInfo.compUnit.hllConfig
+        val res = hllConfig.hashType!!.st.REPR.allocate(tc, hllConfig.hashType!!.st)
+        val si = code.staticInfo
+        res.bind_key_boxed(tc, "file",
+            box_s(si.sourceFile ?: "unknown", hllConfig.strBoxType, tc))
+        res.bind_key_boxed(tc, "line",
+            box_i(si.sourceLine.toLong(), hllConfig.intBoxType, tc))
+        return res
+    }
+    @JvmStatic
     fun setcodename(code: SixModelObject?, name: String?, tc: ThreadContext): SixModelObject? {
         if (code is CodeRef) {
             code.name = name
@@ -7034,6 +7063,55 @@ object Ops {
             throw ExceptionHandling.dieInternal(tc,
                 "Cannot atomic store to an immutable value")
         }
+    }
+    /* The integer atomics work on a native-int reference (lexical, attribute
+     * or positional). The reference kinds store into plain long slots that a
+     * VarHandle cannot uniformly cover, so a shared lock provides the
+     * atomicity; only code actually using the atomic ops contends on it. */
+    private val intAtomicsLock = Object()
+    private fun nativeIntRef(cont: SixModelObject?, tc: ThreadContext): NativeRefInstance =
+        cont as? NativeRefInstance ?: throw ExceptionHandling.dieInternal(tc,
+            "Can only do an atomic integer operation on a native integer reference")
+    @JvmStatic
+    fun atomicload_i(cont: SixModelObject?, tc: ThreadContext): Long {
+        val ref = nativeIntRef(cont, tc)
+        synchronized(intAtomicsLock) { return ref.fetch_i(tc) }
+    }
+    @JvmStatic
+    fun atomicstore_i(cont: SixModelObject?, value: Long, tc: ThreadContext): Long {
+        val ref = nativeIntRef(cont, tc)
+        synchronized(intAtomicsLock) { ref.store_i(tc, value) }
+        return value
+    }
+    @JvmStatic
+    fun atomicadd_i(cont: SixModelObject?, addend: Long, tc: ThreadContext): Long {
+        val ref = nativeIntRef(cont, tc)
+        synchronized(intAtomicsLock) {
+            val orig = ref.fetch_i(tc)
+            ref.store_i(tc, orig + addend)
+            return orig
+        }
+    }
+    @JvmStatic
+    fun atomicinc_i(cont: SixModelObject?, tc: ThreadContext): Long =
+        atomicadd_i(cont, 1L, tc)
+    @JvmStatic
+    fun atomicdec_i(cont: SixModelObject?, tc: ThreadContext): Long =
+        atomicadd_i(cont, -1L, tc)
+    @JvmStatic
+    fun cas_i(cont: SixModelObject?, expected: Long, value: Long, tc: ThreadContext): Long {
+        val ref = nativeIntRef(cont, tc)
+        synchronized(intAtomicsLock) {
+            val seen = ref.fetch_i(tc)
+            if (seen == expected)
+                ref.store_i(tc, value)
+            return seen
+        }
+    }
+    @JvmStatic
+    fun barrierfull(tc: ThreadContext): Long {
+        java.lang.invoke.VarHandle.fullFence()
+        return 0L
     }
     @JvmStatic
     fun casattr(obj: SixModelObject?, classHandle: SixModelObject?,
