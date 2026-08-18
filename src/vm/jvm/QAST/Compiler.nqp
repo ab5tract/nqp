@@ -466,6 +466,51 @@ class QAST::OperationsJAST {
     }
 }
 
+# The size spec Ops.sizedref wants for a reference to a sized native
+# lexical: low byte = bit width, +256 = unsigned, 32 alone = num32;
+# 0 = full width, nothing to note.
+sub sized_native_ref_spec($returns) {
+    my int $spec := nqp::isnull($returns) ?? 0 !! nqp::objprimspec($returns);
+    if $spec == 1 || $spec == 10 {
+        my int $bits := nqp::objprimbits($returns);
+        if $bits > 0 && $bits < 64 {
+            return $spec == 10 ?? 256 + $bits !! $bits;
+        }
+    }
+    elsif $spec == 2 {
+        return 32 if nqp::objprimbits($returns) == 32;
+    }
+    0
+}
+
+# A store to a sized native variable truncates the value to the declared
+# width, the way MoarVM's sized registers do: mask for unsigned, shift out
+# and arithmetically back for signed, and a round-trip through float for
+# num32. The value to store is on the stack; full-width types emit nothing.
+sub emit_sized_native_trunc($il, $returns, int $rt) {
+    my int $spec := nqp::isnull($returns) ?? 0 !! nqp::objprimspec($returns);
+    if ($rt == $RT_INT || $rt == $RT_UINT) && ($spec == 1 || $spec == 10) {
+        my int $bits := nqp::objprimbits($returns);
+        if $bits > 0 && $bits < 64 {
+            if $spec == 10 {
+                $il.append(JAST::PushIVal.new(
+                    :value(nqp::sub_i(nqp::bitshiftl_i(1, $bits), 1)) ));
+                $il.append(JAST::Instruction.new( :op('land') ));
+            }
+            else {
+                $il.append(JAST::PushIndex.new( :value(64 - $bits) ));
+                $il.append(JAST::Instruction.new( :op('lshl') ));
+                $il.append(JAST::PushIndex.new( :value(64 - $bits) ));
+                $il.append(JAST::Instruction.new( :op('lshr') ));
+            }
+        }
+    }
+    elsif $rt == $RT_NUM && $spec == 2 && nqp::objprimbits($returns) == 32 {
+        $il.append(JAST::Instruction.new( :op('d2f') ));
+        $il.append(JAST::Instruction.new( :op('f2d') ));
+    }
+}
+
 sub savesite($il) {
     my $index   := $*BLOCK.alloc_save_site;
     my $reenter := JAST::Label.new( :name( "reenter_"~$index ) );
@@ -3570,6 +3615,8 @@ class QAST::CompilerJAST {
         has @!locals;           # QAST::Var nodes of declared locals
         has %!local_types;      # Mapping of local registers to type names
         has %!lexical_types;    # Mapping of lexical names to types
+        has %!local_returns;    # Mapping of local names to their type objects
+        has %!lexical_returns;  # Mapping of lexical names to their type objects
         has %!lexicalref_types; # Mapping of lexical names to types
         has %!lexical_idxs;     # Lexical indexes (but have to know type too)
         has @!lexical_names;    # List by type of lexial name lists
@@ -3589,6 +3636,8 @@ class QAST::CompilerJAST {
             @!locals := nqp::list();
             %!local_types := nqp::hash();
             %!lexical_types := nqp::hash();
+            %!local_returns := nqp::hash();
+            %!lexical_returns := nqp::hash();
             %!lexicalref_types := nqp::hash();
             %!lexical_idxs := nqp::hash();
             %!local2temp := nqp::hash();
@@ -3657,6 +3706,7 @@ class QAST::CompilerJAST {
             if nqp::existskey(%!lexical_types, $name) || nqp::existskey(%!lexicalref_types, $name) {
                 nqp::die("Lexical '$name' already declared");
             }
+            %!lexical_returns{$name} := $var.returns;
             %!lexical_types{$name} := $type;
             $type := 1 if $type == 10; # Work around for missing unsigned lexical type category
             %!lexical_idxs{$name} := nqp::elems(@!lexical_names[$type]);
@@ -3679,6 +3729,7 @@ class QAST::CompilerJAST {
             if nqp::existskey(%!local_types, $name) {
                 nqp::die("Local '$name' already declared");
             }
+            %!local_returns{$name} := $var.returns;
             %!local_types{$name} := rttype_from_typeobj($var.returns);
         }
 
@@ -3700,6 +3751,8 @@ class QAST::CompilerJAST {
             $tempify ?? $tempify[0] !! [ $name, %!local_types{$name} ]
         }
         method lexical_type($name) { %!lexical_types{$name} }
+        method lexical_returns($name) { %!lexical_returns{$name} }
+        method local_returns($name) { %!local_returns{$name} }
         method lexicalref_type($name) { %!lexicalref_types{$name} }
         method lexical_idx($name) { %!lexical_idxs{$name} }
         method lexical_names_by_type() { @!lexical_names }
@@ -5147,6 +5200,8 @@ class QAST::CompilerJAST {
                     my $valres := self.as_jast_clear_bindval($*BINDVAL, :want($type));
                     $il.append($valres.jast);
                     $*STACK.obtain($il, $valres);
+                    emit_sized_native_trunc($il,
+                        nqp::ifnull($*BLOCK.local_returns($name), nqp::null()), $type);
                     $il.append(dup_ins($type));
                     $il.append(JAST::Instruction.new( :op(store_ins($type)), $info[0] ));
                 }
@@ -5252,6 +5307,9 @@ class QAST::CompilerJAST {
                 my $valres := self.as_jast_clear_bindval($*BINDVAL, :want($type));
                 $il.append($valres.jast);
                 $*STACK.obtain($il, $valres);
+                my $decl-block := $local ?? $*BLOCK !! $declarer;
+                emit_sized_native_trunc($il,
+                    nqp::ifnull($decl-block.lexical_returns($name), nqp::null()), $type);
             }
 
             # If it's declared in the local scope...
@@ -5402,6 +5460,17 @@ class QAST::CompilerJAST {
                     $il.append(JAST::PushIndex.new( :value($scopes) ));
                     $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
                         "getlexref_{$c}_si", $TYPE_SMO, $TYPE_TC, 'Integer', 'Integer' ));
+                }
+                my $decl-block := $local ?? $*BLOCK !! $declarer;
+                my int $szspec := sized_native_ref_spec($decl-block.lexical_returns($name));
+                if $szspec {
+                    # The long slots carry no width, so a reference to a
+                    # sized lexical is told the declared one; its stores
+                    # then truncate the way MoarVM's sized registers do.
+                    $il.append(JAST::PushIVal.new( :value($szspec) ));
+                    $il.append($ALOAD_1);
+                    $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
+                        'sizedref', $TYPE_SMO, $TYPE_SMO, 'Long', $TYPE_TC ));
                 }
                 return result($il, $RT_OBJ);
             }
