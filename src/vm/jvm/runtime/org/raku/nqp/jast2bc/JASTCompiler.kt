@@ -300,6 +300,10 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
             if (method.hasExitHandler) av.visit("hasExitHandler", method.hasExitHandler)
             if (method.argsExpectation > 0) av.visit("argsExpectation", method.argsExpectation)
             if (method.isThunk) av.visit("isThunk", method.isThunk)
+            method.crFile?.let {
+                av.visit("sourceFile", it)
+                av.visit("sourceLine", method.crLine)
+            }
             av.visitEnd()
         }
 

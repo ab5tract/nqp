@@ -5,6 +5,10 @@ import org.raku.nqp.runtime.ThreadContext
 
 /* Number native lexical reference. */
 class NativeRefInstanceNumLex : NativeRefInstance() {
+    /* 32 when the referenced lexical is a num32, else 0; see the IntLex
+     * counterpart. A num32 store rounds to float precision. */
+    @JvmField var sizeSpec = 0
+
     @JvmField var lexicals: DoubleArray? = null
     @JvmField var idx = 0
 
@@ -28,7 +32,7 @@ class NativeRefInstanceNumLex : NativeRefInstance() {
     }
 
     override fun store_n(tc: ThreadContext, value: Double) {
-        lexicals!![idx] = value
+        lexicals!![idx] = if (sizeSpec == 32) value.toFloat().toDouble() else value
     }
 
     override fun store_s(tc: ThreadContext, value: String?) {

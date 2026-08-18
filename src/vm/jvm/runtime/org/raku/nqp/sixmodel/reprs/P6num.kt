@@ -72,6 +72,12 @@ class P6num : REPR() {
         mv.visitVarInsn(Opcodes.ALOAD, 0)
         mv.visitVarInsn(Opcodes.ALOAD, 1)
         mv.visitFieldInsn(Opcodes.GETFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeN", "D")
+        /* A num32 stores at float precision, as MoarVM's num32 registers do. */
+        val bits = (st.REPRData as? StorageSpec)?.bits?.toInt() ?: 64
+        if (bits == 32) {
+            mv.visitInsn(Opcodes.D2F)
+            mv.visitInsn(Opcodes.F2D)
+        }
         mv.visitFieldInsn(Opcodes.PUTFIELD, className, prefix, "D")
         mv.visitInsn(Opcodes.RETURN)
     }
@@ -112,8 +118,14 @@ class P6num : REPR() {
     }
 
     // We don't depend on any details of the STable, so no description is needed
-    override fun inline_description(tc: ThreadContext, st: STable, out: StringBuilder): Boolean = true
-    override fun box_description(tc: ThreadContext, st: STable, out: StringBuilder): Boolean = true
+    /* A num32 rounds to float precision on store, so the width is part of
+     * the storage-class cache signature. */
+    override fun inline_description(tc: ThreadContext, st: STable, out: StringBuilder): Boolean {
+        out.append((st.REPRData as? StorageSpec)?.bits ?: 64)
+        return true
+    }
+    override fun box_description(tc: ThreadContext, st: STable, out: StringBuilder): Boolean =
+        inline_description(tc, st, out)
 
     override fun deserialize_stub(tc: ThreadContext, st: STable): SixModelObject {
         val obj = P6numInstance()
