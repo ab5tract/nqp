@@ -94,7 +94,11 @@ class DispatchRecord(
     var resumeKind = ResumeKind.NONE
         private set
 
-    /* ----- recording state ----- */
+    /* ----- recording state -----
+     *
+     * A record made to replay an already-compiled program never touches any of
+     * this, and one is made per dispatch, so the containers are only created
+     * once a recording actually needs them. */
 
     /** The dispatcher whose callback is currently running. */
     var currentDispatcher: Dispatcher? = initialDispatcher
@@ -106,16 +110,43 @@ class DispatchRecord(
     var outcome: RecordedOutcome? = null
 
     /** Every capture we handed out, and how to rebuild it. */
-    private val captures = IdentityHashMap<SixModelObject, CaptureShape>()
+    private var captures: IdentityHashMap<SixModelObject, CaptureShape>? = null
+
+    private fun capturesMap(): IdentityHashMap<SixModelObject, CaptureShape> {
+        var map = captures
+        if (map == null) {
+            map = IdentityHashMap()
+            captures = map
+        }
+        return map
+    }
 
     /** The tracked value for each value source we were asked about. */
-    private val tracked = HashMap<ValueSource, TrackedInstance>()
+    private var tracked: HashMap<ValueSource, TrackedInstance>? = null
+
+    private fun trackedMap(): HashMap<ValueSource, TrackedInstance> {
+        var map = tracked
+        if (map == null) {
+            map = HashMap()
+            tracked = map
+        }
+        return map
+    }
 
     /** The properties each value was relied upon to have, in the order first tracked. */
-    private val guardSets = LinkedHashMap<ValueSource, ValueGuards>()
+    private var guardSets: LinkedHashMap<ValueSource, ValueGuards>? = null
+
+    private fun guardSetsMap(): LinkedHashMap<ValueSource, ValueGuards> {
+        var map = guardSets
+        if (map == null) {
+            map = LinkedHashMap()
+            guardSets = map
+        }
+        return map
+    }
 
     /** Resume init arguments saved by dispatchers that want to be resumable. */
-    private val resumeInits = ArrayList<ResumeInit>()
+    private var resumeInits: ArrayList<ResumeInit>? = null
 
     /**
      * Arguments a dispatcher saved for its own future resumption, noting which
@@ -139,7 +170,7 @@ class DispatchRecord(
      */
     val initialCapture: CallCaptureInstance by lazy(LazyThreadSafetyMode.NONE) {
         val capture = Captures.create(tc, descriptor, args)
-        captures.put(capture, CaptureShape.ofArgs(descriptor))
+        capturesMap().put(capture, CaptureShape.ofArgs(descriptor))
         capture
     }
 
@@ -164,6 +195,8 @@ class DispatchRecord(
             state.initArgs[index])
     }
 
+    override fun resumeInitArgRaw(level: Int, index: Int): Any? = levels[level].initArgs[index]
+
     override fun resumeState(level: Int): SixModelObject? = levels[level].found.state.state
 
     /** The state cells for the resumptions of our program, made on first demand. */
@@ -182,28 +215,28 @@ class DispatchRecord(
 
     /** The shape of a capture we handed out; dies if it is not one of ours. */
     fun shapeOf(capture: SixModelObject?): CaptureShape =
-        captures.get(capture)
+        captures?.get(capture)
             ?: throw ExceptionHandling.dieInternal(tc,
                 "Dispatch operation received a capture that is not part of this dispatch")
 
     /** Notes a derived capture and builds the matching capture object. */
     fun derive(shape: CaptureShape): CallCaptureInstance {
         val capture = Captures.create(tc, shape.descriptor, shape.evaluate(this))
-        captures.put(capture, shape)
+        capturesMap().put(capture, shape)
         return capture
     }
 
     /** Registers a capture whose shape we already know (a resume init state). */
     fun noteCapture(capture: CallCaptureInstance, shape: CaptureShape) {
-        captures.put(capture, shape)
+        capturesMap().put(capture, shape)
     }
 
     /* ----- tracking and guarding ----- */
 
     /** The tracked value for a source, creating it the first time it is asked for. */
     fun trackedFor(source: ValueSource, value: DispatchValue): TrackedInstance =
-        tracked.getOrPut(source) {
-            guardSets.getOrPut(source) { ValueGuards(levels.size - 1) }
+        trackedMap().getOrPut(source) {
+            guardSetsMap().getOrPut(source) { ValueGuards(levels.size - 1) }
             TrackedInstance.create(tc, source, value)
         }
 
@@ -213,7 +246,7 @@ class DispatchRecord(
             throw ExceptionHandling.dieInternal(tc,
                 "Dispatch operation expected a tracked value")
         val source = trackedValue.source
-        if (source == null || tracked.get(source) !== trackedValue)
+        if (source == null || tracked?.get(source) !== trackedValue)
             throw ExceptionHandling.dieInternal(tc,
                 "Dispatch operation received a tracked value from another dispatch")
         return source
@@ -301,7 +334,7 @@ class DispatchRecord(
     }
 
     private fun guardsFor(source: ValueSource): ValueGuards =
-        guardSets.get(source)
+        guardSets?.get(source)
             ?: throw ExceptionHandling.dieInternal(tc, "Guarding an untracked value")
 
     fun guardType(source: ValueSource) { guardsFor(source).type = true }
@@ -345,11 +378,16 @@ class DispatchRecord(
             throw ExceptionHandling.dieInternal(tc,
                 "Can only use dispatcher-set-resume-init-args in a resumable dispatcher")
         shapeOf(capture)
-        for (init in resumeInits)
+        var inits = resumeInits
+        if (inits == null) {
+            inits = ArrayList()
+            resumeInits = inits
+        }
+        for (init in inits)
             if (init.dispatcher === currentDispatcher)
                 throw ExceptionHandling.dieInternal(tc,
                     "Already set resume init args for this dispatcher")
-        resumeInits.add(ResumeInit(currentDispatcher!!, capture!!, levels.size - 1))
+        inits.add(ResumeInit(currentDispatcher!!, capture!!, levels.size - 1))
     }
 
     /* ----- resumption ----- */
@@ -432,8 +470,10 @@ class DispatchRecord(
          * once a run has that level in hand, so they travel with it. */
         fun guardsAtLevel(level: Int): List<Guard> {
             val out = ArrayList<Guard>()
-            for ((source, guards) in guardSets)
-                if (guards.level == level) emitGuards(source, guards, out)
+            val sets = guardSets
+            if (sets != null)
+                for ((source, guards) in sets)
+                    if (guards.level == level) emitGuards(source, guards, out)
             return out
         }
 
@@ -441,9 +481,11 @@ class DispatchRecord(
          * order the dispatchers registered them in, grouped by the resumption
          * level that was current at the time. */
         val resumptions = ArrayList<ResumptionSpec>()
-        for (level in -1 until levels.size)
-            for (init in resumeInits.filter { it.level == level }.asReversed())
-                resumptions.add(ResumptionSpec(init.dispatcher, shapeOf(init.capture)))
+        val inits = resumeInits
+        if (inits != null)
+            for (level in -1 until levels.size)
+                for (init in inits.filter { it.level == level }.asReversed())
+                    resumptions.add(ResumptionSpec(init.dispatcher, shapeOf(init.capture)))
 
         val resumeLevels = levels.mapIndexed { index, level ->
             ResumptionLevel(level.dispatcher, level.initDescriptor, guardsAtLevel(index),
@@ -455,7 +497,7 @@ class DispatchRecord(
     }
 
     private fun emitGuards(source: ValueSource, guards: ValueGuards, into: MutableList<Guard>) {
-        val value = tracked.get(source)!!.dispatchValue
+        val value = tracked!!.get(source)!!.dispatchValue
         if (guards.literal) {
             /* A literal guard says everything a type or concreteness guard
              * would have said. */
