@@ -7572,9 +7572,14 @@ object Ops {
 
         /* Go by what role the object plays. */
         when (obj!!.st.hllRole.toInt()) {
+            /* For the boxed-native roles, a type object cannot be unboxed;
+             * MoarVM's MVM_hll_map answers with the target language's foreign
+             * type itself there, so mirror that. */
             HLLConfig.ROLE_INT -> {
                 if (isnull(wanted.foreignTypeInt) == 0L) {
-                    return box_i(obj.get_int(tc), wanted.foreignTypeInt, tc)
+                    return if (isconcrete_nd(obj, tc) == 1L)
+                        box_i(obj.get_int(tc), wanted.foreignTypeInt, tc)
+                    else wanted.foreignTypeInt
                 }
                 else if (isnull(wanted.foreignTransformInt) == 0L) {
                     throw RuntimeException("foreign_transform_int NYI")
@@ -7585,7 +7590,9 @@ object Ops {
             }
             HLLConfig.ROLE_NUM -> {
                 if (isnull(wanted.foreignTypeNum) == 0L) {
-                    return box_n(obj.get_num(tc), wanted.foreignTypeNum, tc)
+                    return if (isconcrete_nd(obj, tc) == 1L)
+                        box_n(obj.get_num(tc), wanted.foreignTypeNum, tc)
+                    else wanted.foreignTypeNum
                 }
                 else if (isnull(wanted.foreignTransformNum) == 0L) {
                     throw RuntimeException("foreign_transform_num NYI")
@@ -7596,7 +7603,9 @@ object Ops {
             }
             HLLConfig.ROLE_STR -> {
                 if (isnull(wanted.foreignTypeStr) == 0L) {
-                    return box_s(obj.get_str(tc), wanted.foreignTypeStr, tc)
+                    return if (isconcrete_nd(obj, tc) == 1L)
+                        box_s(obj.get_str(tc), wanted.foreignTypeStr, tc)
+                    else wanted.foreignTypeStr
                 }
                 else if (isnull(wanted.foreignTransformStr) == 0L) {
                     throw RuntimeException("foreign_transform_str NYI")
