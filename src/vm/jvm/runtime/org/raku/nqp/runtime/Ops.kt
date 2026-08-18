@@ -2509,6 +2509,55 @@ object Ops {
     @JvmField val emptyCallSite = CallSiteDescriptor(ByteArray(0), null)
     @JvmField val emptyArgList = arrayOfNulls<Any>(0)
     @JvmField val invocantCallSite = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null)
+    @JvmField val methodWithInvocantCallSite = CallSiteDescriptor(
+        byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_OBJ), null)
+
+    /* Invokes a method resolved by a runtime helper on the given invocant,
+     * going through the dispatcher, the way MoarVM's boolification delegates
+     * to lang-call. A direct invocation would run a multi's proto without
+     * the dispatch its resumption resumes. When the method's language has no
+     * call dispatcher registered (the stage0 bootstrap), invoke directly:
+     * such a world has no dispatch-dependent protos either. The callsite is
+     * cached per method, so this stays a replay rather than recording a
+     * dispatch program on every boolification or stringification. */
+    private val helperDispatchSites =
+        java.util.concurrent.ConcurrentHashMap<SixModelObject, org.raku.nqp.dispatch.DispatchCallSite>()
+    private val helperDispatchSiteType =
+        java.lang.invoke.MethodType.methodType(Void.TYPE)
+
+    private fun invokeMethodViaDispatch(tc: ThreadContext, method: SixModelObject?,
+                                        invocant: SixModelObject?) {
+        invokeMethodViaDispatch(tc, method, invocantCallSite, arrayOf<Any?>(invocant))
+    }
+
+    /* As above, for a method with an arbitrary callsite (invocant first, the
+     * method itself not included). The runtime binder uses this for the
+     * ACCEPTS of a constraint check: raw invocation of a resolved method
+     * that turns out to be an onlystar proto would make its {*} resume
+     * whatever unrelated dispatch encloses the call. */
+    @JvmStatic
+    fun invokeMethodViaDispatch(tc: ThreadContext, method: SixModelObject?,
+                                csd: CallSiteDescriptor, args: Array<Any?>) {
+        val routable = method is CodeRef ||
+            (method != null && method.stInitialized &&
+                method.st.hllOwner?.callDispatcher != null)
+        if (!routable) {
+            invokeDirect(tc, method, csd, args)
+            return
+        }
+        val site = helperDispatchSites.computeIfAbsent(method!!) {
+            org.raku.nqp.dispatch.DispatchCallSite(helperDispatchSiteType)
+        }
+        val flags = ByteArray(csd.argFlags.size + 1)
+        flags[0] = CallSiteDescriptor.ARG_OBJ
+        csd.argFlags.copyInto(flags, 1)
+        val fullCsd = CallSiteDescriptor(flags, csd.names)
+        val fullArgs = arrayOfNulls<Any>(args.size + 1)
+        fullArgs[0] = method
+        args.copyInto(fullArgs, 1)
+        org.raku.nqp.dispatch.Dispatch.dispatchWithDescriptor(site, "lang-call",
+            fullCsd, tc, fullArgs)
+    }
     @JvmField val storeCallSite = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_OBJ), null)
     @JvmField val storeCallSiteI = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_INT), null)
     @JvmField val storeCallSiteN = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_NUM), null)
@@ -2902,6 +2951,17 @@ object Ops {
     fun bindcomplete(tc: ThreadContext): SixModelObject? {
         BindFailure.complete(tc)
         return null
+    }
+
+    /* Will a bind failure in the current frame become a resumption of the
+     * dispatch that invoked it? The same answer as the
+     * bind-will-resume-on-failure syscall, callable without a dispatch
+     * instruction: this is asked in every full-binder frame's prologue, and
+     * an invokedynamic per prologue eats into the per-class indy budget. */
+    @JvmStatic
+    fun bindWillResumeOnFailure(tc: ThreadContext): Long {
+        val record = tc.frame.dispatchRecord ?: return 0
+        return if ((record.program?.bindControl ?: record.bindControl) != null) 1 else 0
     }
 
     /* The role a type plays in its language: one of the HLL_ROLE_*
@@ -4356,7 +4416,7 @@ object Ops {
         val bs = o!!.st.BoolificationSpec
         when (if (bs == null) BoolificationSpec.MODE_NOT_TYPE_OBJECT else bs.Mode) {
         BoolificationSpec.MODE_CALL_METHOD -> {
-            invokeDirect(tc, bs!!.Method, invocantCallSite, arrayOf<Any?>(o))
+            invokeMethodViaDispatch(tc, bs!!.Method, o)
             return istrue(result_o(tc.frame), tc)
         }
         BoolificationSpec.MODE_UNBOX_INT ->
@@ -4419,7 +4479,7 @@ object Ops {
         // bulk.
         val strMeth = if (o.st.MethodCache == null) null else o.st.MethodCache!!.get("Str")
         if (isnull(strMeth) == 0L) {
-            invokeDirect(tc, strMeth, invocantCallSite, arrayOf<Any?>(o))
+            invokeMethodViaDispatch(tc, strMeth, o)
             return result_s(tc.frame)
         }
 
@@ -4460,7 +4520,7 @@ object Ops {
         // Otherwise, look for a Num method.
         val numMeth = o.st.MethodCache!!.get("Num")
         if (isnull(numMeth) == 0L) {
-            invokeDirect(tc, numMeth, invocantCallSite, arrayOf<Any?>(o))
+            invokeMethodViaDispatch(tc, numMeth, o)
             return result_n(tc.frame)
         }
 
