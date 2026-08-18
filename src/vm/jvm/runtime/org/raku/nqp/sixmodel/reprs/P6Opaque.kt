@@ -720,8 +720,11 @@ class P6Opaque : REPR() {
     }
 
     override fun hint_for(tc: ThreadContext, st: STable, classHandle: SixModelObject?, name: String?): Long {
-        val rd = st.REPRData as P6OpaqueREPRData
-        val classHandles = rd.classHandles!!
+        /* A type that has not been composed yet has no REPR data to look a
+         * hint up in; MoarVM answers NO_HINT there, so we do too and the
+         * access falls back to a by-name lookup at runtime. */
+        val rd = st.REPRData as? P6OpaqueREPRData ?: return STable.NO_HINT
+        val classHandles = rd.classHandles ?: return STable.NO_HINT
         for (i in classHandles.indices) {
             if (classHandles[i] === classHandle) {
                 val idx = rd.nameToHintMap!![i].getOrDefault(name, -1)
