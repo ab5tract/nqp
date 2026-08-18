@@ -102,6 +102,11 @@ class StaticCodeInfo(
      */
     @JvmField var isThunk = false
 
+    /** Source location of the block's declaration, from the QAST node it was
+     * compiled from; null/-1 when the compiler had none to give. */
+    @JvmField var sourceFile: String? = null
+    @JvmField var sourceLine = -1
+
     fun oTryGetLexicalIdx(name: String): Int {
         val names = oLexicalNames
         if (names != null) {
