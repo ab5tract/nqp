@@ -25,6 +25,8 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
     @JvmField var hasExitHandler = false
     @JvmField var argsExpectation: Short = 0
     @JvmField var isThunk = false
+    @JvmField var crFile: String? = null
+    @JvmField var crLine = 0
 
     /* Package-private in the Java original; JASTCompiler reads them. */
     @JvmField val beginAll = Label()
@@ -94,6 +96,15 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
             /* Most likely a version of the node without the field. */
             false
         }
+        try {
+            val file = Ops.getattr_s(jast, jastMethod, "$!cr_file", crFileHint, tc)
+            if (file != null && file.isNotEmpty()) {
+                crFile = file
+                crLine = Ops.getattr_i(jast, jastMethod, "$!cr_line", crLineHint, tc).toInt()
+            }
+        } catch (t: Throwable) {
+            /* Most likely a version of the node without the fields. */
+        }
     }
 
     private fun fillList(list: MutableList<String?>, smoList: SixModelObject, tc: ThreadContext) {
@@ -122,6 +133,8 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
         private var hasExitHandlerHint = 0L
         private var argsExpectationHint = 0L
         private var isThunkHint = 0L
+        private var crFileHint = 0L
+        private var crLineHint = 0L
 
         @JvmStatic
         fun setup(jastMethod: SixModelObject, tc: ThreadContext) {
@@ -142,6 +155,8 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
             hasExitHandlerHint  = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!has_exit_handler")
             argsExpectationHint = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!args_expectation")
             isThunkHint         = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!is_thunk")
+            crFileHint          = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!cr_file")
+            crLineHint          = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!cr_line")
         }
     }
 }

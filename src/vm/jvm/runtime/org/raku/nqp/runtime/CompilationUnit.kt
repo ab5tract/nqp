@@ -121,6 +121,10 @@ abstract class CompilationUnit {
             cr.staticInfo.methodName = m.methodName
             cr.staticInfo.hasExitHandler = ann.hasExitHandler
             cr.staticInfo.isThunk = ann.isThunk
+            if (ann.sourceFile.isNotEmpty()) {
+                cr.staticInfo.sourceFile = ann.sourceFile
+                cr.staticInfo.sourceLine = ann.sourceLine
+            }
             if (BOOTCodeSTable != null)
                 cr.st = BOOTCodeSTable
             codeRefList.add(cr)
