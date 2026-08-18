@@ -6543,6 +6543,19 @@ object Ops {
             throw ExceptionHandling.dieInternal(tc, "getcodename can only be used with a CodeRef")
     }
     @JvmStatic
+    fun getcodelocation(code: SixModelObject?, tc: ThreadContext): SixModelObject {
+        if (code !is CodeRef)
+            throw ExceptionHandling.dieInternal(tc, "getcodelocation can only be used with a CodeRef")
+        val hllConfig = tc.frame.codeRef.staticInfo.compUnit.hllConfig
+        val res = hllConfig.hashType!!.st.REPR.allocate(tc, hllConfig.hashType!!.st)
+        val si = code.staticInfo
+        res.bind_key_boxed(tc, "file",
+            box_s(si.sourceFile ?: "unknown", hllConfig.strBoxType, tc))
+        res.bind_key_boxed(tc, "line",
+            box_i(si.sourceLine.toLong(), hllConfig.intBoxType, tc))
+        return res
+    }
+    @JvmStatic
     fun setcodename(code: SixModelObject?, name: String?, tc: ThreadContext): SixModelObject? {
         if (code is CodeRef) {
             code.name = name

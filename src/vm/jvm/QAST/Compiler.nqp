@@ -3423,13 +3423,7 @@ QAST::OperationsJAST.map_classlib_core_op('nativecallsizeof', $TYPE_NATIVE_OPS, 
 QAST::OperationsJAST.map_classlib_core_op('nativecallcast', $TYPE_NATIVE_OPS, 'nativecallcast', [$RT_OBJ, $RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('nativecallglobal', $TYPE_NATIVE_OPS, 'nativecallglobal', [$RT_STR, $RT_STR, $RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 
-QAST::OperationsJAST.add_core_op('getcodelocation', -> $qastcomp, $op {
-    $qastcomp.as_jast(QAST::Op.new(
-        :op('hash'),
-        QAST::SVal.new( :value<file> ), QAST::SVal.new( :value<unknown> ),
-        QAST::SVal.new( :value<line> ), QAST::IVal.new( :value(-1) )
-    ));
-});
+QAST::OperationsJAST.map_classlib_core_op('getcodelocation', $TYPE_OPS, 'getcodelocation', [$RT_OBJ], $RT_OBJ, :tc);
 
 QAST::OperationsJAST.map_classlib_core_op('jvmgetunicodeversion', $TYPE_OPS, 'jvmgetunicodeversion', [], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('getuniname', $TYPE_OPS, 'getuniname', [$RT_INT], $RT_STR, :tc);
@@ -4419,6 +4413,19 @@ class QAST::CompilerJAST {
             my $*JMETH := JAST::Method.new( :name('qb_'~self.cuid_to_qbid($node.cuid)), :returns('Void'), :static(1) );
             $*JMETH.cr_name($node.name);
             $*JMETH.cr_cuid($node.cuid) unless $*COMP_MODE;
+
+            # Note the block's source location, honoring #line directives, so
+            # nqp::getcodelocation has something to answer with at runtime.
+            if $node.node && nqp::can($node.node, 'orig') {
+                my $line-file := HLL::Compiler.linefileof(
+                    $node.node.orig(), $node.node.from(), :cache(1), :directives(1));
+                my $loc-file := $line-file[1]
+                    || nqp::ifnull(nqp::getlexdyn('$?FILES'), '');
+                if $loc-file {
+                    $*JMETH.cr_file(~$loc-file);
+                    $*JMETH.cr_line($line-file[0]);
+                }
+            }
             $*CODEREFS.register_method($*JMETH, $node.cuid);
 
             # Set outer if we have one.
