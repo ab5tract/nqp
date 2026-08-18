@@ -77,17 +77,40 @@ object Dispatch {
     @JvmStatic
     fun dispatch(site: DispatchCallSite, name: String, csIdx: Int, tc: ThreadContext,
                  args: Array<Any?>) {
-        val descriptor = descriptorFor(tc, csIdx)
+        dispatchWithDescriptor(site, name, descriptorFor(tc, csIdx), tc, args)
+    }
+
+    /** A dispatch at a callsite whose descriptor the caller supplies; used by
+     * runtime helpers that keep their own callsite as an inline cache. */
+    @JvmStatic
+    fun dispatchWithDescriptor(site: DispatchCallSite, name: String,
+                               descriptor0: CallSiteDescriptor, tc: ThreadContext,
+                               args: Array<Any?>) {
+        var descriptor = descriptor0
+        var theArgs = args
+        /* Flattening is exploded before the dispatch runs, as MoarVM does at
+         * its dispatch instructions: the program inspects arguments by
+         * position, which only means anything on the flattened form. */
+        if (descriptor.hasFlattening) {
+            descriptor = descriptor.explodeFlattening(tc.curFrame!!, theArgs)
+            theArgs = tc.flatArgs!!
+        }
         for (program in site.programs)
-            if (run(tc, program, descriptor, args, site)) return
-        record(tc, tc.gc.dispatchers.find(tc, name), descriptor, args, site)
+            if (run(tc, program, descriptor, theArgs, site)) return
+        record(tc, tc.gc.dispatchers.find(tc, name), descriptor, theArgs, site)
     }
 
     /** A dispatch with no callsite to install anything at. */
     @JvmStatic
     fun dispatchUncached(tc: ThreadContext, name: String, descriptor: CallSiteDescriptor,
                         args: Array<Any?>) {
-        record(tc, tc.gc.dispatchers.find(tc, name), descriptor, args, null)
+        var theCsd = descriptor
+        var theArgs = args
+        if (theCsd.hasFlattening) {
+            theCsd = theCsd.explodeFlattening(tc.curFrame!!, theArgs)
+            theArgs = tc.flatArgs!!
+        }
+        record(tc, tc.gc.dispatchers.find(tc, name), theCsd, theArgs, null)
     }
 
     private fun descriptorFor(tc: ThreadContext, csIdx: Int): CallSiteDescriptor =
@@ -227,6 +250,7 @@ object Dispatch {
         record.program = program
         record.endRecording()
 
+        if (!Captures.sameShape(program.descriptor, descriptor)) return false
         if (!program.guardsMatch(record)) return false
         if (program.isResuming && !enterResumptions(tc, record, program, bindFailureOf))
             return false
@@ -392,10 +416,16 @@ object Dispatch {
     /** The first resumption a dispatch set up, which is the one to resume. */
     private fun innermostResumption(tc: ThreadContext, record: DispatchRecord): FoundResumption {
         val program = record.program
-        if (program == null || program.resumptions.isEmpty())
-            throw ExceptionHandling.dieInternal(tc,
-                "A dispatch that asked to resume on bind failure set up no resumption")
-        return FoundResumption(record, program.resumptions[0], record.ensureResumeStates()[0])
+        if (program != null && program.resumptions.isNotEmpty())
+            return FoundResumption(record, program.resumptions[0], record.ensureResumeStates()[0])
+        /* A dispatch that is itself a resumption registers no resumptions of
+         * its own: a bind failure of what it invoked (the next candidate
+         * failing to bind, after an earlier one already did) re-resumes what
+         * it was already resuming, whose state it has been updating. */
+        if (record.levels.isNotEmpty())
+            return record.levels[0].found
+        throw ExceptionHandling.dieInternal(tc,
+            "A dispatch that asked to resume on bind failure set up no resumption")
     }
 
     /** Starts a resumption of the innermost resumable dispatch out from here. */

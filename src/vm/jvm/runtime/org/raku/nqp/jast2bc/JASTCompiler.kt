@@ -327,7 +327,13 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
                 throw Exception(e.key + " used but not defined in " + method.name)
         }
 
-        m.visitMaxs(0, 0)
+        try {
+            m.visitMaxs(0, 0)
+        }
+        catch (e: Exception) {
+            throw Exception("Bytecode assembly failed for method '" +
+                method.crName + "' (" + method.name + ") in " + className, e)
+        }
         m.visitEnd()
     }
 
@@ -358,7 +364,27 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
         }
         else if (Ops.istype(insn, jastPushS, tc) != 0L) {
             val value = Ops.getattr_s(insn, jastPushS, "\$!value", 0, tc)
-            m.visitLdcInsn(value)
+            /* A constant-pool Utf8 entry's length is a u2 in bytes; a bigger
+             * string literal is pushed in pieces and concatenated. */
+            if (value != null && value.length > 16000 &&
+                    value.toByteArray(Charsets.UTF_8).size > 60000) {
+                if (System.getenv("NQP_DISPATCH_DEBUG") != null)
+                    System.err.println("[big-sval] " + value.length + " chars, starts: '" +
+                        value.substring(0, 80).replace('\n', ' ') + "'")
+                var i = 0
+                var first = true
+                while (i < value.length) {
+                    val end = minOf(i + 16000, value.length)
+                    m.visitLdcInsn(value.substring(i, end))
+                    if (!first)
+                        m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String",
+                            "concat", "(Ljava/lang/String;)Ljava/lang/String;", false)
+                    first = false
+                    i = end
+                }
+            }
+            else
+                m.visitLdcInsn(value)
         }
         else if (Ops.istype(insn, jastPushC, tc) != 0L) {
             val value = Type.getType(Ops.getattr_s(insn, jastPushC, "\$!value", 0, tc))

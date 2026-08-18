@@ -117,13 +117,15 @@ object Syscalls {
             obj(Ops.capturenamedshash(it.obj(0), it.tc))
         }
         define("capture-names-list", OBJ) { args ->
-            val list = newList(args.tc)
+            /* A native str array, as on MoarVM: the dispatchers read the
+             * names back with nqp::atpos_s. */
+            val tc = args.tc
+            val strArrayType = tc.gc.BOOTStrArray!!
+            val list = strArrayType.st.REPR.allocate(tc, strArrayType.st)
             val names = args.capture(0).descriptor!!.names
             if (names != null)
                 for (name in names)
-                    Ops.push(list, Ops.box_s(name,
-                        args.tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType,
-                        args.tc), args.tc)
+                    Ops.push_s(list, name, tc)
             obj(list)
         }
         define("capture-is-literal-arg", OBJ, INT) { isLiteralArg(it) }
