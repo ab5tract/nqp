@@ -170,8 +170,9 @@ object ExceptionHandling {
             }
             f = f.outer
         }
-        if (handler != null)
+        if (handler != null) {
             invokeHandler(tc, handler, category, f, false, exObj, null)
+        }
         else if (tc.frame.codeRef.staticInfo.compUnit.hllConfig.lexicalHandlerNotFoundError != null) {
             Ops.invokeDirect(tc, tc.frame.codeRef.staticInfo.compUnit.hllConfig.lexicalHandlerNotFoundError,
                 Ops.intIntCallSite, false, arrayOf<Any?>(category, 0L))
@@ -210,7 +211,10 @@ object ExceptionHandling {
             exObj = bits[3] as VMExceptionInstance?
         }
 
-        if (tc.gc.noisyExceptions) tc.unwinder = UnwindException() // capture stack
+        /* A fresh unwinder per throw: the unwind may pass through frames whose
+         * exit paths throw and recover their own unwinds, and a shared
+         * instance would have its target and result clobbered mid-flight. */
+        tc.unwinder = UnwindException()
         when (handlerInfo!![3].toInt()) {
             EX_UNWIND_SIMPLE -> {
                 tc.unwinder.unwindTarget = handlerInfo[0]
