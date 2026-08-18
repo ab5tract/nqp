@@ -570,7 +570,7 @@ internal class AutosplitMethodWriter(
             val opcode = anode.getOpcode()
             when (opcode) {
                 Opcodes.AALOAD -> {
-                    stack[sp - 2] = stack[sp - 2].substring(1)
+                    stack[sp - 2] = stack[sp - 2].substring(1).intern()
                     sp--
                 }
                 Opcodes.ALOAD ->
@@ -708,7 +708,7 @@ internal class AutosplitMethodWriter(
                 Opcodes.MULTIANEWARRAY -> {
                     val m = anode as MultiANewArrayInsnNode
                     sp -= m.dims
-                    stack[sp++] = m.desc
+                    stack[sp++] = m.desc.intern()
                 }
 
                 Opcodes.NEWARRAY -> {
@@ -803,7 +803,9 @@ internal class AutosplitMethodWriter(
 
         // computes the least upper bound of two verification types; we use descriptors, but U44:Lbar; for uninitialized(44), 0 for null, and T for TOP
         fun lub(a: String, b: String): String {
-            // same type?  trivial
+            // every type string entering a frame is interned, so equal types
+            // are identical and the hot same-type case is a pointer compare
+            if (a === b) return a
             if (a == b) return a
             if (a == "T") return a
             if (b == "T") return b
