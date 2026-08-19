@@ -3178,10 +3178,51 @@ QAST::OperationsJAST.map_classlib_core_op('decont_n', $TYPE_OPS, 'decont_n', [$R
 QAST::OperationsJAST.map_classlib_core_op('decont_s', $TYPE_OPS, 'decont_s', [$RT_OBJ], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('assign', $TYPE_OPS, 'assign', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('assignunchecked', $TYPE_OPS, 'assignunchecked', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
-QAST::OperationsJAST.map_classlib_core_op('assign_i', $TYPE_OPS, 'assign_i', [$RT_OBJ, $RT_INT], $RT_OBJ, :tc);
-QAST::OperationsJAST.map_classlib_core_op('assign_u', $TYPE_OPS, 'assign_u', [$RT_OBJ, $RT_UINT], $RT_OBJ, :tc);
-QAST::OperationsJAST.map_classlib_core_op('assign_n', $TYPE_OPS, 'assign_n', [$RT_OBJ, $RT_NUM], $RT_OBJ, :tc);
-QAST::OperationsJAST.map_classlib_core_op('assign_s', $TYPE_OPS, 'assign_s', [$RT_OBJ, $RT_STR], $RT_OBJ, :tc);
+# A native assign whose target is a reference to a lexical or attribute in
+# reach lowers to a direct bind, exactly as the MoarVM backend does. The
+# bind's result is the assigned value (an attribute bind yields it at full
+# width, so a compound step yields the unstored result while the attribute
+# stores truncated), where the real container assign yields the container.
+sub native_assign_bind_scope($target) {
+    if nqp::istype($target, QAST::Var) {
+        my str $scope := $target.scope;
+        if $scope eq 'attributeref' {
+            return 'attribute';
+        }
+        elsif $scope eq 'lexicalref' {
+            my $block := $*BLOCK;
+            my str $name := $target.name;
+            while nqp::istype($block, $*BLOCK.WHAT) {
+                last if $block.qast.ann('DYN_COMP_WRAPPER');
+                return 'lexical' if nqp::defined($block.lexical_type($name));
+                last if nqp::defined($block.lexicalref_type($name));
+                $block := $block.outer;
+            }
+        }
+    }
+    ''
+}
+for [['assign_i', 'jvm_container_assign_i'], ['assign_u', 'jvm_container_assign_u'],
+     ['assign_n', 'jvm_container_assign_n'], ['assign_s', 'jvm_container_assign_s']] -> @spec {
+    my str $op_name       := @spec[0];
+    my str $fallback_name := @spec[1];
+    QAST::OperationsJAST.add_core_op($op_name, -> $qastcomp, $op {
+        my $target := $op[0];
+        my str $bind_scope := native_assign_bind_scope($target);
+        if $bind_scope ne '' {
+            $op.op('bind');
+            $target.scope($bind_scope);
+            $qastcomp.as_jast($op)
+        }
+        else {
+            $qastcomp.as_jast(QAST::Op.new( :op($fallback_name), $op[0], $op[1] ))
+        }
+    });
+}
+QAST::OperationsJAST.map_classlib_core_op('jvm_container_assign_i', $TYPE_OPS, 'assign_i', [$RT_OBJ, $RT_INT], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('jvm_container_assign_u', $TYPE_OPS, 'assign_u', [$RT_OBJ, $RT_UINT], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('jvm_container_assign_n', $TYPE_OPS, 'assign_n', [$RT_OBJ, $RT_NUM], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('jvm_container_assign_s', $TYPE_OPS, 'assign_s', [$RT_OBJ, $RT_STR], $RT_OBJ, :tc);
 
 # lexical related opcodes
 QAST::OperationsJAST.map_classlib_core_op('getlex', $TYPE_OPS, 'getlex', [$RT_STR], $RT_OBJ, :tc);
