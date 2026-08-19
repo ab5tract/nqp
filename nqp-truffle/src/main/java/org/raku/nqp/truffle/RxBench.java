@@ -50,6 +50,7 @@ public final class RxBench {
                 .option("engine.CompileImmediately", "true")
                 .option("engine.TraceCompilation", System.getenv("RX_TRACE") != null ? "true" : "false")
                 .build()) {
+            System.out.println("-- per position from the host, one interop call each --");
             for (String pattern : PATTERNS) {
                 Value matcher = ctx.eval(Source.newBuilder(RxLanguage.ID, pattern, "rx").buildLiteral());
                 long truffle = bestOf(() -> scan(matcher, input));
@@ -57,7 +58,37 @@ public final class RxBench {
                 System.out.printf("%-18s truffle %6.2f ms   java.util.regex %6.2f ms   ratio %.2fx%n",
                     pattern, truffle / 1e6, java / 1e6, (double) truffle / java);
             }
+
+            /*
+             * The same work with the scanning inside the engine: one call
+             * instead of one per position. The loop above measures the
+             * host-to-guest crossing as much as the matching, and a real
+             * integration does not pay that per character -- NQP hands the
+             * cursor over once.
+             */
+            System.out.println("-- scanning inside the engine, one call --");
+            for (String pattern : PATTERNS) {
+                /* The match has to be at the far end, or both engines find
+                 * it at once and the measurement is of nothing. */
+                String haystack = "-".repeat(200_000) + tailFor(pattern);
+                Value matcher = ctx.eval(
+                    Source.newBuilder(RxLanguage.ID, "(?scan)" + pattern, "rx").buildLiteral());
+                Pattern compiled = Pattern.compile(pattern);
+                long truffle = bestOf(() -> matcher.execute(haystack, 0));
+                long java = bestOf(() -> compiled.matcher(haystack).find());
+                System.out.printf("%-18s truffle %6.2f ms   java.util.regex %6.2f ms   ratio %.2fx%n",
+                    pattern, truffle / 1e6, java / 1e6, (double) truffle / java);
+            }
         }
+    }
+
+    /** Text the pattern matches, to put at the end of a haystack. */
+    private static String tailFor(String pattern) {
+        return switch (pattern) {
+            case "a(b|c)*d" -> "abcbcd";
+            case "[a-z]+[0-9]+" -> "abc123";
+            default -> "hello world";
+        };
     }
 
     private static int scan(Value matcher, String input) {

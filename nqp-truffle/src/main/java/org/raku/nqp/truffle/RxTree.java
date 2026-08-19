@@ -20,7 +20,7 @@ public final class RxTree {
     private RxTree() { }
 
     public sealed interface Node
-        permits Seq, Literal, One, Anchor, Alt, Quant, Sub, Capture { }
+        permits Seq, Literal, One, Anchor, Alt, Quant, Sub, Capture, Scan { }
 
     /** rxtype concat. */
     public record Seq(List<Node> parts) implements Node { }
@@ -43,11 +43,23 @@ public final class RxTree {
     /** rxtype quant. A max below zero is unbounded. */
     public record Quant(Node body, int min, int max, boolean greedy) implements Node { }
 
-    /** rxtype subrule. */
-    public record Sub(String name, boolean zeroWidth, boolean negate) implements Node { }
+    /**
+     * rxtype subrule. A capture name means the cursor this rule answers is
+     * itself the capture -- which is what NQP puts in a match tree.
+     */
+    public record Sub(String name, boolean zeroWidth, boolean negate,
+                      String capture) implements Node { }
 
     /** rxtype subcapture. */
     public record Capture(String name, Node body) implements Node { }
+
+    /**
+     * rxtype scan: try the body at each position from here on.
+     *
+     * <p>Every NQP regex is wrapped in one of these, so nothing real can be
+     * encoded without it.
+     */
+    public record Scan(Node body) implements Node { }
 
     /* The character predicates the front ends build One nodes from. Written
      * as constants and small records so that each is a single class the
@@ -66,8 +78,18 @@ public final class RxTree {
         cp -> cp == ' ' || cp == '\t'
               || (Character.isSpaceChar(cp) && cp != '\n' && cp != '\r');
 
+    /* Named rather than lambdas so RxProgram can recognise them and give
+     * them opcodes of their own. */
+    public record Negated(RxProgram.CharPred of) implements RxProgram.CharPred {
+        @Override public boolean holds(int cp) { return !of.holds(cp); }
+    }
+
+    public record Range(int lo, int hi) implements RxProgram.CharPred {
+        @Override public boolean holds(int cp) { return cp >= lo && cp <= hi; }
+    }
+
     public static RxProgram.CharPred not(RxProgram.CharPred pred) {
-        return cp -> !pred.holds(cp);
+        return new Negated(pred);
     }
 
     public static RxProgram.CharPred anyOf(String chars) {
@@ -75,7 +97,7 @@ public final class RxTree {
     }
 
     public static RxProgram.CharPred range(int lo, int hi) {
-        return cp -> cp >= lo && cp <= hi;
+        return new Range(lo, hi);
     }
 
     public static RxProgram.CharPred either(RxProgram.CharPred a, RxProgram.CharPred b) {
