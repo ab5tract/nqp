@@ -8904,12 +8904,51 @@ object Ops {
 
     private const val UNIPROP_NUMERIC_VALUE_NUMERATOR   = 19
     private const val UNIPROP_NUMERIC_VALUE_DENOMINATOR = 10
+    private const val UNIPROP_GENERAL_CATEGORY          = 21
+
+    /* Character.getType constants indexed to their Unicode two-letter
+     * general category names. */
+    private val GENERAL_CATEGORY_NAMES = HashMap<Int, String>().apply {
+        put(Character.UPPERCASE_LETTER.toInt(), "Lu")
+        put(Character.LOWERCASE_LETTER.toInt(), "Ll")
+        put(Character.TITLECASE_LETTER.toInt(), "Lt")
+        put(Character.MODIFIER_LETTER.toInt(), "Lm")
+        put(Character.OTHER_LETTER.toInt(), "Lo")
+        put(Character.NON_SPACING_MARK.toInt(), "Mn")
+        put(Character.ENCLOSING_MARK.toInt(), "Me")
+        put(Character.COMBINING_SPACING_MARK.toInt(), "Mc")
+        put(Character.DECIMAL_DIGIT_NUMBER.toInt(), "Nd")
+        put(Character.LETTER_NUMBER.toInt(), "Nl")
+        put(Character.OTHER_NUMBER.toInt(), "No")
+        put(Character.SPACE_SEPARATOR.toInt(), "Zs")
+        put(Character.LINE_SEPARATOR.toInt(), "Zl")
+        put(Character.PARAGRAPH_SEPARATOR.toInt(), "Zp")
+        put(Character.CONTROL.toInt(), "Cc")
+        put(Character.FORMAT.toInt(), "Cf")
+        put(Character.PRIVATE_USE.toInt(), "Co")
+        put(Character.SURROGATE.toInt(), "Cs")
+        put(Character.UNASSIGNED.toInt(), "Cn")
+        put(Character.DASH_PUNCTUATION.toInt(), "Pd")
+        put(Character.START_PUNCTUATION.toInt(), "Ps")
+        put(Character.END_PUNCTUATION.toInt(), "Pe")
+        put(Character.CONNECTOR_PUNCTUATION.toInt(), "Pc")
+        put(Character.OTHER_PUNCTUATION.toInt(), "Po")
+        put(Character.INITIAL_QUOTE_PUNCTUATION.toInt(), "Pi")
+        put(Character.FINAL_QUOTE_PUNCTUATION.toInt(), "Pf")
+        put(Character.MATH_SYMBOL.toInt(), "Sm")
+        put(Character.CURRENCY_SYMBOL.toInt(), "Sc")
+        put(Character.MODIFIER_SYMBOL.toInt(), "Sk")
+        put(Character.OTHER_SYMBOL.toInt(), "So")
+    }
 
     /* TODO: Make this handle more properties. */
     @JvmStatic
     fun getuniprop_str(codepoint: Long, property: Long, tc: ThreadContext): String {
         var res = ""
-        if (property == UNIPROP_NUMERIC_VALUE_NUMERATOR.toLong() || property == UNIPROP_NUMERIC_VALUE_DENOMINATOR.toLong()) {
+        if (property == UNIPROP_GENERAL_CATEGORY.toLong()) {
+            res = GENERAL_CATEGORY_NAMES[Character.getType(codepoint.toInt())] ?: "Cn"
+        }
+        else if (property == UNIPROP_NUMERIC_VALUE_NUMERATOR.toLong() || property == UNIPROP_NUMERIC_VALUE_DENOMINATOR.toLong()) {
             /* NFKD will decompose fractions into numerator and denominator,
              * separated by "FRACTION SLASH" (⁄). */
             val fraction = java.util.regex.Pattern.compile("⁄").split(
@@ -8931,6 +8970,8 @@ object Ops {
                 return UNIPROP_NUMERIC_VALUE_NUMERATOR.toLong()
             "Numeric_Value_Denominator" ->
                 return UNIPROP_NUMERIC_VALUE_DENOMINATOR.toLong()
+            "General_Category", "gc" ->
+                return UNIPROP_GENERAL_CATEGORY.toLong()
             else ->
                 return -1
         }
