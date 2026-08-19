@@ -232,6 +232,13 @@ object ExceptionHandling {
                 tc.unwinder.payload =
                     if (Ops.isnull(exObj) == 0L) exObj!!.payload as SixModelObject?
                     else null
+                /* The payload this handler is about to read belongs to the
+                 * throw being handled now, so publish it now rather than at
+                 * throw time, as MoarVM's run_handler does. A handler that
+                 * runs arbitrary code before rethrowing -- a CONTROL block
+                 * seeing a return go by, say -- would otherwise leave the
+                 * thread's slot holding whatever that code threw last. */
+                tc.lastPayload = tc.unwinder.payload
                 throw tc.unwinder
             }
             EX_BLOCK -> {
