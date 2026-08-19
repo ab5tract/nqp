@@ -13,6 +13,16 @@ import org.raku.nqp.sixmodel.SixModelObject
  */
 class CallFrame : Cloneable {
     companion object {
+        /**
+         * A frame that holds a scope but was never invoked, whose outer is
+         * the nearest live instance of the static frame it belongs inside
+         * (auto-closing one if there is none). This is what a phaser needs
+         * when it may run without its enclosing block ever being entered.
+         */
+        @JvmStatic
+        fun contextOnly(tc: ThreadContext, sci: StaticCodeInfo): CallFrame =
+            CallFrame(tc, sci)
+
         const val RET_OBJ = 0
         const val RET_INT = 1
         const val RET_NUM = 2
