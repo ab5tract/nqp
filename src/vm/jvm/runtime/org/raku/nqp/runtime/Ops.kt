@@ -7400,6 +7400,10 @@ object Ops {
         val exObj = exType.st.REPR.allocate(tc, exType.st) as VMExceptionInstance
         exObj.category = category
         exObj.origin = tc.curFrame
+        /* On the exception, not only in the thread's slot: the handler that
+         * finally takes this throw may run after other payload throws have
+         * come and gone, and it is this exception's payload it wants. */
+        exObj.payload = payload
         tc.lastPayload = payload
         ExceptionHandling.handlerLexical(tc, category, exObj, false)
     }
@@ -7409,6 +7413,7 @@ object Ops {
         val exObj = exType.st.REPR.allocate(tc, exType.st) as VMExceptionInstance
         exObj.category = category
         exObj.origin = tc.curFrame
+        exObj.payload = payload
         tc.lastPayload = payload
         ExceptionHandling.handlerLexical(tc, category, exObj, true)
     }
