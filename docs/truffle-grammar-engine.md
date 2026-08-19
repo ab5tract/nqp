@@ -303,6 +303,16 @@ with `NQP_JVM_NO_TRUFFLE=1`. `make j-all` builds a working `rakudo-j`.
 CORE.c compile is at parity with the bytecode path — see the two sections
 below for how that is measured and what is left.
 
+**Rakudo's own suite has now been run under the engine**, which it had not
+been before: `RAKUDO_RAKUAST=1 make j-test`, 377 files, 4231 tests, three
+files failing and all three pre-existing and unrelated to matching —
+`regex-crlf-grapheme.t` and `regex-vspace-class-crlf.t` want CR+LF to fuse
+into one grapheme and this backend has no NFG, and
+`22-traited-variable-by-name.t` is about LEAVE phasers not receiving their
+value. That is the branch's documented baseline exactly: one known failure
+and two excluded NFG files. Clear `lib/.precomp`, `t/**/.precomp` and
+`~/.raku/precomp` before the run or it reports failures that are not there.
+
 ## Measured against the thing it replaces
 
 The engine had only ever been compared to `java.util.regex`, which is not
@@ -390,6 +400,6 @@ Worth trying, in the order I would now bet on them:
    This is the same boundary that makes replacing newdisp the *tail* of
    moving code generation to Truffle rather than the head.
 
-Not yet done: rakudo's own test suite has not been run under the engine. And
-a grammar used once may never get hot enough to be compiled — a setting
-compile is the *favourable* case — so any cutover still needs a warmup story.
+Still open: a grammar used once may never get hot enough to be compiled — a
+setting compile is the *favourable* case — so any cutover needs a warmup
+story. Rakudo's own suite is no longer on this list; see Status.
