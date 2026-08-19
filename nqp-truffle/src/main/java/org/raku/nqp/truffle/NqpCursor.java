@@ -31,6 +31,10 @@ public final class NqpCursor implements RxCursor {
     private static final CallSiteDescriptor INVOCANT_INT =
         new CallSiteDescriptor(
             new byte[] { CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_INT }, null);
+    private static final CallSiteDescriptor INVOCANT_INT_STR_OBJ =
+        new CallSiteDescriptor(
+            new byte[] { CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_INT,
+                         CallSiteDescriptor.ARG_STR, CallSiteDescriptor.ARG_OBJ }, null);
     private static final CallSiteDescriptor INVOCANT_OBJ_STR =
         new CallSiteDescriptor(
             new byte[] { CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_OBJ,
@@ -41,10 +45,17 @@ public final class NqpCursor implements RxCursor {
     private final SixModelObject cursorClass;
     private final String target;
 
-    public NqpCursor(ThreadContext tc, SixModelObject cursor, String target) {
+    /**
+     * @param cursorClass the class the cursor's attributes are DECLARED in --
+     *     `$?CLASS` from `!cursor_start_all`, which is what the bytecode path
+     *     uses. The cursor's own WHAT is a subclass for any real grammar, and
+     *     looking an attribute up through it fails with "No such attribute".
+     */
+    public NqpCursor(ThreadContext tc, SixModelObject cursor, SixModelObject cursorClass,
+                     String target) {
         this.tc = tc;
         this.cursor = cursor;
-        this.cursorClass = cursor.st.WHAT;
+        this.cursorClass = cursorClass;
         this.target = target;
     }
 
@@ -70,7 +81,7 @@ public final class NqpCursor implements RxCursor {
 
     @Override public int reached(Object subCursor) {
         if (!(subCursor instanceof SixModelObject sub)) return RxVmNode.NO_MATCH;
-        long pos = Ops.getattr_i(sub, sub.st.WHAT, "$!pos", tc);
+        long pos = Ops.getattr_i(sub, cursorClass, "$!pos", tc);
         return pos < 0 ? RxVmNode.NO_MATCH : (int) pos;
     }
 
@@ -86,6 +97,51 @@ public final class NqpCursor implements RxCursor {
         Ops.invokeDirect(tc, pass, INVOCANT_INT, new Object[] { sub, (long) to });
 
         captureCursor(name, sub);
+    }
+
+    /**
+     * Asks the grammar's NFA which branches of a named alternation to try.
+     *
+     * <p>`!alt` is the bytecode path's own entry point, and it answers by
+     * pushing four ints per branch onto the cursor's bstack -- mark, pos,
+     * rep, capture height -- best LAST, because the bytecode engine reaches
+     * them by popping. The marks it pushes are whatever was handed to it, so
+     * passing the branch indices themselves makes the answer come back in
+     * the engine's own terms.
+     *
+     * <p>The bstack is left as it was found. The engine keeps its choice
+     * points in its own stack and this rule is ratcheted anyway, so entries
+     * left behind would be read later as backtracking that never happened.
+     */
+    @Override public int[] altOrder(String name, int pos, int branches) {
+        SixModelObject bstack = Ops.getattr(cursor, cursorClass, "$!bstack", tc);
+        if (bstack == null || Ops.isnull(bstack) != 0) return RxCursor.NO_BRANCHES;
+        int before = (int) bstack.elems(tc);
+
+        SixModelObject marks = Ops.create(Ops.bootintarray(tc), tc);
+        for (int i = 0; i < branches; i++) {
+            tc.nativeI = i;
+            marks.push_native(tc);
+        }
+
+        /* No $!pos binding here: !alt takes the position as an argument and
+         * the bytecode path does not touch the attribute either. Setting it
+         * would leave a mid-match value behind for !cursor_capture to record. */
+        SixModelObject alt = Ops.findmethod(cursor, "!alt", tc);
+        Ops.invokeDirect(tc, alt, INVOCANT_INT_STR_OBJ,
+            new Object[] { cursor, (long) pos, name, marks });
+
+        int after = (int) bstack.elems(tc);
+        int found = (after - before) / 4;
+        int[] order = found <= 0 ? RxCursor.NO_BRANCHES : new int[found];
+        /* Reversed: !alt pushes the best branch last so that popping finds
+         * it first, and the engine wants them best first. */
+        for (int i = 0; i < found; i++) {
+            bstack.at_pos_native(tc, before + 4L * (found - 1 - i));
+            order[i] = (int) tc.nativeI;
+        }
+        bstack.set_elems(tc, before);
+        return order;
     }
 
     @Override public void captureCursor(String name, Object subCursor) {

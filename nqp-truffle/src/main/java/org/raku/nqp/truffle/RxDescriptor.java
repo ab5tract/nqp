@@ -31,10 +31,11 @@ public final class RxDescriptor {
     public static final int ENUM = 5;     // pool(chars), negate
     public static final int RANGE = 6;    // lo, hi, negate
     public static final int ANCHOR = 7;   // kind
-    public static final int QUANT = 8;    // min, max, greedy, child
+    public static final int QUANT = 8;    // min, max, greedy, ratchet, child
     public static final int SUB = 9;      // pool(name), flags, pool(capture)+1 or 0
     public static final int CAPTURE = 10; // pool(name), child
     public static final int SCAN = 11;    // child
+    public static final int ALT_LTM = 12; // pool(name), ratchet, count, children...
 
     /* CCLASS kinds, in the order the engine's predicates are listed. */
     public static final int CC_ANY = 0;
@@ -91,15 +92,23 @@ public final class RxDescriptor {
             }
             case CCLASS -> {
                 RxProgram.CharPred pred = predicate(code[at++]);
-                return new RxTree.One(code[at++] != 0 ? RxTree.not(pred) : pred);
+                return charClass(pred, code[at++]);
             }
             case ENUM -> {
                 RxProgram.CharPred pred = RxTree.anyOf((String) pool[code[at++]]);
-                return new RxTree.One(code[at++] != 0 ? RxTree.not(pred) : pred);
+                return charClass(pred, code[at++]);
             }
             case RANGE -> {
                 RxProgram.CharPred pred = RxTree.range(code[at++], code[at++]);
-                return new RxTree.One(code[at++] != 0 ? RxTree.not(pred) : pred);
+                return charClass(pred, code[at++]);
+            }
+            case ALT_LTM -> {
+                String name = (String) pool[code[at++]];
+                boolean ratchet = code[at++] != 0;
+                int count = code[at++];
+                List<RxTree.Node> branches = new ArrayList<>(count);
+                for (int i = 0; i < count; i++) branches.add(node());
+                return new RxTree.AltLtm(name, branches, ratchet);
             }
             case ANCHOR -> {
                 return new RxTree.Anchor(RxTree.Anchor.Kind.values()[code[at++]]);
@@ -108,7 +117,8 @@ public final class RxDescriptor {
                 int min = code[at++];
                 int max = code[at++];
                 boolean greedy = code[at++] != 0;
-                return new RxTree.Quant(node(), min, max, greedy);
+                boolean ratchet = code[at++] != 0;
+                return new RxTree.Quant(node(), min, max, greedy, ratchet);
             }
             case SUB -> {
                 String name = (String) pool[code[at++]];
@@ -135,6 +145,20 @@ public final class RxDescriptor {
         List<RxTree.Node> out = new ArrayList<>(count);
         for (int i = 0; i < count; i++) out.add(node());
         return out;
+    }
+
+    /**
+     * A character class from its predicate and flags.
+     *
+     * <p>The flags operand used to be a bare negate. It carries zerowidth
+     * too, because a class that only looks (`<?[{]>`) and one that consumes
+     * are otherwise indistinguishable here, and reading the first as the
+     * second runs every rule after it one character too far.
+     */
+    private static RxTree.Node charClass(RxProgram.CharPred pred, int flags) {
+        boolean negate = (flags & RxProgram.F_NEGATE) != 0;
+        boolean zeroWidth = (flags & RxProgram.F_ZEROWIDTH) != 0;
+        return new RxTree.One(negate ? RxTree.not(pred) : pred, zeroWidth);
     }
 
     private static RxProgram.CharPred predicate(int kind) {
