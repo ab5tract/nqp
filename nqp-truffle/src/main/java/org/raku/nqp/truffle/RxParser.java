@@ -23,69 +23,62 @@ final class RxParser {
 
     private final String src;
     private int at;
-    /* Slots for the per-match state: each quantifier and each capture gets
-     * one when it is built, so the state can be flat arrays. */
-    private int slots;
 
     private RxParser(String src) { this.src = src; }
 
-    /** A built pattern: where to enter it, and how much state it needs. */
-    record Built(RxNodes.Rx entry, int slots) { }
+    
 
     @TruffleBoundary
-    static Built parse(String pattern) {
+    static RxTree.Node parse(String pattern) {
         RxParser p = new RxParser(pattern);
-        RxNodes.Rx tree = p.alternation();
+        RxTree.Node tree = p.alternation();
         if (p.at != pattern.length()) {
             throw new IllegalArgumentException(
                 "unconsumed input at " + p.at + " of '" + pattern + "'");
         }
-        /* Nothing follows the whole pattern, so it accepts where it ends. */
-        return new Built(RxLink.link(tree, null), p.slots);
+        return tree;
     }
 
     /** alternation := concat ('|' concat)* */
-    private RxNodes.Rx alternation() {
-        List<RxNodes.Rx> branches = new ArrayList<>();
+    private RxTree.Node alternation() {
+        List<RxTree.Node> branches = new ArrayList<>();
         branches.add(concat());
         while (peek() == '|') {
             at++;
             branches.add(concat());
         }
-        return branches.size() == 1
-            ? branches.get(0)
-            : new RxNodes.Alt(branches.toArray(new RxNodes.Rx[0]));
+        return branches.size() == 1 ? branches.get(0) : new RxTree.Alt(branches);
     }
 
     /** concat := quantified* */
-    private RxNodes.Rx concat() {
-        List<RxNodes.Rx> parts = new ArrayList<>();
+    private RxTree.Node concat() {
+        List<RxTree.Node> parts = new ArrayList<>();
         while (at < src.length() && peek() != '|' && peek() != ')') {
             parts.add(quantified());
         }
         if (parts.size() == 1) return parts.get(0);
-        return new RxLink.Seq(parts.toArray(new RxNodes.Rx[0]));
+        return new RxTree.Seq(parts);
     }
 
     /** quantified := atom ('*' | '+' | '?')? */
-    private RxNodes.Rx quantified() {
-        RxNodes.Rx atom = atom();
+    private RxTree.Node quantified() {
+        RxTree.Node atom = atom();
         char c = peek();
         if (c == '*' || c == '+' || c == '?') {
             at++;
             int min = c == '+' ? 1 : 0;
             int max = c == '?' ? 1 : -1;
-            return new RxNodes.Quant(atom, null, min, max, true, slots++);
+            return new RxTree.Quant(atom, min, max, true);
         }
         return atom;
     }
 
-    private RxNodes.Rx atom() {
+    private RxTree.Node atom() {
         char c = src.charAt(at);
         switch (c) {
             case '(' -> {
                 at++;
-                RxNodes.Rx inner = alternation();
+                RxTree.Node inner = alternation();
                 expect(')');
                 return inner;
             }
@@ -95,15 +88,15 @@ final class RxParser {
             }
             case '.' -> {
                 at++;
-                return new RxNodes.CClass(RxNodes.CClass.Kind.ANY, false);
+                return new RxTree.One(RxTree.ANY);
             }
             case '^' -> {
                 at++;
-                return new RxNodes.Anchor(RxNodes.Anchor.Kind.BOS);
+                return new RxTree.Anchor(RxTree.Anchor.Kind.BOS);
             }
             case '$' -> {
                 at++;
-                return new RxNodes.Anchor(RxNodes.Anchor.Kind.EOS);
+                return new RxTree.Anchor(RxTree.Anchor.Kind.EOS);
             }
             case '\\' -> {
                 at++;
@@ -111,56 +104,51 @@ final class RxParser {
             }
             default -> {
                 at++;
-                return new RxNodes.Literal(String.valueOf(c), false, false, false);
+                return new RxTree.Literal(String.valueOf(c), false, false, false);
             }
         }
     }
 
-    private RxNodes.Rx escape(char c) {
+    private RxTree.Node escape(char c) {
         return switch (c) {
-            case 'd' -> new RxNodes.CClass(RxNodes.CClass.Kind.DIGIT, false);
-            case 'D' -> new RxNodes.CClass(RxNodes.CClass.Kind.DIGIT, true);
-            case 's' -> new RxNodes.CClass(RxNodes.CClass.Kind.SPACE, false);
-            case 'S' -> new RxNodes.CClass(RxNodes.CClass.Kind.SPACE, true);
-            case 'w' -> new RxNodes.CClass(RxNodes.CClass.Kind.WORD, false);
-            case 'W' -> new RxNodes.CClass(RxNodes.CClass.Kind.WORD, true);
-            case 'n' -> new RxNodes.Literal("\n", false, false, false);
-            case 't' -> new RxNodes.Literal("\t", false, false, false);
-            default -> new RxNodes.Literal(String.valueOf(c), false, false, false);
+            case 'd' -> new RxTree.One(RxTree.DIGIT);
+            case 'D' -> new RxTree.One(RxTree.not(RxTree.DIGIT));
+            case 's' -> new RxTree.One(RxTree.SPACE);
+            case 'S' -> new RxTree.One(RxTree.not(RxTree.SPACE));
+            case 'w' -> new RxTree.One(RxTree.WORD);
+            case 'W' -> new RxTree.One(RxTree.not(RxTree.WORD));
+            case 'n' -> new RxTree.Literal("\n", false, false, false);
+            case 't' -> new RxTree.Literal("\t", false, false, false);
+            default -> new RxTree.Literal(String.valueOf(c), false, false, false);
         };
     }
 
     /** A bracketed set, with ranges and a leading '^' for negation. */
-    private RxNodes.Rx charClass() {
+    private RxTree.Node charClass() {
         boolean negate = peek() == '^';
         if (negate) at++;
         StringBuilder singles = new StringBuilder();
-        List<RxNodes.Rx> ranges = new ArrayList<>();
+        RxProgram.CharPred pred = null;
         while (at < src.length() && peek() != ']') {
             char lo = src.charAt(at++);
             if (peek() == '-' && at + 1 < src.length() && src.charAt(at + 1) != ']') {
                 at++;
                 char hi = src.charAt(at++);
-                ranges.add(new RxNodes.CharRange(lo, hi, negate));
+                RxProgram.CharPred range = RxTree.range(lo, hi);
+                pred = pred == null ? range : RxTree.either(pred, range);
             } else {
                 singles.append(lo);
             }
         }
         expect(']');
-        if (ranges.isEmpty()) {
-            return new RxNodes.EnumCharList(singles.toString(), negate);
-        }
         if (singles.length() > 0) {
-            ranges.add(new RxNodes.EnumCharList(singles.toString(), negate));
+            RxProgram.CharPred set = RxTree.anyOf(singles.toString());
+            pred = pred == null ? set : RxTree.either(pred, set);
         }
-        /* A negated set has to fail if ANY part matches, which is what a
-         * concatenation of zero-width checks would say; only the positive
-         * case is a plain alternation. The negated case with ranges is left
-         * out rather than quietly answering the wrong thing. */
-        if (negate) {
-            throw new IllegalArgumentException("negated ranges are NYI in the harness parser");
-        }
-        return new RxNodes.Alt(ranges.toArray(new RxNodes.Rx[0]));
+        if (pred == null) pred = cp -> false;
+        /* Negation applies to the set as a whole, which is why the parts are
+         * combined first and only then inverted. */
+        return new RxTree.One(negate ? RxTree.not(pred) : pred);
     }
 
     private char peek() { return at < src.length() ? src.charAt(at) : '\0'; }

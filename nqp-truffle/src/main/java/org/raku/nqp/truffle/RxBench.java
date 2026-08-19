@@ -63,7 +63,7 @@ public final class RxBench {
     private static int scan(Value matcher, String input) {
         int hits = 0;
         for (int i = 0; i < input.length(); i++) {
-            if (matcher.execute(input, i).asInt() != RxNodes.NO_MATCH) hits++;
+            if (matcher.execute(input, i).asInt() != RxVmNode.NO_MATCH) hits++;
         }
         return hits;
     }
