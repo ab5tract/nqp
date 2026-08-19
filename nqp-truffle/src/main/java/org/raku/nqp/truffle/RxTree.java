@@ -78,8 +78,18 @@ public final class RxTree {
         cp -> cp == ' ' || cp == '\t'
               || (Character.isSpaceChar(cp) && cp != '\n' && cp != '\r');
 
+    /* Named rather than lambdas so RxProgram can recognise them and give
+     * them opcodes of their own. */
+    public record Negated(RxProgram.CharPred of) implements RxProgram.CharPred {
+        @Override public boolean holds(int cp) { return !of.holds(cp); }
+    }
+
+    public record Range(int lo, int hi) implements RxProgram.CharPred {
+        @Override public boolean holds(int cp) { return cp >= lo && cp <= hi; }
+    }
+
     public static RxProgram.CharPred not(RxProgram.CharPred pred) {
-        return cp -> !pred.holds(cp);
+        return new Negated(pred);
     }
 
     public static RxProgram.CharPred anyOf(String chars) {
@@ -87,7 +97,7 @@ public final class RxTree {
     }
 
     public static RxProgram.CharPred range(int lo, int hi) {
-        return cp -> cp >= lo && cp <= hi;
+        return new Range(lo, hi);
     }
 
     public static RxProgram.CharPred either(RxProgram.CharPred a, RxProgram.CharPred b) {

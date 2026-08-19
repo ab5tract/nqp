@@ -113,6 +113,81 @@ public final class RxVmNode extends Node {
                         }
                     }
                 }
+                case RxProgram.ANY -> {
+                    if (pos >= eos) {
+                        failed = true;
+                    } else {
+                        pos += Character.charCount(target.codePointAt(pos));
+                        pc += 1;
+                    }
+                }
+                case RxProgram.CHAR1 -> {
+                    if (pos >= eos) {
+                        failed = true;
+                    } else {
+                        int cp = target.codePointAt(pos);
+                        if ((cp == code[pc + 1]) == (code[pc + 2] != 0)) {
+                            failed = true;
+                        } else {
+                            pos += Character.charCount(cp);
+                            pc += 3;
+                        }
+                    }
+                }
+                case RxProgram.DIGIT -> {
+                    if (pos >= eos) {
+                        failed = true;
+                    } else {
+                        int cp = target.codePointAt(pos);
+                        if (Character.isDigit(cp) == (code[pc + 1] != 0)) {
+                            failed = true;
+                        } else {
+                            pos += Character.charCount(cp);
+                            pc += 2;
+                        }
+                    }
+                }
+                case RxProgram.WORD -> {
+                    if (pos >= eos) {
+                        failed = true;
+                    } else {
+                        int cp = target.codePointAt(pos);
+                        boolean in = Character.isLetterOrDigit(cp) || cp == '_';
+                        if (in == (code[pc + 1] != 0)) {
+                            failed = true;
+                        } else {
+                            pos += Character.charCount(cp);
+                            pc += 2;
+                        }
+                    }
+                }
+                case RxProgram.SPACE -> {
+                    if (pos >= eos) {
+                        failed = true;
+                    } else {
+                        int cp = target.codePointAt(pos);
+                        if (Character.isWhitespace(cp) == (code[pc + 1] != 0)) {
+                            failed = true;
+                        } else {
+                            pos += Character.charCount(cp);
+                            pc += 2;
+                        }
+                    }
+                }
+                case RxProgram.RANGE1 -> {
+                    if (pos >= eos) {
+                        failed = true;
+                    } else {
+                        int cp = target.codePointAt(pos);
+                        boolean in = cp >= code[pc + 1] && cp <= code[pc + 2];
+                        if (in == (code[pc + 3] != 0)) {
+                            failed = true;
+                        } else {
+                            pos += Character.charCount(cp);
+                            pc += 4;
+                        }
+                    }
+                }
                 case RxProgram.ANCHOR -> {
                     if (!anchorHolds(code[pc + 1], target, pos, eos)) {
                         failed = true;
