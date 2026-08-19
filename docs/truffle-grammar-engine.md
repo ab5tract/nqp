@@ -110,6 +110,155 @@ terminally deprecated method). That is not cosmetic: those warnings land on
 stderr ahead of the compiler's own output and broke `t/nqp/114-pod-panic.t`,
 which asserts on the first line of it.
 
+## What the engine covers, and how to find out what to do next
+
+Coverage grows one rxtype at a time, and the honest measure of it is how many
+whole **rules** the engine takes over — not how many rxtypes are implemented.
+A rule moves only when *every* construct in it can be encoded, so a rxtype
+that appears everywhere can still be worth nothing on its own, and the first
+reason a rule reports says almost nothing about what to implement.
+
+Two knobs answer that properly:
+
+    NQP_RX_SURVEY=1   one line per rule, with EVERY reason it was refused
+    NQP_RX_NO=a,b     refuse these features, to measure what they are worth
+    NQP_RX_TRY=a,b    turn ON a feature that is written but known broken
+
+    rx survey: statement OK
+    rx survey: term:sym<...> BAIL rxtype qastnode;subrule with computed arguments
+
+`NQP_RX_NO` takes feature names (`anchor-const`, `quant-sep`, `uniprop`,
+`subrule-args`, `goal`), and what it is for is subtraction: build once with everything, then measure with
+a group refused, and the difference is what that group actually bought.
+Compiling rakudo's Raku grammar takes about fifteen seconds against two and a
+half minutes to rebuild nqp, so every combination is a run rather than a
+build:
+
+    nqp/nqp-j-gradle tools/build/gen-cat.nqp jvm src/Raku/Grammar.nqp > /tmp/g.nqp
+    NQP_RX_SURVEY=1 NQP_RX_NO=quant-sep nqp/nqp-j-gradle --module-path=blib \
+        --target=jar --output=/tmp/g.jar /tmp/g.nqp
+
+Beware: rakudo's `blib` records the nqp module versions it was built against,
+so it has to be rebuilt after every nqp rebuild or the compile dies with
+"Missing or wrong version of dependency". `make blib/Raku/Grammar.jar` after
+deleting the module jars is enough; it does not need the settings.
+
+Encoded: concat, alt (ordered and longest-token), literal, cclass,
+enumcharlist, charrange, anchor — including the constant `pass` and `fail` —
+quant, with or without a separator, uniprop, subrule — including calls
+carrying literal arguments — subcapture, scan, pass, dba, ws, and goal (`~`),
+which is rewritten exactly as `QAST::Compiler.goal` rewrites it rather than
+compiled separately.
+
+Not encoded: qastnode (`{ ... }`, `<?{ ... }>`), which is arbitrary NQP code
+compiled into the matcher's own frame and is by far the largest remaining
+group — there is an attempt at it, and it does not work; see below. Then
+subrule calls whose arguments are *computed*, rules that can be resumed
+(`regex` rather than `token`/`rule`), which the engine cannot express at all,
+subrule calls through a variable, dynquant, conj, the `<:Block("...")>` form
+of uniprop, which smartmatches a value rather than testing one, and
+ignoremark literals.
+
+Measured on rakudo's Raku grammar, which has 1105 rules:
+
+| group                                  | rules |
+|----------------------------------------|------:|
+| on the engine before                   |   655 |
+| constant anchors (`pass`, `fail`)      |   +24 |
+| quantifier separators (`a+ % ','`)     |    +5 |
+| Unicode properties (`<:Alpha>`)        |    +2 |
+| subrule calls with literal arguments   |   +79 |
+| goal (`~`), which waits on those       |    +7 |
+| **on the engine now**                  | **773** |
+
+Refusing all five reproduces 655 exactly. That is the check worth keeping: an
+apparatus that cannot reproduce the number it started from is not measuring
+what it claims to.
+
+What the next groups are worth, by the same subtraction:
+
+| group                                  | rules |
+|----------------------------------------|------:|
+| qastnode                               |   +93 |
+| subrule calls with computed arguments  |   +83 |
+| resumable (`regex`) rules              |   +35 |
+| subrule calls through a variable       |    +7 |
+
+## Coming back for the rule's own code — written, and NOT working
+
+`{ ... }`, `<?{ ... }>` and `:my $x := ...` are arbitrary NQP, and the
+bytecode path compiles them straight into the matcher's frame where they can
+read the rule's lexicals. `qastnode` is the largest thing the engine does not
+cover: 203 of the 1105 rules in rakudo's Raku grammar mention it, and 93 are
+blocked by nothing else.
+
+The attempt here does not move the code — it **comes back for it**:
+
+* the encoder collects each `qastnode` body and emits only an *index*;
+* `QAST::Compiler.engine_jast` wraps the bodies in one nested block that
+  switches on that index, and hands the rule's class the **static** code
+  object for it (a `QAST::BVal`, so a rule that never reaches a callback pays
+  one constant load and no allocation);
+* `NqpCursor.callbackHolds` closes it over the frame *at the moment a
+  callback fires* — `Ops.takeclosure(callback, tc)`. That works because
+  `rxmatch` is a static call and pushes no frame of its own, so `tc.curFrame`
+  is still the rule's own frame.
+
+**It produces a wrong parse, so it is off by default.** `NQP_RX_TRY=qastnode`
+turns it on. What is known:
+
+* nqp bootstraps and compiles itself with it enabled, and then the first
+  program compiled by a stage whose *own* code carries descriptors mis-parses:
+  `package_def` reaches `install_package_symbol` with an NQPMu where a
+  capture should be.
+* Refusing `qastnode` alone makes that build green, so the mechanism is the
+  cause and nothing else in the engine is.
+
+The likeliest reason, **unproven**: a codeblock is not bare code.
+`QRegex::P6Regex::Actions.codeblock` wraps every `{ ... }` in a nested
+`QAST::Block` of its own with `blocktype('immediate')`, built while the
+grammar was parsed and with the rule's block as its lexical parent.
+Re-parenting that under a block the backend invents afterwards moves it a
+frame deeper. A sound version probably has to reuse *that* block as the
+callback — turning it from immediate into a closure value — rather than wrap
+it in a new one.
+
+Do not build on that guess without checking it. The same kind of guess about
+declarations was already wrong: `NQP::Actions.variable_declarator` does hoist
+`my $x` into the enclosing block's `$BLOCK[0]`, so a `:my` inside a regex
+leaves only a reference or a bind behind, not a declaration.
+
+A second limit is real whatever the cause: `NQP::Optimizer` turns a lexical
+that no *inner block* uses into a local, and cannot know about a block the
+backend invents afterwards. A local lives in one frame and cannot be named
+from another, so a rule whose code touches one is refused outright
+(`qastnode over a lowered local`).
+
+## Why the engine is Kotlin
+
+The node set is hand-written: `RxVmNode` is one interpreter loop over a
+`@CompilationFinal` program, and the specialization that matters — the
+program becoming a constant — comes from that annotation rather than from
+Truffle's `@Specialization` DSL. The DSL is an annotation processor that
+*generates a Java subclass* of your node, which would mean kapt on every
+build and `allopen` to defeat Kotlin's final-by-default, to buy a mechanical
+generation of specializations this engine does not have.
+
+So the engine proper is Kotlin — nodes, program, descriptor, wire format,
+cursor, and the pattern parser the harnesses use — next to the Kotlin runtime
+it calls into. `RxLanguage` stays Java because
+`@TruffleLanguage.Registration` and `@ExportLibrary` genuinely are
+annotation-processed: polyglot finds a language through a generated provider.
+The three standalone `main()` harnesses (`RxCheck`, `RxBench`,
+`RxDescriptorCheck`) stay Java as well, for no better reason than that they
+are test scaffolding and moving them would risk the tests to gain nothing.
+
+Gradle handles the mix (Kotlin compiles first, Java against its output), but
+note the harness tasks need `kotlin-stdlib` on their classpath explicitly —
+it cannot come from `runtimeClasspath` wholesale, because that also carries
+the Truffle jars, which have to resolve as *modules*. In a real run the
+stdlib is already on nqp's boot classpath next to `nqp-runtime`.
+
 ## Semantics that must match NQP exactly
 
 Each of these produced a wrong parse rather than an error:
@@ -139,6 +288,10 @@ Each of these produced a wrong parse rather than an error:
 The nqp suite is at parity with the bytecode baseline: 142 files, 13110
 tests, one pre-existing `t/p5regex` failure (test 78) that fails identically
 with `NQP_JVM_NO_TRUFFLE=1`. `make j-all` builds a working `rakudo-j`.
+
+773 of the 1105 rules in rakudo's Raku grammar are on the engine, and the
+CORE.c compile is at parity with the bytecode path — see the two sections
+below for how that is measured and what is left.
 
 ## Measured against the thing it replaces
 
@@ -175,22 +328,57 @@ The same shape appears on the legacy front end (CORE.c parse 124.702 off vs
 consistent across five measurements. These are single runs, so treat the
 magnitudes as approximate — but not the sign.
 
-Worth trying, in the order I would bet on them:
+### Coverage was the hypothesis, and it held
 
-1. **Truffle's compiler threads.** See above; the cost is spread across
-   stages that do no matching. Cheapest thing to test, and if it is the whole
-   story the matching itself may already be at parity or better.
-2. **The subrule boundary.** Every `<foo>` leaves the engine, invokes an NQP
+Hypothesis 3 above was that the engine holds too little of the grammar to pay
+for the crossings. It has now been tested by raising coverage from 655 rules
+to 773, and it is right. Same measurement, RakuAST front end:
+
+| stage     | 655 rules | 773 rules | engine off | 773 vs off |
+|-----------|----------:|----------:|-----------:|-----------:|
+| parse     |   165.981 |   160.973 |    161.158 | **−0.1%** |
+| optimize  |    44.990 |    43.330 |     43.245 |     +0.2% |
+| qast      |    12.432 |    13.285 |     11.920 |    +11.5% |
+| jast      |    42.816 |    42.528 |     41.697 |     +2.0% |
+| classfile |    49.641 |    48.927 |     49.138 |     −0.4% |
+| **total** | **316.4** | **309.0** |  **307.2** | **+0.6%** |
+
+**The engine is now at parity with the bytecode path it replaces** — +0.6%
+overall, and parse itself, the stage that actually runs the regexes, is
+within noise of engine-off. The 3% it was down has been recovered by covering
+more of the grammar, which is what hypothesis 3 predicted.
+
+Do not measure this on the legacy front end. The same coverage change
+measured there looks like a 3.3% *regression* (parse 126.936 → 131.129),
+which is the opposite conclusion; the legacy front end is being cut and its
+numbers are not worth acting on.
+
+What is left is +11.5% on `qast` and +2.0% on `jast` — stages that run **no
+regexes at all**. Whatever that is, it is not matching, and it is now the
+whole of the remaining overhead.
+
+Worth trying, in the order I would now bet on them:
+
+1. **Truffle's compiler threads.** The remaining cost is concentrated in
+   stages that do no matching, which is exactly the shape of background
+   compilation competing with the compiler's own work. Cheapest to test, with
+   `engine.TraceCompilation` and a pinned compiler thread count.
+2. **The per-match entry cost, which is avoidable bookkeeping.** Every match
+   does a `ConcurrentHashMap` lookup keyed by the descriptor *string* to find
+   its compiled program, and allocates a fresh `NqpCursor`; every subrule
+   call does `Ops.findmethod` by name plus a fresh argument array, where the
+   bytecode path has an `invokedynamic` site with a guard chain. The program
+   lookup should not be a lookup at all: `JAST::Class` takes fields, so the
+   rule's own class can hold the compiled program in a static.
+3. **`altOrder` allocates** a fresh marks array per named-alt entry — a real
+   `BOOTIntArray` SixModelObject, filled one `push_native` at a time — and
+   reads its answer back through the cursor's bstack, where the bytecode path
+   pushes onto a stack it already owns.
+4. **The subrule boundary.** Every `<foo>` leaves the engine, invokes an NQP
    CodeRef and returns; partial evaluation stops dead there. A grammar is
    mostly subrule calls, so the compiled region between two of them is small.
    This is the same boundary that makes replacing newdisp the *tail* of
    moving code generation to Truffle rather than the head.
-3. **Coverage.** About 57 rules are on the engine and the rest of the grammar
-   is still bytecode, so the crossing cost is paid without whole-grammar
-   speedup.
-4. **`altOrder` allocates** a fresh marks array per named-alt entry and reads
-   back through the bstack, where the bytecode path pushes onto a stack it
-   already owns.
 
 Not yet done: rakudo's own test suite has not been run under the engine. And
 a grammar used once may never get hot enough to be compiled — a setting

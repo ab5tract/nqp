@@ -11,6 +11,54 @@
 # the rest go on working.
 
 class QAST::RxDescriptor {
+    # NQP_RX_NO=a,b refuses named features that the encoder otherwise
+    # handles.
+    #
+    # What a group of rxtypes is worth is not the number of rules that name
+    # it first, nor the number of times it occurs: a rule moves to the engine
+    # only when everything in it can be encoded, so the yield of a group is
+    # how many rules it CLOSES OUT, and that can only be had by measuring
+    # with and without it. Rebuilding nqp to find out costs two and a half
+    # minutes; this costs a run.
+    #
+    #   anchor-const   the constant `pass` and `fail` anchors
+    #   quant-sep      quantifiers with a separator, `a+ % ','`
+    #   uniprop        Unicode property tests, <:Alpha>
+    #   subrule-args   subrule calls carrying literal arguments
+    #   goal           the `~` construct
+    my %rx_no;
+    my int $rx_no_read := 0;
+    sub rx_refuses(str $feature) {
+        unless $rx_no_read {
+            $rx_no_read := 1;
+            my %env := nqp::getenvhash();
+            if nqp::existskey(%env, 'NQP_RX_NO') {
+                for nqp::split(',', %env<NQP_RX_NO>) { %rx_no{$_} := 1 }
+            }
+        }
+        nqp::existskey(%rx_no, $feature)
+    }
+
+    # NQP_RX_TRY=a,b turns ON a feature that is written but not trusted.
+    #
+    # The opposite sense to NQP_RX_NO, deliberately: what sits behind this is
+    # known to produce a wrong parse, so off has to be the default and turning
+    # it on has to be an act of intent rather than an omission.
+    #
+    #   qastnode       `{ ... }` and `<?{ ... }>` run back in the rule's frame
+    my %rx_try;
+    my int $rx_try_read := 0;
+    sub rx_tries(str $feature) {
+        unless $rx_try_read {
+            $rx_try_read := 1;
+            my %env := nqp::getenvhash();
+            if nqp::existskey(%env, 'NQP_RX_TRY') {
+                for nqp::split(',', %env<NQP_RX_TRY>) { %rx_try{$_} := 1 }
+            }
+        }
+        nqp::existskey(%rx_try, $feature)
+    }
+
     # Tags, matching RxDescriptor.java.
     my int $SEQ     := 1;
     my int $ALT     := 2;
@@ -24,6 +72,12 @@ class QAST::RxDescriptor {
     my int $CAPTURE := 10;
     my int $SCAN    := 11;
     my int $ALT_LTM := 12;
+    my int $UNIPROP := 13;
+    my int $QASTNODE := 14;
+
+    # Subrule argument kinds, matching RxDescriptor.java.
+    my int $ARG_STR := 0;
+    my int $ARG_INT := 1;
 
     my int $F_NEGATE     := 1;
     my int $F_ZEROWIDTH  := 2;
@@ -48,14 +102,22 @@ class QAST::RxDescriptor {
         'eol',  3,
         'lwb',  4,
         'rwb',  5,
+        # The two constant assertions. QAST::Compiler spells `fail` as a jump
+        # to the fail label and `pass` as no instructions at all -- an anchor
+        # subtype it does not recognise simply holds.
+        'pass', 6,
+        'fail', 7,
     );
 
     has @!code;
     has @!pool;
+    has @!callbacks;
     has str $!pass_name;
     has str $!bail_reason;
+    has @!bail_reasons;
     has int $!scan;
     has int $!bailed;
+    has int $!survey;
 
     # The descriptor for a QAST::Regex tree, or null when it uses something
     # the engine does not implement yet.
@@ -65,11 +127,36 @@ class QAST::RxDescriptor {
         # one -- a plain list answers "does not implement push_native".
         nqp::bindattr($self, QAST::RxDescriptor, '@!code', nqp::list_i());
         nqp::bindattr($self, QAST::RxDescriptor, '@!pool', []);
+        nqp::bindattr($self, QAST::RxDescriptor, '@!bail_reasons', []);
+        nqp::bindattr($self, QAST::RxDescriptor, '@!callbacks', []);
         nqp::bindattr_s($self, QAST::RxDescriptor, '$!pass_name', '');
         nqp::bindattr_i($self, QAST::RxDescriptor, '$!scan', 0);
+        nqp::bindattr_i($self, QAST::RxDescriptor, '$!survey',
+            nqp::existskey(nqp::getenvhash(), 'NQP_RX_SURVEY') ?? 1 !! 0);
         $self.inspect_pass($node);
         $self.walk($node);
+        $self.report if $self.survey;
         $self.bailed ?? nqp::null() !! $self
+    }
+
+    method survey() { $!survey }
+
+    # One line per rule, naming EVERY reason it was refused rather than the
+    # first.
+    #
+    # The first reason alone cannot say what a group of rxtypes is worth: a
+    # rule refused for an anchor may hold four other things the engine does
+    # not cover, so implementing anchors moves it from one bail to another
+    # and buys nothing. What decides which group to do next is how many
+    # rules a given SET of reasons accounts for, and that needs all of them.
+    method report() {
+        my str $name := $!pass_name eq '' ?? '<anon>' !! $!pass_name;
+        if $!bailed {
+            nqp::say('rx survey: ' ~ $name ~ ' BAIL ' ~ nqp::join(';', @!bail_reasons));
+        }
+        else {
+            nqp::say('rx survey: ' ~ $name ~ ' OK');
+        }
     }
 
     # What the rule does when it succeeds, and whether the engine may be the
@@ -93,14 +180,16 @@ class QAST::RxDescriptor {
         # No pass at all: not a whole rule body, so there is no defined thing
         # for the engine to hand back.
         return self.bail('no pass node') if nqp::isnull($pass);
-        return self.bail('backtrackable rule') unless $pass.backtrack eq 'r';
+        # The name first, so that a rule refused for any other reason still
+        # has one to be reported under.
         if $pass.name() {
             $!pass_name := $pass.name();
         }
-        elsif nqp::elems(@($pass)) == 1 {
+        elsif nqp::elems($pass) == 1 {
             # A computed name, known only while the rule runs.
-            return self.bail('computed pass name');
+            self.bail('computed pass name');
         }
+        self.bail('backtrackable rule') unless $pass.backtrack eq 'r';
     }
 
     method find_pass($node) {
@@ -117,6 +206,12 @@ class QAST::RxDescriptor {
     }
 
     method pass_name() { $!pass_name }
+
+    # The QAST the engine has to come back into the rule's frame to run, one
+    # entry per callback index. QAST::Compiler.engine_jast turns these into a
+    # single block that switches on the index; the descriptor itself carries
+    # only the index, since the code cannot be flattened into an int array.
+    method callbacks() { @!callbacks }
 
     method scan() { $!scan }
 
@@ -181,18 +276,34 @@ class QAST::RxDescriptor {
             nqp::say('rx bail: ' ~ $why)
                 if nqp::existskey(nqp::getenvhash(), 'NQP_RX_BAIL');
         }
+        if $!survey {
+            my int $seen := 0;
+            for @!bail_reasons { $seen := 1 if $_ eq $why }
+            nqp::push(@!bail_reasons, $why) unless $seen;
+        }
         nqp::null()
     }
 
     method bail_reason() { $!bail_reason }
 
-    # A plain named rule call. A subrule with arguments, or one calling a
-    # variable, keeps the bytecode path.
+    # A named rule call, with any arguments it was written with.
+    #
+    # A call through a variable keeps the bytecode path: the engine has a name
+    # to call, not a code object to invoke.
     method subrule_call($node) {
-        return self.bail('subrule without a literal name')
+        return self.bail('subrule via a variable')
             unless nqp::istype($node[0], QAST::Node)
-                && nqp::elems($node[0].list) == 1
+                && nqp::elems($node[0]) >= 1
                 && nqp::istype($node[0][0], QAST::SVal);
+
+        # The arguments are collected BEFORE anything is emitted, because one
+        # of them may refuse the rule and a half-written node would leave the
+        # code array describing something that is not there. They still take
+        # pool slots first, which costs nothing: the pool is indexed, not
+        # ordered.
+        my @args := self.subrule_args($node[0]);
+        return nqp::null if nqp::isnull(@args);
+
         self.emit($SUB);
         self.emit(self.constant($node[0][0].value));
         self.emit(self.flags($node));
@@ -200,6 +311,78 @@ class QAST::RxDescriptor {
         self.emit($node.subtype eq 'capture'
             ?? self.constant(~$node.name) + 1
             !! 0);
+        self.emit(nqp::div_i(nqp::elems(@args), 2));
+        self.emit($_) for @args;
+    }
+
+    # (kind, pool index) per argument, or null when one of them cannot travel.
+    #
+    # Only what the grammar's source says outright can be carried: a variable,
+    # an expression or a block is evaluated in the rule's own frame, which the
+    # engine has no access to. Literals are worth having because the rules
+    # that report errors are almost all called with them -- <.panic('...')>,
+    # <.obs('x', 'y')>, and the <.FAILGOAL(...)> every `~` ends in.
+    method subrule_args($call) {
+        my @args;
+        my int $i := 1;
+        my int $n := nqp::elems($call);
+        if $n > 1 && rx_refuses('subrule-args') {
+            self.bail('subrule with literal arguments');
+            return nqp::null;
+        }
+        while $i < $n {
+            my $arg := $call[$i];
+            # A named or flattened argument arrives at the callee differently
+            # from a positional one, and the call site the engine builds says
+            # positional. Encoding one as the other would call the rule with
+            # arguments it did not ask for.
+            if $arg.named || $arg.flat {
+                self.bail('subrule with a named or flattened argument');
+                return nqp::null;
+            }
+            elsif nqp::istype($arg, QAST::SVal) {
+                nqp::push(@args, $ARG_STR);
+                nqp::push(@args, self.constant(~$arg.value));
+            }
+            elsif nqp::istype($arg, QAST::IVal) {
+                # The pool is strings, so an int travels as its decimal text.
+                nqp::push(@args, $ARG_INT);
+                nqp::push(@args, self.constant(~$arg.value));
+            }
+            else {
+                self.bail('subrule with computed arguments');
+                return nqp::null;
+            }
+            $i := $i + 1;
+        }
+        @args
+    }
+
+    # Whether a subtree reads a local it does not itself declare.
+    #
+    # A local lives in one frame and is named by slot, so a block that did not
+    # declare it cannot name it at all. %seen carries the declarations found
+    # so far, which is what tells a temporary the code made for itself from a
+    # variable NQP::Optimizer lowered out of the rule's lexical scope.
+    #
+    # A nested QAST::Block is skipped: it has a frame of its own, and anything
+    # local in it was declared in it.
+    method reads_outer_local($node, %seen) {
+        return 0 unless nqp::istype($node, QAST::Node);
+        return 0 if nqp::istype($node, QAST::Block);
+        if nqp::istype($node, QAST::Var) && $node.scope eq 'local' {
+            my str $decl := $node.decl // '';
+            if $decl eq 'var' || $decl eq 'param' {
+                %seen{$node.name} := 1;
+            }
+            elsif !nqp::existskey(%seen, $node.name) {
+                return 1;
+            }
+        }
+        for @($node) {
+            return 1 if self.reads_outer_local($_, %seen);
+        }
+        0
     }
 
     # negate/zerowidth/ignorecase as one int. Character classes carry this
@@ -234,7 +417,10 @@ class QAST::RxDescriptor {
     }
 
     method walk($node) {
-        return nqp::null if $!bailed;
+        # A survey wants every reason, so it keeps walking a rule that has
+        # already been refused; what it emits is garbage, and is thrown away
+        # with the descriptor.
+        return nqp::null if $!bailed && !$!survey;
         # A missing child, or one that is not a regex node at all: the engine
         # has no reading of either, so the rule keeps the bytecode path.
         return self.bail('non-regex node') unless nqp::istype($node, QAST::Regex);
@@ -280,11 +466,14 @@ class QAST::RxDescriptor {
             # not a plain regex node, the whole rule has to go.
             my @kept := @($node);
             for @kept {
-                return self.bail('unencodable alternation branch')
-                    unless nqp::istype($_, QAST::Regex)
+                unless nqp::istype($_, QAST::Regex)
                         && ($_.rxtype // 'concat') ne 'pass'
-                        && ($_.rxtype // 'concat') ne 'dba';
+                        && ($_.rxtype // 'concat') ne 'dba' {
+                    self.bail('unencodable alternation branch');
+                    return nqp::null unless $!survey;
+                }
             }
+            @kept := self.encodable(@kept) if $!bailed && $!survey;
             self.emit($ALT_LTM);
             self.emit(self.constant(~$node.name));
             self.emit($node.backtrack eq 'r' ?? 1 !! 0);
@@ -332,13 +521,29 @@ class QAST::RxDescriptor {
         elsif $rxtype eq 'anchor' {
             my str $subtype := $node.subtype;
             return self.bail('anchor ' ~ $subtype) unless nqp::existskey(%anchor, $subtype);
+            return self.bail('anchor ' ~ $subtype)
+                if ($subtype eq 'pass' || $subtype eq 'fail') && rx_refuses('anchor-const');
             self.emit($ANCHOR);
             self.emit(%anchor{$subtype});
         }
         elsif $rxtype eq 'quant' {
-            # A separator or a dynamic bound both mean more than the engine
-            # encodes so far.
-            return self.bail('quant with separator') if nqp::elems(@($node)) > 1;
+            # A separator is a second child -- `<digit>+ % ','`. It sits
+            # BETWEEN two repetitions and is never trailing, which is what
+            # the engine's program has to say too.
+            my int $sep := nqp::elems($node) > 1 ?? 1 !! 0;
+            if $sep {
+                if rx_refuses('quant-sep') {
+                    self.bail('quant with separator');
+                    return nqp::null unless $!survey;
+                }
+                # Nothing in NQP builds a quant with more than a body and a
+                # separator, so a third child means something this does not
+                # understand rather than something it can guess at.
+                if nqp::elems($node) > 2 {
+                    self.bail('quant with more than a separator');
+                    return nqp::null unless $!survey;
+                }
+            }
             # 'f' is frugal (lazy), 'r' is ratcheted -- it keeps what it
             # took and never gives any of it back. A token makes every
             # quantifier in it ratcheted, so this flag is what most of a
@@ -349,7 +554,67 @@ class QAST::RxDescriptor {
             self.emit($node.max);
             self.emit($node.backtrack eq 'f' ?? 0 !! 1);
             self.emit($node.backtrack eq 'r' ?? 1 !! 0);
+            self.emit($sep);
             self.walk($node[0]);
+            self.walk($node[1]) if $sep;
+        }
+        elsif $rxtype eq 'qastnode' {
+            # `{ ... }`, `<?{ ... }>`, `:my $x := ...`: arbitrary NQP code,
+            # compiled by the bytecode path straight into the matcher's own
+            # frame, where it can see the rule's lexicals. The engine is a
+            # Java loop with no frame of its own, so instead of moving the
+            # code it comes BACK for it: the code becomes one branch of a
+            # block the rule hands over, and the descriptor carries only
+            # which branch.
+            # OFF by default, and it must stay that way until the failure
+            # below is understood. Turn it on with NQP_RX_TRY=qastnode.
+            #
+            # What is known: with this enabled, nqp bootstraps and compiles
+            # itself, but the first program compiled by a stage whose OWN code
+            # carries descriptors mis-parses -- `package_def` reaches
+            # `install_package_symbol` with an NQPMu where a capture should
+            # be. Refusing qastnode alone makes that build green, so the
+            # mechanism here is the cause and nothing else in the engine is.
+            #
+            # The likeliest reason, unproven: a codeblock is not bare code.
+            # `QRegex::P6Regex::Actions.codeblock` wraps every `{ ... }` in a
+            # nested QAST::Block of its own with blocktype('immediate'), built
+            # while the grammar was parsed and with the rule's block as its
+            # lexical parent. Re-parenting that under a block the backend
+            # invents afterwards moves it a frame deeper, and the World
+            # already recorded symbols against the original nesting. A sound
+            # version probably has to reuse THAT block as the callback --
+            # turning it from immediate into a closure value -- rather than
+            # wrap it in a new one. Do not build on the guess without checking
+            # it: the same guess about hoisted declarations was already wrong
+            # (NQP::Actions.variable_declarator does hoist them, to $BLOCK[0]).
+            return self.bail('rxtype qastnode') unless rx_tries('qastnode');
+            return self.bail('qastnode without a body') unless nqp::elems($node) == 1;
+
+            # The block is nested inside the rule's, so it reaches the rule's
+            # lexicals as a closure does -- but NOT its locals, and
+            # NQP::Optimizer turns a lexical no inner block uses into exactly
+            # that. It cannot know about a block the backend invents later,
+            # so a rule whose code touches one of those has to keep the
+            # bytecode path; encoding it would compile a reference to a local
+            # that does not exist where the code ended up.
+            return self.bail('qastnode over a lowered local')
+                if self.reads_outer_local($node[0], nqp::hash());
+
+            self.emit($QASTNODE);
+            self.emit(nqp::elems(@!callbacks));
+            self.emit(self.flags($node));
+            nqp::push(@!callbacks, $node[0]);
+        }
+        elsif $rxtype eq 'uniprop' {
+            # <:Alpha>. The pair form, <:Block("Basic Latin")>, smartmatches
+            # the property's VALUE against a matcher the cursor supplies, so
+            # it is a call rather than a test and stays on the bytecode path.
+            return self.bail('uniprop pair') unless nqp::elems($node) == 1;
+            return self.bail('rxtype uniprop') if rx_refuses('uniprop');
+            self.emit($UNIPROP);
+            self.emit(self.constant(~$node[0]));
+            self.emit(self.flags($node));
         }
         elsif $rxtype eq 'subrule' {
             self.subrule_call($node);
@@ -375,6 +640,24 @@ class QAST::RxDescriptor {
             # would silently skip the wrong things.
             self.subrule_call($node);
         }
+        elsif $rxtype eq 'goal' {
+            # `'(' ~ ')' <thing>`. QAST::Compiler does not compile this at
+            # all: it rewrites it into nodes it already has, and the rewrite
+            # is what is copied here rather than reimplemented, so the two
+            # cannot come to disagree about what `~` means.
+            #
+            # The third child is the rule that reports the missing goal --
+            # <.FAILGOAL(')', 'argument list')> -- so nothing of this shape
+            # can be encoded until a subrule can carry literal arguments.
+            return self.bail('rxtype goal') if rx_refuses('goal');
+            return self.bail('goal without three children')
+                unless nqp::elems($node) == 3;
+            self.walk(QAST::Regex.new(
+                :rxtype<concat>,
+                $node[1],
+                QAST::Regex.new( :rxtype<altseq>, $node[0], $node[2] )
+            ));
+        }
         elsif $rxtype eq 'subcapture' {
             # The span becomes a cursor when it is captured, the way
             # !cursor_start_subcapture does it for the bytecode path; the
@@ -384,9 +667,17 @@ class QAST::RxDescriptor {
             self.walk($node[0]);
         }
         else {
-            # qastnode, dynquant, goal, conj and the rest: the bytecode path
-            # still owns these.
-            self.bail;
+            # qastnode, dynquant, conj and the rest: the bytecode path still
+            # owns these. Named, because "unknown" cannot say which rxtype is
+            # worth implementing next.
+            self.bail('rxtype ' ~ $rxtype);
+            # A survey looks inside anyway: what else the rule holds decides
+            # whether covering this rxtype would actually free it.
+            if $!survey {
+                for @($node) {
+                    self.walk($_) if nqp::istype($_, QAST::Regex);
+                }
+            }
         }
         nqp::null
     }
