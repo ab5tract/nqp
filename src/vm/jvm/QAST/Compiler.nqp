@@ -4064,6 +4064,13 @@ class QAST::CompilerJAST {
         my $*NEXT_QBID := 0;
         # Pre-seed to make sure that qbids correspond to serialization IDs
         my $*COMP_MODE := $cu.compilation_mode;
+        # Comp-mode units pair code refs with methods by block id, so the
+        # cuid strings are dead weight there (and the setting's constant
+        # pool lives close to the 64K limit). A nested unit is the
+        # exception: it never deserializes, and the enclosing compilation
+        # reconnects its code objects by looking the cuids up on the
+        # freshly compiled code refs.
+        my $*EMIT_CUIDS := !$*COMP_MODE || $cu.is_nested;
         if $*COMP_MODE {
             for $cu.code_ref_blocks() -> $qblock {
                 %*CUID_TO_QBID{$qblock.cuid} := $*NEXT_QBID++;
@@ -4099,8 +4106,14 @@ class QAST::CompilerJAST {
                 $block.push(QAST::Stmt.new($_));
             }
 
-            # If we need to do deserialization, emit code for that.
-            if $*COMP_MODE {
+            # If we need to do deserialization, emit code for that. A
+            # nested unit (an EVAL inside another compilation) does not
+            # serialize: its objects live in the enclosing compilation's
+            # SC and this unit only ever runs in the process that compiled
+            # it. Serializing it would also fail outright, as compiler
+            # state like @!compstuff thunks is still live mid-compilation.
+            # The MoarVM backend skips it the same way.
+            if $*COMP_MODE && !$cu.is_nested {
                 $block.push(self.deserialization_code($cu.sc(), $cu.code_ref_blocks(),
                     $cu.repo_conflict_resolver()));
             }
@@ -4465,7 +4478,7 @@ class QAST::CompilerJAST {
             # are handled out of band).
             my $*JMETH := JAST::Method.new( :name('qb_'~self.cuid_to_qbid($node.cuid)), :returns('Void'), :static(1) );
             $*JMETH.cr_name($node.name);
-            $*JMETH.cr_cuid($node.cuid) unless $*COMP_MODE;
+            $*JMETH.cr_cuid($node.cuid) unless $*COMP_MODE && !$*EMIT_CUIDS;
 
             # Note the block's source location so nqp::getcodelocation has
             # something to answer with at runtime. A node that knows its own
