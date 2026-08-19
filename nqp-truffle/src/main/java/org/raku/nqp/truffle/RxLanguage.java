@@ -37,21 +37,19 @@ public final class RxLanguage extends TruffleLanguage<RxLanguage.Ctx> {
      * which is the thing a compile-time approach cannot reach.
      */
     @Override protected CallTarget parse(ParsingRequest request) {
-        RxParser.Built built = RxParser.parse(request.getSource().getCharacters().toString());
-        Matcher matcher = new Matcher(
-            new MatchRootNode(this, built.entry(), built.slots()).getCallTarget());
+        RxProgram program = RxProgram.compile(
+            RxParser.parse(request.getSource().getCharacters().toString()));
+        Matcher matcher = new Matcher(new MatchRootNode(this, program).getCallTarget());
         return new ConstantRootNode(this, matcher).getCallTarget();
     }
 
     /** Runs one pattern against one target; the unit partial evaluation compiles. */
     public static final class MatchRootNode extends RootNode {
-        @Child private RxNodes.Rx entry;
-        private final int slots;
+        @Child private RxVmNode vm;
 
-        public MatchRootNode(TruffleLanguage<?> language, RxNodes.Rx entry, int slots) {
+        public MatchRootNode(TruffleLanguage<?> language, RxProgram program) {
             super(language);
-            this.entry = entry;
-            this.slots = slots;
+            this.vm = new RxVmNode(program);
         }
 
         @Override public Object execute(VirtualFrame frame) {
@@ -59,7 +57,7 @@ public final class RxLanguage extends TruffleLanguage<RxLanguage.Ctx> {
             String target = (String) args[0];
             int pos = args.length > 1 ? (Integer) args[1] : 0;
             RxCursor cursor = args.length > 2 ? (RxCursor) args[2] : new RxCursor.OfString(target);
-            return entry.match(new RxState(cursor, slots), pos);
+            return vm.match(cursor, pos);
         }
     }
 
