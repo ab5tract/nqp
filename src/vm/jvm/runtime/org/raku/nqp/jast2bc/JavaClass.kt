@@ -5,4 +5,5 @@ class JavaClass {
     @JvmField var bytes: ByteArray? = null
     @JvmField var serialized: ByteArray? = null
     @JvmField var hasMain = false
+    @JvmField var nestedClassNames: List<String> = emptyList()
 }

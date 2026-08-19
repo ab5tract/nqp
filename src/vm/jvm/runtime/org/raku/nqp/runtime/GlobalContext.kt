@@ -225,6 +225,18 @@ class GlobalContext {
     @JvmField var hllGlobalAll: HashMap<ContextKey<*, *>, Any>
     @JvmField var hllGlobalAllLock: Any
 
+    /* In-memory compiled units retained for nested-unit persistence: an
+     * EVAL compiled during a precompilation may need its classfile embedded
+     * in the enclosing unit's output, so a precompiled module can restore
+     * the code refs its serialized graph points into. Keyed by class name,
+     * with a cuid-to-class index alongside. Only populated while a
+     * compiling SC is on the stack, so ordinary runtime EVALs cost nothing. */
+    @JvmField val inMemoryUnitBytes: java.util.concurrent.ConcurrentHashMap<String, ByteArray> = java.util.concurrent.ConcurrentHashMap()
+    @JvmField val inMemoryUnitOfCuid: java.util.concurrent.ConcurrentHashMap<String, String> = java.util.concurrent.ConcurrentHashMap()
+    /* Nested units claimed mid-deserialization, awaiting their own
+     * deserialization code run (jvm-finish-nested). */
+    @JvmField val claimedNestedUnits: java.util.concurrent.ConcurrentHashMap<String, CompilationUnit> = java.util.concurrent.ConcurrentHashMap()
+
     @JvmField var currentThreadCtxRef: ThreadLocal<WeakReference<ThreadContext>>?
     @JvmField var allThreads: WeakHashMap<java.lang.Thread, ThreadContext>
 

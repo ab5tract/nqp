@@ -353,6 +353,30 @@ object Syscalls {
             }
             void
         }
+
+        /* ----- JVM nested compilation units ----- */
+
+        /* The class an in-memory compiled block belongs to, when one was
+         * retained for nested-unit persistence; empty string otherwise.
+         * Syscalls rather than ops so the compiler itself can call them
+         * without a bootstrap-breaking new op. */
+        define("jvm-class-of-cuid", STR) { args ->
+            DispatchValue(ArgKind.STR, Ops.jvmclassofcuid(args.str(0), args.tc))
+        }
+
+        /* Loads a nested unit embedded in the current unit's jar and
+         * installs its code refs into the current unit's qbid table. */
+        define("jvm-claim-nested", STR, OBJ, OBJ) { args ->
+            Ops.jvmclaimnested(args.str(0), args.obj(1), args.obj(2), args.tc)
+            void
+        }
+
+        /* Runs a claimed nested unit's deserialization code once the
+         * enclosing deserialization has populated the SC. */
+        define("jvm-finish-nested", STR) { args ->
+            Ops.jvmfinishnested(args.str(0), args.tc)
+            void
+        }
     }
 
     private fun insertLiteral(args: SyscallArgs, value: DispatchValue): SixModelObject {
