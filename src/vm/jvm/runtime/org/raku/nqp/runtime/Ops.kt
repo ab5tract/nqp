@@ -3241,7 +3241,10 @@ object Ops {
                 retval = box_s(tc.nativeS, tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
             }
             else if (tc.nativeType == ThreadContext.NATIVE_JVM_OBJ) {
-                val slot = (obj as P6OpaqueBaseInstance).resolveAttribute(obj.st.WHAT, name)
+                /* Resolve through the class handle the access named, not
+                 * the object's current type: after a mixin the two differ,
+                 * and only the handle is a key in the attribute maps. */
+                val slot = (obj as P6OpaqueBaseInstance).resolveAttribute(decont(ch, tc), name)
                 val attrSt = (obj.st.REPRData as P6OpaqueREPRData).flattenedSTables!![slot]
                 if (attrSt != null) {
                     retval = attrSt.REPR.allocate(tc, attrSt)
@@ -3315,7 +3318,10 @@ object Ops {
                 retval = box_s(tc.nativeS, tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
             }
             else if (tc.nativeType == ThreadContext.NATIVE_JVM_OBJ) {
-                val slot = (obj as P6OpaqueBaseInstance).resolveAttribute(obj.st.WHAT, name)
+                /* Resolve through the class handle the access named, not
+                 * the object's current type: after a mixin the two differ,
+                 * and only the handle is a key in the attribute maps. */
+                val slot = (obj as P6OpaqueBaseInstance).resolveAttribute(decont(ch, tc), name)
                 val attrSt = (obj.st.REPRData as P6OpaqueREPRData).flattenedSTables!![slot]
                 if (attrSt != null) {
                     retval = attrSt.REPR.allocate(tc, attrSt)
