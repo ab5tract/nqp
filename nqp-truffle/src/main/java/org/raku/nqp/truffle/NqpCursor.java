@@ -8,28 +8,33 @@ import org.raku.nqp.sixmodel.SixModelObject;
 /**
  * The engine's view of a real NQP Cursor.
  *
- * <p>The bytecode path works the same way, which is what this follows: a
- * subrule is a method call on the cursor, and the position it reached is
- * {@code $!pos} on the cursor it answers, negative meaning no match. The
- * target comes from the cursor's shared parse state rather than being
- * passed in, so the two paths agree about what is being matched.
+ * <p>Every step here is the one the bytecode path takes, so the two agree
+ * about what a match does to a cursor:
  *
- * <h2>Captures are not faithful yet</h2>
- *
- * NQP does not capture spans, it captures <em>cursors</em>:
- * {@code !cursor_capture} is handed the sub-cursor a rule produced, and
- * that cursor is what ends up in the match tree with its own captures
- * inside it. The engine currently reports a name and a pair of positions,
- * which is enough for a matcher and not enough for a parser. Bridging that
- * means the engine tracking sub-cursors where it now tracks offsets --
- * a change to what {@link RxCursor} promises, not just to this class. Until
- * then a rule with captures has to stay on the bytecode path, which is what
- * the descriptor's fallback is for.
+ * <ul>
+ *   <li>a subrule is {@code $!pos := pos} followed by a method call, and the
+ *       position it reached is {@code $!pos} on the cursor it answered,
+ *       negative meaning no match;
+ *   <li>a span becomes a capture through
+ *       {@code !cursor_start_subcapture}, {@code !cursor_pass} and
+ *       {@code !cursor_capture} -- a cursor is built for the span, passed at
+ *       its end, and then captured, because a capture in a match tree is a
+ *       cursor rather than a pair of offsets;
+ *   <li>a rule's own result is captured directly, since it is a cursor
+ *       already.
+ * </ul>
  */
 public final class NqpCursor implements RxCursor {
 
-    private static final CallSiteDescriptor INVOCANT_ONLY =
+    private static final CallSiteDescriptor INVOCANT =
         new CallSiteDescriptor(new byte[] { CallSiteDescriptor.ARG_OBJ }, null);
+    private static final CallSiteDescriptor INVOCANT_INT =
+        new CallSiteDescriptor(
+            new byte[] { CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_INT }, null);
+    private static final CallSiteDescriptor INVOCANT_OBJ_STR =
+        new CallSiteDescriptor(
+            new byte[] { CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_OBJ,
+                         CallSiteDescriptor.ARG_STR }, null);
 
     private final ThreadContext tc;
     private final SixModelObject cursor;
@@ -48,27 +53,44 @@ public final class NqpCursor implements RxCursor {
     @Override public int eos() { return target.length(); }
 
     /**
-     * Calls a rule of the grammar, the way the bytecode path does: put the
-     * position on the cursor, invoke the method, and read the position off
-     * whatever it answered.
+     * Calls a rule of the grammar.
      *
-     * <p>This is the boundary partial evaluation stops at. The callee is
-     * compiled NQP bytecode rather than Truffle nodes, so there is nothing
-     * on the other side for PE to fold into the caller -- the same reason
-     * the dispatch work has to follow code generation moving to Truffle.
+     * <p>This is where partial evaluation stops: the callee is compiled NQP
+     * bytecode rather than Truffle nodes, so there is nothing on the far
+     * side to fold into the caller. It is the same boundary that makes the
+     * dispatch work follow code generation moving to Truffle rather than
+     * precede it.
      */
-    @Override public int callSubrule(String name, int pos) {
+    @Override public Object callSubrule(String name, int pos) {
         Ops.bindattr_i(cursor, cursorClass, "$!pos", pos, tc);
         SixModelObject method = Ops.findmethod(cursor, name, tc);
-        Ops.invokeDirect(tc, method, INVOCANT_ONLY, new Object[] { cursor });
-        SixModelObject sub = Ops.result_o(tc.curFrame);
-        long reached = Ops.getattr_i(sub, sub.st.WHAT, "$!pos", tc);
-        return reached < 0 ? RxVmNode.NO_MATCH : (int) reached;
+        Ops.invokeDirect(tc, method, INVOCANT, new Object[] { cursor });
+        return Ops.result_o(tc.curFrame);
     }
 
-    @Override public void capture(String name, int from, int to) {
-        throw new UnsupportedOperationException(
-            "NQP captures cursors rather than spans; a rule with captures stays "
-            + "on the bytecode path until the engine tracks sub-cursors");
+    @Override public int reached(Object subCursor) {
+        if (!(subCursor instanceof SixModelObject sub)) return RxVmNode.NO_MATCH;
+        long pos = Ops.getattr_i(sub, sub.st.WHAT, "$!pos", tc);
+        return pos < 0 ? RxVmNode.NO_MATCH : (int) pos;
+    }
+
+    @Override public void captureSpan(String name, int from, int to) {
+        /* No rule produced this, so there is no cursor for it yet: build one
+         * over the span and pass it, which is what makes it a capture NQP
+         * can put in the match tree. */
+        SixModelObject start = Ops.findmethod(cursor, "!cursor_start_subcapture", tc);
+        Ops.invokeDirect(tc, start, INVOCANT_INT, new Object[] { cursor, (long) from });
+        SixModelObject sub = Ops.result_o(tc.curFrame);
+
+        SixModelObject pass = Ops.findmethod(sub, "!cursor_pass", tc);
+        Ops.invokeDirect(tc, pass, INVOCANT_INT, new Object[] { sub, (long) to });
+
+        captureCursor(name, sub);
+    }
+
+    @Override public void captureCursor(String name, Object subCursor) {
+        SixModelObject capture = Ops.findmethod(cursor, "!cursor_capture", tc);
+        Ops.invokeDirect(tc, capture, INVOCANT_OBJ_STR,
+            new Object[] { cursor, subCursor, name });
     }
 }

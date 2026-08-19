@@ -24,10 +24,11 @@ public final class RxVmNode extends Node {
     /** No match. */
     public static final int NO_MATCH = -1;
 
-    private static final int CHOICE_WIDTH = 3;   // pc, pos, capture-log height
-    private static final int UNDO_WIDTH = 2;     // register, previous value
+    private static final int CHOICE_WIDTH = 3;   // pc, pos, pending-capture height
+    private static final Object SPAN = new Object();
     private static final int[] EMPTY = new int[0];
-    private static final String[] NO_NAMES = new String[0];
+    private static final Object[] NO_PENDING = new Object[0];
+    private static final int PENDING_WIDTH = 4;  // name, from|cursor, to, kind
 
     @CompilationFinal private final RxProgram program;
 
@@ -59,15 +60,21 @@ public final class RxVmNode extends Node {
         int[] regs = program.registers == 0 ? EMPTY : new int[program.registers];
         int[] choices = new int[program.choiceDepth * CHOICE_WIDTH];
         int choiceTop = 0;
-        int[] undo = program.captures == 0 ? EMPTY : new int[program.captures * UNDO_WIDTH];
-        int undoTop = 0;
         /* Captures are recorded as they are passed, and taken back when a
          * choice point before them is resumed; that is what the undo log is
          * for. The bytecode engine unwinds its capture stack for the same
          * reason. */
         int[] capStart = program.captures == 0 ? EMPTY : new int[program.registers];
-        String[] capName = program.captures == 0 ? NO_NAMES : new String[program.registers];
-        int[] capEnd = program.captures == 0 ? EMPTY : new int[program.registers];
+        /*
+         * Captures are held back until the whole match has succeeded, and
+         * the pending list is cut back to a choice point's height when one
+         * is resumed -- so a path that was tried and abandoned captures
+         * nothing. The bytecode engine unwinds its cstack against its marks
+         * for the same reason. Held as (name, from, to) with a null name
+         * meaning the cursor at that slot is the capture instead.
+         */
+        Object[] pending = program.captures == 0 ? NO_PENDING : new Object[16 * PENDING_WIDTH];
+        int pendingTop = 0;
 
         int pc = 0;
         int pos = startPos;
@@ -76,7 +83,7 @@ public final class RxVmNode extends Node {
             boolean failed = false;
             switch (code[pc]) {
                 case RxProgram.MATCH -> {
-                    if (capName.length != 0) flush(cursor, capName, capStart, capEnd);
+                    if (pendingTop != 0) flush(cursor, pending, pendingTop);
                     return pos;
                 }
                 case RxProgram.CHAR -> {
@@ -119,7 +126,7 @@ public final class RxVmNode extends Node {
                     }
                     choices[choiceTop] = code[pc + 2];
                     choices[choiceTop + 1] = pos;
-                    choices[choiceTop + 2] = undoTop;
+                    choices[choiceTop + 2] = pendingTop;
                     choiceTop += CHOICE_WIDTH;
                     pc = code[pc + 1];
                 }
@@ -145,30 +152,40 @@ public final class RxVmNode extends Node {
                     }
                 }
                 case RxProgram.CAP_START -> {
-                    int r = code[pc + 1];
-                    if (undoTop + UNDO_WIDTH > undo.length) undo = grow(undo);
-                    undo[undoTop] = r;
-                    undo[undoTop + 1] = capStart[r];
-                    undoTop += UNDO_WIDTH;
-                    capStart[r] = pos;
+                    capStart[code[pc + 1]] = pos;
                     pc += 2;
                 }
                 case RxProgram.CAP_END -> {
                     int r = code[pc + 1];
-                    capEnd[r] = pos;
-                    capName[r] = (String) pool[code[pc + 2]];
+                    if (pendingTop + PENDING_WIDTH > pending.length) pending = grow(pending);
+                    pending[pendingTop] = pool[code[pc + 2]];
+                    pending[pendingTop + 1] = capStart[r];
+                    pending[pendingTop + 2] = pos;
+                    pending[pendingTop + 3] = SPAN;
+                    pendingTop += PENDING_WIDTH;
                     pc += 3;
                 }
                 case RxProgram.SUB -> {
                     String name = (String) pool[code[pc + 1]];
                     int flags = code[pc + 2];
-                    int r = callSubrule(cursor, name, pos);
+                    Object sub = callSubrule(cursor, name, pos);
+                    int r = reached(cursor, sub);
                     boolean matched = r != NO_MATCH;
                     if (matched == ((flags & RxProgram.F_NEGATE) != 0)) {
                         failed = true;
                     } else {
                         if (matched && (flags & RxProgram.F_ZEROWIDTH) == 0) pos = r;
-                        pc += 3;
+                        /* A capturing subrule keeps the cursor it made; that
+                         * cursor is the capture, not the span it covered. */
+                        if (matched && code[pc + 3] != 0) {
+                            if (pendingTop + PENDING_WIDTH > pending.length) pending = grow(pending);
+                            pending[pendingTop] = pool[code[pc + 3] - 1];
+                            pending[pendingTop + 1] = sub;
+                            pending[pendingTop + 2] = null;
+                            pending[pendingTop + 3] = null;
+                            pendingTop += PENDING_WIDTH;
+                        }
+                        pc += 4;
                     }
                 }
                 default -> throw new IllegalStateException("bad opcode " + code[pc]);
@@ -179,11 +196,8 @@ public final class RxVmNode extends Node {
                 choiceTop -= CHOICE_WIDTH;
                 pc = choices[choiceTop];
                 pos = choices[choiceTop + 1];
-                int wantUndo = choices[choiceTop + 2];
-                while (undoTop > wantUndo) {
-                    undoTop -= UNDO_WIDTH;
-                    capStart[undo[undoTop]] = undo[undoTop + 1];
-                }
+                /* Anything captured on the abandoned path goes with it. */
+                pendingTop = choices[choiceTop + 2];
             }
         }
     }
@@ -216,14 +230,30 @@ public final class RxVmNode extends Node {
      * bytecode, and a capture lands on the cursor. Both are boundaries. */
 
     @TruffleBoundary
-    private static int callSubrule(RxCursor cursor, String name, int pos) {
+    private static Object callSubrule(RxCursor cursor, String name, int pos) {
         return cursor.callSubrule(name, pos);
     }
 
     @TruffleBoundary
-    private static void flush(RxCursor cursor, String[] names, int[] starts, int[] ends) {
-        for (int r = 0; r < names.length; r++) {
-            if (names[r] != null) cursor.capture(names[r], starts[r], ends[r]);
+    private static int reached(RxCursor cursor, Object subCursor) {
+        return cursor.reached(subCursor);
+    }
+
+    @TruffleBoundary
+    private static void flush(RxCursor cursor, Object[] pending, int top) {
+        for (int i = 0; i < top; i += PENDING_WIDTH) {
+            String name = (String) pending[i];
+            if (pending[i + 3] == SPAN) {
+                cursor.captureSpan(name, (Integer) pending[i + 1], (Integer) pending[i + 2]);
+            } else {
+                cursor.captureCursor(name, pending[i + 1]);
+            }
         }
+    }
+
+    private static Object[] grow(Object[] array) {
+        Object[] bigger = new Object[array.length * 2];
+        System.arraycopy(array, 0, bigger, 0, array.length);
+        return bigger;
     }
 }
