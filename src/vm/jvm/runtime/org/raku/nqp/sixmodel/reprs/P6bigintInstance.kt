@@ -9,12 +9,20 @@ import org.raku.nqp.sixmodel.SixModelObject
 class P6bigintInstance : SixModelObject() {
     @JvmField var value: BigInteger? = null
 
-    private companion object {
-        val SMALLEST_UNBOXABLE = BigInteger(Long.MIN_VALUE.toString())
+    companion object {
+        @JvmField val SMALLEST_UNBOXABLE = BigInteger(Long.MIN_VALUE.toString())
     }
 
     override fun set_int(tc: ThreadContext, value: Long) {
         this.value = BigInteger.valueOf(value)
+    }
+
+    override fun get_uint(tc: ThreadContext): Long {
+        val value = this.value!!
+        if (value.bitLength() > 64)
+            throw ExceptionHandling.dieInternal(tc, "Cannot unbox " +
+                value.bitLength() + " bit wide bigint into native integer")
+        return value.toLong()
     }
 
     override fun get_int(tc: ThreadContext): Long {
