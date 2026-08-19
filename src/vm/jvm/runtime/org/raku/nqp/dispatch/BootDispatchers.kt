@@ -139,9 +139,13 @@ object BootDispatchers {
             return
         }
 
-        /* The method table hangs off the meta-object, so the type decides it. */
+        /* The method table hangs off the meta-object, so the type decides it.
+         * A type with no KnowHOW meta-object may still carry a published
+         * method cache -- the Java interop wrappers do -- and that serves
+         * the same way. */
         record.guardType(source)
         val methods = knowHowMethods(tc, invocant)
+            ?: (if (invocant != null && invocant.stInitialized) invocant.st.MethodCache else null)
             ?: throw ExceptionHandling.dieInternal(tc,
                 "lang-meth-call cannot work out how to dispatch on this type" +
                 " ('${Ops.typeName(invocant, tc)}' calling" +
@@ -207,7 +211,11 @@ object BootDispatchers {
     /** Reports a method that could not be found, the way the language wants it. */
     private fun langMethNotFound(record: DispatchRecord, capture: SixModelObject) {
         val tc = record.tc
-        val handler = tc.frame.codeRef.staticInfo.compUnit.hllConfig.methodNotFoundError
+        /* The language whose error to raise is the dispatch site's, not the
+         * dispatcher's own: read the config off the frame the dispatch
+         * instruction is in. */
+        val siteFrame = record.callerFrame ?: tc.frame
+        val handler = siteFrame.codeRef.staticInfo.compUnit.hllConfig.methodNotFoundError
         if (handler != null) {
             val shape = record.shapeOf(capture)
                 .insert(tc, 0, ValueSource.Literal(ArgKind.OBJ, handler), ArgKind.OBJ)
