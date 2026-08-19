@@ -105,7 +105,12 @@ val javaToolchains = extensions.getByType<JavaToolchainService>()
 val jvmDir: Directory = layout.buildDirectory.dir("jvm").get()
 val shareRuntimeDir = jvmDir.dir("share/runtime")
 val shareLibDir = jvmDir.dir("share/lib")
+// The Truffle modules keep a directory of their own: everything in
+// share/runtime is a candidate for the runner's boot classpath, and these
+// have to be on the module path instead.
+val shareTruffleDir = jvmDir.dir("share/truffle")
 val runtimeJarFile = File(projectDir, "nqp-runtime/build/libs/nqp-runtime.jar")
+val engineJarFile = File(projectDir, "nqp-truffle/build/libs/nqp-truffle.jar")
 
 val nqpThirdParty: Configuration = configurations.create("nqpThirdParty")
 
@@ -211,6 +216,10 @@ fun registerStage(
             t.deps.forEach { dependsOn(compileTasks.getValue(it)) }
             compilerDeps.forEach { dependsOn(it) }
             dependsOn(":nqp-runtime:jar")
+            // A stage compiled by a compiler that emits descriptors contains
+            // calls into the engine, and the next stage runs that code, so
+            // every stage needs the engine reachable -- not just the runner.
+            dependsOn(":nqp-truffle:jar", "syncTruffleModules")
 
             val outputJar = stageDir.file(t.jar).asFile
             inputs.file(inputFile)
@@ -222,7 +231,7 @@ fun registerStage(
             }
             workingDir = projectDir
             mainClass = "nqp"
-            classpath = files(compilerDir)
+            classpath = files(compilerDir, engineJarFile)
 
             doFirst {
                 val bootcp = (
@@ -231,6 +240,8 @@ fun registerStage(
                         "${compilerDir.absolutePath}/nqp.jar"
                     ).joinToString(File.pathSeparator)
                 jvmArgs("--enable-native-access=ALL-UNNAMED", "-Xmx$nqpStageMaxHeap", "-XX:+AllowParallelDefineClass", "-Xbootclasspath/a:$bootcp")
+                jvmArgs("--module-path", shareTruffleDir.asFile.absolutePath,
+                    "--add-modules", "org.graalvm.truffle,org.graalvm.truffle.runtime")
             }
 
             val stableSc = if (stage == 1) listOf("--stable-sc=stage1") else emptyList()
@@ -256,8 +267,18 @@ val stage2 = registerStage(2, jvmDir.dir("stage1").asFile, stage1.values)
 val syncRuntimeJars = tasks.register<Sync>("syncRuntimeJars") {
     from(nqpThirdParty)
     from(runtimeJarFile)
+    // The engine sits here with the rest of the runtime, but the runner puts
+    // it on the class path: runnerJars decides the boot classpath by name, so
+    // an extra jar in this directory is not picked up by accident.
+    from(engineJarFile)
     into(shareRuntimeDir)
-    dependsOn(":nqp-runtime:jar")
+    dependsOn(":nqp-runtime:jar", ":nqp-truffle:jar")
+}
+
+val syncTruffleModules = tasks.register<Sync>("syncTruffleModules") {
+    from(project(":nqp-truffle").layout.buildDirectory.dir("truffle-modules"))
+    into(shareTruffleDir)
+    dependsOn(":nqp-truffle:syncTruffleModules")
 }
 
 // Local jvmconfig.properties served from the lib dir: the lib dir precedes
@@ -288,8 +309,10 @@ val generateRunner = tasks.register<GenerateRunnerTask>("generateRunner") {
     jarDir = shareRuntimeDir.asFile.absolutePath
     libDir = shareLibDir.asFile.absolutePath
     runnerJarNames.set(provider { NqpDeps.runnerJars(thirdPartySorted().map { it.name }) })
+    truffleModuleDir = shareTruffleDir.asFile.absolutePath
+    engineJar = shareRuntimeDir.file(engineJarFile.name).asFile.absolutePath
     output = layout.projectDirectory.file("nqp-j-gradle")
-    dependsOn(syncRuntimeJars, syncLib, generateLocalJvmConfig)
+    dependsOn(syncRuntimeJars, syncTruffleModules, syncLib, generateLocalJvmConfig)
 }
 
 val stage2CatP5qregex = tasks.register<GenCatTask>("stage2CatP5qregex") {
@@ -354,9 +377,11 @@ tasks.register("installJvm") {
     doLast {
         val runtimeDest = File("$nqpPrefix/share/nqp/runtime")
         val libDest = File("$nqpPrefix/share/nqp/lib")
+        val truffleDest = File("$nqpPrefix/share/nqp/truffle")
         val binDest = File("$nqpPrefix/bin")
-        listOf(runtimeDest, libDest, binDest).forEach { it.mkdirs() }
+        listOf(runtimeDest, libDest, truffleDest, binDest).forEach { it.mkdirs() }
         shareRuntimeDir.asFile.listFiles()?.forEach { it.copyTo(File(runtimeDest, it.name), overwrite = true) }
+        shareTruffleDir.asFile.listFiles()?.forEach { it.copyTo(File(truffleDest, it.name), overwrite = true) }
         shareLibDir.asFile.listFiles()
             ?.filterNot { it.name == "jvmconfig.properties" }
             ?.forEach { it.copyTo(File(libDest, it.name), overwrite = true) }
@@ -382,6 +407,8 @@ val generateGenRunner = tasks.register<GenerateRunnerTask>("generateGenRunner") 
     jarDir = genShareDir.dir("runtime").asFile.absolutePath
     libDir = genShareDir.dir("lib").asFile.absolutePath
     runnerJarNames.set(provider { NqpDeps.runnerJars(thirdPartySorted().map { it.name }) })
+    truffleModuleDir = genShareDir.dir("truffle").asFile.absolutePath
+    engineJar = genShareDir.file("runtime/${engineJarFile.name}").asFile.absolutePath
     output = layout.projectDirectory.file("nqp-j")
 }
 
@@ -392,6 +419,10 @@ tasks.register("syncToGen") {
     doLast {
         shareRuntimeDir.asFile.listFiles()?.forEach {
             it.copyTo(genShareDir.file("runtime/${it.name}").asFile, overwrite = true)
+        }
+        genShareDir.dir("truffle").asFile.mkdirs()
+        shareTruffleDir.asFile.listFiles()?.forEach {
+            it.copyTo(genShareDir.file("truffle/${it.name}").asFile, overwrite = true)
         }
         shareLibDir.asFile.listFiles()
             ?.filterNot { it.name == "jvmconfig.properties" }

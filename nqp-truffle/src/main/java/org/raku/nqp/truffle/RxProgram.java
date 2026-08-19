@@ -41,6 +41,16 @@ public final class RxProgram {
     public static final int CAP_START = 9;  // register
     public static final int CAP_END = 10;   // register, name(idx)
     public static final int ADVANCE = 11;   // step one codepoint, or fail at the end
+    public static final int CUT_MARK = 18;  // register -- remember the choice-point height
+    public static final int CUT = 19;       // register -- drop every choice point made since
+    /* name(idx), count, then one pc per branch. The order to try them in is
+     * asked of the cursor at match time, so it is not in the code. */
+    public static final int ALT_LTM = 20;
+    /* predicate(idx), negate -- tests without moving. Its own opcode rather
+     * than a flag on the rest because the end of the string is a special
+     * case: a NEGATED zero-width class succeeds there, having nothing to
+     * exclude, where a consuming one has to fail. */
+    public static final int ONE_ZW = 21;
     /*
      * The character classes worth their own opcode. ONE reaches a predicate
      * through an interface call, and across patterns that call site sees
@@ -144,9 +154,16 @@ public final class RxProgram {
                 return;
             }
             if (node instanceof RxTree.One one) {
+                RxProgram.CharPred pred = one.pred();
+                if (one.zeroWidth()) {
+                    /* Negation stays inside the opcode: the predicate itself
+                     * carries it, and the end-of-string rule needs to know. */
+                    if (pred instanceof RxTree.Negated n) op(ONE_ZW, constant(n.of()), 1);
+                    else op(ONE_ZW, constant(pred), 0);
+                    return;
+                }
                 /* A predicate the opcode set knows becomes that opcode; the
                  * rest still go through the interface. */
-                RxProgram.CharPred pred = one.pred();
                 if (pred == RxTree.ANY) op(ANY);
                 else if (pred == RxTree.DIGIT) op(DIGIT, 0);
                 else if (pred == RxTree.WORD) op(WORD, 0);
@@ -168,6 +185,10 @@ public final class RxProgram {
             }
             if (node instanceof RxTree.Alt alt) {
                 emitAlt(alt.branches(), 0);
+                return;
+            }
+            if (node instanceof RxTree.AltLtm alt) {
+                emitAltLtm(alt);
                 return;
             }
             if (node instanceof RxTree.Quant quant) {
@@ -245,7 +266,53 @@ public final class RxProgram {
          * looping forever, the same job the bytecode engine gives its rep
          * counter.
          */
+        /*
+         * A longest-token alternation. The branches are laid out one after
+         * another, each ending in a jump to the common exit, and the header
+         * holds a slot per branch which is patched to where that branch
+         * starts. Which slot to take first is decided at match time by the
+         * grammar's NFA, so the code says only where each branch is.
+         */
+        void emitAltLtm(RxTree.AltLtm alt) {
+            int cut = alt.ratchet() ? reg() : -1;
+            if (cut >= 0) op(CUT_MARK, cut);
+
+            int n = alt.branches().size();
+            int header = op(ALT_LTM, constant(alt.name()), n);
+            for (int i = 0; i < n; i++) code.add(0);
+            /* Every branch can be a choice point until one of them wins. */
+            splits += n;
+
+            List<Integer> jumps = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                patch(header + 3 + i, here());
+                emit(alt.branches().get(i));
+                jumps.add(op(JMP, 0));
+            }
+            int out = here();
+            for (int jump : jumps) patch(jump + 1, out);
+
+            if (cut >= 0) op(CUT, cut);
+        }
+
         void emitQuant(RxTree.Quant quant) {
+            /*
+             * A ratcheted quantifier keeps what it took. NQP's `token` and
+             * `rule` make every quantifier in them ratcheted, so this is the
+             * common case rather than an exotic one: `\d+` in a token takes
+             * all the digits and never gives one back to help what follows
+             * match. Expressed here by remembering the choice-point height
+             * before the loop and cutting back to it after -- the choice
+             * points the loop made are simply gone, so a later failure
+             * backtracks past the whole quantifier instead of into it.
+             */
+            int cut = quant.ratchet() ? reg() : -1;
+            if (cut >= 0) op(CUT_MARK, cut);
+            emitQuantBody(quant);
+            if (cut >= 0) op(CUT, cut);
+        }
+
+        void emitQuantBody(RxTree.Quant quant) {
             for (int i = 0; i < quant.min(); i++) emit(quant.body());
             if (quant.max() < 0) {
                 int r = reg();

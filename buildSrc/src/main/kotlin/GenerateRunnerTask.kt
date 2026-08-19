@@ -3,6 +3,7 @@ import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
 
@@ -26,6 +27,20 @@ abstract class GenerateRunnerTask : DefaultTask() {
     @get:Input
     abstract val runnerJarNames: ListProperty<String>
 
+    /**
+     * Absolute path of the directory holding the Truffle module jars, and of
+     * the grammar engine's own jar. The engine goes on the CLASS path, not
+     * the boot classpath: it needs to see Truffle, and the boot loader cannot
+     * see the module path. It can still call into nqp-runtime, because the
+     * application loader delegates to the boot loader; the return trip is why
+     * the runtime looks the engine up reflectively rather than importing it.
+     */
+    @get:[Input Optional]
+    abstract val truffleModuleDir: Property<String>
+
+    @get:[Input Optional]
+    abstract val engineJar: Property<String>
+
     @get:OutputFile
     abstract val output: RegularFileProperty
 
@@ -38,6 +53,37 @@ abstract class GenerateRunnerTask : DefaultTask() {
             add("$jar/nqp-runtime.jar")
             runnerJarNames.get().forEach { add("$jar/$it") }
             add("$lib/nqp.jar")
+        }
+        // Emitted only when both halves are staged, so a tree built without
+        // the engine still produces a runner that works.
+        val truffleSetup = if (truffleModuleDir.isPresent && engineJar.isPresent) {
+            """
+            |# The grammar engine runs on Truffle, which binds to the JDK's
+            |# compiler only when its jars resolve as MODULES; on the class
+            |# path it falls back to an interpreter that does no partial
+            |# evaluation and simply measures as "Truffle is slow".
+            |#
+            |# The engine jar goes on the class path rather than the boot
+            |# classpath because the boot loader cannot see the module path.
+            |#
+            |# NQP_JVM_NO_TRUFFLE=1 omits all of it, pinning every regex to
+            |# the bytecode path -- the reference the engine is measured
+            |# against, and the way back if the engine misbehaves.
+            |TRUFFLE=
+            |TRUFFLE_NATIVE=
+            |CP="$lib"
+            |if [ -z "${'$'}{NQP_JVM_NO_TRUFFLE:-}" ]; then
+            |  TRUFFLE="--module-path ${truffleModuleDir.get()} --add-modules org.graalvm.truffle,org.graalvm.truffle.runtime"
+            |  TRUFFLE_NATIVE=",org.graalvm.truffle"
+            |  CP="$lib:${engineJar.get()}"
+            |fi
+            |""".trimMargin()
+        } else {
+            """
+            |TRUFFLE=
+            |TRUFFLE_NATIVE=
+            |CP="$lib"
+            |""".trimMargin()
         }
         val script = """
             |#!/bin/sh
@@ -77,12 +123,21 @@ abstract class GenerateRunnerTask : DefaultTask() {
             |# --enable-native-access: the native call support links foreign
             |# functions with java.lang.foreign, whose restricted methods JDK
             |# 24+ warns about (JEP 472) and will eventually refuse to code
-            |# that has not been granted native access.
+            |# that has not been granted native access. Truffle is a NAMED
+            |# module, so ALL-UNNAMED does not cover it and it has to be
+            |# granted access by name -- the JVM says as much in the warning.
+            |#
+            |# --sun-misc-unsafe-memory-access=allow: Truffle's own runtime
+            |# calls the terminally deprecated Unsafe::objectFieldOffset. That
+            |# is in truffle-runtime, not in anything here; NQP itself moved
+            |# off the Unsafe fast path to safeInstance() already. Nothing to
+            |# fix on this side, so quieten it rather than print it per run.
             |#
             |# NQP_JVM_MAXHEAP caps the heap (default 4g). The Makefile runner
             |# uses -XX:+AggressiveHeap (~half of physical RAM per JVM), which
             |# can stall a swapless machine when several runners overlap.
-            |exec java -Dnqp.execname="${'$'}EXEC" --enable-native-access=ALL-UNNAMED -Xmx"${'$'}{NQP_JVM_MAXHEAP:-4g}" -XX:+AllowParallelDefineClass -Xbootclasspath/a:"${bootEntries.joinToString(":")}" -cp "$lib" nqp "${'$'}@"
+            |$truffleSetup
+            |exec java -Dnqp.execname="${'$'}EXEC" --enable-native-access=ALL-UNNAMED${'$'}{TRUFFLE_NATIVE} --sun-misc-unsafe-memory-access=allow -Xmx"${'$'}{NQP_JVM_MAXHEAP:-4g}" -XX:+AllowParallelDefineClass ${'$'}TRUFFLE -Xbootclasspath/a:"${bootEntries.joinToString(":")}" -cp "${'$'}CP" nqp "${'$'}@"
             |""".trimMargin()
         val file = output.get().asFile
         file.writeText(script)
