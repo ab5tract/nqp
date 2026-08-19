@@ -625,10 +625,14 @@ class SerializationWriter(
                 return null
         }
         if (staticCode!!.sc == null) {
-            if (fatal)
+            if (fatal) {
+                val cr = staticCode as CodeRef
                 throw ExceptionHandling.dieInternal(tc,
-                    "Serialization Error: could not locate static code ref for closure " +
-                    (staticCode as CodeRef).name)
+                    "Serialization Error: could not locate static code ref for closure '" +
+                    cr.name + "' (cuid " + cr.staticInfo.uniqueId +
+                    ", from " + (cr.staticInfo.sourceFile ?: "unknown") +
+                    ":" + cr.staticInfo.sourceLine + ")")
+            }
             else
                 return null
         }
