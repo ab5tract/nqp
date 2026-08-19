@@ -192,9 +192,13 @@ class QAST::RxDescriptor {
             self.emit(0);
         }
         elsif $rxtype eq 'subcapture' {
-            self.emit($CAPTURE);
-            self.emit(self.constant(~$node.name));
-            self.walk($node[0]);
+            # NQP captures cursors, not spans: !cursor_capture is handed the
+            # sub-cursor a rule produced, and that cursor carries its own
+            # captures into the match tree. The engine reports a name and a
+            # pair of offsets, which is enough for a matcher and not enough
+            # for a parser, so a rule that captures stays on the bytecode
+            # path until the engine tracks sub-cursors.
+            self.bail;
         }
         else {
             # qastnode, dynquant, goal, conj and the rest: the bytecode path
