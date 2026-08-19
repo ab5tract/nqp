@@ -192,11 +192,13 @@ open class BootJavaInterop(gc: GlobalContext) {
         cc.cv!!.visitEnd()
 
         val bits = cc.cv!!.toByteArray()
-        //try {
-        //    java.nio.file.Files.write(new java.io.File(className.replace('/','_') + ".class").toPath(), bits);
-        //} catch (java.io.IOException e) {
-        //    e.printStackTrace();
-        //}
+        if (System.getenv("NQP_DEBUG_DUMP_CLASSFILES") != null) {
+            try {
+                java.nio.file.Files.write(
+                    java.io.File(cc.className!!.replace('/', '_') + ".class").toPath(), bits)
+            } catch (e: java.io.IOException) {
+            }
+        }
         // XXX: The condition here can probably cut down a few more
         // allocations if we check if the target's class loader isn't in the
         // chain of loaders above gc.byteClassLoader.
