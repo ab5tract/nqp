@@ -84,17 +84,28 @@ class P6bigint : REPR() {
         val bigIntegerIN = Type.getType(BigInteger::class.java).internalName
 
         val getDesc = "(Lorg/raku/nqp/runtime/ThreadContext;)J"
+        /* The signed reading rejects what a signed native cannot hold, as
+         * the standalone instance and MoarVM both do, rather than wrapping
+         * silently through BigInteger.longValue and losing an overflow. */
         val getMeth = cw.visitMethod(Opcodes.ACC_PUBLIC, "get_int", getDesc, null, null)
         getMeth.visitVarInsn(Opcodes.ALOAD, 0)
         getMeth.visitFieldInsn(Opcodes.GETFIELD, className, prefix, bigIntegerType)
-        /* Through the checked unbox: a value wider than 64 bits must throw,
-         * as the standalone P6bigintInstance.get_int and MoarVM both do,
-         * rather than silently wrap through BigInteger.longValue. */
         getMeth.visitMethodInsn(Opcodes.INVOKESTATIC,
             "org/raku/nqp/sixmodel/reprs/P6bigint", "checkedLongValue",
             "(Ljava/math/BigInteger;)J")
         getMeth.visitInsn(Opcodes.LRETURN)
         getMeth.visitMaxs(0, 0)
+
+        /* The unsigned reading takes the wider rule: 64 bits is a value an
+         * unsigned native holds, where the signed one stops at 63. */
+        val getUMeth = cw.visitMethod(Opcodes.ACC_PUBLIC, "get_uint", getDesc, null, null)
+        getUMeth.visitVarInsn(Opcodes.ALOAD, 0)
+        getUMeth.visitFieldInsn(Opcodes.GETFIELD, className, prefix, bigIntegerType)
+        getUMeth.visitMethodInsn(Opcodes.INVOKESTATIC,
+            "org/raku/nqp/sixmodel/reprs/P6bigint", "uncheckedLongValue",
+            "(Ljava/math/BigInteger;)J")
+        getUMeth.visitInsn(Opcodes.LRETURN)
+        getUMeth.visitMaxs(0, 0)
 
         val setDesc = "(Lorg/raku/nqp/runtime/ThreadContext;J)V"
         val setMeth = cw.visitMethod(Opcodes.ACC_PUBLIC, "set_int", setDesc, null, null)
@@ -139,8 +150,18 @@ class P6bigint : REPR() {
     }
 
     companion object {
-        /** Unboxes a flattened bigint to a long, refusing a value the long
-         * cannot hold, the same way the standalone instance does. */
+        /** The unsigned reading of a flattened bigint: 64 bits is a value
+         * an unsigned native holds, so only wider than that is refused. */
+        @JvmStatic
+        fun uncheckedLongValue(value: java.math.BigInteger): Long {
+            if (value.bitLength() > 64)
+                throw RuntimeException("Cannot unbox " + value.bitLength() +
+                    " bit wide bigint into native integer")
+            return value.toLong()
+        }
+
+        /** The signed reading, refusing what a signed native cannot hold,
+         * the same way the standalone instance does. */
         @JvmStatic
         fun checkedLongValue(value: java.math.BigInteger): Long {
             if (value.bitLength() >= 64 && value != P6bigintInstance.SMALLEST_UNBOXABLE)
