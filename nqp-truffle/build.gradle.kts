@@ -22,6 +22,17 @@ repositories {
     mavenCentral()
 }
 
+/*
+ * Just the Truffle artifacts, resolved apart from everything else. The
+ * runner puts these -- and only these -- on the module path: nqp-runtime
+ * is already on the boot classpath, and a jar that is on both becomes a
+ * second, unrelated copy of every class it holds.
+ */
+val truffleModules: Configuration by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+
 dependencies {
     /* The engine calls back into the existing runtime for anything that is
      * not the match itself: subrules are NQP CodeRefs, and the cursor whose
@@ -40,6 +51,24 @@ dependencies {
 
     testImplementation("org.graalvm.truffle:truffle-api:$truffle")
     testImplementation("org.graalvm.polyglot:polyglot:$truffle")
+
+    truffleModules("org.graalvm.truffle:truffle-api:$truffle")
+    truffleModules("org.graalvm.truffle:truffle-runtime:$truffle")
+    truffleModules("org.graalvm.polyglot:polyglot:$truffle")
+}
+
+/*
+ * Stages the Truffle modules where the runner can name them. Without this
+ * they exist only inside the Gradle cache, whose layout is a hash per
+ * artifact and no use to a generated shell script.
+ */
+val truffleModuleDir = layout.buildDirectory.dir("truffle-modules")
+
+val syncTruffleModules by tasks.registering(Sync::class) {
+    group = "build"
+    description = "Stages the Truffle module jars for the runner's --module-path."
+    from(truffleModules)
+    into(truffleModuleDir)
 }
 
 tasks.compileJava {

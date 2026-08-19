@@ -46,6 +46,7 @@ my $TYPE_CU         := 'Lorg/raku/nqp/runtime/CompilationUnit;';
 my $TYPE_CR         := 'Lorg/raku/nqp/runtime/CodeRef;';
 my $TYPE_CF         := 'Lorg/raku/nqp/runtime/CallFrame;';
 my $TYPE_OPS        := 'Lorg/raku/nqp/runtime/Ops;';
+my $TYPE_RXENGINE   := 'Lorg/raku/nqp/runtime/GrammarEngines;';
 my $TYPE_NATIVE_OPS := 'Lorg/raku/nqp/runtime/NativeCallOps;';
 my $TYPE_IO_OPS     := 'Lorg/raku/nqp/runtime/IOOps;';
 my $TYPE_CSD        := 'Lorg/raku/nqp/runtime/CallSiteDescriptor;';
@@ -5969,6 +5970,13 @@ class QAST::CompilerJAST {
     }
 
     multi method as_jast(QAST::Regex $node, :$want) {
+        # A rule the engine covers is handed to it whole, and no matcher is
+        # emitted for it at all. The choice is made here, at compile time,
+        # because the descriptor either describes the rule faithfully or does
+        # not exist -- there is no half of a rule to fall back to.
+        my $desc := self.rx_descriptor($node);
+        return self.engine_jast($node, $desc) unless nqp::isnull($desc);
+
         # build the list of (unique) locals we need
         my %*REG;
         my $prefix := self.unique('rx') ~ '_';
@@ -6242,6 +6250,161 @@ class QAST::CompilerJAST {
     method regex_jast($node) {
         my $rxtype := $node.rxtype() || 'concat';
         self."$rxtype"($node);
+    }
+
+    # The descriptor for this rule, or null to keep the bytecode path.
+    #
+    # NQP_JVM_NO_TRUFFLE has to be set for the compile and the run alike: it
+    # decides here whether descriptors are emitted, and a rule compiled to a
+    # descriptor has no matcher to fall back on if the engine is missing when
+    # it runs.
+    method rx_descriptor($node) {
+        return nqp::null()
+            if nqp::existskey(nqp::getenvhash(), 'NQP_JVM_NO_TRUFFLE');
+
+        my $desc := QAST::RxDescriptor.encode($node);
+        return nqp::null() if nqp::isnull($desc);
+
+        # Triage knobs. Which rules the engine takes over is otherwise decided
+        # entirely by what it can encode, and when one of them is wrong the
+        # only symptom is a grammar that parses the wrong language somewhere
+        # far away. These narrow the set by hand so the wrong one can be found
+        # by bisection rather than by staring.
+        #
+        #   NQP_RX_SKIP=a,b   refuse these rules by name
+        #   NQP_RX_SKIP_ANON  refuse rules that do not reduce (no pass name)
+        #   NQP_RX_ONLY=a,b   refuse everything except these
+        my %env := nqp::getenvhash();
+        my str $name := $desc.pass_name;
+        if nqp::existskey(%env, 'NQP_RX_SKIP_ANON') && $name eq '' {
+            return nqp::null();
+        }
+        if nqp::existskey(%env, 'NQP_RX_SKIP') {
+            for nqp::split(',', %env<NQP_RX_SKIP>) {
+                return nqp::null() if $_ eq $name;
+            }
+        }
+        if nqp::existskey(%env, 'NQP_RX_ONLY') {
+            my int $found := 0;
+            for nqp::split(',', %env<NQP_RX_ONLY>) {
+                $found := 1 if $_ eq $name;
+            }
+            return nqp::null() unless $found;
+        }
+        if nqp::existskey(%env, 'NQP_RX_ENCODED') {
+            nqp::say('rx engine: ' ~ ($name eq '' ?? '<anon>' !! $name));
+        }
+
+        # The descriptor travels as a string constant, and the class file
+        # format caps those at 65535 bytes of UTF-8. A rule that big is rare
+        # and matters little; refusing it here beats emitting a class that
+        # will not load.
+        my str $encoded := $desc.encoded;
+        return nqp::null() if nqp::chars($encoded) > 20000;
+
+        $desc
+    }
+
+    # Hands the whole rule to the grammar engine.
+    #
+    # The prologue is the bytecode path's, cut down to what the engine needs:
+    # !cursor_start_all answers the new cursor, the target, and the position
+    # to start from. The position has to come from that list rather than from
+    # the cursor, whose $!pos is -3 until the rule finishes -- reading it
+    # there would start every match at a negative offset.
+    #
+    # The restart slot is not consulted because it cannot be set: only a rule
+    # that passed with :backtrack is ever resumed, and the descriptor refuses
+    # those.
+    method engine_jast($node, $desc) {
+        my %*REG;
+        my $prefix := self.unique('rxe') ~ '_';
+        my $reglist := nqp::split(' ', 'start o cur o curclass o tgt s pos i selffrom i');
+        while $reglist {
+            my $reg := nqp::shift($reglist);
+            my $rt  := nqp::shift($reglist);
+            my $type := $rt eq 'i' ?? int !! $rt eq 's' ?? str !! NQPMu;
+            %*REG{$reg} := $prefix ~ $reg;
+            $*BLOCK.add_local(QAST::Var.new(
+                :name($prefix ~ $reg), :scope('local'), :returns($type), :decl('var') ));
+        }
+
+        my $il := JAST::InstructionList.new();
+        my $pro := self.as_jast(QAST::Stmts.new(
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name(%*REG<start>), :scope('local') ),
+                QAST::Op.new(
+                    :op('callmethod'), :name('!cursor_start_all'),
+                    QAST::Var.new( :name('self'), :scope('local') )
+                )),
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name("\$\xa2"), :scope('lexical') ),
+                QAST::Op.new(
+                    :op('bind'),
+                    QAST::Var.new( :name(%*REG<cur>), :scope('local') ),
+                    QAST::Op.new(
+                        :op('atpos'),
+                        QAST::Var.new( :name(%*REG<start>), :scope('local') ),
+                        QAST::IVal.new( :value(0) )
+                    ))),
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name(%*REG<tgt>), :scope('local'), :returns(str) ),
+                QAST::Op.new(
+                    :op('unbox_s'),
+                    QAST::Op.new(
+                        :op('atpos'),
+                        QAST::Var.new( :name(%*REG<start>), :scope('local') ),
+                        QAST::IVal.new( :value(1) )
+                    ))),
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name(%*REG<pos>), :scope('local'), :returns(int) ),
+                QAST::Op.new(
+                    :op('unbox_i'),
+                    QAST::Op.new(
+                        :op('atpos'),
+                        QAST::Var.new( :name(%*REG<start>), :scope('local') ),
+                        QAST::IVal.new( :value(2) )
+                    ))),
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name(%*REG<curclass>), :scope('local') ),
+                QAST::Op.new(
+                    :op('atpos'),
+                    QAST::Var.new( :name(%*REG<start>), :scope('local') ),
+                    QAST::IVal.new( :value(3) )
+                )),
+            # The INVOCANT's $!from, which is what decides whether a scanning
+            # rule may scan: -1 means a top-level parse looking for its first
+            # match, anything else means a subrule called at a position.
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name(%*REG<selffrom>), :scope('local'), :returns(int) ),
+                QAST::Op.new(
+                    :op('getattr_i'),
+                    QAST::Var.new( :name('self'), :scope('local') ),
+                    QAST::Var.new( :name(%*REG<curclass>), :scope('local') ),
+                    QAST::SVal.new( :value('$!from') )
+                ))
+        ), :want($RT_VOID));
+        $il.append($pro.jast);
+        $*STACK.obtain(NQPMu, $pro);
+
+        $il.append(JAST::PushSVal.new( :value($desc.encoded) ));
+        $il.append(JAST::Instruction.new( :op('aload'), %*REG<cur> ));
+        $il.append(JAST::Instruction.new( :op('aload'), %*REG<curclass> ));
+        $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
+        $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+        $il.append(JAST::Instruction.new( :op('lload'), %*REG<selffrom> ));
+        $il.append($ALOAD_1);
+        $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_RXENGINE,
+            'rxmatch', $TYPE_SMO, $TYPE_STR, $TYPE_SMO, $TYPE_SMO, $TYPE_STR,
+            'Long', 'Long', $TYPE_TC ));
+
+        result($il, $RT_OBJ)
     }
 
     method alt($node) {

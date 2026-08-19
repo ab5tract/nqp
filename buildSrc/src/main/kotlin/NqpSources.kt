@@ -84,7 +84,11 @@ object NqpSources {
     val JASTNODES = listOf("src/vm/jvm/QAST/JASTNodes.nqp")
 
     /** tools/templates/jvm/qast_sources */
-    val QAST = listOf("src/vm/jvm/QAST/Compiler.nqp")
+    val QAST = listOf(
+        // Before the compiler, which asks it to flatten each regex.
+        "src/vm/jvm/QAST/RxDescriptor.nqp",
+        "src/vm/jvm/QAST/Compiler.nqp",
+    )
 
     val P6QREGEX = listOf(
         "src/QRegex/P6Regex/Grammar.nqp",

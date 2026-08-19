@@ -218,6 +218,54 @@ public final class RxVmNode extends Node {
                     regs[code[pc + 1]] = pos;
                     pc += 2;
                 }
+                case RxProgram.CUT_MARK -> {
+                    regs[code[pc + 1]] = choiceTop;
+                    pc += 2;
+                }
+                case RxProgram.ONE_ZW -> {
+                    boolean negate = code[pc + 2] != 0;
+                    boolean ok;
+                    if (pos >= eos) {
+                        /* Nothing here. A negated look-ahead is satisfied by
+                         * that -- there is no character to be the wrong one --
+                         * and a positive one cannot be. */
+                        ok = negate;
+                    } else {
+                        RxProgram.CharPred pred = (RxProgram.CharPred) pool[code[pc + 1]];
+                        ok = pred.holds(target.codePointAt(pos)) != negate;
+                    }
+                    if (ok) pc += 3; else failed = true;
+                    /* pos deliberately untouched: that is what zero-width is. */
+                }
+                case RxProgram.ALT_LTM -> {
+                    String name = (String) pool[code[pc + 1]];
+                    int n = code[pc + 2];
+                    int[] order = altOrder(cursor, name, pos, n);
+                    if (order.length == 0) {
+                        failed = true;
+                    } else {
+                        /* Everything after the best branch becomes a choice
+                         * point, pushed worst first so the best is resumed
+                         * last -- the stack is LIFO and the first branch is
+                         * taken now rather than pushed. */
+                        for (int i = order.length - 1; i >= 1; i--) {
+                            if (choiceTop + CHOICE_WIDTH > choices.length) {
+                                choices = grow(choices);
+                            }
+                            choices[choiceTop] = code[pc + 3 + order[i]];
+                            choices[choiceTop + 1] = pos;
+                            choices[choiceTop + 2] = pendingTop;
+                            choiceTop += CHOICE_WIDTH;
+                        }
+                        pc = code[pc + 3 + order[0]];
+                    }
+                }
+                case RxProgram.CUT -> {
+                    /* Everything the quantifier could still have tried is
+                     * discarded, so a later failure backtracks past it. */
+                    choiceTop = regs[code[pc + 1]];
+                    pc += 2;
+                }
                 case RxProgram.EMPTY_CHECK -> {
                     /* A repetition that consumed nothing would spin here. */
                     if (pos == regs[code[pc + 1]]) {
@@ -312,6 +360,11 @@ public final class RxVmNode extends Node {
     @TruffleBoundary
     private static int reached(RxCursor cursor, Object subCursor) {
         return cursor.reached(subCursor);
+    }
+
+    @TruffleBoundary
+    private static int[] altOrder(RxCursor cursor, String name, int pos, int branches) {
+        return cursor.altOrder(name, pos, branches);
     }
 
     @TruffleBoundary
