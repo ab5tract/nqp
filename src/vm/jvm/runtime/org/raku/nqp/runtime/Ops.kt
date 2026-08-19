@@ -2383,7 +2383,9 @@ object Ops {
             CallFrame.RET_STR ->
                 return coerce_s2i(cf.sRet)
             else ->
-                return unbox_i(cf.oRet, cf.tc)
+                /* Unsigned: the wider reading, or a value that only an
+                 * unsigned native can hold is rejected on its way into one. */
+                return unbox_u(cf.oRet, cf.tc)
         }
     }
     @JvmStatic
@@ -3177,9 +3179,19 @@ object Ops {
     fun unbox_i(obj: SixModelObject?, tc: ThreadContext): Long {
         return decont(obj, tc)!!.get_int(tc)
     }
+    /* MoarVM reads a bigint into an unsigned native through an accessor of
+     * its own, which takes any value of 64 bits or fewer, where the signed
+     * one stops at 63 bits for a positive value. There is a single get_int
+     * here to serve both, so the unsigned readers apply the wider rule
+     * themselves and let the value wrap into the signed range, which is
+     * what an unsigned native holds it as anyway. */
+    @JvmStatic
+    fun unsignedFrom(obj: SixModelObject, tc: ThreadContext): Long {
+        return obj.get_uint(tc)
+    }
     @JvmStatic
     fun unbox_u(obj: SixModelObject?, tc: ThreadContext): Long {
-        return decont(obj, tc)!!.get_int(tc)
+        return unsignedFrom(decont(obj, tc)!!, tc)
     }
     @JvmStatic
     fun unbox_n(obj: SixModelObject?, tc: ThreadContext): Double {
@@ -4350,7 +4362,7 @@ object Ops {
             if (cs != null)
                 return cs.fetch_i(tc, obj)
         }
-        return obj!!.get_int(tc)
+        return unsignedFrom(obj!!, tc)
     }
     @JvmStatic
     fun decont_n(obj: SixModelObject?, tc: ThreadContext): Double {
