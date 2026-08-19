@@ -8,6 +8,7 @@ class JAST::Class is JAST::Node {
     has str $!serialized;
     has @!methods;
     has @!fields;
+    has @!nested_classes;
     
     method BUILD(:$name!, :$super!, :$filename) {
         $!name    := $name;
@@ -15,6 +16,7 @@ class JAST::Class is JAST::Node {
         $!filename := $filename;
         @!methods := [];
         @!fields  := [];
+        @!nested_classes := [];
     }
     
     method add_method($method) {
@@ -28,6 +30,7 @@ class JAST::Class is JAST::Node {
     method name(*@value) { @value ?? ($!name := @value[0]) !! $!name }
     method super(*@value) { @value ?? ($!super := @value[0]) !! $!super }
     method serialized(*@value) { @value ?? ($!serialized := @value[0]) !! $!serialized }
+    method nested_classes(*@value) { @value ?? (@!nested_classes := @value[0]) !! @!nested_classes }
     method methods() { @!methods }
     
     method dump() {

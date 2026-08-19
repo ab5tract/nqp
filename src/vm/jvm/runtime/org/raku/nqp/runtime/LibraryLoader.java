@@ -17,6 +17,7 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.jar.JarEntry;
@@ -126,6 +127,7 @@ public class LibraryLoader {
         String name = null;
         ByteBuffer classfile = null;
         ByteBuffer serial = null;
+        Map<String, ByteBuffer> nested = new HashMap<>();
         try (JarInputStream jis = new JarInputStream(new ByteBufferedInputStream(buffer))) {
             JarEntry je;
             while ((je = jis.getNextJarEntry()) != null) {
@@ -134,6 +136,10 @@ public class LibraryLoader {
                     name = je.getComment();
                     classfile = readToHeapBuffer(jis);
                 }
+                else if (jf.endsWith(".class"))
+                    /* A nested unit riding along; served on demand. */
+                    nested.put(jf.substring(0, jf.length() - ".class".length()),
+                        readToHeapBuffer(jis));
                 else if (jf.endsWith(".serialized.lz4") && serial == null)
                     serial = readToHeapBuffer(jis);
                 else if (jf.endsWith(".serialized") && serial == null)
@@ -146,7 +152,7 @@ public class LibraryLoader {
             throw new IllegalArgumentException("Bytecode jar lacks class file");
         if (serial == null)
             throw new IllegalArgumentException("Bytecode jar lacks serialization file");
-        return new MemoryClassLoader(classfile, serial, parent).loadSerialClass(name);
+        return new MemoryClassLoader(classfile, serial, nested, parent).loadSerialClass(name);
     }
 
     public static void resolveClass(ThreadContext tc, Class<?> c) {
@@ -297,6 +303,21 @@ public class LibraryLoader {
         }
 
         @Override
+        protected Class<?> findClass(String name) throws ClassNotFoundException {
+            /* A nested unit embedded alongside the main class. */
+            try (JarFile jar = new JarFile(filename)) {
+                JarEntry entry = jar.getJarEntry(name + ".class");
+                if (entry == null)
+                    throw new ClassNotFoundException(name + " in " + filename);
+                byte[] buffer = jar.getInputStream(entry).readAllBytes();
+                return defineClass(name, buffer, 0, buffer.length);
+            }
+            catch (IOException e) {
+                throw new ClassNotFoundException(name + " in " + filename, e);
+            }
+        }
+
+        @Override
         public InputStream getResourceAsStream(String name) {
             try {
                 JarFile jar = new JarFile(filename);
@@ -314,11 +335,30 @@ public class LibraryLoader {
 
         private final WeakReference<ByteBuffer> classfile;
         private final ByteBuffer serial;
+        private final Map<String, ByteBuffer> nested;
 
         protected MemoryClassLoader(ByteBuffer classfile, ByteBuffer serial, ByteClassLoader parent) {
+            this(classfile, serial, new HashMap<>(), parent);
+        }
+
+        protected MemoryClassLoader(ByteBuffer classfile, ByteBuffer serial, Map<String, ByteBuffer> nested, ByteClassLoader parent) {
             super(parent);
             this.classfile = new WeakReference(classfile);
             this.serial = serial;
+            this.nested = nested;
+        }
+
+        @Override
+        protected Class<?> findClass(String name) throws ClassNotFoundException {
+            ByteBuffer bytes = nested.get(name);
+            if (bytes == null)
+                throw new ClassNotFoundException(name);
+            try {
+                return defineClass(name, bytes, null);
+            }
+            catch (NoClassDefFoundError | IndexOutOfBoundsException | SecurityException e) {
+                throw new ClassNotFoundException("could not define nested class " + name, e);
+            }
         }
 
         protected Class<?> findSerialClass(String name) throws ClassNotFoundException {
