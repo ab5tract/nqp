@@ -4750,6 +4750,11 @@ class QAST::CompilerJAST {
                             $il.append($lbl);
                         }
                     }
+                    # MoarVM fetches a sized parameter into a sized register,
+                    # so the argument arrives already truncated. Every local
+                    # here is full width, so do it explicitly. A slurpy or a
+                    # full-width parameter emits nothing.
+                    emit_sized_native_trunc($il, $_.returns, $type);
                     if $_.scope eq 'local' {
                         $il.append(JAST::Instruction.new( :op(store_ins($type)), $_.name ));
                     }
