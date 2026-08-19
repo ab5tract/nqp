@@ -108,7 +108,10 @@ object BootDispatchers {
         else {
             val hll = hllOf(tc, invokee)
                 ?: throw ExceptionHandling.dieInternal(tc,
-                    "lang-call cannot invoke an object belonging to no language")
+                    "lang-call cannot invoke an object belonging to no language (a " +
+                    (if (invokee == null) "null" else invokee.javaClass.simpleName +
+                        if (invokee.stInitialized) " of type " +
+                            invokee.st.debugName else " with no STable") + ")")
             delegate = hll.callDispatcher
                 ?: throw ExceptionHandling.dieInternal(tc,
                     "No language call dispatcher registered for '${hll.name}'")
