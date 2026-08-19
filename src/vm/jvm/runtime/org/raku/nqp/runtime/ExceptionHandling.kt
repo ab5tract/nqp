@@ -323,12 +323,27 @@ object ExceptionHandling {
          * recorded one; #line-directive-mapped (SETTING::src/... for
          * setting code). */
         val mappedFile: String?
-            get() = frame.codeRef.staticInfo.sourceFile ?: file
+            get() {
+                val si = frame.codeRef.staticInfo
+                if (line >= 0) {
+                    val section = si.sourceSectionFor(line)
+                    if (section >= 0)
+                        return si.sourceSectionFile!![section]
+                }
+                return si.sourceFile ?: file
+            }
         /* The line in mappedFile's numbering: the raw LineNumberTable line
-         * shifted by the block's raw-to-mapped offset. */
+         * shifted by the raw-to-mapped offset of whichever directive
+         * section it falls in (the block-level one when none). */
         val mappedLine: Int
             get() {
                 val si = frame.codeRef.staticInfo
+                if (line >= 0) {
+                    val section = si.sourceSectionFor(line)
+                    if (section >= 0)
+                        return line -
+                            (si.sourceSectionRaw!![section] - si.sourceSectionLine!![section])
+                }
                 return if (si.sourceFile != null && line >= 0)
                     line - si.sourceLineDelta
                 else line

@@ -112,6 +112,24 @@ class StaticCodeInfo(
      * LineNumberTable rows use) and sourceFile's numbering. */
     @JvmField var sourceLineDelta = 0
 
+    /** Intra-body #line directive sections, sorted by raw line: from
+     * sourceSectionRaw[i] onward the code reads as sourceSectionFile[i]
+     * starting at line sourceSectionLine[i]. Null for the common body
+     * with no directive of its own. */
+    @JvmField var sourceSectionRaw: IntArray? = null
+    @JvmField var sourceSectionLine: IntArray? = null
+    @JvmField var sourceSectionFile: Array<String>? = null
+
+    /** The directive section a raw line falls in, or -1 for the part of
+     * the body before any section (covered by the method-level mapping). */
+    fun sourceSectionFor(rawLine: Int): Int {
+        val raws = sourceSectionRaw ?: return -1
+        var i = raws.size - 1
+        while (i >= 0 && raws[i] > rawLine)
+            i--
+        return i
+    }
+
     fun oTryGetLexicalIdx(name: String): Int {
         val names = oLexicalNames
         if (names != null) {
