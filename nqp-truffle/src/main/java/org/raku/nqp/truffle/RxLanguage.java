@@ -37,18 +37,21 @@ public final class RxLanguage extends TruffleLanguage<RxLanguage.Ctx> {
      * which is the thing a compile-time approach cannot reach.
      */
     @Override protected CallTarget parse(ParsingRequest request) {
-        RxNodes.Rx tree = RxParser.parse(request.getSource().getCharacters().toString());
-        Matcher matcher = new Matcher(new MatchRootNode(this, tree).getCallTarget());
+        RxParser.Built built = RxParser.parse(request.getSource().getCharacters().toString());
+        Matcher matcher = new Matcher(
+            new MatchRootNode(this, built.entry(), built.slots()).getCallTarget());
         return new ConstantRootNode(this, matcher).getCallTarget();
     }
 
     /** Runs one pattern against one target; the unit partial evaluation compiles. */
     public static final class MatchRootNode extends RootNode {
-        @Child private RxNodes.Rx tree;
+        @Child private RxNodes.Rx entry;
+        private final int slots;
 
-        public MatchRootNode(TruffleLanguage<?> language, RxNodes.Rx tree) {
+        public MatchRootNode(TruffleLanguage<?> language, RxNodes.Rx entry, int slots) {
             super(language);
-            this.tree = tree;
+            this.entry = entry;
+            this.slots = slots;
         }
 
         @Override public Object execute(VirtualFrame frame) {
@@ -56,7 +59,7 @@ public final class RxLanguage extends TruffleLanguage<RxLanguage.Ctx> {
             String target = (String) args[0];
             int pos = args.length > 1 ? (Integer) args[1] : 0;
             RxCursor cursor = args.length > 2 ? (RxCursor) args[2] : new RxCursor.OfString(target);
-            return tree.matchAlone(cursor, target, pos, cursor.eos());
+            return entry.match(new RxState(cursor, slots), pos);
         }
     }
 
