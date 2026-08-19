@@ -31,7 +31,16 @@ open class P6OpaqueBaseInstance : SixModelObject() {
                     break
             }
         }
-        throw RuntimeException("No such attribute '$name' for this object")
+        val known = StringBuilder()
+        for (i in classHandles.indices) {
+            known.append(if (i == 0) " [" else "; ")
+            known.append(classHandles[i]?.st?.debugName)
+            known.append(": ")
+            known.append(rd.nameToHintMap!![i].keys.joinToString(","))
+        }
+        if (classHandles.isNotEmpty()) known.append("]")
+        throw RuntimeException("No such attribute '$name' for this object" +
+            " (looked in ${classHandle?.st?.debugName}; has$known)")
     }
 
     fun autoViv(slot: Int, tc: ThreadContext): SixModelObject {
