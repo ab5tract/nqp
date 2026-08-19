@@ -55,7 +55,8 @@ public final class RxLanguage extends TruffleLanguage<RxLanguage.Ctx> {
             Object[] args = frame.getArguments();
             String target = (String) args[0];
             int pos = args.length > 1 ? (Integer) args[1] : 0;
-            return tree.match(target, pos, target.length());
+            RxCursor cursor = args.length > 2 ? (RxCursor) args[2] : new RxCursor.OfString(target);
+            return tree.matchAlone(cursor, target, pos, cursor.eos());
         }
     }
 
@@ -71,13 +72,17 @@ public final class RxLanguage extends TruffleLanguage<RxLanguage.Ctx> {
         @ExportMessage boolean isExecutable() { return true; }
 
         @ExportMessage Object execute(Object[] args) throws ArityException, UnsupportedTypeException {
-            if (args.length < 1 || args.length > 2) {
-                throw ArityException.create(1, 2, args.length);
+            if (args.length < 1 || args.length > 3) {
+                throw ArityException.create(1, 3, args.length);
             }
             if (!(args[0] instanceof String s)) {
                 throw UnsupportedTypeException.create(args, "target must be a string");
             }
-            return args.length == 2 ? target.call(s, args[1]) : target.call(s);
+            return switch (args.length) {
+                case 1 -> target.call(s);
+                case 2 -> target.call(s, args[1]);
+                default -> target.call(s, args[1], args[2]);
+            };
         }
     }
 

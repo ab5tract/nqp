@@ -1,6 +1,7 @@
 package org.raku.nqp.truffle;
 
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 
@@ -10,12 +11,22 @@ import com.oracle.truffle.api.nodes.Node;
  * generic matcher below becomes machine code for one particular pattern,
  * which is the whole reason for the engine to exist.
  *
- * <p>The bytecode backend is a backtracking machine driven by an explicit
- * mark stack ({@code regex_mark}/{@code regex_commit}) and jumps. There is
- * no Truffle equivalent of a goto, so backtracking is expressed the other
- * way round: a matcher returns the position it reached, or {@link #NO_MATCH},
- * and an alternation simply tries its next child. The mark stack becomes the
- * Java stack, which is what lets partial evaluation see through it.
+ * <h2>Why continuation passing</h2>
+ *
+ * The bytecode backend is a backtracking machine driven by an explicit mark
+ * stack ({@code regex_mark}/{@code regex_commit}) and jumps: a quantifier
+ * that took too much is rewound by popping back to a mark. There is no
+ * Truffle equivalent of a goto, and the obvious alternative -- have each
+ * node return the position it reached -- cannot express giving characters
+ * back. It gets {@code a*a} wrong, because {@code a*} takes everything and
+ * nothing can make it reconsider.
+ *
+ * <p>So a node is handed the rest of the pattern as a continuation. A
+ * quantifier tries a repetition, asks the continuation, and on failure drops
+ * back to fewer; an alternation asks the continuation inside each branch.
+ * Backtracking becomes ordinary returning, and the mark stack becomes the
+ * Java stack -- which is the form partial evaluation can see through, since
+ * the continuation at each site is a constant.
  *
  * <p>Positions are indices into the target's UTF-16 units, as everywhere
  * else in this backend; {@link #width} steps a whole codepoint, since
@@ -27,11 +38,32 @@ public abstract class RxNodes {
     /** No match. Distinct from 0, which is a match consuming nothing. */
     public static final int NO_MATCH = -1;
 
+    /** The rest of the pattern, asked whether it matches from here. */
+    public interface RxCont {
+        int run(RxCursor cursor, String target, int pos, int eos);
+    }
+
+    /** The continuation at the end of a pattern: whatever reached here matched. */
+    public static final RxCont ACCEPT = (cursor, target, pos, eos) -> pos;
+
     public abstract static class Rx extends Node {
         /**
-         * @return the position after the match, or {@link #NO_MATCH}.
+         * The target and eos travel alongside the cursor rather than being
+         * read from it per node: they are loop-invariant for a whole match,
+         * and passing them keeps the hot path free of interface calls that
+         * partial evaluation would have to reason about. Only the nodes that
+         * genuinely need the cursor -- subrules and captures -- touch it.
+         *
+         * @param k what must also match, starting where this node ends
+         * @return the position the whole rest of the pattern reached, or
+         *         {@link #NO_MATCH}
          */
-        public abstract int match(String target, int pos, int eos);
+        public abstract int match(RxCursor cursor, String target, int pos, int eos, RxCont k);
+
+        /** Matches this node alone, with nothing required after it. */
+        public final int matchAlone(RxCursor cursor, String target, int pos, int eos) {
+            return match(cursor, target, pos, eos, ACCEPT);
+        }
     }
 
     /** UTF-16 units occupied by the codepoint at pos. */
@@ -53,91 +85,117 @@ public abstract class RxNodes {
             this.ignoreCase = ignoreCase;
         }
 
-        @Override public int match(String target, int pos, int eos) {
+        @Override public int match(RxCursor cursor, String target, int pos, int eos, RxCont k) {
             /* regionMatches answers false for a range past the end, so a
              * negated literal with no room left is a match -- which is the
              * assertion holding, not failing. */
             boolean hit = pos + text.length() <= eos
                 && target.regionMatches(ignoreCase, pos, text, 0, text.length());
             if (hit == negate) return NO_MATCH;
-            return zeroWidth ? pos : pos + text.length();
+            return k.run(cursor, target, zeroWidth ? pos : pos + text.length(), eos);
         }
     }
 
-    /** rxtype concat: every child in turn, each starting where the last ended. */
+    /** rxtype concat: every child in turn, each continuing into the next. */
     public static final class Concat extends Rx {
         @Children private final Rx[] parts;
 
         public Concat(Rx... parts) { this.parts = parts; }
 
-        @Override @ExplodeLoop public int match(String target, int pos, int eos) {
-            /* Unrolled by PE: the child count is fixed per pattern, so the
-             * loop disappears and the children inline into one another. */
-            for (Rx part : parts) {
-                pos = part.match(target, pos, eos);
-                if (pos == NO_MATCH) return NO_MATCH;
-            }
-            return pos;
+        @Override public int match(RxCursor cursor, String target, int pos, int eos, RxCont k) {
+            return step(0, cursor, target, pos, eos, k);
+        }
+
+        /*
+         * The child index is constant at each site once PE unrolls the
+         * chain, so the continuations below fold into direct control flow
+         * rather than remaining allocated objects.
+         */
+        private int step(int i, RxCursor cursor, String target, int pos, int eos, RxCont k) {
+            if (i == parts.length) return k.run(cursor, target, pos, eos);
+            return parts[i].match(cursor, target, pos, eos,
+                (c, t, p, e) -> step(i + 1, c, t, p, e, k));
         }
     }
 
     /**
-     * rxtype alt: the first branch that matches wins, and a branch that
-     * fails leaves the position untouched.
+     * rxtype alt: the first branch that matches, and whose continuation also
+     * matches, wins.
      *
-     * <p>This is where the shape differs most from the bytecode engine: it
-     * pushes a mark and jumps back on failure, where here a failed branch
-     * has simply returned and the next one is tried with the original
-     * position still in hand.
+     * <p>Asking the continuation inside the branch is what makes this
+     * correct rather than merely plausible: {@code (a|ab)c} against "abc"
+     * needs the second branch precisely because the first leaves 'c'
+     * unmatched, which is only visible once the rest of the pattern has been
+     * tried.
      */
     public static final class Alt extends Rx {
         @Children private final Rx[] branches;
 
         public Alt(Rx... branches) { this.branches = branches; }
 
-        @Override @ExplodeLoop public int match(String target, int pos, int eos) {
+        @Override @ExplodeLoop
+        public int match(RxCursor cursor, String target, int pos, int eos, RxCont k) {
             for (Rx branch : branches) {
-                int r = branch.match(target, pos, eos);
+                int r = branch.match(cursor, target, pos, eos, k);
                 if (r != NO_MATCH) return r;
             }
             return NO_MATCH;
         }
     }
 
-    /** rxtype quant: min..max repetitions, greedy or frugal. */
+    /** rxtype quant: min..max repetitions, giving characters back as needed. */
     public static final class Quant extends Rx {
         @Child private Rx body;
         @Child private Rx separator;
         @CompilationFinal private final int min;
         @CompilationFinal private final int max;   // -1 for unbounded
-        @CompilationFinal private final boolean backtrackable;
+        @CompilationFinal private final boolean greedy;
 
-        public Quant(Rx body, Rx separator, int min, int max, boolean backtrackable) {
+        public Quant(Rx body, Rx separator, int min, int max, boolean greedy) {
             this.body = body;
             this.separator = separator;
             this.min = min;
             this.max = max;
-            this.backtrackable = backtrackable;
+            this.greedy = greedy;
         }
 
-        @Override public int match(String target, int pos, int eos) {
-            int count = 0;
-            int at = pos;
-            while (max < 0 || count < max) {
-                int next = at;
-                if (count > 0 && separator != null) {
-                    next = separator.match(target, next, eos);
-                    if (next == NO_MATCH) break;
-                }
-                int r = body.match(target, next, eos);
-                if (r == NO_MATCH) break;
-                /* A body that consumed nothing would spin forever; the
-                 * bytecode engine guards this with its rep counter. */
-                if (r == at && count >= min) break;
-                at = r;
-                count++;
+        @Override public int match(RxCursor cursor, String target, int pos, int eos, RxCont k) {
+            return rep(0, cursor, target, pos, eos, k);
+        }
+
+        /*
+         * Greedy tries one more repetition before offering the continuation,
+         * frugal offers it first. That ordering is the entire difference
+         * between the two, and unwinding this recursion is what "giving
+         * characters back" means here.
+         */
+        private int rep(int count, RxCursor cursor, String target, int pos, int eos, RxCont k) {
+            if (!greedy && count >= min) {
+                int done = k.run(cursor, target, pos, eos);
+                if (done != NO_MATCH) return done;
             }
-            return count >= min ? at : NO_MATCH;
+            if (max < 0 || count < max) {
+                int deeper = one(count, cursor, target, pos, eos, k);
+                if (deeper != NO_MATCH) return deeper;
+            }
+            if (greedy && count >= min) {
+                return k.run(cursor, target, pos, eos);
+            }
+            return NO_MATCH;
+        }
+
+        private int one(int count, RxCursor cursor, String target, int pos, int eos, RxCont k) {
+            int at = pos;
+            if (count > 0 && separator != null) {
+                int sep = separator.matchAlone(cursor, target, at, eos);
+                if (sep == NO_MATCH) return NO_MATCH;
+                at = sep;
+            }
+            final int from = at;
+            /* A repetition that consumed nothing would recurse forever; the
+             * bytecode engine guards the same case with its rep counter. */
+            return body.match(cursor, target, at, eos, (c, t, p, e) ->
+                p == from ? NO_MATCH : rep(count + 1, c, t, p, e, k));
         }
     }
 
@@ -149,7 +207,7 @@ public abstract class RxNodes {
 
         public Anchor(Kind kind) { this.kind = kind; }
 
-        @Override public int match(String target, int pos, int eos) {
+        @Override public int match(RxCursor cursor, String target, int pos, int eos, RxCont k) {
             boolean ok = switch (kind) {
                 case BOS -> pos == 0;
                 case EOS -> pos == eos;
@@ -160,7 +218,7 @@ public abstract class RxNodes {
                 case RWB -> pos > 0 && isWord(target, pos - 1)
                             && (pos == eos || !isWord(target, pos));
             };
-            return ok ? pos : NO_MATCH;
+            return ok ? k.run(cursor, target, pos, eos) : NO_MATCH;
         }
 
         private static boolean isWord(String target, int pos) {
@@ -169,22 +227,35 @@ public abstract class RxNodes {
         }
     }
 
+    /** One character, tested by whatever the subclass considers membership. */
+    abstract static class OneChar extends Rx {
+        @CompilationFinal final boolean negate;
+
+        OneChar(boolean negate) { this.negate = negate; }
+
+        abstract boolean holds(int codepoint);
+
+        @Override public final int match(RxCursor cursor, String target, int pos, int eos, RxCont k) {
+            if (pos >= eos) return NO_MATCH;
+            int cp = target.codePointAt(pos);
+            if (holds(cp) == negate) return NO_MATCH;
+            return k.run(cursor, target, pos + width(target, pos), eos);
+        }
+    }
+
     /** rxtype cclass: one character from a named class. */
-    public static final class CClass extends Rx {
+    public static final class CClass extends OneChar {
         public enum Kind { ANY, DIGIT, SPACE, WORD, NEWLINE, HSPACE, VSPACE }
 
         @CompilationFinal private final Kind kind;
-        @CompilationFinal private final boolean negate;
 
         public CClass(Kind kind, boolean negate) {
+            super(negate);
             this.kind = kind;
-            this.negate = negate;
         }
 
-        @Override public int match(String target, int pos, int eos) {
-            if (pos >= eos) return NO_MATCH;
-            int cp = target.codePointAt(pos);
-            boolean in = switch (kind) {
+        @Override boolean holds(int cp) {
+            return switch (kind) {
                 case ANY -> true;
                 case DIGIT -> Character.isDigit(cp);
                 case SPACE -> Character.isWhitespace(cp);
@@ -195,47 +266,33 @@ public abstract class RxNodes {
                 case VSPACE -> cp == '\n' || cp == '\r' || cp == 0x0B || cp == 0x0C
                                || cp == 0x85 || cp == 0x2028 || cp == 0x2029;
             };
-            if (in == negate) return NO_MATCH;
-            return pos + width(target, pos);
         }
     }
 
     /** rxtype enumcharlist: one character drawn from a fixed set. */
-    public static final class EnumCharList extends Rx {
+    public static final class EnumCharList extends OneChar {
         @CompilationFinal private final String chars;
-        @CompilationFinal private final boolean negate;
 
         public EnumCharList(String chars, boolean negate) {
+            super(negate);
             this.chars = chars;
-            this.negate = negate;
         }
 
-        @Override public int match(String target, int pos, int eos) {
-            if (pos >= eos) return NO_MATCH;
-            int cp = target.codePointAt(pos);
-            if ((chars.indexOf(cp) >= 0) == negate) return NO_MATCH;
-            return pos + width(target, pos);
-        }
+        @Override boolean holds(int cp) { return chars.indexOf(cp) >= 0; }
     }
 
     /** rxtype charrange: one character within an inclusive range. */
-    public static final class CharRange extends Rx {
+    public static final class CharRange extends OneChar {
         @CompilationFinal private final int lo;
         @CompilationFinal private final int hi;
-        @CompilationFinal private final boolean negate;
 
         public CharRange(int lo, int hi, boolean negate) {
+            super(negate);
             this.lo = lo;
             this.hi = hi;
-            this.negate = negate;
         }
 
-        @Override public int match(String target, int pos, int eos) {
-            if (pos >= eos) return NO_MATCH;
-            int cp = target.codePointAt(pos);
-            if ((cp >= lo && cp <= hi) == negate) return NO_MATCH;
-            return pos + width(target, pos);
-        }
+        @Override boolean holds(int cp) { return cp >= lo && cp <= hi; }
     }
 
     /** rxtype scan: find the leftmost position the body matches from. */
@@ -244,12 +301,78 @@ public abstract class RxNodes {
 
         public Scan(Rx body) { this.body = body; }
 
-        @Override public int match(String target, int pos, int eos) {
+        @Override public int match(RxCursor cursor, String target, int pos, int eos, RxCont k) {
             for (int at = pos; at <= eos; at += width(target, at)) {
-                int r = body.match(target, at, eos);
+                int r = body.match(cursor, target, at, eos, k);
                 if (r != NO_MATCH) return r;
             }
             return NO_MATCH;
+        }
+    }
+
+    /**
+     * rxtype subrule: hand off to another rule of the grammar.
+     *
+     * <p>This is the boundary of what partial evaluation can specialize. The
+     * callee is NQP code -- compiled bytecode, not Truffle nodes -- so PE
+     * inlines up to the call and stops. That is the whole reason the dispatch
+     * half of this work has to come after code generation moves to Truffle:
+     * until the callee is nodes too, there is nothing on the other side for
+     * PE to fold into the caller.
+     */
+    public static final class Subrule extends Rx {
+        @CompilationFinal private final String name;
+        @CompilationFinal private final boolean zeroWidth;
+        @CompilationFinal private final boolean negate;
+
+        public Subrule(String name, boolean zeroWidth, boolean negate) {
+            this.name = name;
+            this.zeroWidth = zeroWidth;
+            this.negate = negate;
+        }
+
+        @Override public int match(RxCursor cursor, String target, int pos, int eos, RxCont k) {
+            int r = call(cursor, pos);
+            boolean matched = r != NO_MATCH;
+            if (matched == negate) return NO_MATCH;
+            return k.run(cursor, target, negate || zeroWidth ? pos : r, eos);
+        }
+
+        @TruffleBoundary
+        private int call(RxCursor cursor, int pos) {
+            return cursor.callSubrule(name, pos);
+        }
+    }
+
+    /**
+     * rxtype subcapture: match the body and record what it spanned.
+     *
+     * <p>Recorded only once the continuation has accepted too, so a path
+     * that was tried and abandoned leaves nothing behind. The bytecode
+     * engine has to unwind its capture stack when a mark is backtracked to;
+     * returning from a node makes that bookkeeping unnecessary.
+     */
+    public static final class SubCapture extends Rx {
+        @Child private Rx body;
+        @CompilationFinal private final String name;
+
+        public SubCapture(String name, Rx body) {
+            this.name = name;
+            this.body = body;
+        }
+
+        @Override public int match(RxCursor cursor, String target, int pos, int eos, RxCont k) {
+            final int from = pos;
+            return body.match(cursor, target, pos, eos, (c, t, p, e) -> {
+                int rest = k.run(c, t, p, e);
+                if (rest != NO_MATCH) record(c, from, p);
+                return rest;
+            });
+        }
+
+        @TruffleBoundary
+        private void record(RxCursor cursor, int from, int to) {
+            cursor.capture(name, from, to);
         }
     }
 }
