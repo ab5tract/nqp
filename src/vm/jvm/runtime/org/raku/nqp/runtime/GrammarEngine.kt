@@ -46,6 +46,7 @@ interface GrammarEngine {
         target: String,
         from: Int,
         invocantFrom: Int,
+        callback: SixModelObject?,
     ): SixModelObject
 }
 
@@ -110,6 +111,7 @@ object GrammarEngines {
         target: String,
         from: Long,
         invocantFrom: Long,
+        callback: SixModelObject?,
         tc: ThreadContext,
     ): SixModelObject {
         val engine = engine ?: throw IllegalStateException(
@@ -118,7 +120,8 @@ object GrammarEngines {
         val program = programs.computeIfAbsent(encoded) { engine.compile(it) }
         if (trace) traceEnter(encoded, target, from)
         val result = engine.match(
-            program, tc, cursor, cursorClass, target, from.toInt(), invocantFrom.toInt())
+            program, tc, cursor, cursorClass, target, from.toInt(), invocantFrom.toInt(),
+            callback)
         if (trace) traceLeave(encoded, cursor, cursorClass, from, tc)
         return result
     }
