@@ -122,6 +122,7 @@ class JAST::Method is JAST::Node {
     has str $!cr_file;
     has int $!cr_line;
     has int $!cr_rawline;
+    has @!cr_sections;
 
     method BUILD(:$name!, :$returns!, :$static = 1) {
         $!name := $name;
@@ -141,6 +142,7 @@ class JAST::Method is JAST::Node {
         $!cr_file := '';
         $!cr_line := 0;
         $!cr_rawline := 0;
+        @!cr_sections := [];
     }
 
     method add_argument($name, $type) {
@@ -176,6 +178,31 @@ class JAST::Method is JAST::Node {
     method is_thunk(*@value) { $!is_thunk := @value[0] if @value; $!is_thunk }
     method cr_file(*@value) { @value ?? ($!cr_file := @value[0]) !! $!cr_file }
     method cr_line(*@value) { @value ?? ($!cr_line := @value[0]) !! $!cr_line }
+    method cr_sections() { @!cr_sections }
+
+    # Note that source at raw (directive-free) line $rawline reads as line
+    # $line of $file: a #line directive section within this method's body.
+    # Only a change of mapping adds a row, so methods without an intra-body
+    # directive record nothing, and rows stay sorted by raw line.
+    method cr_add_section($rawline, $line, $file) {
+        my int $n := nqp::elems(@!cr_sections);
+        my $cur_file;
+        my int $cur_delta;
+        if $n {
+            my @last := @!cr_sections[$n - 1];
+            return 0 if $rawline < @last[0];
+            $cur_file  := @last[2];
+            $cur_delta := @last[0] - @last[1];
+        }
+        else {
+            $cur_file  := $!cr_file;
+            $cur_delta := $!cr_rawline - $!cr_line;
+        }
+        unless $file eq $cur_file && $rawline - $line == $cur_delta {
+            nqp::push(@!cr_sections, [$rawline, $line, $file]);
+        }
+        1
+    }
     method cr_rawline(*@value) { @value ?? ($!cr_rawline := @value[0]) !! $!cr_rawline }
 
     method dump(@dumped) {

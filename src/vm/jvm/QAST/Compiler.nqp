@@ -4997,6 +4997,23 @@ class QAST::CompilerJAST {
                     $line := HLL::Compiler.lineof($node.orig(), $node.from(), :cache(1), :directives(0));
                 }
                 $il.append(JAST::Annotation.new( :line($line) ));
+
+                # A #line directive between this method's statements changes
+                # what the raw line maps to; record the section so backtraces
+                # can honor it (the method-level mapping only covers the
+                # block's declaration point).
+                if $*JMETH.cr_file {
+                    if nqp::can($node, 'file') && nqp::can($node, 'line') {
+                        my $mfile := $node.file;
+                        $*JMETH.cr_add_section($line, $node.line, ~$mfile) if $mfile;
+                    }
+                    else {
+                        my $line-file := HLL::Compiler.linefileof(
+                            $node.orig(), $node.from(), :cache(1), :directives(1));
+                        $*JMETH.cr_add_section($line, $line-file[0], ~$line-file[1])
+                            if $line-file[1];
+                    }
+                }
             }
 
             my $void := $all_void || $i != $resultchild;
