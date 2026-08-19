@@ -27,9 +27,7 @@ public class ArgsExpectation {
                     csd = csd.explodeFlattening(tc.curFrame, args);
                 if (csd.argFlags.length != 0)
                     ExceptionHandling.dieInternal(tc,
-                        "Wrong number of arguments passed; expected 0..0, but got " +
-                        csd.argFlags.length +
-                        " (" + csd.numPositionals + " of those positional)");
+                        arityFail(csd.numPositionals, 0));
             }
             cr.staticInfo.mh.invokeExact(tc, cr, csd);
             break;
@@ -64,16 +62,12 @@ public class ArgsExpectation {
                         break;
                     default:
                         ExceptionHandling.dieInternal(tc,
-                            "Wrong number of arguments passed; expected 1..1, but got " +
-                            csd.argFlags.length +
-                            " (" + csd.numPositionals + " of those positional)");
+                            arityFail(csd.numPositionals, 1));
                     }
                 }
                 else {
                     ExceptionHandling.dieInternal(tc,
-                        "Wrong number of arguments passed; expected 1..1, but got " +
-                        csd.argFlags.length +
-                        " (" + csd.numPositionals + " of those positional)");
+                        arityFail(csd.numPositionals, 1));
                 }
             }
             break;
@@ -109,9 +103,7 @@ public class ArgsExpectation {
                         break;
                     default:
                         ExceptionHandling.dieInternal(tc,
-                            "Wrong number of arguments passed; expected 2..2, but got " +
-                            csd.argFlags.length +
-                            " (" + csd.numPositionals + " of those positional)");
+                            arityFail(csd.numPositionals, 2));
                     }
                     switch (csd.argFlags[1]) {
                     case CallSiteDescriptor.ARG_OBJ:
@@ -129,22 +121,26 @@ public class ArgsExpectation {
                         break;
                     default:
                         ExceptionHandling.dieInternal(tc,
-                            "Wrong number of arguments passed; expected 2..2, but got " +
-                            csd.argFlags.length +
-                            " (" + csd.numPositionals + " of those positional)");
+                            arityFail(csd.numPositionals, 2));
                     }
                     cr.staticInfo.mh.invokeExact(tc, cr, csd, arg1, arg2);
                 }
                 else {
                     ExceptionHandling.dieInternal(tc,
-                        "Wrong number of arguments passed; expected 2..2, but got " +
-                        csd.argFlags.length +
-                        " (" + csd.numPositionals + " of those positional)");
+                        arityFail(csd.numPositionals, 2));
                 }
             }
             break;
         default:
             ExceptionHandling.dieInternal(tc, "Unknown Argument Expectation in invoke");
         }
+    }
+
+    /* Worded as MoarVM's arity_fail words it: the message reaches the user
+     * through an unhandled-exception report, and tests read it. */
+    private static String arityFail(int got, int expected) {
+        return (got > expected ? "Too many" : "Too few") +
+            " positionals passed; expected " + expected + " argument" +
+            (expected == 1 ? "" : "s") + " but got " + got;
     }
 }
