@@ -4997,6 +4997,23 @@ class QAST::CompilerJAST {
                     $line := HLL::Compiler.lineof($node.orig(), $node.from(), :cache(1), :directives(0));
                 }
                 $il.append(JAST::Annotation.new( :line($line) ));
+
+                # A #line directive between this method's statements changes
+                # what the raw line maps to; record the section so backtraces
+                # can honor it (the method-level mapping only covers the
+                # block's declaration point).
+                if $*JMETH.cr_file {
+                    if nqp::can($node, 'file') && nqp::can($node, 'line') {
+                        my $mfile := $node.file;
+                        $*JMETH.cr_add_section($line, $node.line, ~$mfile) if $mfile;
+                    }
+                    else {
+                        my $line-file := HLL::Compiler.linefileof(
+                            $node.orig(), $node.from(), :cache(1), :directives(1));
+                        $*JMETH.cr_add_section($line, $line-file[0], ~$line-file[1])
+                            if $line-file[1];
+                    }
+                }
             }
 
             my $void := $all_void || $i != $resultchild;
@@ -6595,17 +6612,32 @@ class QAST::CompilerJAST {
         $il.append($LCMP);
         $il.append(JAST::Instruction.new( :op('ifgt'), %*REG<fail> ));
 
-        $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
-        $il.append(JAST::PushIndex.new(
-            :value($node.subtype eq 'ignorecase' ?? 1 !! 0) ));
-        $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-        $il.append($L2I);
-        $il.append(JAST::PushSVal.new( :value($litconst) ));
-        $il.append(JAST::PushIndex.new( :value(0) ));
-        $il.append(JAST::PushIndex.new( :value($litlen) ));
-        $il.append(JAST::Instruction.new( :op('invokevirtual'),
-            $TYPE_STR, 'regionMatches', 'Z', 'Z', 'Integer', $TYPE_STR, 'Integer', 'Integer' ));
-        $il.append(JAST::Instruction.new( :op($node.negate ?? 'ifne' !! 'ifeq'), %*REG<fail> ));
+        my str $subtype := $node.subtype;
+        if $subtype eq 'ignoremark' || $subtype eq 'ignorecase+ignoremark' {
+            # The mark-insensitive comparisons live in Ops; regionMatches
+            # below only knows exact and case-insensitive.
+            $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
+            $il.append(JAST::PushSVal.new( :value($litconst) ));
+            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+            $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
+                ($subtype eq 'ignoremark' ?? 'eqatim' !! 'eqaticim'),
+                'Long', $TYPE_STR, $TYPE_STR, 'Long' ));
+            $il.append($L2I);
+            $il.append(JAST::Instruction.new( :op($node.negate ?? 'ifne' !! 'ifeq'), %*REG<fail> ));
+        }
+        else {
+            $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
+            $il.append(JAST::PushIndex.new(
+                :value($subtype eq 'ignorecase' ?? 1 !! 0) ));
+            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+            $il.append($L2I);
+            $il.append(JAST::PushSVal.new( :value($litconst) ));
+            $il.append(JAST::PushIndex.new( :value(0) ));
+            $il.append(JAST::PushIndex.new( :value($litlen) ));
+            $il.append(JAST::Instruction.new( :op('invokevirtual'),
+                $TYPE_STR, 'regionMatches', 'Z', 'Z', 'Integer', $TYPE_STR, 'Integer', 'Integer' ));
+            $il.append(JAST::Instruction.new( :op($node.negate ?? 'ifne' !! 'ifeq'), %*REG<fail> ));
+        }
 
         unless $node.subtype eq 'zerowidth' {
             $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
@@ -7053,14 +7085,22 @@ class QAST::CompilerJAST {
         $il.append($LADD);
         $il.append($DUP2);
         $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
-        if nqp::elems($node.list) && $node.subtype ne 'ignorecase' {
-            # shuffle the stack variables into place for indexfrom.
+        if nqp::elems($node.list) {
+            # Pick the index variant matching the literal's semantics, the
+            # same way the MoarVM backend does.
+            my str $subtype := $node.subtype;
+            my str $indexop :=
+                $subtype eq 'ignorecase'            ?? 'indexic'   !!
+                $subtype eq 'ignoremark'            ?? 'indexim'   !!
+                $subtype eq 'ignorecase+ignoremark' ?? 'indexicim' !!
+                                                       'indexfrom';
+            # shuffle the stack variables into place for the index op.
             $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
             $il.append(JAST::PushSVal.new( :value($node[0]) ));
             $il.append($DUP2_X2);
             $il.append($POP2);
             $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
-                    "indexfrom", 'Long', $TYPE_STR, $TYPE_STR, 'Long'));
+                    $indexop, 'Long', $TYPE_STR, $TYPE_STR, 'Long'));
             $il.append($DUP2);
             $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
             $il.append(JAST::PushIVal.new( :value(-1) ));

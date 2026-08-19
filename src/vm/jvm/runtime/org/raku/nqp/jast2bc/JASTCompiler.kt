@@ -310,6 +310,16 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
                  * -- costs nothing at all. */
                 val delta = method.crRawLine - method.crLine
                 if (delta != 0) av.visit("sourceLineDelta", delta)
+                /* Intra-body directive sections; rare, so the extra pool
+                 * entries stay negligible (files intern, ints are small). */
+                method.crSectionRaw?.let { raws ->
+                    av.visit("sourceSectionRaw", raws)
+                    av.visit("sourceSectionLine", method.crSectionLine)
+                    val avSect = av.visitArray("sourceSectionFile")
+                    for (f in method.crSectionFile!!)
+                        avSect.visit(null, f)
+                    avSect.visitEnd()
+                }
             }
             av.visitEnd()
         }
