@@ -56,6 +56,16 @@ abstract class JvmConfigPropertiesTask : DefaultTask() {
         val allJars = jars.joinToString(cpsep) +
             "$cpsep$jardir${slash}nqp-runtime.jar$cpsep$libdir${slash}nqp.jar"
 
+        /*
+         * Where the grammar engine lives, for anything downstream that has to
+         * start a JVM able to run NQP-compiled code. Rakudo is the case that
+         * matters: nqp.jar now holds rules compiled to descriptors, and a
+         * runner that loads it without these cannot run them at all. The
+         * modules must be on the MODULE path and the engine on the class
+         * path -- see GrammarEngine.kt for why the split is not optional.
+         */
+        val truffledir = if (prefix.get() == ".") "." else nqpHome.get() + slash + "truffle"
+
         val configKeys = listOf(
             "_o", "so", "cc", "ccflags", "cccdlflags", "ccdlflags",
             "ld", "ldflags", "lddlflags", "libs", "perllibs", "osname",
@@ -86,6 +96,9 @@ abstract class JvmConfigPropertiesTask : DefaultTask() {
             |runtime.bootclasspath=-Xbootclasspath/a:.$cpsep$allJars
             |runtime.classpath=$libdir
             |runtime.jars=$allJars
+            |runtime.truffle.modulepath=$truffledir
+            |runtime.truffle.addmodules=org.graalvm.truffle,org.graalvm.truffle.runtime
+            |runtime.truffle.engine=$jardir${slash}nqp-truffle.jar
             |nativecall.o=${cfg["_o"]}
             |nativecall.so=${cfg["so"]}
             |nativecall.cc=${cfg["cc"]}

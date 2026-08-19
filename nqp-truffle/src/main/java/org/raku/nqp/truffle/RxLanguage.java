@@ -36,11 +36,40 @@ public final class RxLanguage extends TruffleLanguage<RxLanguage.Ctx> {
      * compiled code -- a parser for a grammar that only exists at runtime,
      * which is the thing a compile-time approach cannot reach.
      */
+    /**
+     * The matcher call target for each source parsed, by source text.
+     *
+     * <p>A polyglot {@code Value} is the only thing {@code eval} hands back,
+     * and calling through one boxes every argument and every result. Matching
+     * is the hot path -- once per rule per position -- so the embedder needs
+     * the bare CallTarget, and this is where parse leaves it for them. Only
+     * the eval touches the map; matching never does.
+     */
+    static final java.util.concurrent.ConcurrentHashMap<String, CallTarget> PARSED =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
     @Override protected CallTarget parse(ParsingRequest request) {
-        RxProgram program = RxProgram.compile(
-            RxParser.parse(request.getSource().getCharacters().toString()));
-        Matcher matcher = new Matcher(new MatchRootNode(this, program).getCallTarget());
+        String source = request.getSource().getCharacters().toString();
+        RxProgram program = compileSource(source);
+        CallTarget match = new MatchRootNode(this, program).getCallTarget();
+        PARSED.put(source, match);
+        Matcher matcher = new Matcher(match);
         return new ConstantRootNode(this, matcher).getCallTarget();
+    }
+
+    /**
+     * A source is either a pattern to parse or a descriptor the backend
+     * already flattened. The second is how a grammar arrives: by the time the
+     * JVM backend emits code it holds the rule as QAST::Regex, so parsing text
+     * again would be both wasted work and a second chance to disagree with the
+     * bytecode path about what the rule means.
+     */
+    static RxProgram compileSource(String source) {
+        if (RxWire.isDescriptor(source)) {
+            RxWire.Descriptor d = RxWire.decode(source);
+            return RxDescriptor.compile(d.code(), d.pool());
+        }
+        return RxProgram.compile(RxParser.parse(source));
     }
 
     /** Runs one pattern against one target; the unit partial evaluation compiles. */
