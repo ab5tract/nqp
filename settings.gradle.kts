@@ -5,3 +5,4 @@ plugins {
 rootProject.name = "nqp-jvm"
 
 include(":nqp-runtime")
+include(":nqp-truffle")
