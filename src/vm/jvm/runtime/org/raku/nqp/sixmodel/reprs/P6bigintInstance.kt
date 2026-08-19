@@ -17,6 +17,14 @@ class P6bigintInstance : SixModelObject() {
         this.value = BigInteger.valueOf(value)
     }
 
+    override fun get_uint(tc: ThreadContext): Long {
+        val value = this.value!!
+        if (value.bitLength() > 64)
+            throw ExceptionHandling.dieInternal(tc, "Cannot unbox " +
+                value.bitLength() + " bit wide bigint into native integer")
+        return value.toLong()
+    }
+
     override fun get_int(tc: ThreadContext): Long {
         val value = this.value!!
         /* NOTE: faithful to the historical Java, which compared `this`
