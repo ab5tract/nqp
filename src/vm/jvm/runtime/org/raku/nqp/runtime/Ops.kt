@@ -6631,6 +6631,24 @@ object Ops {
         else
             throw ExceptionHandling.dieInternal(tc, "getcodename can only be used with a CodeRef")
     }
+    /**
+     * Gives the code a scope to close over that was never entered. A phaser
+     * can be asked to run without its enclosing block ever having been
+     * invoked -- a QUIT on a whenever that never fired, say -- and it still
+     * has to find that block's lexicals. Build a frame for the enclosing
+     * static scope and hand it to the code as its outer; that frame in turn
+     * finds the nearest live instance of the scope around it, so the phaser
+     * reaches real values wherever there are any. MoarVM's
+     * MVM_frame_capture_inner does the same two steps.
+     */
+    @JvmStatic
+    fun captureinnerlex(code: SixModelObject?, tc: ThreadContext): SixModelObject? {
+        if (code !is CodeRef)
+            throw ExceptionHandling.dieInternal(tc, "captureinnerlex must be used on a CodeRef")
+        val outerStatic = code.staticInfo.outerStaticInfo ?: return code
+        code.outer = CallFrame.contextOnly(tc, outerStatic)
+        return code
+    }
     @JvmStatic
     fun forceouterctx(code: SixModelObject?, ctx: SixModelObject?, tc: ThreadContext): SixModelObject? {
         if (code !is CodeRef)
