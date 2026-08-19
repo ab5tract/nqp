@@ -125,6 +125,11 @@ abstract class CompilationUnit {
                 cr.staticInfo.sourceFile = ann.sourceFile
                 cr.staticInfo.sourceLine = ann.sourceLine
                 cr.staticInfo.sourceLineDelta = ann.sourceLineDelta
+                if (ann.sourceSectionRaw.isNotEmpty()) {
+                    cr.staticInfo.sourceSectionRaw = ann.sourceSectionRaw
+                    cr.staticInfo.sourceSectionLine = ann.sourceSectionLine
+                    cr.staticInfo.sourceSectionFile = ann.sourceSectionFile
+                }
             }
             if (BOOTCodeSTable != null)
                 cr.st = BOOTCodeSTable
