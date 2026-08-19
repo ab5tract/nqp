@@ -80,3 +80,17 @@ tasks.register<JavaExec>("rxcheck") {
         )
     }
 }
+
+tasks.register<JavaExec>("rxdesc") {
+    group = "verification"
+    description = "Checks the QAST::Regex descriptor decodes to the same engine."
+    mainClass = "org.raku.nqp.truffle.RxDescriptorCheck"
+    classpath = sourceSets["main"].output
+    val truffleModules = configurations.runtimeClasspath
+    doFirst {
+        jvmArgs(
+            "--module-path", truffleModules.get().asPath,
+            "--add-modules", "org.graalvm.truffle,org.graalvm.truffle.runtime",
+        )
+    }
+}
