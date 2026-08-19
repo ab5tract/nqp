@@ -1810,6 +1810,22 @@ object Ops {
         }
     }
 
+    /* Worded as MoarVM's arity_fail words it: the message reaches the user
+     * through an unhandled-exception report, and tests read it. */
+    private fun arityFail(got: Int, min: Int, max: Int): String {
+        val problem = if (max != -1 && got > max) "Too many" else "Too few"
+        return when {
+            min == max ->
+                "$problem positionals passed; expected $min argument" +
+                    (if (min == 1) "" else "s") + " but got $got"
+            max == -1 ->
+                "$problem positionals passed; expected at least $min arguments but got only $got"
+            else ->
+                "$problem positionals passed; expected $min " +
+                    (if (min + 1 == max) "or" else "to") + " $max arguments but got $got"
+        }
+    }
+
     /* Invocation arity check. */
     @JvmStatic
     fun checkarity(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, required: Int, accepted: Int): CallSiteDescriptor {
@@ -1820,8 +1836,7 @@ object Ops {
             cf.tc.flatArgs = args
         val positionals = callSite.numPositionals
         if (positionals < required || positionals > accepted && accepted != -1)
-            throw ExceptionHandling.dieInternal(cf.tc, "Wrong number of arguments passed; expected " +
-                required + ".." + accepted + ", but got " + positionals)
+            throw ExceptionHandling.dieInternal(cf.tc, arityFail(positionals, required, accepted))
         /* Keep the arguments on the frame. A parameter bound here can still
          * fail a check the HLL wants to report against the original
          * arguments, and this route is the only place they survive. */
