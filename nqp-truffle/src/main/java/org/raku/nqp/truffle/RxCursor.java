@@ -35,6 +35,22 @@ package org.raku.nqp.truffle;
  */
 public interface RxCursor {
 
+    int[] NO_BRANCHES = new int[0];
+
+    /**
+     * The branches of a named alternation, in the order to try them.
+     *
+     * <p>A named alt is longest-token-match: which branch wins is decided by
+     * an NFA the grammar carries, not by the order they were written in. The
+     * engine does not own that NFA -- it asks the cursor, which runs the very
+     * `!alt` the bytecode path runs, so the two cannot disagree about the
+     * winner and the highwater mark gets updated either way.
+     *
+     * @param branches how many branches there are; the answer indexes them.
+     * @return the branches worth trying, best first; empty means none match.
+     */
+    int[] altOrder(String name, int pos, int branches);
+
     /** The string being matched. */
     String target();
 
@@ -85,5 +101,8 @@ public interface RxCursor {
         @Override public void captureSpan(String name, int from, int to) { }
 
         @Override public void captureCursor(String name, Object subCursor) { }
+
+        /* No grammar, so no NFA and no alternation to order. */
+        @Override public int[] altOrder(String name, int pos, int branches) { return NO_BRANCHES; }
     }
 }

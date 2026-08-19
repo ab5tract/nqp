@@ -20,7 +20,7 @@ public final class RxTree {
     private RxTree() { }
 
     public sealed interface Node
-        permits Seq, Literal, One, Anchor, Alt, Quant, Sub, Capture, Scan { }
+        permits Seq, Literal, One, Anchor, Alt, AltLtm, Quant, Sub, Capture, Scan { }
 
     /** rxtype concat. */
     public record Seq(List<Node> parts) implements Node { }
@@ -30,18 +30,55 @@ public final class RxTree {
                           boolean ignoreCase) implements Node { }
 
     /** rxtype cclass, enumcharlist and charrange: all one character. */
-    public record One(RxProgram.CharPred pred) implements Node { }
+    /**
+     * One character's worth of test.
+     *
+     * @param zeroWidth when set the test is made but the position does not
+     *     move -- `<?[{]>` and friends. Treating one as consuming shifts
+     *     everything after it by a character.
+     */
+    public record One(RxProgram.CharPred pred, boolean zeroWidth) implements Node {
+        public One(RxProgram.CharPred pred) { this(pred, false); }
+    }
 
     /** rxtype anchor. */
     public record Anchor(Kind kind) implements Node {
         public enum Kind { BOS, EOS, BOL, EOL, LWB, RWB }
     }
 
-    /** rxtype alt. */
+    /** rxtype alt with no name: the branches are tried in source order. */
     public record Alt(List<Node> branches) implements Node { }
 
+    /**
+     * rxtype alt WITH a name: longest-token-match.
+     *
+     * <p>The branch order is not the source order. It comes from an NFA the
+     * grammar carries, run at the current position, which reports the
+     * branches that could match ordered by how far each one gets. The engine
+     * does not compute that itself -- it asks the cursor, which is the same
+     * `!alt` the bytecode path calls, so both agree about which branch wins
+     * and the NFA stays in one place.
+     *
+     * @param ratchet whether the alternation commits to its branch, which a
+     *     named alt in a ratcheted rule does.
+     */
+    public record AltLtm(String name, List<Node> branches, boolean ratchet) implements Node { }
+
     /** rxtype quant. A max below zero is unbounded. */
-    public record Quant(Node body, int min, int max, boolean greedy) implements Node { }
+    /**
+     * @param ratchet whether the quantifier keeps what it took. NQP's `token`
+     *     and `rule` mark every quantifier in them this way, so a greedy
+     *     quantifier that gives characters back is the exception, not the
+     *     rule -- and treating one as the other accepts input the bytecode
+     *     path rejects.
+     */
+    public record Quant(Node body, int min, int max, boolean greedy, boolean ratchet)
+        implements Node {
+
+        public Quant(Node body, int min, int max, boolean greedy) {
+            this(body, min, max, greedy, false);
+        }
+    }
 
     /**
      * rxtype subrule. A capture name means the cursor this rule answers is
