@@ -42,6 +42,8 @@ object ExceptionHandling {
     private val death = ThreadDeath()
 
     private fun dieInternal(tc: ThreadContext, msg: String, t: Throwable?): RuntimeException {
+        if (t != null && System.getenv("NQP_DEBUG_JAVA_STACK") != null)
+            t.printStackTrace()
         val exObj: VMExceptionInstance
         if (tc.gc.noisyExceptions) {
             (t ?: Throwable(msg)).printStackTrace()
