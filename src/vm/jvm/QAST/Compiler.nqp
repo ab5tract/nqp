@@ -4064,6 +4064,13 @@ class QAST::CompilerJAST {
         my $*NEXT_QBID := 0;
         # Pre-seed to make sure that qbids correspond to serialization IDs
         my $*COMP_MODE := $cu.compilation_mode;
+        # Comp-mode units pair code refs with methods by block id, so the
+        # cuid strings are dead weight there (and the setting's constant
+        # pool lives close to the 64K limit). A nested unit is the
+        # exception: it never deserializes, and the enclosing compilation
+        # reconnects its code objects by looking the cuids up on the
+        # freshly compiled code refs.
+        my $*EMIT_CUIDS := !$*COMP_MODE || $cu.is_nested;
         if $*COMP_MODE {
             for $cu.code_ref_blocks() -> $qblock {
                 %*CUID_TO_QBID{$qblock.cuid} := $*NEXT_QBID++;
@@ -4099,8 +4106,14 @@ class QAST::CompilerJAST {
                 $block.push(QAST::Stmt.new($_));
             }
 
-            # If we need to do deserialization, emit code for that.
-            if $*COMP_MODE {
+            # If we need to do deserialization, emit code for that. A
+            # nested unit (an EVAL inside another compilation) does not
+            # serialize: its objects live in the enclosing compilation's
+            # SC and this unit only ever runs in the process that compiled
+            # it. Serializing it would also fail outright, as compiler
+            # state like @!compstuff thunks is still live mid-compilation.
+            # The MoarVM backend skips it the same way.
+            if $*COMP_MODE && !$cu.is_nested {
                 $block.push(self.deserialization_code($cu.sc(), $cu.code_ref_blocks(),
                     $cu.repo_conflict_resolver()));
             }
@@ -4234,6 +4247,57 @@ class QAST::CompilerJAST {
     }
 
     method deserialization_code($sc, @code_ref_blocks, $repo_conf_res) {
+        # Some code-ref slots may belong to nested units (EVALs run at
+        # BEGIN time) rather than to blocks compiled into this unit. Their
+        # classfiles ride along in the jar, and the deserialization code
+        # loads them back and installs their code refs into the slots
+        # before deserializing, matched by cuid. The slot index is the
+        # block's position: the code ref table is keyed that way.
+        my %nested_by_class;
+        my @nested_class_names;
+        my int $crb_idx := 0;
+        for @code_ref_blocks {
+            my str $crb_cuid := $_.cuid;
+            unless $*CODEREFS.know_cuid($crb_cuid) {
+                my str $nested_class := nqp::syscall('jvm-class-of-cuid', $crb_cuid);
+                if $nested_class ne '' {
+                    unless nqp::existskey(%nested_by_class, $nested_class) {
+                        %nested_by_class{$nested_class} := [[], []];
+                        nqp::push(@nested_class_names, $nested_class);
+                    }
+                    nqp::push(%nested_by_class{$nested_class}[0], $crb_idx);
+                    nqp::push(%nested_by_class{$nested_class}[1], $crb_cuid);
+                }
+            }
+            $crb_idx := $crb_idx + 1;
+        }
+        my $nested_claims := QAST::Stmts.new();
+        my $nested_finish := QAST::Stmts.new();
+        if @nested_class_names {
+            $*JCLASS.nested_classes(@nested_class_names);
+            for @nested_class_names -> $nested_class {
+                $nested_finish.push(QAST::Op.new(
+                    :op('syscall'),
+                    QAST::SVal.new( :value('jvm-finish-nested') ),
+                    QAST::SVal.new( :value($nested_class) )
+                ));
+                my $idx_list := QAST::Op.new( :op('list_i') );
+                for %nested_by_class{$nested_class}[0] {
+                    $idx_list.push(QAST::IVal.new( :value($_) ));
+                }
+                my $cuid_list := QAST::Op.new( :op('list_s') );
+                for %nested_by_class{$nested_class}[1] {
+                    $cuid_list.push(QAST::SVal.new( :value($_) ));
+                }
+                $nested_claims.push(QAST::Op.new(
+                    :op('syscall'),
+                    QAST::SVal.new( :value('jvm-claim-nested') ),
+                    QAST::SVal.new( :value($nested_class) ),
+                    $idx_list, $cuid_list
+                ));
+            }
+        }
+
         # Serialize it.
         my $sh := nqp::list_s();
         my $serialized := nqp::serialize($sc, $sh);
@@ -4292,6 +4356,7 @@ class QAST::CompilerJAST {
                 QAST::Var.new( :name('conflicts'), :scope('local'), :decl('var') ),
                 QAST::Op.new( :op('list') )
             ),
+            $nested_claims,
             QAST::Op.new(
                 :op('deserialize'),
                 nqp::isnull($serialized) ?? QAST::Op.new( :op('null_s') ) !! QAST::SVal.new( :value($serialized) ),
@@ -4300,6 +4365,7 @@ class QAST::CompilerJAST {
                 QAST::Op.new( :op('null') ),
                 QAST::Var.new( :name('conflicts'), :scope('local') )
             ),
+            $nested_finish,
             QAST::Op.new(
                 :op('if'),
                 QAST::Op.new(
@@ -4465,7 +4531,7 @@ class QAST::CompilerJAST {
             # are handled out of band).
             my $*JMETH := JAST::Method.new( :name('qb_'~self.cuid_to_qbid($node.cuid)), :returns('Void'), :static(1) );
             $*JMETH.cr_name($node.name);
-            $*JMETH.cr_cuid($node.cuid) unless $*COMP_MODE;
+            $*JMETH.cr_cuid($node.cuid) unless $*COMP_MODE && !$*EMIT_CUIDS;
 
             # Note the block's source location so nqp::getcodelocation has
             # something to answer with at runtime. A node that knows its own

@@ -113,6 +113,19 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
                     jos.write(digest)
                     jos.closeEntry()
 
+                    /* Nested units (EVALs run while this unit compiled)
+                     * whose code refs the serialization points into ride
+                     * along, to be loaded back by jvmclaimnested. */
+                    for (nestedName in c.nestedClassNames) {
+                        val nestedBytes = tc.gc.inMemoryUnitBytes[nestedName]
+                            ?: throw RuntimeException(
+                                "No retained classfile for nested unit " + nestedName)
+                        val jen = JarEntry(nestedName + ".class")
+                        jos.putNextEntry(jen)
+                        jos.write(nestedBytes)
+                        jos.closeEntry()
+                    }
+
                     jos.close()
                 }
             }
@@ -197,6 +210,7 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
 
         c.name = jastClass.className
         c.serialized = jastClass.serialized
+        c.nestedClassNames = jastClass.nestedClasses
 
         val className = jastClass.className!!.replace('.', '/')
         val superName = jastClass.superName!!.replace('.', '/')
