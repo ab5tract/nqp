@@ -87,7 +87,12 @@ class P6bigint : REPR() {
         val getMeth = cw.visitMethod(Opcodes.ACC_PUBLIC, "get_int", getDesc, null, null)
         getMeth.visitVarInsn(Opcodes.ALOAD, 0)
         getMeth.visitFieldInsn(Opcodes.GETFIELD, className, prefix, bigIntegerType)
-        getMeth.visitMethodInsn(Opcodes.INVOKEVIRTUAL, bigIntegerIN, "longValue", "()J")
+        /* Through the checked unbox: a value wider than 64 bits must throw,
+         * as the standalone P6bigintInstance.get_int and MoarVM both do,
+         * rather than silently wrap through BigInteger.longValue. */
+        getMeth.visitMethodInsn(Opcodes.INVOKESTATIC,
+            "org/raku/nqp/sixmodel/reprs/P6bigint", "checkedLongValue",
+            "(Ljava/math/BigInteger;)J")
         getMeth.visitInsn(Opcodes.LRETURN)
         getMeth.visitMaxs(0, 0)
 
@@ -132,4 +137,17 @@ class P6bigint : REPR() {
             throw RuntimeException(e)
         }
     }
+
+    companion object {
+        /** Unboxes a flattened bigint to a long, refusing a value the long
+         * cannot hold, the same way the standalone instance does. */
+        @JvmStatic
+        fun checkedLongValue(value: java.math.BigInteger): Long {
+            if (value.bitLength() >= 64 && value != P6bigintInstance.SMALLEST_UNBOXABLE)
+                throw RuntimeException("Cannot unbox " + value.bitLength() +
+                    " bit wide bigint into native integer")
+            return value.toLong()
+        }
+    }
+
 }
