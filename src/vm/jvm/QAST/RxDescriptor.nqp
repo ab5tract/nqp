@@ -576,18 +576,22 @@ class QAST::RxDescriptor {
             # be. Refusing qastnode alone makes that build green, so the
             # mechanism here is the cause and nothing else in the engine is.
             #
-            # The likeliest reason, unproven: a codeblock is not bare code.
-            # `QRegex::P6Regex::Actions.codeblock` wraps every `{ ... }` in a
-            # nested QAST::Block of its own with blocktype('immediate'), built
-            # while the grammar was parsed and with the rule's block as its
-            # lexical parent. Re-parenting that under a block the backend
-            # invents afterwards moves it a frame deeper, and the World
-            # already recorded symbols against the original nesting. A sound
-            # version probably has to reuse THAT block as the callback --
-            # turning it from immediate into a closure value -- rather than
-            # wrap it in a new one. Do not build on the guess without checking
-            # it: the same guess about hoisted declarations was already wrong
-            # (NQP::Actions.variable_declarator does hoist them, to $BLOCK[0]).
+            # The constraint a fix has to satisfy, established rather than
+            # guessed: lexical access here is DEPTH-INDEXED and resolved at
+            # compile time -- as_jast(QAST::Var) walks BlockInfo.outer()
+            # counting frames and emits an access at that depth. Compile-time
+            # nesting and run-time frame nesting therefore have to correspond
+            # exactly, and a codeblock is not bare code:
+            # QRegex::P6Regex::Actions.codeblock wraps every `{ ... }` in a
+            # nested QAST::Block of its own with blocktype('immediate'), whose
+            # outer is found by a different mechanism from a closure's.
+            #
+            # A sound version may have to reuse THAT block as the callback,
+            # turning it from immediate into a closure value, rather than wrap
+            # it in a new one. That part is a hypothesis; do not build on it
+            # without checking. The previous guess here was wrong --
+            # NQP::Actions.variable_declarator hoists `my $x` into $BLOCK[0],
+            # so declarations were never the problem.
             return self.bail('rxtype qastnode') unless rx_tries('qastnode');
             return self.bail('qastnode without a body') unless nqp::elems($node) == 1;
 
