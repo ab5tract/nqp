@@ -76,6 +76,13 @@ abstract class SixModelObject : Cloneable {
     open fun get_int(tc: ThreadContext): Long {
         throw ExceptionHandling.dieInternal(tc, "This type (" + this.st.REPR.name + ") cannot unbox to a native integer")
     }
+    /* Reading into an unsigned native, where MoarVM has an accessor of its
+     * own: a bigint of 64 bits is a value an unsigned native holds, while
+     * the signed reading stops at 63. Only a type that can tell the two
+     * apart overrides this. */
+    open fun get_uint(tc: ThreadContext): Long {
+        return get_int(tc)
+    }
     open fun set_num(tc: ThreadContext, value: Double) {
         throw ExceptionHandling.dieInternal(tc, "This type (" + this.st.REPR.name + ") cannot box a native number")
     }
