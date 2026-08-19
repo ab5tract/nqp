@@ -7308,8 +7308,10 @@ object Ops {
                 if (te.frame!!.codeRef.staticInfo.isThunk)
                     continue
                 val annots = Hash.st.REPR.allocate(tc, Hash.st)
-                annots.bind_key_boxed(tc, "file", box_s(if (te.file == null) "" else te.file, Str, tc))
-                annots.bind_key_boxed(tc, "line", box_i(if (te.line < 0) 1 else te.line.toLong(), Int, tc))
+                val file = te.mappedFile
+                val line = te.mappedLine
+                annots.bind_key_boxed(tc, "file", box_s(if (file == null) "" else file, Str, tc))
+                annots.bind_key_boxed(tc, "line", box_i(if (line < 0) 1 else line.toLong(), Int, tc))
                 val row = Hash.st.REPR.allocate(tc, Hash.st)
                 row.bind_key_boxed(tc, "sub", te.frame!!.codeRef)
                 row.bind_key_boxed(tc, "annotations", annots)
@@ -8727,6 +8729,11 @@ object Ops {
                 return
             } catch (sse: SaveStackException) {
                 if (isnull(sse.key) == 0L && sse.key !== theKey) {
+                    if (System.getenv("NQP_DEBUG_CONT") != null)
+                        System.err.println("reset key mismatch: have " +
+                            (if (theKey == null) "null" else theKey.javaClass.simpleName + "@" +
+                                Integer.toHexString(System.identityHashCode(theKey))) +
+                            " want " + sse)
                     // This is intended for an outer scope, so just append ourself
                     throw sse.pushFrame(0, resetReenter, arrayOf<Any?>(theKey), null)
                 }
@@ -8775,6 +8782,8 @@ object Ops {
 
     @JvmStatic
     fun continuationcontrol(protect: Long, key: SixModelObject?, run: SixModelObject?, tc: ThreadContext) {
+        if (System.getenv("NQP_DEBUG_CONT") != null)
+            Throwable("continuationcontrol on " + Thread.currentThread().name).printStackTrace()
         throw SaveStackException(key, protect != 0L, run)
     }
 

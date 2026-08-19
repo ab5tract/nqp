@@ -16,6 +16,18 @@ class SaveStackException(
     /** Topmost frame saved so far. */
     @JvmField var top: ResumeStatus.Frame? = null
 
+    override fun toString(): String =
+        "SaveStackException(key=" + (if (key == null) "null" else
+            key!!.javaClass.simpleName + "@" + Integer.toHexString(System.identityHashCode(key))) +
+        ", protect=" + protect + ", frames=" + run {
+            val names = StringBuilder(); var f = top
+            while (f != null) {
+                names.append(f.callFrame?.codeRef?.name ?: "?").append('<')
+                f = f.next
+            }
+            names.toString()
+        } + ")"
+
     fun pushFrame(resumePoint: Int, method: MethodHandle?, saveSpace: Array<Any?>?, callFrame: CallFrame?): SaveStackException {
         val resolvedMethod = method ?: callFrame!!.codeRef.staticInfo.mhResume
         top = ResumeStatus.Frame(resolvedMethod, resumePoint, saveSpace, callFrame, top)

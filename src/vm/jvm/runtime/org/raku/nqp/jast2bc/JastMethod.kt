@@ -27,6 +27,7 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
     @JvmField var isThunk = false
     @JvmField var crFile: String? = null
     @JvmField var crLine = 0
+    @JvmField var crRawLine = 0
 
     /* Package-private in the Java original; JASTCompiler reads them. */
     @JvmField val beginAll = Label()
@@ -101,6 +102,7 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
             if (file != null && file.isNotEmpty()) {
                 crFile = file
                 crLine = Ops.getattr_i(jast, jastMethod, "$!cr_line", crLineHint, tc).toInt()
+                crRawLine = Ops.getattr_i(jast, jastMethod, "$!cr_rawline", crRawLineHint, tc).toInt()
             }
         } catch (t: Throwable) {
             /* Most likely a version of the node without the fields. */
@@ -135,6 +137,7 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
         private var isThunkHint = 0L
         private var crFileHint = 0L
         private var crLineHint = 0L
+        private var crRawLineHint = 0L
 
         @JvmStatic
         fun setup(jastMethod: SixModelObject, tc: ThreadContext) {
@@ -157,6 +160,7 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
             isThunkHint         = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!is_thunk")
             crFileHint          = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!cr_file")
             crLineHint          = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!cr_line")
+            crRawLineHint       = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!cr_rawline")
         }
     }
 }

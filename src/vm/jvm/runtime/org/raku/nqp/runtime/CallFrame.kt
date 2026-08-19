@@ -192,6 +192,13 @@ class CallFrame : Cloneable {
         if (sci.contextsAwaitingOuter != null)
             adoptWaitingContexts(sci)
 
+        /* Note this invocation while it is still live, not only in leave():
+         * another thread resolving the outer of a closure declared in this
+         * scope (an END phaser run by a dying thread, say) walks its own
+         * caller chain, misses, and would otherwise auto-close a fresh empty
+         * frame while the real one is still running here. */
+        sci.priorInvocation = this
+
         // Current call frame becomes this new one.
         tc.curFrame = this
     }
@@ -241,6 +248,9 @@ class CallFrame : Cloneable {
 
         if (sci.contextsAwaitingOuter != null)
             adoptWaitingContexts(sci)
+
+        /* As above: visible to other threads while live. */
+        sci.priorInvocation = this
     }
 
     /**

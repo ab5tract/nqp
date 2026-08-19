@@ -4467,9 +4467,27 @@ class QAST::CompilerJAST {
             $*JMETH.cr_name($node.name);
             $*JMETH.cr_cuid($node.cuid) unless $*COMP_MODE;
 
-            # Note the block's source location, honoring #line directives, so
-            # nqp::getcodelocation has something to answer with at runtime.
-            if $node.node && nqp::can($node.node, 'orig') {
+            # Note the block's source location so nqp::getcodelocation has
+            # something to answer with at runtime. A node that knows its own
+            # file and line (RakuAST origins) is believed outright, the same
+            # way the MoarVM backend does; otherwise the position is computed
+            # from the orig, honoring #line directives.
+            if $node.node && nqp::can($node.node, 'file') && nqp::can($node.node, 'line') {
+                my $loc-file := $node.node.file;
+                if $loc-file {
+                    $*JMETH.cr_file(~$loc-file);
+                    $*JMETH.cr_line($node.node.line);
+                    # The unmapped line pairs with the LineNumberTable rows,
+                    # which come from orig-line/lineof without directives.
+                    $*JMETH.cr_rawline(nqp::can($node.node, 'orig-line')
+                        ?? $node.node.orig-line()
+                        !! nqp::can($node.node, 'orig')
+                            ?? HLL::Compiler.lineof($node.node.orig(),
+                                   $node.node.from(), :cache(1), :directives(0))
+                            !! $node.node.line);
+                }
+            }
+            elsif $node.node && nqp::can($node.node, 'orig') {
                 my $line-file := HLL::Compiler.linefileof(
                     $node.node.orig(), $node.node.from(), :cache(1), :directives(1));
                 my $loc-file := $line-file[1]
@@ -4477,6 +4495,8 @@ class QAST::CompilerJAST {
                 if $loc-file {
                     $*JMETH.cr_file(~$loc-file);
                     $*JMETH.cr_line($line-file[0]);
+                    $*JMETH.cr_rawline(HLL::Compiler.lineof(
+                        $node.node.orig(), $node.node.from(), :cache(1), :directives(0)));
                 }
             }
             $*CODEREFS.register_method($*JMETH, $node.cuid);
@@ -5200,8 +5220,9 @@ class QAST::CompilerJAST {
                     my $valres := self.as_jast_clear_bindval($*BINDVAL, :want($type));
                     $il.append($valres.jast);
                     $*STACK.obtain($il, $valres);
-                    emit_sized_native_trunc($il,
-                        nqp::ifnull($*BLOCK.local_returns($name), nqp::null()), $type);
+                    # No truncation here: locals match MoarVM registers,
+                    # which are full width whatever the declared type; only
+                    # lexical slots, attributes and boxes store sized.
                     $il.append(dup_ins($type));
                     $il.append(JAST::Instruction.new( :op(store_ins($type)), $info[0] ));
                 }
