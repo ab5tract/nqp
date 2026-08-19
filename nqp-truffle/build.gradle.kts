@@ -23,6 +23,11 @@ repositories {
 }
 
 dependencies {
+    /* The engine calls back into the existing runtime for anything that is
+     * not the match itself: subrules are NQP CodeRefs, and the cursor whose
+     * position and captures a match updates lives there too. */
+    implementation(project(":nqp-runtime"))
+
     // Must match the GraalVM the JDK is: a mismatched pair fails either as
     // the fallback interpreter or an InternalError out of libgraal init.
     val truffle = property("truffleVersion") as String
@@ -52,6 +57,20 @@ tasks.register<JavaExec>("bench") {
     group = "verification"
     description = "Measures the regex engine against java.util.regex."
     mainClass = "org.raku.nqp.truffle.RxBench"
+    classpath = sourceSets["main"].output
+    val truffleModules = configurations.runtimeClasspath
+    doFirst {
+        jvmArgs(
+            "--module-path", truffleModules.get().asPath,
+            "--add-modules", "org.graalvm.truffle,org.graalvm.truffle.runtime",
+        )
+    }
+}
+
+tasks.register<JavaExec>("rxcheck") {
+    group = "verification"
+    description = "Checks the engine's answers against java.util.regex."
+    mainClass = "org.raku.nqp.truffle.RxCheck"
     classpath = sourceSets["main"].output
     val truffleModules = configurations.runtimeClasspath
     doFirst {
