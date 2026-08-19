@@ -3515,6 +3515,8 @@ QAST::OperationsJAST.map_classlib_core_op('jvmgetunicodeversion', $TYPE_OPS, 'jv
 QAST::OperationsJAST.map_classlib_core_op('getuniname', $TYPE_OPS, 'getuniname', [$RT_INT], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('unipropcode', $TYPE_OPS, 'unipropcode', [$RT_STR], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('getuniprop_str', $TYPE_OPS, 'getuniprop_str', [$RT_INT, $RT_INT], $RT_STR, :tc);
+QAST::OperationsJAST.map_classlib_core_op('getuniprop_int', $TYPE_OPS, 'getuniprop_int', [$RT_INT, $RT_INT], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('getuniprop_bool', $TYPE_OPS, 'getuniprop_bool', [$RT_INT, $RT_INT], $RT_INT, :tc);
 
 QAST::OperationsJAST.map_classlib_core_op('force_gc', $TYPE_OPS, 'force_gc', [], $RT_OBJ, :tc);
 
@@ -6592,10 +6594,7 @@ class QAST::CompilerJAST {
         }
 
         unless $node.subtype eq 'zerowidth' {
-            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-            $il.append($IVAL_ONE);
-            $il.append($LADD);
-            $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
+            self.regex_advance_char($il);
         }
 
         $il
@@ -6645,10 +6644,7 @@ class QAST::CompilerJAST {
         $il.append(JAST::Instruction.new( :op($node.negate ?? 'ifge' !! 'iflt'), %*REG<fail> ));
 
         unless $node.subtype eq 'zerowidth' {
-            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-            $il.append($IVAL_ONE);
-            $il.append($LADD);
-            $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
+            self.regex_advance_char($il);
         }
 	$il.append($donelabel) if $donelabel;
 
@@ -6698,10 +6694,7 @@ class QAST::CompilerJAST {
         }
 
         unless $node.subtype eq 'zerowidth' {
-            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-            $il.append($IVAL_ONE);
-            $il.append($LADD);
-            $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
+            self.regex_advance_char($il);
         }
 
         $il;
@@ -6712,12 +6705,20 @@ class QAST::CompilerJAST {
         my $litconst := $node[0];
         my $litlen := nqp::chars($litconst);
 
-        $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-        $il.append(JAST::PushIVal.new( :value($litlen) ));
-        $il.append($LADD);
-        $il.append(JAST::Instruction.new( :op('lload'), %*REG<eos> ));
-        $il.append($LCMP);
-        $il.append(JAST::Instruction.new( :op('ifgt'), %*REG<fail> ));
+        # Only worth asking when a match is what we want. A negated literal
+        # with no room left cannot be there, which is exactly the assertion
+        # succeeding -- failing here would reject `\C[...]` against a target
+        # shorter than the long character it rules out. The comparisons below
+        # all answer false for a range past the end, so nothing needs the
+        # guard for correctness.
+        unless $node.negate {
+            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+            $il.append(JAST::PushIVal.new( :value($litlen) ));
+            $il.append($LADD);
+            $il.append(JAST::Instruction.new( :op('lload'), %*REG<eos> ));
+            $il.append($LCMP);
+            $il.append(JAST::Instruction.new( :op('ifgt'), %*REG<fail> ));
+        }
 
         my str $subtype := $node.subtype;
         if $subtype eq 'ignoremark' || $subtype eq 'ignorecase+ignoremark' {
@@ -7502,30 +7503,108 @@ class QAST::CompilerJAST {
 
     method uniprop($node) {
         my $il := JAST::InstructionList.new();
-        if nqp::elems(@($node)) > 1 {
-            nqp::die("Unicode property pairs NYI on jvm backend");
-        }
 
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<eos> ));
         $il.append($LCMP);
         $il.append(JAST::Instruction.new( :op('ifge'), %*REG<fail> ));
 
-        $il.append(JAST::PushSVal.new( :value($node[0]) ));
-        $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
-        $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-        $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
-            "ischarprop", 'Long', $TYPE_STR, $TYPE_STR, 'Long' ));
+        if nqp::elems(@($node)) > 1 {
+            # A property pair, <:Block("Basic Latin")>: the property's value
+            # at this position is smartmatched against the given matcher,
+            # which the cursor delegates so a grammar can override it.
+            $il.append(self.uniprop_pair($node));
+        }
+        else {
+            $il.append(JAST::PushSVal.new( :value($node[0]) ));
+            $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
+            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+            $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
+                "ischarprop", 'Long', $TYPE_STR, $TYPE_STR, 'Long' ));
+        }
         $il.append($L2I);
         $il.append(JAST::Instruction.new( :op($node.negate ?? 'ifne' !! 'ifeq'), %*REG<fail> ));
 
         unless $node.subtype eq 'zerowidth' {
-            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-            $il.append($IVAL_ONE);
-            $il.append($LADD);
-            $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
+            self.regex_advance_char($il);
         }
 
+        $il
+    }
+
+    # Step over the character at pos. MoarVM counts a position per codepoint,
+    # where a position here is a UTF-16 unit and a non-BMP codepoint occupies
+    # two of them, so a bare increment would land between the halves of one
+    # character and match a lone surrogate.
+    method regex_advance_char($il) {
+        $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+        $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
+        $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+        $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
+            "cpwidth", 'Long', $TYPE_STR, 'Long' ));
+        $il.append($LADD);
+        $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
+    }
+
+    # The value side of a property pair, left on the stack as a long that is
+    # 1 when the matcher accepted it. A property carries either a string
+    # value or a numeric one, and which it is shows in the reading: an empty
+    # string means the string reading found nothing, so ask for the number.
+    # <:name(...)> reads the codepoint's own name instead of a property.
+    method uniprop_pair($node) {
+        my $prop    := ~$node[0];
+        my $by_name := $prop eq 'name' || $prop eq 'Name';
+        my $ord     := self.unique('rxuniprop_ord');
+        my $val     := self.unique('rxuniprop_val');
+        my $matcher := self.unique('rxuniprop_matcher');
+
+        my sub localvar($name, *%opts) {
+            QAST::Var.new( :name($name), :scope('local'), |%opts )
+        }
+        my sub propcode() {
+            QAST::Op.new( :op('unipropcode'), QAST::SVal.new( :value($prop) ) )
+        }
+        # Unboxed here rather than left to the caller's :want, so that both
+        # arms of the choice below already agree on the int type. This is
+        # what MoarVM's int result register does for the same call.
+        my sub accepts($arg) {
+            QAST::Op.new( :op('unbox_i'),
+                QAST::Op.new(
+                    :op('callmethod'), :name('!DELEGATE_ACCEPTS'),
+                    localvar(%*REG<cur>),
+                    localvar($matcher),
+                    $arg
+                ))
+        }
+
+        my $qast := QAST::Stmts.new(
+            QAST::Op.new( :op('bind'),
+                localvar($ord, :decl('var'), :returns(int)),
+                QAST::Op.new( :op('ordat'),
+                    localvar(%*REG<tgt>, :returns(str)),
+                    localvar(%*REG<pos>, :returns(int)) )),
+            QAST::Op.new( :op('bind'),
+                localvar($val, :decl('var'), :returns(str)),
+                $by_name
+                    ?? QAST::Op.new( :op('getuniname'), localvar($ord, :returns(int)) )
+                    !! QAST::Op.new( :op('getuniprop_str'),
+                           localvar($ord, :returns(int)), propcode() )),
+            QAST::Op.new( :op('bind'),
+                localvar($matcher, :decl('var')),
+                $node[1] ));
+
+        $qast.push($by_name
+            ?? accepts(localvar($val, :returns(str)))
+            !! QAST::Op.new( :op('if'),
+                   QAST::Op.new( :op('chars'), localvar($val, :returns(str)) ),
+                   accepts(localvar($val, :returns(str))),
+                   accepts(QAST::Op.new( :op('getuniprop_int'),
+                       localvar($ord, :returns(int)), propcode() )) ));
+
+        my $il  := JAST::InstructionList.new();
+        my $res := self.as_jast($qast, :want($RT_INT));
+        $il.append($res.jast);
+        $*STACK.obtain($il, $res);
         $il
     }
 
