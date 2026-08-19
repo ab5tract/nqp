@@ -23,6 +23,9 @@ class NativeCallBody {
      * whatever the function nominally returns. */
     @JvmField var ctorHandle: MethodHandle? = null
     @JvmField var argTypes: Array<ArgType>? = null
+    /* Handles for the variadic shapes this site has been called with,
+     * keyed by the appended argument layouts. */
+    @JvmField var variadicHandles: java.util.concurrent.ConcurrentHashMap<String, MethodHandle>? = null
     @JvmField var argInfo: Array<SixModelObject?>? = null
     @JvmField var retType: ArgType? = null
 }
