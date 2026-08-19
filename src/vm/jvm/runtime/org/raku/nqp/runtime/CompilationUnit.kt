@@ -124,6 +124,7 @@ abstract class CompilationUnit {
             if (ann.sourceFile.isNotEmpty()) {
                 cr.staticInfo.sourceFile = ann.sourceFile
                 cr.staticInfo.sourceLine = ann.sourceLine
+                cr.staticInfo.sourceLineDelta = ann.sourceLineDelta
             }
             if (BOOTCodeSTable != null)
                 cr.st = BOOTCodeSTable
