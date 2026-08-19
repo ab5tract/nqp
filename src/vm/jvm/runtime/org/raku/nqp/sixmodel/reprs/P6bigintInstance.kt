@@ -9,8 +9,8 @@ import org.raku.nqp.sixmodel.SixModelObject
 class P6bigintInstance : SixModelObject() {
     @JvmField var value: BigInteger? = null
 
-    private companion object {
-        val SMALLEST_UNBOXABLE = BigInteger(Long.MIN_VALUE.toString())
+    companion object {
+        @JvmField val SMALLEST_UNBOXABLE = BigInteger(Long.MIN_VALUE.toString())
     }
 
     override fun set_int(tc: ThreadContext, value: Long) {
