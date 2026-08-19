@@ -35,7 +35,7 @@ public final class RxProgram {
     public static final int ANCHOR = 3;     // kind
     public static final int SPLIT = 4;      // preferred pc, alternative pc
     public static final int JMP = 5;        // pc
-    public static final int SUB = 6;        // name(idx), flags
+    public static final int SUB = 6;        // name(idx), flags, capture(idx+1 or 0)
     public static final int MARK = 7;       // register
     public static final int EMPTY_CHECK = 8; // register -- fail if nothing consumed
     public static final int CAP_START = 9;  // register
@@ -141,8 +141,13 @@ public final class RxProgram {
                 return;
             }
             if (node instanceof RxTree.Sub sub) {
+                /* Zero means the result is not captured; otherwise the pool
+                 * index of the name, biased so zero can mean "none". */
+                int capture = sub.capture() == null ? 0 : constant(sub.capture()) + 1;
                 op(SUB, constant(sub.name()),
-                    (sub.negate() ? F_NEGATE : 0) | (sub.zeroWidth() ? F_ZEROWIDTH : 0));
+                    (sub.negate() ? F_NEGATE : 0) | (sub.zeroWidth() ? F_ZEROWIDTH : 0),
+                    capture);
+                if (sub.capture() != null) captures++;
                 return;
             }
             if (node instanceof RxTree.Scan scan) {
