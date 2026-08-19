@@ -590,6 +590,10 @@ open class BootJavaInterop(gc: GlobalContext) {
             mv.visitLdcInsn(Type.getType(what))
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, "org/raku/nqp/runtime/BootJavaInterop", "marshalOutRecursive",
                 Type.getMethodDescriptor(Type.getType(Array<Any>::class.java), TYPE_SMO, TYPE_TC, Type.getType(Class::class.java)))
+            /* The helper's static return type is too wide for the callee's
+             * parameter; without the cast the verifier rejects the adaptor
+             * ("Object not assignable to [Ljava/lang/Object;"). */
+            mv.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(what))
         }
         else {
             val isntWrapped = Label()
@@ -602,8 +606,13 @@ open class BootJavaInterop(gc: GlobalContext) {
             // XXX: the secondary decont is a bit awkward, but storing to the stack doesn't seem to work out
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, TYPE_OPS.getInternalName(), "decont", Type.getMethodDescriptor(TYPE_SMO, TYPE_SMO, TYPE_TC))
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, "org/raku/nqp/runtime/BootJavaInterop\$RuntimeSupport", "unboxJava", Type.getMethodDescriptor(TYPE_OBJ, TYPE_SMO))
-            mv.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(what))
             mv.visitLabel(isntWrapped)
+            /* Cast after the join: with the cast only on the wrapped arm,
+             * the verifier merges the two paths to Object and rejects any
+             * use of the value at its marshalled type. The not-wrapped arm
+             * failing the cast at run time is the correct outcome for a
+             * non-Java object where a Java one is needed. */
+            mv.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(what))
         }
     }
 
