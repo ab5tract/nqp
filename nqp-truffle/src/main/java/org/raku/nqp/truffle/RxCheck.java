@@ -44,7 +44,7 @@ public final class RxCheck {
                 int got = matcher.execute(c.input(), 0).asInt();
 
                 var m = Pattern.compile(c.pattern()).matcher(c.input());
-                int want = m.lookingAt() ? m.end() : RxNodes.NO_MATCH;
+                int want = m.lookingAt() ? m.end() : RxVmNode.NO_MATCH;
 
                 boolean ok = got == want;
                 if (!ok) bad++;
