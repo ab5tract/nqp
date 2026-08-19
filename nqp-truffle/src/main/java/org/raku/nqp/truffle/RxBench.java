@@ -10,6 +10,12 @@ import java.util.regex.Pattern;
 /**
  * Runs the engine against java.util.regex on the same patterns and input.
  *
+ * <p>Run it with RX_TRACE=1 to see what actually compiled. That matters
+ * more than it sounds: the matcher root currently fails compilation with
+ * "Too deep inlining" because quantifier repetition is recursive, so the
+ * numbers below are of interpreted code. A trace line saying "opt failed"
+ * for MatchRootNode means the measurement is not of the compiled engine.
+ *
  * <p>It asserts that the run is actually optimized before reporting a
  * number. Both ways this can silently not be true -- the fallback
  * "Interpreted" runtime when the Truffle artifacts do not match the JDK's
@@ -42,6 +48,7 @@ public final class RxBench {
         try (Context ctx = Context.newBuilder(RxLanguage.ID)
                 .allowExperimentalOptions(true)
                 .option("engine.CompileImmediately", "true")
+                .option("engine.TraceCompilation", System.getenv("RX_TRACE") != null ? "true" : "false")
                 .build()) {
             for (String pattern : PATTERNS) {
                 Value matcher = ctx.eval(Source.newBuilder(RxLanguage.ID, pattern, "rx").buildLiteral());

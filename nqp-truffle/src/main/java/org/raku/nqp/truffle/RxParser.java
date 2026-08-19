@@ -23,18 +23,25 @@ final class RxParser {
 
     private final String src;
     private int at;
+    /* Slots for the per-match state: each quantifier and each capture gets
+     * one when it is built, so the state can be flat arrays. */
+    private int slots;
 
     private RxParser(String src) { this.src = src; }
 
+    /** A built pattern: where to enter it, and how much state it needs. */
+    record Built(RxNodes.Rx entry, int slots) { }
+
     @TruffleBoundary
-    static RxNodes.Rx parse(String pattern) {
+    static Built parse(String pattern) {
         RxParser p = new RxParser(pattern);
         RxNodes.Rx tree = p.alternation();
         if (p.at != pattern.length()) {
             throw new IllegalArgumentException(
                 "unconsumed input at " + p.at + " of '" + pattern + "'");
         }
-        return tree;
+        /* Nothing follows the whole pattern, so it accepts where it ends. */
+        return new Built(RxLink.link(tree, null), p.slots);
     }
 
     /** alternation := concat ('|' concat)* */
@@ -57,7 +64,7 @@ final class RxParser {
             parts.add(quantified());
         }
         if (parts.size() == 1) return parts.get(0);
-        return new RxNodes.Concat(parts.toArray(new RxNodes.Rx[0]));
+        return new RxLink.Seq(parts.toArray(new RxNodes.Rx[0]));
     }
 
     /** quantified := atom ('*' | '+' | '?')? */
@@ -68,7 +75,7 @@ final class RxParser {
             at++;
             int min = c == '+' ? 1 : 0;
             int max = c == '?' ? 1 : -1;
-            return new RxNodes.Quant(atom, null, min, max, true);
+            return new RxNodes.Quant(atom, null, min, max, true, slots++);
         }
         return atom;
     }
