@@ -3,6 +3,7 @@ package org.raku.nqp.dispatch
 import org.raku.nqp.runtime.CodeRef
 import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.HLLConfig
+import org.raku.nqp.runtime.NativeCallOps
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.SixModelObject
@@ -43,6 +44,23 @@ object BootDispatchers {
         record.guardType(source)
         record.guardConcreteness(source)
         record.settle(Outcome.InvokeCode(source, argsShape(record, capture)))
+    }
+
+    /**
+     * Invokes a native (foreign) function: the capture carries the built
+     * native call object, the return type, and then the already-marshalled
+     * arguments. Everything worth guarding was guarded by whichever language
+     * dispatcher delegated here, so the whole capture simply becomes the
+     * invocation arguments of the foreign-call syscall.
+     */
+    private fun bootForeignCode(record: DispatchRecord, capture: SixModelObject) {
+        record.settle(Outcome.InvokeSyscall(foreignCodeInvoke, record.shapeOf(capture)))
+    }
+
+    /** The syscall a boot-foreign-code outcome replays through. Not in the
+     * syscall table: its argument kinds vary per native function. */
+    private val foreignCodeInvoke = Syscall("foreign-code-invoke", emptyArray(), 0) { args ->
+        NativeCallOps.dispatchCall(args.tc, args.descriptor, args.args)
     }
 
     /** Invokes a function the VM provides, named by the first argument. */
@@ -327,6 +345,7 @@ object BootDispatchers {
         builtin("boot-code", ::bootCode),
         builtin("boot-code-constant", ::bootCodeConstant),
         builtin("boot-syscall", ::bootSyscall),
+        builtin("boot-foreign-code", ::bootForeignCode),
         builtin("boot-resume", ::bootResume),
         builtin("boot-resume-caller", ::bootResumeCaller),
         builtin("lang-call", ::langCall),
