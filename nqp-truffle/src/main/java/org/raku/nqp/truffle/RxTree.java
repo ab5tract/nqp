@@ -43,8 +43,12 @@ public final class RxTree {
     /** rxtype quant. A max below zero is unbounded. */
     public record Quant(Node body, int min, int max, boolean greedy) implements Node { }
 
-    /** rxtype subrule. */
-    public record Sub(String name, boolean zeroWidth, boolean negate) implements Node { }
+    /**
+     * rxtype subrule. A capture name means the cursor this rule answers is
+     * itself the capture -- which is what NQP puts in a match tree.
+     */
+    public record Sub(String name, boolean zeroWidth, boolean negate,
+                      String capture) implements Node { }
 
     /** rxtype subcapture. */
     public record Capture(String name, Node body) implements Node { }

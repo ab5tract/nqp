@@ -88,6 +88,31 @@ public final class RxDescriptorCheck {
                 },
                 new Object[] { "zz" }, "abcd", -1),
 
+            /* a subcapture round-trips and does not disturb the match; the
+             * capture itself lands on the cursor, which OfString discards */
+            new Case("subcapture",
+                new int[] {
+                    RxDescriptor.SEQ, 2,
+                    RxDescriptor.CAPTURE, 0,
+                        RxDescriptor.QUANT, 1, -1, 1,
+                            RxDescriptor.CCLASS, RxDescriptor.CC_DIGIT, 0,
+                    RxDescriptor.LITERAL, 1, 0,
+                },
+                new Object[] { "num", "x" }, "42x", 3),
+
+            /* a capture on a path that is abandoned must not be kept: the
+             * first branch captures and then fails on the literal */
+            new Case("capture on a dead path",
+                new int[] {
+                    RxDescriptor.SEQ, 2,
+                    RxDescriptor.ALT, 2,
+                        RxDescriptor.CAPTURE, 0,
+                            RxDescriptor.LITERAL, 1, 0,
+                        RxDescriptor.LITERAL, 2, 0,
+                    RxDescriptor.LITERAL, 3, 0,
+                },
+                new Object[] { "n", "ab", "a", "c" }, "ac", 2),
+
             /* anchor at end after a greedy run, which only matches once the
              * quantifier has given characters back */
             new Case("greedy then eos",

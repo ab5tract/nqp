@@ -171,6 +171,10 @@ class QAST::RxDescriptor {
             self.emit($SUB);
             self.emit(self.constant($node[0][0].value));
             self.emit(self.flags($node));
+            # A capturing subrule's own cursor is the capture.
+            self.emit($node.subtype eq 'capture'
+                ?? self.constant(~$node.name) + 1
+                !! 0);
         }
         elsif $rxtype eq 'scan' {
             # Every NQP regex is wrapped in one of these.
@@ -190,15 +194,15 @@ class QAST::RxDescriptor {
             self.emit($SUB);
             self.emit(self.constant('ws'));
             self.emit(0);
+            self.emit(0);
         }
         elsif $rxtype eq 'subcapture' {
-            # NQP captures cursors, not spans: !cursor_capture is handed the
-            # sub-cursor a rule produced, and that cursor carries its own
-            # captures into the match tree. The engine reports a name and a
-            # pair of offsets, which is enough for a matcher and not enough
-            # for a parser, so a rule that captures stays on the bytecode
-            # path until the engine tracks sub-cursors.
-            self.bail;
+            # The span becomes a cursor when it is captured, the way
+            # !cursor_start_subcapture does it for the bytecode path; the
+            # engine only has to say which span, and when.
+            self.emit($CAPTURE);
+            self.emit(self.constant(~$node.name));
+            self.walk($node[0]);
         }
         else {
             # qastnode, dynquant, goal, conj and the rest: the bytecode path
