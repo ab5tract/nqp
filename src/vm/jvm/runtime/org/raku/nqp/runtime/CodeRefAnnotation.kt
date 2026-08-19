@@ -21,4 +21,7 @@ annotation class CodeRefAnnotation(
     val sourceFile: String = "",
     val sourceLine: Int = -1,
     val sourceLineDelta: Int = 0,
+    val sourceSectionRaw: IntArray = [],
+    val sourceSectionLine: IntArray = [],
+    val sourceSectionFile: Array<String> = [],
 )
