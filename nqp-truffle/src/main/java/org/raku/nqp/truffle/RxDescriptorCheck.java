@@ -71,6 +71,23 @@ public final class RxDescriptorCheck {
                 new int[] { RxDescriptor.ENUM, 0, 1 },
                 new Object[] { "," }, "x,", 1),
 
+            /* scan: the body only matches partway in, which is the shape
+             * every NQP regex has around it */
+            new Case("scan finds it later",
+                new int[] {
+                    RxDescriptor.SCAN,
+                    RxDescriptor.LITERAL, 0, 0,
+                },
+                new Object[] { "cd" }, "abcd", 4),
+
+            /* scan that never matches has to fail rather than run off */
+            new Case("scan finds nothing",
+                new int[] {
+                    RxDescriptor.SCAN,
+                    RxDescriptor.LITERAL, 0, 0,
+                },
+                new Object[] { "zz" }, "abcd", -1),
+
             /* anchor at end after a greedy run, which only matches once the
              * quantifier has given characters back */
             new Case("greedy then eos",

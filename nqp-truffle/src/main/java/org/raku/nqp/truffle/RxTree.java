@@ -20,7 +20,7 @@ public final class RxTree {
     private RxTree() { }
 
     public sealed interface Node
-        permits Seq, Literal, One, Anchor, Alt, Quant, Sub, Capture { }
+        permits Seq, Literal, One, Anchor, Alt, Quant, Sub, Capture, Scan { }
 
     /** rxtype concat. */
     public record Seq(List<Node> parts) implements Node { }
@@ -48,6 +48,14 @@ public final class RxTree {
 
     /** rxtype subcapture. */
     public record Capture(String name, Node body) implements Node { }
+
+    /**
+     * rxtype scan: try the body at each position from here on.
+     *
+     * <p>Every NQP regex is wrapped in one of these, so nothing real can be
+     * encoded without it.
+     */
+    public record Scan(Node body) implements Node { }
 
     /* The character predicates the front ends build One nodes from. Written
      * as constants and small records so that each is a single class the

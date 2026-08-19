@@ -40,6 +40,7 @@ public final class RxProgram {
     public static final int EMPTY_CHECK = 8; // register -- fail if nothing consumed
     public static final int CAP_START = 9;  // register
     public static final int CAP_END = 10;   // register, name(idx)
+    public static final int ADVANCE = 11;   // step one codepoint, or fail at the end
 
     /* CHAR flags. */
     public static final int F_NEGATE = 1;
@@ -142,6 +143,27 @@ public final class RxProgram {
             if (node instanceof RxTree.Sub sub) {
                 op(SUB, constant(sub.name()),
                     (sub.negate() ? F_NEGATE : 0) | (sub.zeroWidth() ? F_ZEROWIDTH : 0));
+                return;
+            }
+            if (node instanceof RxTree.Scan scan) {
+                /*
+                 *   L0: SPLIT L1, L2      try matching where we are
+                 *   L1: <body> ...
+                 *   L2: ADVANCE           nothing here; step one and retry
+                 *       JMP L0
+                 * The split's alternative arm is what a failure inside the
+                 * body resumes at, with the position it had on entry, which
+                 * is exactly what scanning needs.
+                 */
+                int loop = here();
+                int split = op(SPLIT, 0, 0);
+                patch(split + 1, here());
+                emit(scan.body());
+                int done = op(JMP, 0);
+                patch(split + 2, here());
+                op(ADVANCE);
+                op(JMP, loop);
+                patch(done + 1, here());
                 return;
             }
             if (node instanceof RxTree.Capture capture) {
