@@ -12,6 +12,9 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
     @JvmField var serialized: ByteArray? = null
     @JvmField var methods: SixModelObject?
     @JvmField var fields: SixModelObject?
+    /* Names of nested in-memory units whose classfiles ride along in this
+     * class's jar; empty for nearly every class. */
+    @JvmField val nestedClasses: MutableList<String> = ArrayList()
 
     init {
         if (Ops.istype(jast, jastClass, tc) == 0L)
@@ -31,6 +34,18 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
             serialized = bytes
         }
 
+        try {
+            val nested = jast.get_attribute_boxed(tc, jastClass, "@!nested_classes", nestedClassesHint)
+            if (nested != null) {
+                val iter = Ops.iter(nested, tc)
+                while (Ops.istrue(iter, tc) != 0L)
+                    iter.shift_boxed(tc)!!.get_str(tc)?.let { nestedClasses.add(it) }
+            }
+        }
+        catch (t: Throwable) {
+            /* Most likely a version of the node without the field. */
+        }
+
         if (className == null)
             throw Exception("Missing class name")
         if (superName == null)
@@ -44,6 +59,7 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
         private var serializedHint = 0L
         private var methodsHint = 0L
         private var fieldsHint = 0L
+        private var nestedClassesHint = 0L
 
         @JvmStatic
         fun setup(jastClass: SixModelObject, tc: ThreadContext) {
@@ -53,6 +69,7 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
             serializedHint = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "$!serialized")
             methodsHint    = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "@!methods")
             fieldsHint     = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "@!fields")
+            nestedClassesHint = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "@!nested_classes")
         }
     }
 }

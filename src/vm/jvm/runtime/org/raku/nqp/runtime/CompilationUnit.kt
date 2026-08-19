@@ -89,7 +89,7 @@ abstract class CompilationUnit {
     /**
      * Does initialization work for the compilation unit.
      */
-    open fun initializeCompilationUnit(tc: ThreadContext) {
+    open fun initializeCompilationUnit(tc: ThreadContext, runDeserialize: Boolean) {
         /* Look through methods for code refs. */
         val BOOTCodeSTable: STable? = tc.gc.BOOTCode?.st
         val codeRefList = ArrayList<CodeRef>()
@@ -171,7 +171,18 @@ abstract class CompilationUnit {
         /* Get HLL configuration object. */
         hllConfig = tc.gc.getHLLConfigFor(this.hllName())
 
-        /* Run any deserialization code. */
+        /* Run any deserialization code, unless the caller wants to run it
+         * later itself: a nested unit claimed while its enclosing unit is
+         * mid-deserialization must not touch the still-empty SC. */
+        if (runDeserialize)
+            runDeserializeIfAvailable(tc)
+    }
+
+    fun initializeCompilationUnit(tc: ThreadContext) {
+        initializeCompilationUnit(tc, true)
+    }
+
+    fun runDeserializeIfAvailable(tc: ThreadContext) {
         var desCodeRef: CodeRef? = null
         if (deserializeQbid() >= 0)
             desCodeRef = lookupCodeRef(deserializeQbid())
