@@ -34,6 +34,7 @@ public final class RxDescriptor {
     public static final int QUANT = 8;    // min, max, greedy, child
     public static final int SUB = 9;      // pool(name), flags
     public static final int CAPTURE = 10; // pool(name), child
+    public static final int SCAN = 11;    // child
 
     /* CCLASS kinds, in the order the engine's predicates are listed. */
     public static final int CC_ANY = 0;
@@ -119,6 +120,9 @@ public final class RxDescriptor {
             case CAPTURE -> {
                 String name = (String) pool[code[at++]];
                 return new RxTree.Capture(name, node());
+            }
+            case SCAN -> {
+                return new RxTree.Scan(node());
             }
             default -> throw new IllegalArgumentException("unknown descriptor tag " + tag);
         }

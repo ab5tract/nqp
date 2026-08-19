@@ -124,6 +124,14 @@ public final class RxVmNode extends Node {
                     pc = code[pc + 1];
                 }
                 case RxProgram.JMP -> pc = code[pc + 1];
+                case RxProgram.ADVANCE -> {
+                    if (pos >= eos) {
+                        failed = true;
+                    } else {
+                        pos += Character.charCount(target.codePointAt(pos));
+                        pc += 1;
+                    }
+                }
                 case RxProgram.MARK -> {
                     regs[code[pc + 1]] = pos;
                     pc += 2;
