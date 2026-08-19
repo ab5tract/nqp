@@ -80,12 +80,53 @@ object Dispatch {
         dispatchWithDescriptor(site, name, descriptorFor(tc, csIdx), tc, args)
     }
 
+    /**
+     * The tail of a compiled callsite target: every compiled program's guards
+     * failed, so try whatever programs the chain does not cover and then
+     * record afresh. The compiled prefix is skipped, not retried. Only called
+     * for callsites whose shape has no flattening, so the descriptor needs no
+     * exploding here.
+     */
+    @JvmStatic
+    fun fallback(site: DispatchCallSite, name: String, descriptor: CallSiteDescriptor,
+                 compiled: Int, tc: ThreadContext, args: Array<Any?>) {
+        val programs = site.programs
+        if (programs.size > compiled) {
+            val ctx = GuardCheckContext(tc, descriptor, args)
+            for (i in compiled until programs.size)
+                if (run(tc, ctx, programs[i], site)) return
+        }
+        record(tc, tc.gc.dispatchers.find(tc, name), descriptor, args, site)
+    }
+
     /** A dispatch at a callsite whose descriptor the caller supplies; used by
      * runtime helpers that keep their own callsite as an inline cache. */
     @JvmStatic
     fun dispatchWithDescriptor(site: DispatchCallSite, name: String,
                                descriptor0: CallSiteDescriptor, tc: ThreadContext,
                                args: Array<Any?>) {
+        /* A hot site has a compiled chain; run it directly. Helper-made sites
+         * only ever get here (they never invoke the indy target), and some
+         * rebuild their descriptor per call, so shape equality has to stand
+         * in when identity fails. A chain only exists for a non-flattening
+         * shape, so no exploding is needed on this path. */
+        val chain = site.chain
+        if (chain != null) {
+            val static = site.staticDescriptor
+            if (descriptor0 === static ||
+                    (static != null && Captures.sameShape(descriptor0, static))) {
+                chain.invoke(tc, args)
+                return
+            }
+        }
+        else if (site.linkedName == null) {
+            /* Note the site's constants, so that crossing the heat threshold
+             * can compile a chain; see DispatchCompiler. */
+            site.staticDescriptor = descriptor0
+            site.linkedName = name
+        }
+        if (++site.heat == DispatchCompiler.threshold)
+            site.recompile()
         var descriptor = descriptor0
         var theArgs = args
         /* Flattening is exploded before the dispatch runs, as MoarVM does at
@@ -362,7 +403,12 @@ object Dispatch {
     /** Leaves a value where the code after the dispatch instruction will find it. */
     @JvmStatic
     fun setResult(tc: ThreadContext, record: DispatchRecord, value: DispatchValue) {
-        val frame = record.callerFrame ?: tc.frame
+        setFrameResult(record.callerFrame ?: tc.frame, value)
+    }
+
+    /** As setResult, for callers that already have the frame in hand. */
+    @JvmStatic
+    fun setFrameResult(frame: CallFrame, value: DispatchValue) {
         when (value.kind) {
             ArgKind.OBJ -> {
                 frame.oRet = value.obj
