@@ -121,6 +121,7 @@ class JAST::Method is JAST::Node {
     has int $!is_thunk;
     has str $!cr_file;
     has int $!cr_line;
+    has int $!cr_rawline;
 
     method BUILD(:$name!, :$returns!, :$static = 1) {
         $!name := $name;
@@ -139,6 +140,7 @@ class JAST::Method is JAST::Node {
         @!cr_handlers := [];
         $!cr_file := '';
         $!cr_line := 0;
+        $!cr_rawline := 0;
     }
 
     method add_argument($name, $type) {
@@ -174,6 +176,7 @@ class JAST::Method is JAST::Node {
     method is_thunk(*@value) { $!is_thunk := @value[0] if @value; $!is_thunk }
     method cr_file(*@value) { @value ?? ($!cr_file := @value[0]) !! $!cr_file }
     method cr_line(*@value) { @value ?? ($!cr_line := @value[0]) !! $!cr_line }
+    method cr_rawline(*@value) { @value ?? ($!cr_rawline := @value[0]) !! $!cr_rawline }
 
     method dump(@dumped) {
         nqp::push(@dumped, "+ method");
@@ -205,6 +208,7 @@ class JAST::Method is JAST::Node {
         if $!cr_file ne '' {
             nqp::push(@dumped, "++ crfile $!cr_file");
             nqp::push(@dumped, "++ crline $!cr_line");
+            nqp::push(@dumped, "++ crrawline $!cr_rawline");
         }
         for @!instructions {
             $_.dump(@dumped);
