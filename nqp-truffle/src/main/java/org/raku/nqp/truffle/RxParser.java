@@ -30,6 +30,11 @@ final class RxParser {
 
     @TruffleBoundary
     static RxTree.Node parse(String pattern) {
+        /* A real regex arrives already wrapped in a scan; the harness says
+         * so with a prefix rather than growing a syntax for it. */
+        if (pattern.startsWith("(?scan)")) {
+            return new RxTree.Scan(parse(pattern.substring("(?scan)".length())));
+        }
         RxParser p = new RxParser(pattern);
         RxTree.Node tree = p.alternation();
         if (p.at != pattern.length()) {

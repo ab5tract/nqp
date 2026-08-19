@@ -22,6 +22,7 @@ class QAST::RxDescriptor {
     my int $QUANT   := 8;
     my int $SUB     := 9;
     my int $CAPTURE := 10;
+    my int $SCAN    := 11;
 
     my int $F_NEGATE     := 1;
     my int $F_ZEROWIDTH  := 2;
@@ -87,19 +88,36 @@ class QAST::RxDescriptor {
         $flags
     }
 
+    # The children that put something in the descriptor. A node that
+    # encodes to nothing cannot be counted by its parent.
+    method encodable(@nodes) {
+        my @kept;
+        for @nodes {
+            my str $rxtype := $_.rxtype // 'concat';
+            nqp::push(@kept, $_)
+                unless $rxtype eq 'pass' || $rxtype eq 'dba';
+        }
+        @kept
+    }
+
     method walk($node) {
         return nqp::null if $!bailed;
         my str $rxtype := $node.rxtype // 'concat';
 
         if $rxtype eq 'concat' {
+            # pass and dba encode to nothing, so they must not be counted;
+            # a child count that disagrees with what follows would be read
+            # as a malformed descriptor.
+            my @kept := self.encodable(@($node));
             self.emit($SEQ);
-            self.emit(nqp::elems(@($node)));
-            self.walk($_) for @($node);
+            self.emit(nqp::elems(@kept));
+            self.walk($_) for @kept;
         }
         elsif $rxtype eq 'altseq' || $rxtype eq 'alt' {
+            my @kept := self.encodable(@($node));
             self.emit($ALT);
-            self.emit(nqp::elems(@($node)));
-            self.walk($_) for @($node);
+            self.emit(nqp::elems(@kept));
+            self.walk($_) for @kept;
         }
         elsif $rxtype eq 'literal' {
             # An ignoremark literal needs the mark-insensitive comparisons
@@ -153,15 +171,42 @@ class QAST::RxDescriptor {
             self.emit($SUB);
             self.emit(self.constant($node[0][0].value));
             self.emit(self.flags($node));
+            # A capturing subrule's own cursor is the capture.
+            self.emit($node.subtype eq 'capture'
+                ?? self.constant(~$node.name) + 1
+                !! 0);
+        }
+        elsif $rxtype eq 'scan' {
+            # Every NQP regex is wrapped in one of these.
+            self.emit($SCAN);
+            self.walk($node[0]);
+        }
+        elsif $rxtype eq 'pass' {
+            # The engine answers the position it reached, and the caller
+            # tells the cursor; nothing to encode.
+        }
+        elsif $rxtype eq 'dba' {
+            # Only a name for error messages.
+        }
+        elsif $rxtype eq 'ws' {
+            # A normal subrule call, which is how the bytecode path treats
+            # it too.
+            self.emit($SUB);
+            self.emit(self.constant('ws'));
+            self.emit(0);
+            self.emit(0);
         }
         elsif $rxtype eq 'subcapture' {
+            # The span becomes a cursor when it is captured, the way
+            # !cursor_start_subcapture does it for the bytecode path; the
+            # engine only has to say which span, and when.
             self.emit($CAPTURE);
             self.emit(self.constant(~$node.name));
             self.walk($node[0]);
         }
         else {
-            # dba, qastnode, dynquant, goal, conj, scan, pass, ws: the
-            # bytecode path still owns these.
+            # qastnode, dynquant, goal, conj and the rest: the bytecode path
+            # still owns these.
             self.bail;
         }
         nqp::null
