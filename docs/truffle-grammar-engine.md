@@ -140,8 +140,58 @@ The nqp suite is at parity with the bytecode baseline: 142 files, 13110
 tests, one pre-existing `t/p5regex` failure (test 78) that fails identically
 with `NQP_JVM_NO_TRUFFLE=1`. `make j-all` builds a working `rakudo-j`.
 
-Not yet done: rakudo's own test suite has not been run under the engine, and
-the engine has never been measured against the bytecode path it replaces —
-only against `java.util.regex`, which is not what it replaces. A grammar used
-once may never get hot enough to be compiled, so any cutover needs a warmup
-story.
+## Measured against the thing it replaces
+
+The engine had only ever been compared to `java.util.regex`, which is not
+what it replaces. Here it is against the bytecode path: same machine, same
+sources, CORE.c compiled by the **RakuAST** front end, which is what this
+work targets (the legacy front end is being cut). Engine-off is a full
+rebuild of nqp *and* rakudo under `NQP_JVM_NO_TRUFFLE=1`, since descriptors
+are a compile-time decision.
+
+CORE.c, seconds:
+
+| stage     | engine off | engine on |   delta |
+|-----------|-----------:|----------:|--------:|
+| parse     |    161.158 |   165.981 | **+3.0%** |
+| optimize  |     43.245 |    44.990 |   +4.0% |
+| qast      |     11.920 |    12.432 |   +4.3% |
+| jast      |     41.697 |    42.816 |   +2.7% |
+| classfile |     49.138 |    49.641 |   +1.0% |
+| **total** |    **307.2** | **316.4** | **+3.0%** |
+
+**The engine is currently ~3% SLOWER than the bytecode path it replaces.**
+
+Note *where* the cost lands. If the engine were merely a slower matcher, only
+`parse` would move; instead every stage is up by roughly the same proportion,
+including stages that run no regexes at all. That points at the Truffle
+runtime itself — its background compilation threads competing with the
+compiler's own work — rather than at matching being slow. Worth confirming
+with `engine.TraceCompilation` and a pinned compiler thread count before
+optimising anything else.
+
+The same shape appears on the legacy front end (CORE.c parse 124.702 off vs
+126.936 on, +1.8%; CORE.d +1.7%; CORE.e +1.1%), so the direction is
+consistent across five measurements. These are single runs, so treat the
+magnitudes as approximate — but not the sign.
+
+Worth trying, in the order I would bet on them:
+
+1. **Truffle's compiler threads.** See above; the cost is spread across
+   stages that do no matching. Cheapest thing to test, and if it is the whole
+   story the matching itself may already be at parity or better.
+2. **The subrule boundary.** Every `<foo>` leaves the engine, invokes an NQP
+   CodeRef and returns; partial evaluation stops dead there. A grammar is
+   mostly subrule calls, so the compiled region between two of them is small.
+   This is the same boundary that makes replacing newdisp the *tail* of
+   moving code generation to Truffle rather than the head.
+3. **Coverage.** About 57 rules are on the engine and the rest of the grammar
+   is still bytecode, so the crossing cost is paid without whole-grammar
+   speedup.
+4. **`altOrder` allocates** a fresh marks array per named-alt entry and reads
+   back through the bstack, where the bytecode path pushes onto a stack it
+   already owns.
+
+Not yet done: rakudo's own test suite has not been run under the engine. And
+a grammar used once may never get hot enough to be compiled — a setting
+compile is the *favourable* case — so any cutover still needs a warmup story.
