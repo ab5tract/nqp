@@ -32,8 +32,9 @@ public final class RxDescriptor {
     public static final int RANGE = 6;    // lo, hi, negate
     public static final int ANCHOR = 7;   // kind
     public static final int QUANT = 8;    // min, max, greedy, child
-    public static final int SUB = 9;      // pool(name), flags
+    public static final int SUB = 9;      // pool(name), flags, pool(capture)+1 or 0
     public static final int CAPTURE = 10; // pool(name), child
+    public static final int SCAN = 11;    // child
 
     /* CCLASS kinds, in the order the engine's predicates are listed. */
     public static final int CC_ANY = 0;
@@ -112,13 +113,18 @@ public final class RxDescriptor {
             case SUB -> {
                 String name = (String) pool[code[at++]];
                 int flags = code[at++];
+                int capture = code[at++];
                 return new RxTree.Sub(name,
                     (flags & RxProgram.F_ZEROWIDTH) != 0,
-                    (flags & RxProgram.F_NEGATE) != 0);
+                    (flags & RxProgram.F_NEGATE) != 0,
+                    capture == 0 ? null : (String) pool[capture - 1]);
             }
             case CAPTURE -> {
                 String name = (String) pool[code[at++]];
                 return new RxTree.Capture(name, node());
+            }
+            case SCAN -> {
+                return new RxTree.Scan(node());
             }
             default -> throw new IllegalArgumentException("unknown descriptor tag " + tag);
         }

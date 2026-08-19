@@ -35,11 +35,25 @@ public final class RxProgram {
     public static final int ANCHOR = 3;     // kind
     public static final int SPLIT = 4;      // preferred pc, alternative pc
     public static final int JMP = 5;        // pc
-    public static final int SUB = 6;        // name(idx), flags
+    public static final int SUB = 6;        // name(idx), flags, capture(idx+1 or 0)
     public static final int MARK = 7;       // register
     public static final int EMPTY_CHECK = 8; // register -- fail if nothing consumed
     public static final int CAP_START = 9;  // register
     public static final int CAP_END = 10;   // register, name(idx)
+    public static final int ADVANCE = 11;   // step one codepoint, or fail at the end
+    /*
+     * The character classes worth their own opcode. ONE reaches a predicate
+     * through an interface call, and across patterns that call site sees
+     * every predicate there is -- megamorphic, so partial evaluation cannot
+     * fold it. These carry the test in the opcode instead, where it becomes
+     * a constant once the program is.
+     */
+    public static final int DIGIT = 12;     // negate
+    public static final int WORD = 13;      // negate
+    public static final int SPACE = 14;     // negate
+    public static final int ANY = 15;       // (no operands)
+    public static final int RANGE1 = 16;    // lo, hi, negate
+    public static final int CHAR1 = 17;     // codepoint, negate
 
     /* CHAR flags. */
     public static final int F_NEGATE = 1;
@@ -120,11 +134,32 @@ public final class RxProgram {
                 int flags = (lit.negate() ? F_NEGATE : 0)
                           | (lit.zeroWidth() ? F_ZEROWIDTH : 0)
                           | (lit.ignoreCase() ? F_IGNORECASE : 0);
-                op(CHAR, constant(lit.text()), flags);
+                /* Most literals in a grammar are one character; comparing a
+                 * codepoint beats a region match against a one-char string. */
+                if (flags == 0 && lit.text().codePointCount(0, lit.text().length()) == 1) {
+                    op(CHAR1, lit.text().codePointAt(0), 0);
+                } else {
+                    op(CHAR, constant(lit.text()), flags);
+                }
                 return;
             }
             if (node instanceof RxTree.One one) {
-                op(ONE, constant(one.pred()));
+                /* A predicate the opcode set knows becomes that opcode; the
+                 * rest still go through the interface. */
+                RxProgram.CharPred pred = one.pred();
+                if (pred == RxTree.ANY) op(ANY);
+                else if (pred == RxTree.DIGIT) op(DIGIT, 0);
+                else if (pred == RxTree.WORD) op(WORD, 0);
+                else if (pred == RxTree.SPACE) op(SPACE, 0);
+                else if (pred instanceof RxTree.Negated n) {
+                    if (n.of() == RxTree.DIGIT) op(DIGIT, 1);
+                    else if (n.of() == RxTree.WORD) op(WORD, 1);
+                    else if (n.of() == RxTree.SPACE) op(SPACE, 1);
+                    else if (n.of() instanceof RxTree.Range r) op(RANGE1, r.lo(), r.hi(), 1);
+                    else op(ONE, constant(pred));
+                }
+                else if (pred instanceof RxTree.Range r) op(RANGE1, r.lo(), r.hi(), 0);
+                else op(ONE, constant(pred));
                 return;
             }
             if (node instanceof RxTree.Anchor anchor) {
@@ -140,8 +175,34 @@ public final class RxProgram {
                 return;
             }
             if (node instanceof RxTree.Sub sub) {
+                /* Zero means the result is not captured; otherwise the pool
+                 * index of the name, biased so zero can mean "none". */
+                int capture = sub.capture() == null ? 0 : constant(sub.capture()) + 1;
                 op(SUB, constant(sub.name()),
-                    (sub.negate() ? F_NEGATE : 0) | (sub.zeroWidth() ? F_ZEROWIDTH : 0));
+                    (sub.negate() ? F_NEGATE : 0) | (sub.zeroWidth() ? F_ZEROWIDTH : 0),
+                    capture);
+                if (sub.capture() != null) captures++;
+                return;
+            }
+            if (node instanceof RxTree.Scan scan) {
+                /*
+                 *   L0: SPLIT L1, L2      try matching where we are
+                 *   L1: <body> ...
+                 *   L2: ADVANCE           nothing here; step one and retry
+                 *       JMP L0
+                 * The split's alternative arm is what a failure inside the
+                 * body resumes at, with the position it had on entry, which
+                 * is exactly what scanning needs.
+                 */
+                int loop = here();
+                int split = op(SPLIT, 0, 0);
+                patch(split + 1, here());
+                emit(scan.body());
+                int done = op(JMP, 0);
+                patch(split + 2, here());
+                op(ADVANCE);
+                op(JMP, loop);
+                patch(done + 1, here());
                 return;
             }
             if (node instanceof RxTree.Capture capture) {
