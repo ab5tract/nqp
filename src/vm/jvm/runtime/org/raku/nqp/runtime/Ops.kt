@@ -8607,6 +8607,74 @@ object Ops {
         res.jc = JASTCompiler.buildClass(jast!!, jastNodes!!, false, tc)
         return res
     }
+    /** The class an in-memory compiled block belongs to, when one was
+     * retained for nested-unit persistence; empty string otherwise. */
+    @JvmStatic
+    fun jvmclassofcuid(cuid: String?, tc: ThreadContext): String =
+        if (cuid == null) "" else tc.gc.inMemoryUnitOfCuid[cuid] ?: ""
+
+    /**
+     * Loads a nested compilation unit embedded in the current unit's jar
+     * and installs its code refs into the current unit's qbid table at the
+     * given slots, matched by cuid, so deserialization finds the code refs
+     * the serialized graph points into. The MoarVM backend has no need of
+     * this: it assembles nested units' frames into the enclosing bytecode.
+     */
+    @JvmStatic
+    fun jvmclaimnested(className: String?, idxs: SixModelObject?, cuids: SixModelObject?, tc: ThreadContext): SixModelObject? {
+        val cu = tc.frame.codeRef.staticInfo.compUnit
+        try {
+            val klass = Class.forName(className, true, cu.javaClass.classLoader)
+            val nested = klass.getDeclaredConstructor().newInstance() as CompilationUnit
+            nested.shared = tc.gc.sharingHint
+            /* The enclosing SC is still empty at this point; the nested
+             * unit's own deserialization code (static block lexical values
+             * and the like) runs via jvm-finish-nested afterwards. */
+            nested.initializeCompilationUnit(tc, false)
+            tc.gc.claimedNestedUnits[className!!] = nested
+            val byCuid = HashMap<String, CodeRef>()
+            nested.codeRefs?.let { crs ->
+                for (cr in crs) {
+                    val cuid = cr.staticInfo.uniqueId
+                    if (!cuid.isNullOrEmpty())
+                        byCuid[cuid] = cr
+                }
+            }
+            val n = idxs!!.elems(tc).toInt()
+            var table = cu.qbidToCodeRef!!
+            for (k in 0 until n) {
+                idxs.at_pos_native(tc, k.toLong())
+                val idx = tc.nativeI.toInt()
+                cuids!!.at_pos_native(tc, k.toLong())
+                val cuid = tc.nativeS!!
+                val cr = byCuid[cuid]
+                    ?: throw ExceptionHandling.dieInternal(tc,
+                        "Nested unit $className carries no block with cuid '$cuid'")
+                if (idx >= table.size) {
+                    table = table.copyOf(idx + 1)
+                    cu.qbidToCodeRef = table
+                }
+                table[idx] = cr
+            }
+        }
+        catch (e: ReflectiveOperationException) {
+            throw ExceptionHandling.dieInternal(tc,
+                "Could not load nested compilation unit $className: $e")
+        }
+        return null
+    }
+
+    /** Runs a claimed nested unit's deserialization code, once the
+     * enclosing unit's own deserialization has populated the SC. */
+    @JvmStatic
+    fun jvmfinishnested(className: String?, tc: ThreadContext): SixModelObject? {
+        val nested = tc.gc.claimedNestedUnits.remove(className)
+            ?: throw ExceptionHandling.dieInternal(tc,
+                "No claimed nested compilation unit named $className")
+        nested.runDeserializeIfAvailable(tc)
+        return null
+    }
+
     @JvmStatic
     fun compilejasttofile(jast: SixModelObject?, jastNodes: SixModelObject?, filename: String?, tc: ThreadContext): SixModelObject? {
         JASTCompiler.writeClass(jast!!, jastNodes!!, filename!!, tc)
@@ -8623,6 +8691,20 @@ object Ops {
             res.cu!!.initializeCompilationUnit(tc)
             if (compileeHLL != 0L)
                 usecompilerhllconfig(tc)
+            /* A unit compiled while a compilation is under way may be a
+             * nested unit whose code refs the enclosing serialization
+             * points into; retain what embedding it later needs. */
+            if (!tc.compilingSCs.isNullOrEmpty()) {
+                val unitName = res.jc!!.name!!
+                tc.gc.inMemoryUnitBytes[unitName] = res.jc!!.bytes!!
+                res.cu!!.codeRefs?.let { crs ->
+                    for (cr in crs) {
+                        val cuid = cr.staticInfo.uniqueId
+                        if (!cuid.isNullOrEmpty())
+                            tc.gc.inMemoryUnitOfCuid[cuid] = unitName
+                    }
+                }
+            }
             res.jc = null
             return obj
         }
