@@ -106,7 +106,23 @@ class HLL::Backend::JVM {
     }
 
     method supports-op($opname) {
-        0 # NYI, so give the safe answer
+        # MoarVM spells its dispatch ops with a result-kind suffix, and that
+        # is the spelling HLL code asks about (NativeCall probes for
+        # 'dispatch_v' to choose the dispatcher-based implementation). This
+        # backend registers the family under the bare name, so map those
+        # spellings before consulting the op table.
+        my $mapped := $opname eq 'dispatch_v' || $opname eq 'dispatch_o'
+                   || $opname eq 'dispatch_i' || $opname eq 'dispatch_n'
+                   || $opname eq 'dispatch_s'
+            ?? 'dispatch'
+            !! $opname;
+        # This unit compiles before the QAST compiler's, so its classes are
+        # only reachable through the compiler registry at runtime, the same
+        # way the jast stage reaches it above.
+        my $qastcomp := nqp::getcomp('QAST');
+        nqp::isnull($qastcomp) || !nqp::can($qastcomp, 'operations')
+            ?? 0
+            !! $qastcomp.operations.core_op_supported($mapped)
     }
 }
 
