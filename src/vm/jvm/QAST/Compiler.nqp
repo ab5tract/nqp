@@ -6319,7 +6319,8 @@ class QAST::CompilerJAST {
     method engine_jast($node, $desc) {
         my %*REG;
         my $prefix := self.unique('rxe') ~ '_';
-        my $reglist := nqp::split(' ', 'start o cur o curclass o tgt s pos i selffrom i');
+        my $reglist := nqp::split(' ',
+            'start o cur o curclass o tgt s pos i selffrom i callback o');
         while $reglist {
             my $reg := nqp::shift($reglist);
             my $rt  := nqp::shift($reglist);
@@ -6393,18 +6394,97 @@ class QAST::CompilerJAST {
         $il.append($pro.jast);
         $*STACK.obtain(NQPMu, $pro);
 
+        # The block the engine comes back into for anything it cannot express
+        # itself. It is a value here, not a call: what is pushed is the static
+        # code object, so a rule that never reaches a callback pays a constant
+        # load and nothing else. The engine closes it over this frame at the
+        # moment a callback actually fires, which is the only moment the frame
+        # is known to be the right one.
+        if nqp::elems($desc.callbacks) {
+            my $cb := self.as_jast(self.rx_callback_block($desc), :want($RT_OBJ));
+            $il.append($cb.jast);
+            $*STACK.obtain($il, $cb);
+        }
+        else {
+            $il.append($ACONST_NULL);
+        }
+        $il.append(JAST::Instruction.new( :op('astore'), %*REG<callback> ));
+
         $il.append(JAST::PushSVal.new( :value($desc.encoded) ));
         $il.append(JAST::Instruction.new( :op('aload'), %*REG<cur> ));
         $il.append(JAST::Instruction.new( :op('aload'), %*REG<curclass> ));
         $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<selffrom> ));
+        $il.append(JAST::Instruction.new( :op('aload'), %*REG<callback> ));
         $il.append($ALOAD_1);
         $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_RXENGINE,
             'rxmatch', $TYPE_SMO, $TYPE_STR, $TYPE_SMO, $TYPE_SMO, $TYPE_STR,
-            'Long', 'Long', $TYPE_TC ));
+            'Long', 'Long', $TYPE_SMO, $TYPE_TC ));
 
         result($il, $RT_OBJ)
+    }
+
+    # One block holding every piece of the rule the engine has to come back
+    # for, chosen by index.
+    #
+    # One block rather than one per callback: a block used as a value is a
+    # closure, and building a list of them would allocate per rule call --
+    # where a grammar calls its rules millions of times. This way the rule
+    # pushes a constant and only a callback that actually fires costs
+    # anything.
+    #
+    # The cursor and its declaring class are parameters rather than lexicals
+    # because they are LOCALS of the rule's frame, which a nested block cannot
+    # see -- the same reason a rule whose code reads a lowered local is
+    # refused outright.
+    method rx_callback_block($desc) {
+        my $idx   := QAST::Node.unique('rxcb_idx');
+        my $cur   := QAST::Node.unique('rxcb_cur');
+        my $class := QAST::Node.unique('rxcb_class');
+        my $pos   := QAST::Node.unique('rxcb_pos');
+
+        my sub local($name, *%opts) {
+            QAST::Var.new( :name($name), :scope('local'), |%opts )
+        }
+
+        # Chosen from the last back, so each `if` wraps the ones after it.
+        my @bodies := $desc.callbacks;
+        my $dispatch := QAST::Op.new( :op('null') );
+        my int $i := nqp::elems(@bodies);
+        while $i > 0 {
+            $i := $i - 1;
+            $dispatch := QAST::Op.new(
+                :op('if'),
+                QAST::Op.new( :op('iseq_i'), local($idx), QAST::IVal.new( :value($i) ) ),
+                # What the bytecode path does before the code runs: the
+                # position it is looking at goes on the cursor, and $¢ names
+                # the cursor, because the code is written to read both.
+                QAST::Stmts.new(
+                    QAST::Op.new(
+                        :op('bindattr_i'),
+                        local($cur), local($class),
+                        QAST::SVal.new( :value('$!pos') ),
+                        local($pos)
+                    ),
+                    QAST::Op.new(
+                        :op('bind'),
+                        QAST::Var.new( :name("\$\xa2"), :scope('lexical') ),
+                        local($cur)
+                    ),
+                    @bodies[$i]
+                ),
+                $dispatch
+            );
+        }
+
+        QAST::Block.new(
+            local($idx,   :decl('param'), :returns(int)),
+            local($cur,   :decl('param')),
+            local($class, :decl('param')),
+            local($pos,   :decl('param'), :returns(int)),
+            $dispatch
+        )
     }
 
     method alt($node) {
@@ -7362,7 +7442,7 @@ class QAST::CompilerJAST {
         $il.append($LADD);
         $il.append($DUP2);
         $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
-        if nqp::elems($node.list) {
+        if nqp::elems($node) {
             # Pick the index variant matching the literal's semantics, the
             # same way the MoarVM backend does.
             my str $subtype := $node.subtype;
