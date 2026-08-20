@@ -367,22 +367,27 @@ class QAST::RxDescriptor {
     #
     # A nested QAST::Block is skipped: it has a frame of its own, and anything
     # local in it was declared in it.
+    # Answers the NAME of the first such local, or '' for none. The name is
+    # the whole value of this check: "a lowered local" does not say whether
+    # the rule is unreachable or whether one well-known variable is in the
+    # way of every codeblock alike.
     method reads_outer_local($node, %seen) {
-        return 0 unless nqp::istype($node, QAST::Node);
-        return 0 if nqp::istype($node, QAST::Block);
+        return '' unless nqp::istype($node, QAST::Node);
+        return '' if nqp::istype($node, QAST::Block);
         if nqp::istype($node, QAST::Var) && $node.scope eq 'local' {
             my str $decl := $node.decl // '';
             if $decl eq 'var' || $decl eq 'param' {
                 %seen{$node.name} := 1;
             }
             elsif !nqp::existskey(%seen, $node.name) {
-                return 1;
+                return $node.name;
             }
         }
         for @($node) {
-            return 1 if self.reads_outer_local($_, %seen);
+            my str $found := self.reads_outer_local($_, %seen);
+            return $found if $found;
         }
-        0
+        ''
     }
 
     # negate/zerowidth/ignorecase as one int. Character classes carry this
@@ -576,18 +581,22 @@ class QAST::RxDescriptor {
             # be. Refusing qastnode alone makes that build green, so the
             # mechanism here is the cause and nothing else in the engine is.
             #
-            # The likeliest reason, unproven: a codeblock is not bare code.
-            # `QRegex::P6Regex::Actions.codeblock` wraps every `{ ... }` in a
-            # nested QAST::Block of its own with blocktype('immediate'), built
-            # while the grammar was parsed and with the rule's block as its
-            # lexical parent. Re-parenting that under a block the backend
-            # invents afterwards moves it a frame deeper, and the World
-            # already recorded symbols against the original nesting. A sound
-            # version probably has to reuse THAT block as the callback --
-            # turning it from immediate into a closure value -- rather than
-            # wrap it in a new one. Do not build on the guess without checking
-            # it: the same guess about hoisted declarations was already wrong
-            # (NQP::Actions.variable_declarator does hoist them, to $BLOCK[0]).
+            # The constraint a fix has to satisfy, established rather than
+            # guessed: lexical access here is DEPTH-INDEXED and resolved at
+            # compile time -- as_jast(QAST::Var) walks BlockInfo.outer()
+            # counting frames and emits an access at that depth. Compile-time
+            # nesting and run-time frame nesting therefore have to correspond
+            # exactly, and a codeblock is not bare code:
+            # QRegex::P6Regex::Actions.codeblock wraps every `{ ... }` in a
+            # nested QAST::Block of its own with blocktype('immediate'), whose
+            # outer is found by a different mechanism from a closure's.
+            #
+            # A sound version may have to reuse THAT block as the callback,
+            # turning it from immediate into a closure value, rather than wrap
+            # it in a new one. That part is a hypothesis; do not build on it
+            # without checking. The previous guess here was wrong --
+            # NQP::Actions.variable_declarator hoists `my $x` into $BLOCK[0],
+            # so declarations were never the problem.
             return self.bail('rxtype qastnode') unless rx_tries('qastnode');
             return self.bail('qastnode without a body') unless nqp::elems($node) == 1;
 
@@ -598,8 +607,9 @@ class QAST::RxDescriptor {
             # so a rule whose code touches one of those has to keep the
             # bytecode path; encoding it would compile a reference to a local
             # that does not exist where the code ended up.
-            return self.bail('qastnode over a lowered local')
-                if self.reads_outer_local($node[0], nqp::hash());
+            my str $lowered := self.reads_outer_local($node[0], nqp::hash());
+            return self.bail('qastnode over a lowered local ' ~ $lowered)
+                if $lowered;
 
             self.emit($QASTNODE);
             self.emit(nqp::elems(@!callbacks));
