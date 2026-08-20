@@ -214,19 +214,29 @@ turns it on. What is known:
 * Refusing `qastnode` alone makes that build green, so the mechanism is the
   cause and nothing else in the engine is.
 
-The likeliest reason, **unproven**: a codeblock is not bare code.
-`QRegex::P6Regex::Actions.codeblock` wraps every `{ ... }` in a nested
-`QAST::Block` of its own with `blocktype('immediate')`, built while the
-grammar was parsed and with the rule's block as its lexical parent.
-Re-parenting that under a block the backend invents afterwards moves it a
-frame deeper. A sound version probably has to reuse *that* block as the
-callback — turning it from immediate into a closure value — rather than wrap
-it in a new one.
+**The constraint any fix has to satisfy**, which is established rather than
+guessed: lexical access on this backend is **depth-indexed, resolved at
+compile time**. `as_jast(QAST::Var)` for a lexical not in the current block
+walks `BlockInfo.outer()` counting frames (`$scopes`) and emits an access at
+that depth — see `Compiler.nqp`, the `scope eq 'lexical'` branch. So compile-
+time block nesting and run-time frame nesting must correspond exactly. Insert
+a block and every lexical underneath it moves a level; that is only safe if
+the frame chain gains exactly one level in the same place, which is what
+`takeclosure` is doing here.
 
-Do not build on that guess without checking it. The same kind of guess about
-declarations was already wrong: `NQP::Actions.variable_declarator` does hoist
-`my $x` into the enclosing block's `$BLOCK[0]`, so a `:my` inside a regex
-leaves only a reference or a bind behind, not a declaration.
+Also relevant: a codeblock is not bare code.
+`QRegex::P6Regex::Actions.codeblock` wraps every `{ ... }` in a nested
+`QAST::Block` of its own with `blocktype('immediate')`, so re-parenting moves
+*two* levels of nesting, not one, and an immediate block's outer is found by a
+different mechanism from a closure's. A sound version may have to reuse
+*that* block as the callback — turning it from immediate into a closure value
+— rather than wrap it in a new one.
+
+That last part is a hypothesis, not a finding: do not build on it without
+checking. The previous guess in this same spot was wrong —
+`NQP::Actions.variable_declarator` does hoist `my $x` into the enclosing
+block's `$BLOCK[0]`, so a `:my` inside a regex leaves only a reference or a
+bind behind, not a declaration, and declarations were never the problem.
 
 A second limit is real whatever the cause: `NQP::Optimizer` turns a lexical
 that no *inner block* uses into a local, and cannot know about a block the
@@ -292,6 +302,16 @@ with `NQP_JVM_NO_TRUFFLE=1`. `make j-all` builds a working `rakudo-j`.
 773 of the 1105 rules in rakudo's Raku grammar are on the engine, and the
 CORE.c compile is at parity with the bytecode path — see the two sections
 below for how that is measured and what is left.
+
+**Rakudo's own suite has now been run under the engine**, which it had not
+been before: `RAKUDO_RAKUAST=1 make j-test`, 377 files, 4231 tests, three
+files failing and all three pre-existing and unrelated to matching —
+`regex-crlf-grapheme.t` and `regex-vspace-class-crlf.t` want CR+LF to fuse
+into one grapheme and this backend has no NFG, and
+`22-traited-variable-by-name.t` is about LEAVE phasers not receiving their
+value. That is the branch's documented baseline exactly: one known failure
+and two excluded NFG files. Clear `lib/.precomp`, `t/**/.precomp` and
+`~/.raku/precomp` before the run or it reports failures that are not there.
 
 ## Measured against the thing it replaces
 
@@ -380,6 +400,6 @@ Worth trying, in the order I would now bet on them:
    This is the same boundary that makes replacing newdisp the *tail* of
    moving code generation to Truffle rather than the head.
 
-Not yet done: rakudo's own test suite has not been run under the engine. And
-a grammar used once may never get hot enough to be compiled — a setting
-compile is the *favourable* case — so any cutover still needs a warmup story.
+Still open: a grammar used once may never get hot enough to be compiled — a
+setting compile is the *favourable* case — so any cutover needs a warmup
+story. Rakudo's own suite is no longer on this list; see Status.
