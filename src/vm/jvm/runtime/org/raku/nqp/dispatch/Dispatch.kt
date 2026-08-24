@@ -77,7 +77,30 @@ object Dispatch {
     @JvmStatic
     fun dispatch(site: DispatchCallSite, name: String, csIdx: Int, tc: ThreadContext,
                  args: Array<Any?>) {
-        dispatchWithDescriptor(site, name, descriptorFor(tc, csIdx), tc, args)
+        val d = descriptorFor(tc, csIdx)
+        /* Does the descriptor describe THESE arguments? Arity says the
+         * descriptor is the wrong one; a type clash with matching arity says
+         * the arguments are wrong. Distinguishing those is the whole
+         * question. */
+        if (!d.hasFlattening) {
+            var why: String? = null
+            if (args.size < d.numPositionals) why = "ARITY"
+            else for (i in 0 until d.numPositionals) {
+                val a = args[i]
+                val f = d.argFlags[i]
+                if (f == CallSiteDescriptor.ARG_STR && a != null && a !is String) { why = "TYPE@" + i; break }
+                if (f == CallSiteDescriptor.ARG_OBJ && a is DispatchCallSite) { why = "SITE@" + i; break }
+            }
+            if (why != null && badReports.incrementAndGet() <= 5) {
+                System.err.println("DISPATCH ENTRY BAD[" + why + "] name=" + name +
+                    " csIdx=" + csIdx + " numPos=" + d.numPositionals +
+                    " flags=" + d.argFlags.joinToString(",") + " nargs=" + args.size +
+                    " types=" + args.joinToString(",") { x -> x?.javaClass?.simpleName ?: "null" } +
+                    " cu=" + tc.frame.codeRef.staticInfo.compUnit.javaClass.name)
+                Throwable("dispatch entry bad").printStackTrace()
+            }
+        }
+        dispatchWithDescriptor(site, name, d, tc, args)
     }
 
     /**
@@ -167,6 +190,8 @@ object Dispatch {
         }
         record(tc, tc.gc.dispatchers.find(tc, name), theCsd, theArgs, null)
     }
+
+    private val badReports = java.util.concurrent.atomic.AtomicInteger()
 
     private fun descriptorFor(tc: ThreadContext, csIdx: Int): CallSiteDescriptor =
         if (csIdx >= 0)
@@ -391,6 +416,12 @@ object Dispatch {
             is Outcome.InvokeCode -> {
                 val callee = outcome.callee.evaluateRaw(record) as SixModelObject?
                 val args = outcome.args.evaluate(record)
+                /* Save and restore, as invokeCallback does: the callee can
+                 * dispatch, and clearing on the way out of the INNER dispatch
+                 * would leave this one with no pending record -- either
+                 * "Not currently recording a dispatch program", or worse, a
+                 * later dispatch tracking against the wrong capture. */
+                val outer = tc.pendingDispatch
                 tc.pendingDispatch = record
                 try {
                     Ops.invokeDirect(tc, callee, outcome.args.descriptor, args)
@@ -400,7 +431,7 @@ object Dispatch {
                     resumeAfterBindFailure(tc, record, failure.flag)
                 }
                 finally {
-                    tc.pendingDispatch = null
+                    tc.pendingDispatch = outer
                 }
             }
         }
