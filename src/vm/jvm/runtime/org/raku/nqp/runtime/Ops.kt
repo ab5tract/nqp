@@ -2500,7 +2500,14 @@ object Ops {
         if (obj is CallCaptureInstance) {
             val i = idx.toInt()
             if (obj.descriptor!!.argFlags[i] == CallSiteDescriptor.ARG_STR) {
-                return obj.args!![i] as String?
+                val v = obj.args!![i]
+                if (v != null && v !is String) {
+                    System.err.println("CAPTURE CORRUPT: captureposarg_s(" + i + ") flags=" +
+                        obj.descriptor!!.argFlags.joinToString(",") + " nargs=" + obj.args!!.size +
+                        " types=" + obj.args!!.joinToString(",") { a -> a?.javaClass?.simpleName ?: "null" })
+                    Throwable("capture corrupt").printStackTrace()
+                }
+                return v as String?
             }
             else {
                 throw ExceptionHandling.dieInternal(tc, "Expected native str argument")
