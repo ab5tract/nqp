@@ -279,13 +279,19 @@ object Dispatch {
         when (callback) {
             is DispatchCallback.Builtin -> callback.run(record, capture)
             is DispatchCallback.Code -> {
+                /* Save and restore rather than clear: a dispatcher callback
+                 * can itself dispatch, and clearing on the way out of the
+                 * INNER one would leave the outer recording with no pending
+                 * dispatch -- which is what "Not currently recording a
+                 * dispatch program" is. */
+                val outer = tc.pendingDispatch
                 tc.pendingDispatch = record
                 try {
                     Ops.invokeDirect(tc, callback.code, Ops.invocantCallSite,
                         arrayOf<Any?>(capture))
                 }
                 finally {
-                    tc.pendingDispatch = null
+                    tc.pendingDispatch = outer
                 }
             }
         }
