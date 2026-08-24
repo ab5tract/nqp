@@ -2633,7 +2633,7 @@ object Ops {
      * cached per method, so this stays a replay rather than recording a
      * dispatch program on every boolification or stringification. */
     private val helperDispatchSites =
-        java.util.concurrent.ConcurrentHashMap<SixModelObject, org.raku.nqp.dispatch.DispatchCallSite>()
+        java.util.concurrent.ConcurrentHashMap<Pair<SixModelObject, String>, org.raku.nqp.dispatch.DispatchCallSite>()
     private val helperDispatchSiteType =
         java.lang.invoke.MethodType.methodType(Void.TYPE)
 
@@ -2657,13 +2657,21 @@ object Ops {
             invokeDirect(tc, method, csd, args)
             return
         }
-        val site = helperDispatchSites.computeIfAbsent(method!!) {
-            org.raku.nqp.dispatch.DispatchCallSite(helperDispatchSiteType)
-        }
         val flags = ByteArray(csd.argFlags.size + 1)
         flags[0] = CallSiteDescriptor.ARG_OBJ
         csd.argFlags.copyInto(flags, 1)
         val fullCsd = CallSiteDescriptor(flags, csd.names)
+        /* Keyed by the argument SHAPE as well as the method. A DispatchCallSite
+         * caches the program recorded against the shape it first saw, so one
+         * site per method replays that program for a call of different arity --
+         * and the arguments then land in the wrong slots, which surfaces far
+         * away as a DispatchCallSite where a string was expected. */
+        val shapeKey = StringBuilder(flags.size + 8)
+        for (f in flags) shapeKey.append(f.toInt()).append(',')
+        fullCsd.names?.let { for (n in it) shapeKey.append(n).append(';') }
+        val site = helperDispatchSites.computeIfAbsent(Pair(method!!, shapeKey.toString())) {
+            org.raku.nqp.dispatch.DispatchCallSite(helperDispatchSiteType)
+        }
         val fullArgs = arrayOfNulls<Any>(args.size + 1)
         fullArgs[0] = method
         args.copyInto(fullArgs, 1)
