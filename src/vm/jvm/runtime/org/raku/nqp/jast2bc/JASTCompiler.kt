@@ -253,14 +253,25 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
         cw.visitEnd()
         c.bytes = cw.toByteArray()
 
-        /* HotSpot keeps per-class invokedynamic resolution state that is
-         * silently corrupted past 65535 indy instructions (observed on
-         * JDK 25.0.3: aliased callsites under JIT, SIGSEGV under -Xint).
-         * Refuse to emit a class in that regime rather than let it load. */
-        if (indyCount > 65535)
-            throw RuntimeException("Class " + className + " has " + indyCount
-                + " invokedynamic instructions, over the safe per-class limit of 65535"
-                + " (by bootstrap method: "
+        /* HotSpot gives a class one resolved-references array and indexes it
+         * with a 16-bit field. It holds one entry per invokedynamic
+         * INSTRUCTION -- sites sharing a constant pool entry still take one
+         * each -- plus one per string, class, method-handle, method-type and
+         * dynamic constant. Past 65535 the index wraps and the entries alias:
+         * a string constant reads back as another site's CallSite, and a
+         * bootstrap slot reads back as something that is not a MethodHandle,
+         * which the VM reports as "classfile must supply a valid BSM" or dies
+         * on (observed on JDK 25.0.3 and 25.0.4: aliased callsites under JIT,
+         * SIGSEGV under -Xint). Nothing downstream can detect it, so refuse to
+         * emit such a class. The QAST compiler keeps its indy sites under
+         * $INDY_SITE_BUDGET so this is a backstop, not the usual limiter. */
+        val constantRefs = countResolvedReferences(c.bytes!!)
+        val resolvedRefs = constantRefs + indyCount
+        if (resolvedRefs > 65535)
+            throw RuntimeException("Class " + className + " needs " + resolvedRefs
+                + " resolved references (" + indyCount + " invokedynamic instructions plus "
+                + constantRefs + " string/class/handle constants), over the JVM's"
+                + " per-class limit of 65535 (by bootstrap method: "
                 + indyByBsm.entries.sortedByDescending { it.value }
                     .joinToString(", ") { it.key + "=" + it.value }
                 + ")")
@@ -843,6 +854,32 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
         @Suppress("UNCHECKED_CAST")
         m.visitMethodInsn(callType, targetType.getInternalName(), methodName,
                 Type.getMethodDescriptor(returnType, *(argumentTypes as Array<Type>)))
+    }
+
+    /* Counts the constant pool entries that take a resolved-references slot:
+     * Class, String, MethodHandle, MethodType and Dynamic. Reads the emitted
+     * bytes rather than asking ASM, which does not expose its pool. */
+    private fun countResolvedReferences(bytes: ByteArray): Int {
+        fun u1(at: Int) = bytes[at].toInt() and 0xff
+        fun u2(at: Int) = (u1(at) shl 8) or u1(at + 1)
+        val count = u2(8)
+        var at = 10
+        var refs = 0
+        var i = 1
+        while (i < count) {
+            when (val tag = u1(at)) {
+                1 -> at += 3 + u2(at + 1)                       /* Utf8 */
+                7, 8, 16, 19, 20 -> { at += 3; if (tag != 19 && tag != 20) refs++ }
+                15 -> { at += 4; refs++ }                        /* MethodHandle */
+                17 -> { at += 5; refs++ }                        /* Dynamic */
+                18 -> at += 5                                    /* InvokeDynamic: counted per instruction */
+                3, 4, 9, 10, 11, 12 -> at += 5
+                5, 6 -> { at += 9; i++ }                         /* Long/Double take two slots */
+                else -> throw RuntimeException("Unknown constant pool tag $tag")
+            }
+            i++
+        }
+        return refs
     }
 
     /* Per-class invokedynamic instruction count; see the limit check after
