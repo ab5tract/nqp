@@ -53,6 +53,19 @@ my $TYPE_CSD        := 'Lorg/raku/nqp/runtime/CallSiteDescriptor;';
 my $TYPE_SMO        := 'Lorg/raku/nqp/sixmodel/SixModelObject;';
 my $TYPE_STR        := 'Ljava/lang/String;';
 my $TYPE_OBJ        := 'Ljava/lang/Object;';
+
+# How many invokedynamic instructions one compilation unit's class may hold.
+# HotSpot gives a class a single resolved-references array and indexes it with
+# a 16-bit field. It holds one entry per invokedynamic INSTRUCTION -- not per
+# constant pool entry, so sites sharing a bootstrap still take one each -- plus
+# one per string, class, method-handle and method-type constant. Past 65535 the
+# index wraps and entries alias: a string constant reads back as some other
+# site's CallSite, and a bootstrap slot reads back as something that is not a
+# MethodHandle, which the VM reports as "classfile must supply a valid BSM" or
+# dies on outright. Nothing downstream can detect that, so leave room for the
+# constants and put the dispatches that do not fit on the uncached invokestatic
+# path, which needs no resolved reference at all.
+my int $INDY_SITE_BUDGET := 48000;
 my $TYPE_MATH       := 'Ljava/lang/Math;';
 my $TYPE_MH         := 'Ljava/lang/invoke/MethodHandle;';
 my $TYPE_MT         := 'Ljava/lang/invoke/MethodType;';
@@ -584,13 +597,34 @@ my $chain_codegen := sub ($qastcomp, $op) {
         $il.append(JAST::PushSVal.new( :value('lang-call') ));
         $il.append(JAST::PushIndex.new( :value($cs_idx) ));
         $il.append($ALOAD_1);
-        $il.append(JAST::Instruction.new( :op('aload'), $calltmp ));
-        $il.append(JAST::Instruction.new( :op('aload'), $atmp ));
-        $il.append(JAST::Instruction.new( :op('aload'), $btmp ));
-        $il.append(savesite(JAST::InvokeDynamic.new(
-            'dispatch_noa', 'V', [$TYPE_STR, 'I', $TYPE_TC, $TYPE_SMO, $TYPE_SMO, $TYPE_SMO],
-            'org/raku/nqp/dispatch/DispatchBootstrap', 'dispatch_noa'
-        )));
+        if $*CODEREFS.take_indy_site() {
+            $il.append(JAST::Instruction.new( :op('aload'), $calltmp ));
+            $il.append(JAST::Instruction.new( :op('aload'), $atmp ));
+            $il.append(JAST::Instruction.new( :op('aload'), $btmp ));
+            $il.append(savesite(JAST::InvokeDynamic.new(
+                'dispatch_noa', 'V', [$TYPE_STR, 'I', $TYPE_TC, $TYPE_SMO, $TYPE_SMO, $TYPE_SMO],
+                'org/raku/nqp/dispatch/DispatchBootstrap', 'dispatch_noa'
+            )));
+        }
+        else {
+            # Out of resolved-reference budget; see $INDY_SITE_BUDGET. All three
+            # arguments are objects already in locals, so the array needs no
+            # boxing and the stack tracker is not involved.
+            my @tmps := [$calltmp, $atmp, $btmp];
+            $il.append(JAST::PushIndex.new( :value(3) ));
+            $il.append(JAST::Instruction.new( :op('anewarray'), $TYPE_OBJ ));
+            my int $ti := 0;
+            while $ti < 3 {
+                $il.append($DUP);
+                $il.append(JAST::PushIndex.new( :value($ti) ));
+                $il.append(JAST::Instruction.new( :op('aload'), @tmps[$ti] ));
+                $il.append($AASTORE);
+                $ti := $ti + 1;
+            }
+            $il.append(savesite(JAST::Instruction.new( :op('invokestatic'),
+                'Lorg/raku/nqp/dispatch/Dispatch;', 'dispatchWide', 'Void',
+                $TYPE_STR, 'Integer', $TYPE_TC, "[$TYPE_OBJ" )));
+        }
         $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
         $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
             'result_o', $TYPE_SMO, $TYPE_CF ));
@@ -1624,7 +1658,7 @@ sub emit_dispatch($qastcomp, $node, str $dispatcher, @args, :$str_second) {
     my $cs_idx := @argstuff[0];
     $*STACK.spill_to_locals($il);
 
-    if dispatch_arg_slots(@argstuff[1]) > 250 {
+    if dispatch_arg_slots(@argstuff[1]) > 250 || !$*CODEREFS.take_indy_site() {
         emit_wide_dispatch($il, $dispatcher, $cs_idx, @argstuff[1]);
         return result_from_cf($il, rttype_from_typeobj($node.returns));
     }
@@ -1848,7 +1882,7 @@ sub add_dispatcher_op($qastcomp, $op, str $prefix) {
     my $cs_idx := @argstuff[0];
     $*STACK.spill_to_locals($il);
 
-    if dispatch_arg_slots(@argstuff[1]) > 250 {
+    if dispatch_arg_slots(@argstuff[1]) > 250 || !$*CODEREFS.take_indy_site() {
         emit_wide_dispatch($il, $name_qast.value, $cs_idx, @argstuff[1]);
         return result_from_cf($il, rttype_from_typeobj($op.returns));
     }
@@ -3544,6 +3578,7 @@ class QAST::CompilerJAST {
         has @!cuids;
         has @!callsites;
         has %!callsite_map;
+        has int $!indy_sites;
 
         method BUILD() {
             $!cur_idx := 0;
@@ -3553,7 +3588,18 @@ class QAST::CompilerJAST {
             @!cuids := [];
             @!callsites := [];
             %!callsite_map := {};
+            $!indy_sites := 0;
         }
+
+        # Claims one of this class's invokedynamic sites, or returns false when
+        # the budget is spent and the caller must emit the uncached form.
+        method take_indy_site() {
+            return 0 if $!indy_sites >= $INDY_SITE_BUDGET;
+            $!indy_sites := $!indy_sites + 1;
+            1
+        }
+
+        method indy_sites() { $!indy_sites }
 
         method register_method($jastmeth, $cuid) {
             %!cuid_to_idx{$cuid} := $!cur_idx;
