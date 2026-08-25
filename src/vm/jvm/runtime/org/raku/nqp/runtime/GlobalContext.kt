@@ -342,6 +342,14 @@ class GlobalContext {
                 continue
             th.interrupt()
         }
+        /* The timer owns a live thread, and a live thread is a GC root: left
+         * running it keeps this context, and so the whole setting it loaded,
+         * reachable for as long as the process lives. That costs nothing when
+         * the process is about to end, but a server that runs many programs in
+         * turn accumulates one per run -- 45 of them after 45 runs, with the
+         * heap pinned at its ceiling and runs quietly producing no output. */
+        timer.cancel()
+
         mainThread = null
         currentThreadCtxRef = null
         @Suppress("DEPRECATION")
