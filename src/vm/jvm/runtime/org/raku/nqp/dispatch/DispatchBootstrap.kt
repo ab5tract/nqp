@@ -47,6 +47,27 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
     @JvmField var heat: Int = 0
 
     /**
+     * The target this site was linked with, kept so the site can be made cold
+     * again. See [DispatchBootstrap.resetAll].
+     */
+    @JvmField var coldTarget: MethodHandle? = null
+
+    /**
+     * Forgets everything recorded here, returning the site to the state it was
+     * linked in. The programs cached at a callsite guard on the types of the
+     * run that recorded them, and those belong to one GlobalContext; a process
+     * that runs unrelated programs in turn must not carry them over.
+     */
+    fun reset() {
+        programs = emptyArray()
+        chain = null
+        heat = 0
+        linkedName = null
+        staticDescriptor = null
+        coldTarget?.let { if (fromIndy) setTarget(it) }
+    }
+
+    /**
      * Adds a program to the cache. Past the limit the callsite is megamorphic
      * and we stop growing: dispatches still work by recording each time.
      */
@@ -73,6 +94,43 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
 
 /** Links dispatch instructions to the dispatch machinery. */
 object DispatchBootstrap {
+    /**
+     * Every callsite linked in this process. A long-lived process that runs
+     * unrelated programs in turn -- the eval server -- loads the compilation
+     * unit once, so its dispatch instructions, and the inline caches they
+     * carry, are shared by every run. Each run builds its own GlobalContext
+     * and so its own type universe, which a program recorded by an earlier run
+     * can never match; the re-recording that follows re-enters the same
+     * callsite and does not terminate. Handing each run cold caches keeps the
+     * loaded class -- which is the expensive part -- without carrying the
+     * recordings across.
+     */
+    private val linked = java.util.concurrent.ConcurrentLinkedQueue<DispatchCallSite>()
+
+    /**
+     * Per-run caches owned by layers above this one. The HLL runtime keeps
+     * dispatch state of its own that must go cold with everything else --
+     * rakudo's per-routine rv-decont sites held every run's routines, and
+     * through them each run's whole serialization-context graph, ~180MB a
+     * run -- but it cannot be named from here: nqp does not see rakudo.
+     * Whoever owns such a cache registers its clearing instead.
+     */
+    private val resettables = java.util.concurrent.CopyOnWriteArrayList<Runnable>()
+
+    @JvmStatic
+    fun registerResettable(action: Runnable) {
+        resettables.add(action)
+    }
+
+    /** Makes every callsite in this process cold again. */
+    @JvmStatic
+    fun resetAll() {
+        for (site in linked) site.reset()
+        org.raku.nqp.runtime.Ops.resetHelperDispatchSites()
+        org.raku.nqp.runtime.GrammarEngines.clearProgramCache()
+        for (action in resettables) action.run()
+    }
+
     @JvmStatic
     fun dispatch_noa(caller: Lookup, indyName: String, type: MethodType): CallSite {
         try {
@@ -85,10 +143,13 @@ object DispatchBootstrap {
              * follow the dispatcher name, callsite index and thread context)
              * into an array. */
             val site = DispatchCallSite(type, fromIndy = true)
-            site.setTarget(MethodHandles
+            val cold = MethodHandles
                 .insertArguments(handler, 0, site)
                 .asCollector(Array<Any>::class.java, type.parameterCount() - 3)
-                .asType(type))
+                .asType(type)
+            site.coldTarget = cold
+            site.setTarget(cold)
+            linked.add(site)
             return site
         }
         catch (e: Exception) {
