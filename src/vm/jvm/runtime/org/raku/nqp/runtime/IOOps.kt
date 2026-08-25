@@ -17,28 +17,23 @@ import org.raku.nqp.sixmodel.reprs.IOHandleInstance
  */
 object IOOps {
 
-    private class SigRunnable(tc: ThreadContext, schedulee: SixModelObject, signum: Long) : Runnable {
-        /* NOTE: shared static state assigned from the constructor is
-         * preserved from the Java original (multiple registered signal
-         * handlers would overwrite each other's schedulee there too). */
-        companion object {
-            var tc: ThreadContext? = null
-            var schedulee: SixModelObject? = null
-            var signum: Long = 0
-        }
-
-        init {
-            Companion.tc = tc
-            Companion.schedulee = schedulee
-            Companion.signum = signum
-        }
-
+    private class SigRunnable(val tc: ThreadContext, val schedulee: SixModelObject, val signum: Long) : Runnable {
         override fun run() {
-            val tc = Companion.tc!!
-            Ops.invokeDirect(tc, Companion.schedulee, Ops.invocantCallSite,
-                arrayOf<Any?>(Ops.box_i(Companion.signum, tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)))
+            Ops.invokeDirect(tc, schedulee, Ops.invocantCallSite,
+                arrayOf<Any?>(Ops.box_i(signum, tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)))
         }
     }
+
+    /* Registered signal schedulees, run by one JVM shutdown hook installed on
+     * first use. The Java original registered a hook per signal() call, which
+     * parked a Thread -- and the ThreadContext its runnable held, and through
+     * it the run's whole GlobalContext -- in ApplicationShutdownHooks until
+     * the JVM died; its handler state also lived in statics, so a later
+     * registration overwrote every earlier one. The registry is cleared with
+     * the dispatch caches between eval-server runs, so a finished run's
+     * handlers neither pin the run nor fire at server exit. */
+    private val signalRuns = java.util.concurrent.CopyOnWriteArrayList<SigRunnable>()
+    private val signalHooked = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private object SigProcess {
         private const val SIGNUM_HIGHEST = 32
@@ -158,8 +153,14 @@ object IOOps {
         task.queue = queue
         task.schedulee = schedulee
 
-        val sigrun: Runnable = SigRunnable(tc, schedulee, signalNum)
-        Runtime.getRuntime().addShutdownHook(Thread(sigrun))
+        if (signalHooked.compareAndSet(false, true)) {
+            Runtime.getRuntime().addShutdownHook(Thread {
+                for (sigrun in signalRuns)
+                    sigrun.run()
+            })
+            org.raku.nqp.dispatch.DispatchBootstrap.registerResettable { signalRuns.clear() }
+        }
+        signalRuns.add(SigRunnable(tc, schedulee, signalNum))
         return task
     }
 

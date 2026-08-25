@@ -79,6 +79,15 @@ object GrammarEngines {
     private val programs = java.util.concurrent.ConcurrentHashMap<String, Any>()
 
     /**
+     * Drops every compiled program. A compiled program is built against the
+     * run that first needed it and holds that run's objects, so a process
+     * running unrelated programs in turn keeps each one's whole setting alive
+     * through this cache. Clearing costs the next run its compilation again,
+     * which is the price of not carrying the previous run around.
+     */
+    fun clearProgramCache() = programs.clear()
+
+    /**
      * Traces every match to stderr as `rx <rule> <from>..<end>`.
      *
      * This is a RUN time switch, not a compile time one, which is the whole
