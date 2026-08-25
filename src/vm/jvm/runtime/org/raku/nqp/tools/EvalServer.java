@@ -38,6 +38,17 @@ public class EvalServer {
     private String cookiePath;
     private String mainPath;
 
+    /**
+     * Runs are carried out one at a time. Two things in a run are process-wide
+     * rather than per-connection: System.out/System.err, which each run
+     * redirects at its own socket, and the dispatch caches on the shared
+     * compilation unit, which each run resets before it starts. Letting two
+     * runs overlap means one redirects the other's output, and one hands the
+     * other cold caches midway through -- the same stale-cache state that
+     * makes a dispatch re-record without end.
+     */
+    private static final Object RUN_LOCK = new Object();
+
     private GlobalContext gc;
     private Class<?> cuType;
     private String cookie;
@@ -53,13 +64,13 @@ public class EvalServer {
     }
 
     public String run(String appPath, String[] argv) throws Exception {
+        gc = new GlobalContext();
         try {
             cuType = LibraryLoader.loadFile(appPath, gc.byteClassLoader, true);
         } catch (ThreadDeath td) {
             throw new RuntimeException("Couldn't loadFile. Your CLASSPATH might not be set up correctly.");
         }
 
-        gc = new GlobalContext();
         gc.in = new ByteArrayInputStream(new byte[0]);
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         gc.out = gc.err = new PrintStream( baos, true, "UTF-8" );
@@ -91,6 +102,29 @@ public class EvalServer {
     }
 
     private void run() throws Exception {
+        /* Ending a run is done by throwing ThreadDeath: GlobalContext.exit
+         * interrupts every other thread the run registered, and each unwinds
+         * that way. That is expected, but a thread dying of it reaches the
+         * default handler, which prints "Exception in thread ..." to
+         * System.err -- and a run has System.err pointed at its client socket,
+         * so the report lands in the middle of that run's TAP output and the
+         * harness sees a file with no plan. Threads left over from earlier runs
+         * make it worse as the server keeps going, which is what turned a
+         * working server into one that failed more files the longer it ran.
+         * An unwind is not news; report anything else. */
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+            if (e instanceof ThreadDeath) return;
+            System.err.println("Uncaught exception in " + t.getName() + ":");
+            e.printStackTrace();
+        });
+
+        /* The app class is loaded once here and reused by every request, which
+         * is the whole point of the server: a request pays for neither JVM
+         * startup nor class loading. Loading needs a class loader, and that
+         * lives on a GlobalContext, so the server holds one of its own; each
+         * request still gets a fresh GlobalContext (see ServiceThread) so that
+         * evals do not share state. */
+        gc = new GlobalContext();
         cuType = LibraryLoader.loadFile(mainPath, gc.byteClassLoader, true);
 
         SecureRandom rng = new SecureRandom();
@@ -160,6 +194,10 @@ public class EvalServer {
 
             @Override
             public void run() {
+                synchronized (RUN_LOCK) { runOne(); }
+            }
+
+            private void runOne() {
                 PrintStream orgOut = System.out;
                 PrintStream orgErr = System.err;
                 System.setOut(ops);
@@ -186,6 +224,13 @@ public class EvalServer {
             }
 
             private void eval() throws Exception {
+                /* The compilation unit is loaded once and shared, so its
+                 * dispatch callsites still hold what earlier runs recorded.
+                 * Those recordings guard on the previous run's types, which
+                 * belong to the GlobalContext built below and are gone; left
+                 * in place they never match and the re-recording re-enters the
+                 * callsite without end. */
+                org.raku.nqp.dispatch.DispatchBootstrap.resetAll();
                 GlobalContext gc = new GlobalContext();
                 gc.in = new ByteArrayInputStream(new byte[0]);
                 gc.out = gc.err = this.ops;

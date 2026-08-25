@@ -2641,6 +2641,13 @@ object Ops {
      * dispatch program on every boolification or stringification. */
     private val helperDispatchSites =
         java.util.concurrent.ConcurrentHashMap<Pair<SixModelObject, String>, org.raku.nqp.dispatch.DispatchCallSite>()
+
+    /* These are keyed by the method object, which belongs to one
+     * GlobalContext, so a process running unrelated programs in turn must drop
+     * them along with the instruction callsites; see
+     * DispatchBootstrap.resetAll. */
+    @JvmStatic
+    fun resetHelperDispatchSites() = helperDispatchSites.clear()
     private val helperDispatchSiteType =
         java.lang.invoke.MethodType.methodType(Void.TYPE)
 
