@@ -97,6 +97,15 @@ class RxProgram private constructor(
         const val RANGE1 = 16      // lo, hi, negate
         const val CHAR1 = 17       // codepoint, negate
 
+        /* (no operands) -- a newline, where a CR also consumes a directly
+         * following LF. The strings this backend matches are not NFG, so a
+         * "\r\n" is two characters; a consuming newline class must take
+         * both or every position after it is off by one on CRLF input. The
+         * bytecode engine does the same through Ops.checkcrlf. Negated and
+         * zero-width newline classes stay ordinary predicates: nothing is
+         * consumed, so there is no pair to keep whole. */
+        const val NL = 24
+
         /* CHAR flags. */
         const val F_NEGATE = 1
         const val F_ZEROWIDTH = 2
@@ -249,6 +258,7 @@ class RxProgram private constructor(
                 pred === RxTree.DIGIT -> op(DIGIT, 0)
                 pred === RxTree.WORD -> op(WORD, 0)
                 pred === RxTree.SPACE -> op(SPACE, 0)
+                pred === RxTree.NEWLINE -> op(NL)
                 pred is RxTree.Negated -> {
                     val of = pred.of
                     when {
