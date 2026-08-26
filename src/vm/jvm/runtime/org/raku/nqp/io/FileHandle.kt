@@ -75,11 +75,47 @@ class FileHandle(tc: ThreadContext, filename: String, mode: String) :
         } catch (e: IOException) {
             throw ExceptionHandling.dieInternal(tc, e)
         }
-        Runtime.getRuntime().addShutdownHook(Thread {
-            if (chan.isOpen) {
-                close(tc)
+        openHandles.removeIf { it.get() == null }
+        openHandles.add(java.lang.ref.WeakReference(this))
+    }
+
+    /* Close without a ThreadContext: at JVM exit there is no run left to
+     * report an error to. */
+    private fun closeAtExit() {
+        try {
+            val wb = writeBuffer
+            if (wb != null) {
+                wb.flip()
+                while (wb.hasRemaining())
+                    chan.write(wb)
+                wb.clear()
             }
-        })
+            chan.close()
+        } catch (e: IOException) {
+            /* exiting anyway */
+        }
+    }
+
+    companion object {
+        /* One JVM shutdown hook flushes every handle still open at exit.
+         * A hook per handle -- the old shape -- parks a Thread in
+         * ApplicationShutdownHooks until the JVM dies, and that Thread's
+         * closure held the opening run's ThreadContext, and through it the
+         * run's whole GlobalContext: in the eval server, every finished
+         * run's copy of the setting, forever. The weak references let a
+         * dead run's handles be collected with it. */
+        private val openHandles =
+            java.util.concurrent.ConcurrentLinkedQueue<java.lang.ref.WeakReference<FileHandle>>()
+
+        init {
+            Runtime.getRuntime().addShutdownHook(Thread {
+                for (ref in openHandles) {
+                    val h = ref.get() ?: continue
+                    if (h.chan.isOpen)
+                        h.closeAtExit()
+                }
+            })
+        }
     }
 
     override fun write(tc: ThreadContext, array: ByteArray): Long {

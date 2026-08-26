@@ -107,12 +107,28 @@ object DispatchBootstrap {
      */
     private val linked = java.util.concurrent.ConcurrentLinkedQueue<DispatchCallSite>()
 
+    /**
+     * Per-run caches owned by layers above this one. The HLL runtime keeps
+     * dispatch state of its own that must go cold with everything else --
+     * rakudo's per-routine rv-decont sites held every run's routines, and
+     * through them each run's whole serialization-context graph, ~180MB a
+     * run -- but it cannot be named from here: nqp does not see rakudo.
+     * Whoever owns such a cache registers its clearing instead.
+     */
+    private val resettables = java.util.concurrent.CopyOnWriteArrayList<Runnable>()
+
+    @JvmStatic
+    fun registerResettable(action: Runnable) {
+        resettables.add(action)
+    }
+
     /** Makes every callsite in this process cold again. */
     @JvmStatic
     fun resetAll() {
         for (site in linked) site.reset()
         org.raku.nqp.runtime.Ops.resetHelperDispatchSites()
         org.raku.nqp.runtime.GrammarEngines.clearProgramCache()
+        for (action in resettables) action.run()
     }
 
     @JvmStatic
