@@ -343,6 +343,53 @@ object Syscalls {
             val code = args.obj(0)
             bool(code is CodeRef && code.isCompilerStub)
         }
+        /* The capture-lex family works on the bare code handle, the way the
+         * raku-capture-lex(-callers) dispatchers hand it over after they
+         * unwrap the Code object. Frames are matched the way CallFrame's
+         * own outer hunt does: by method handle and compilation unit, which
+         * holds across CodeRef clones. */
+        define("try-capture-lex", OBJ) { args ->
+            val code = args.obj(0) as? CodeRef
+                ?: throw ExceptionHandling.dieInternal(args.tc,
+                    "try-capture-lex requires a code handle")
+            val wanted = code.staticInfo.outerStaticInfo
+            val cur = args.tc.curFrame
+            if (wanted != null && cur != null
+                    && cur.codeRef.staticInfo.mh === wanted.mh
+                    && cur.codeRef.staticInfo.compUnit === wanted.compUnit)
+                code.outer = cur
+            obj(null)
+        }
+        define("try-capture-lex-callers", OBJ) { args ->
+            val code = args.obj(0) as? CodeRef
+                ?: throw ExceptionHandling.dieInternal(args.tc,
+                    "try-capture-lex-callers requires a code handle")
+            val wanted = code.staticInfo.outerStaticInfo
+            if (wanted != null) {
+                var frame = args.tc.curFrame
+                while (frame != null) {
+                    if (frame.codeRef.staticInfo.mh === wanted.mh
+                            && frame.codeRef.staticInfo.compUnit === wanted.compUnit) {
+                        code.outer = frame
+                        break
+                    }
+                    frame = frame.caller
+                }
+            }
+            obj(null)
+        }
+        define("get-code-outer-ctx", OBJ) { args ->
+            val code = args.obj(0) as? CodeRef
+                ?: throw ExceptionHandling.dieInternal(args.tc,
+                    "get-code-outer-ctx requires a code handle")
+            val outer = code.outer
+                ?: throw ExceptionHandling.dieInternal(args.tc,
+                    "Specified code ref has no outer")
+            val contextRef = args.tc.gc.ContextRef!!
+            val wrap = contextRef.st.REPR.allocate(args.tc, contextRef.st)
+            (wrap as org.raku.nqp.sixmodel.reprs.ContextRefInstance).context = outer
+            obj(wrap)
+        }
         define("set-cur-hll-config-key", STR, OBJ) { args ->
             val config = args.tc.gc.getHLLConfigFor(
                 args.tc.frame.codeRef.staticInfo.compUnit.hllName())
