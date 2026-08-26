@@ -92,6 +92,39 @@ object NativeSupport {
     @JvmStatic
     fun fromCString(seg: MemorySegment?): String? = unbounded(seg)?.getString(0)
 
+    private val MALLOC by lazy {
+        LINKER.downcallHandle(
+            LINKER.defaultLookup().find("malloc").orElseThrow {
+                UnsatisfiedLinkError("This platform's C library exports no 'malloc'")
+            },
+            FunctionDescriptor.of(ValueLayout.ADDRESS, C_SIZE_T))
+    }
+
+    /**
+     * A C string owned by C code. An explicitly-managed string passes out of
+     * our hands entirely -- the callee is allowed to free() it, or to keep
+     * the pointer for as long as it likes -- so it must come from the C
+     * allocator: an arena's memory is a slice of a slab the arena will free
+     * again on collection, and a foreign free() of it corrupts the process
+     * heap. (The crash lands much later, wherever the allocator hands the
+     * poisoned chunks next: seen as SIGSEGVs in G1CodeRootSet::add and
+     * JVMCI's failed-speculation reader, and as glibc double-free aborts.)
+     * Nothing on this side ever frees these; not freeing what nobody frees
+     * is exactly the leak the caller signed up for.
+     */
+    @JvmStatic
+    fun mallocCString(value: String?): MemorySegment {
+        val bytes = (value ?: "").toByteArray(StandardCharsets.UTF_8)
+        val size = bytes.size + 1L
+        val raw = MALLOC.invokeWithArguments(size) as MemorySegment
+        if (raw.address() == 0L)
+            throw OutOfMemoryError("malloc of $size bytes for a C string failed")
+        val seg = raw.reinterpret(size)
+        MemorySegment.copy(bytes, 0, seg, ValueLayout.JAVA_BYTE, 0L, bytes.size)
+        seg.set(ValueLayout.JAVA_BYTE, bytes.size.toLong(), 0)
+        return seg
+    }
+
     private val libraries = ConcurrentHashMap<String, SymbolLookup>()
 
     @JvmStatic
