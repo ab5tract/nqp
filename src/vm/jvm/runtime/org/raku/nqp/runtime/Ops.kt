@@ -4667,8 +4667,12 @@ object Ops {
         // If it has a Str method, that wins.
         // We could put this in the generated code, but it's here to avoid the
         // bulk.
-        val strMeth = if (o.st.MethodCache == null) null else o.st.MethodCache!!.get("Str")
-        if (isnull(strMeth) == 0L) {
+        // Full resolution, not just the published cache: a HOW that answers
+        // find_method itself (the cache un-authoritative or absent) supplies
+        // Str here on MoarVM, so it must on the JVM too. The concreteness
+        // test is the dispatcher's as well.
+        val strMeth = findmethodNonFatal(o, "Str", tc)
+        if (isnull(strMeth) == 0L && isconcrete(strMeth, tc) == 1L) {
             invokeMethodViaDispatch(tc, strMeth, o)
             return result_s(tc.frame)
         }
@@ -4696,57 +4700,53 @@ object Ops {
     fun smart_numify(obj: SixModelObject?, tc: ThreadContext): Double {
         val o = decont(obj, tc)
 
-        // If it's null, it's 0.0
+        // The nqp-numify dispatcher's case order, so the backends agree:
+        // null, concrete num unbox, Num method, type object, elems,
+        // boxed str, boxed int.
         if (isnull(o) == 1L)
             return 0.0
 
-        // If it can unbox as an int or a num, that wins right off.
         val ss = o!!.st.REPR.get_storage_spec(tc, o.st)
-        if (Boxable.INT in ss.canBox)
-            return o.get_int(tc).toDouble()
-        if (Boxable.NUM in ss.canBox)
+        if (Boxable.NUM in ss.canBox && o !is TypeObject)
             return o.get_num(tc)
 
-        // Otherwise, look for a Num method.
-        val numMeth = o.st.MethodCache?.get("Num")
-        if (isnull(numMeth) == 0L) {
+        val numMeth = findmethodNonFatal(o, "Num", tc)
+        if (isnull(numMeth) == 0L && isconcrete(numMeth, tc) == 1L) {
             invokeMethodViaDispatch(tc, numMeth, o)
             return result_n(tc.frame)
         }
 
-        // If it's a type object, zero.
         if (o is TypeObject)
             return 0.0
 
-        // See if it can unbox to a primitive we can numify.
-        if (Boxable.STR in ss.canBox)
-            return coerce_s2n(o.get_str(tc))
         if (o is VMArrayInstance || o is VMHashInstance)
             return o.elems(tc).toDouble()
+        if (Boxable.STR in ss.canBox)
+            return coerce_s2n(o.get_str(tc))
+        if (Boxable.INT in ss.canBox)
+            return o.get_int(tc).toDouble()
 
-        // If anything else, we can't do it.
         throw ExceptionHandling.dieInternal(tc, "Cannot numify this")
     }
     @JvmStatic
     fun smart_intify(obj: SixModelObject?, tc: ThreadContext): Long {
         val o = decont(obj, tc)
 
-        // If it's null, it's 0
+        // The nqp-intify dispatcher's case order, so the backends agree:
+        // null, concrete int unbox, Int method, type object, elems,
+        // boxed str, boxed num.
         if (isnull(o) == 1L)
             return 0
 
-        // If it can unbox as an int or a num, that wins right off.
         val ss = o!!.st.REPR.get_storage_spec(tc, o.st)
-        if (Boxable.INT in ss.canBox)
+        if (Boxable.INT in ss.canBox && o !is TypeObject)
             return o.get_int(tc)
-        if (Boxable.NUM in ss.canBox)
-            return o.get_num(tc).toLong()
 
-        // Otherwise, look for an Int method. Through the dispatcher: a
-        // raw invocation of an onlystar proto's {*} would resume whatever
-        // unrelated dispatch is innermost (see invokeMethodViaDispatch).
-        val intMeth = o.st.MethodCache?.get("Int")
-        if (isnull(intMeth) == 0L) {
+        // Through the dispatcher: a raw invocation of an onlystar proto's
+        // {*} would resume whatever unrelated dispatch is innermost (see
+        // invokeMethodViaDispatch).
+        val intMeth = findmethodNonFatal(o, "Int", tc)
+        if (isnull(intMeth) == 0L && isconcrete(intMeth, tc) == 1L) {
             invokeMethodViaDispatch(tc, intMeth, o)
             return result_i(tc.frame)
         }
@@ -4755,13 +4755,13 @@ object Ops {
         if (o is TypeObject)
             return 0
 
-        // See if it can unbox to a primitive we can numify.
-        if (Boxable.STR in ss.canBox)
-            return coerce_s2i(o.get_str(tc))
         if (o is VMArrayInstance || o is VMHashInstance)
             return o.elems(tc)
+        if (Boxable.STR in ss.canBox)
+            return coerce_s2i(o.get_str(tc))
+        if (Boxable.NUM in ss.canBox)
+            return o.get_num(tc).toLong()
 
-        // If anything else, we can't do it.
         throw ExceptionHandling.dieInternal(tc, "Cannot intify this")
     }
 
