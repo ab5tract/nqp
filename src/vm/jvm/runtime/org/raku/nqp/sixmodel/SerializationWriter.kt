@@ -798,7 +798,10 @@ class SerializationWriter(
             val names = cf.codeRef.staticInfo.oLexicalNames!!
             for (i in oLex.indices) {
                 writeStr(names[i])
-                writeRef(oLex[i])
+                /* Vivify before writing: a clone-flagged lexical the frame
+                 * never read must serialize as this frame's own clone, not
+                 * as the vivification marker. */
+                writeRef(cf.oLexOrVivify(i))
             }
         }
         if (iLex != null) {

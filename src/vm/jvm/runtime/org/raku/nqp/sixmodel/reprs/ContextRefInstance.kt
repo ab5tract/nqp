@@ -11,7 +11,7 @@ class ContextRefInstance : SixModelObject() {
 
     override fun at_key_boxed(tc: ThreadContext, key: String?): SixModelObject? {
         val idx = context.codeRef.staticInfo.oTryGetLexicalIdx(key!!)
-        return if (idx == -1) Ops.createNull(tc) else context.oLex!![idx]
+        return if (idx == -1) Ops.createNull(tc) else context.oLexOrVivify(idx)
     }
 
     override fun at_key_native(tc: ThreadContext, key: String?) {
