@@ -2647,7 +2647,10 @@ object Ops {
      * them along with the instruction callsites; see
      * DispatchBootstrap.resetAll. */
     @JvmStatic
-    fun resetHelperDispatchSites() = helperDispatchSites.clear()
+    fun resetHelperDispatchSites() {
+        helperDispatchSites.clear()
+        resetLangCallSites()
+    }
     private val helperDispatchSiteType =
         java.lang.invoke.MethodType.methodType(Void.TYPE)
 
@@ -2731,6 +2734,38 @@ object Ops {
         /* Invoke with the descriptor and arg list. */
         invokeDirect(tc, invokee, CallSiteDescriptor(callsite, null), args)
     }
+    /* Dispatch sites for invocations routed through the HLL's registered
+     * call dispatcher (lang-call -> raku-invoke on Raku). Keyed by the code
+     * object and callsite descriptor identity, so each shape records its own
+     * program; the map drops with the rest of the dispatch state between
+     * eval-server runs (see resetHelperDispatchSites' registration). */
+    private val langCallSites =
+        java.util.concurrent.ConcurrentHashMap<Pair<SixModelObject, CallSiteDescriptor>, org.raku.nqp.dispatch.DispatchCallSite>()
+
+    /* Invoke an HLL code object through its language's registered call
+     * dispatcher, as MoarVM's lang-call does for every call site. This is
+     * what runs raku-invoke on the JVM: custom dispatchers, CALL-ME, wrapper
+     * handling and revision gating all live in the dispatcher, none of which
+     * the InvocationSpec shortcut below can see. */
+    private fun invokeViaCallDispatcher(tc: ThreadContext, invokee: SixModelObject,
+                                        csd: CallSiteDescriptor, args: Array<Any?>) {
+        val flags = ByteArray(csd.argFlags.size + 1)
+        flags[0] = CallSiteDescriptor.ARG_OBJ
+        csd.argFlags.copyInto(flags, 1)
+        val fullCsd = CallSiteDescriptor(flags, csd.names)
+        val site = langCallSites.computeIfAbsent(Pair(invokee, csd)) {
+            org.raku.nqp.dispatch.DispatchCallSite(helperDispatchSiteType)
+        }
+        val fullArgs = arrayOfNulls<Any>(args.size + 1)
+        fullArgs[0] = invokee
+        args.copyInto(fullArgs, 1)
+        org.raku.nqp.dispatch.Dispatch.dispatchWithDescriptor(site, "lang-call",
+            fullCsd, tc, fullArgs)
+    }
+
+    @JvmStatic
+    fun resetLangCallSites() = langCallSites.clear()
+
     @JvmStatic
     fun invokeDirect(tc: ThreadContext, invokee: SixModelObject?, csd: CallSiteDescriptor, args: Array<Any?>) {
         invokeDirect(tc, invokee, csd, true, args)
@@ -2745,6 +2780,11 @@ object Ops {
             cr = invokee
         }
         else {
+            if (invokee != null && invokee.stInitialized
+                    && invokee.st.hllOwner?.callDispatcher != null) {
+                invokeViaCallDispatcher(tc, invokee, callSite, argList)
+                return
+            }
             val invSpec = invokee!!.st.InvocationSpec
                 ?: throw ExceptionHandling.dieInternal(tc, "Cannot invoke this object")
             if (isnull(invSpec.ClassHandle) == 0L)
@@ -4668,7 +4708,7 @@ object Ops {
             return o.get_num(tc)
 
         // Otherwise, look for a Num method.
-        val numMeth = o.st.MethodCache!!.get("Num")
+        val numMeth = o.st.MethodCache?.get("Num")
         if (isnull(numMeth) == 0L) {
             invokeMethodViaDispatch(tc, numMeth, o)
             return result_n(tc.frame)
@@ -4702,10 +4742,12 @@ object Ops {
         if (Boxable.NUM in ss.canBox)
             return o.get_num(tc).toLong()
 
-        // Otherwise, look for an Int method.
-        val intMeth = o.st.MethodCache!!.get("Int")
+        // Otherwise, look for an Int method. Through the dispatcher: a
+        // raw invocation of an onlystar proto's {*} would resume whatever
+        // unrelated dispatch is innermost (see invokeMethodViaDispatch).
+        val intMeth = o.st.MethodCache?.get("Int")
         if (isnull(intMeth) == 0L) {
-            invokeDirect(tc, intMeth, invocantCallSite, arrayOf<Any?>(o))
+            invokeMethodViaDispatch(tc, intMeth, o)
             return result_i(tc.frame)
         }
 
