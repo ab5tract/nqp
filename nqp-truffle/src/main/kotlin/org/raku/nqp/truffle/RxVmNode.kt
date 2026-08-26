@@ -113,6 +113,22 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     }
                 }
 
+                RxProgram.NL -> {
+                    if (pos >= eos) {
+                        failed = true
+                    } else {
+                        val cp = target.codePointAt(pos)
+                        if (cp != '\n'.code && cp != '\r'.code) {
+                            failed = true
+                        } else {
+                            pos += 1
+                            if (cp == '\r'.code && pos < eos && target[pos] == '\n')
+                                pos += 1
+                            pc += 1
+                        }
+                    }
+                }
+
                 RxProgram.CHAR1 -> {
                     if (pos >= eos) {
                         failed = true
