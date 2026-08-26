@@ -78,7 +78,11 @@ class TruffleGrammarEngine : GrammarEngine {
             while (at <= eos) {
                 end = p.target.call(target, at, rx) as Int
                 if (end >= 0) break
-                at++
+                /* By atom, not by char: a CR directly followed by LF is one
+                 * fused pair (RxProgram.CRLF), and an NFG backend has no
+                 * position inside it to offer a match. Stepping into the LF
+                 * would let <[\x0A]> find a newline NFG says is not there. */
+                at += if (at < eos - 1 && target[at] == '\r' && target[at + 1] == '\n') 2 else 1
             }
             if (end < 0) at = from
         } else {

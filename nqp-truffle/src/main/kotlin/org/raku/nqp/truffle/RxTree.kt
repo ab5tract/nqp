@@ -170,6 +170,8 @@ object RxTree {
             this(name, zeroWidth, negate, capture, null)
     }
 
+    /**
+
     /** rxtype subcapture. */
     @JvmRecord
     data class Capture(val name: String, val body: Node) : Node
@@ -189,20 +191,28 @@ object RxTree {
      * static fields, which is what the identity comparisons in
      * RxProgram.Builder rely on. */
 
+    /* Where a predicate mentions RxProgram.CRLF: that is the fused CR LF
+     * pair (see its definition). It is whitespace, vertical, and a newline
+     * -- the properties NFG gives the grapheme -- and nothing else: not a
+     * word character, not in any codepoint range, not equal to CR or LF
+     * alone. */
+
     @JvmField val ANY: RxProgram.CharPred = RxProgram.CharPred { true }
     @JvmField val DIGIT: RxProgram.CharPred = RxProgram.CharPred { Character.isDigit(it) }
-    @JvmField val SPACE: RxProgram.CharPred = RxProgram.CharPred { Character.isWhitespace(it) }
+    @JvmField val SPACE: RxProgram.CharPred = RxProgram.CharPred {
+        it == RxProgram.CRLF || Character.isWhitespace(it)
+    }
     @JvmField val WORD: RxProgram.CharPred =
         RxProgram.CharPred { Character.isLetterOrDigit(it) || it == '_'.code }
     @JvmField val NEWLINE: RxProgram.CharPred =
-        RxProgram.CharPred { it == '\n'.code || it == '\r'.code }
+        RxProgram.CharPred { it == '\n'.code || it == '\r'.code || it == RxProgram.CRLF }
     @JvmField val VSPACE: RxProgram.CharPred = RxProgram.CharPred {
-        it == '\n'.code || it == '\r'.code || it == 0x0B || it == 0x0C ||
-            it == 0x85 || it == 0x2028 || it == 0x2029
+        it == '\n'.code || it == '\r'.code || it == RxProgram.CRLF ||
+            it == 0x0B || it == 0x0C || it == 0x85 || it == 0x2028 || it == 0x2029
     }
     @JvmField val HSPACE: RxProgram.CharPred = RxProgram.CharPred {
         it == ' '.code || it == '\t'.code ||
-            (Character.isSpaceChar(it) && it != '\n'.code && it != '\r'.code)
+            (it >= 0 && Character.isSpaceChar(it) && it != '\n'.code && it != '\r'.code)
     }
 
     /* Named rather than lambdas so RxProgram can recognise them and give
@@ -225,15 +235,29 @@ object RxTree {
      * non-BMP character, and comparing against a truncated char would let
      * half a surrogate pair decide the answer. Java's String.indexOf(int)
      * does the same thing; Kotlin has no overload for it.
+     *
+     * A CR directly followed by LF in the list is read as one member -- the
+     * fused pair, equal only to RxProgram.CRLF -- because that is what the
+     * list means on an NFG backend, where the two codepoints became one
+     * grapheme the moment the string was made. The front end relies on it:
+     * a standalone \v appends "\r\n" to its enumeration to say the pair is
+     * in the class, while the in-class \v lists only single codepoints. It
+     * cuts the other way too: <[\x0D\x0A]> holds only the pair, so a lone
+     * CR is not a member, exactly as on MoarVM.
      */
     @JvmStatic
     fun anyOf(chars: String): RxProgram.CharPred = RxProgram.CharPred { cp ->
         var at = 0
         var found = false
         while (at < chars.length) {
-            val here = chars.codePointAt(at)
-            if (here == cp) { found = true; break }
-            at += Character.charCount(here)
+            if (chars[at] == '\r' && at + 1 < chars.length && chars[at + 1] == '\n') {
+                if (cp == RxProgram.CRLF) { found = true; break }
+                at += 2
+            } else {
+                val here = chars.codePointAt(at)
+                if (here == cp) { found = true; break }
+                at += Character.charCount(here)
+            }
         }
         found
     }
