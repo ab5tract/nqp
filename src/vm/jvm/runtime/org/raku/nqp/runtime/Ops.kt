@@ -1151,7 +1151,7 @@ object Ops {
     @JvmStatic
     fun getlex_s(cf: CallFrame, i: Int): String? { return cf.sLex!![i] }
     @JvmStatic
-    fun getlex_o(cf: CallFrame, i: Int): SixModelObject? { return cf.oLex!![i] }
+    fun getlex_o(cf: CallFrame, i: Int): SixModelObject? { return cf.oLexOrVivify(i) }
 
     /* Lexical binding in current scope. */
     @JvmStatic
@@ -1204,7 +1204,7 @@ object Ops {
         var s = si
         while (s-- > 0)
             frame = frame.outer!!
-        return frame.oLex!![i]
+        return frame.oLexOrVivify(i)
     }
 
     /* Lexical binding in outer scope. */
@@ -1261,7 +1261,7 @@ object Ops {
         while (curFrame != null) {
             val found = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (found != -1)
-                return curFrame.oLex!![found]
+                return curFrame.oLexOrVivify(found)
             curFrame = curFrame.outer
         }
         return createNull(tc)
@@ -1316,7 +1316,7 @@ object Ops {
         while (curFrame != null) {
             val found = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (found != -1)
-                return curFrame.oLex!![found]
+                return curFrame.oLexOrVivify(found)
             curFrame = curFrame.outer
         }
         throw ExceptionHandling.dieInternal(tc, "Lexical '" + name + "' not found")
@@ -1610,7 +1610,7 @@ object Ops {
         while (curFrame != null) {
             val idx = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (idx != -1)
-                return curFrame.oLex!![idx]
+                return curFrame.oLexOrVivify(idx)
             curFrame = curFrame.caller
         }
         return createNull(tc)
@@ -1623,7 +1623,7 @@ object Ops {
             while (curFrame != null) {
                 val found = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
                 if (found != -1)
-                    return curFrame.oLex!![found]
+                    return curFrame.oLexOrVivify(found)
                 curFrame = curFrame.outer
             }
             curCallerFrame = curCallerFrame.caller
@@ -1639,7 +1639,7 @@ object Ops {
             while (curFrame != null) {
                 val found = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
                 if (found != -1)
-                    return curFrame.oLex!![found]
+                    return curFrame.oLexOrVivify(found)
                 curFrame = curFrame.outer
             }
             return createNull(tc)
@@ -1655,7 +1655,7 @@ object Ops {
             while (curFrame != null) {
                 val idx = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
                 if (idx != -1)
-                    return curFrame.oLex!![idx]
+                    return curFrame.oLexOrVivify(idx)
                 curFrame = curFrame.caller
             }
             return createNull(tc)
@@ -1673,7 +1673,7 @@ object Ops {
                 while (curFrame != null) {
                     val found = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
                     if (found != -1)
-                        return curFrame.oLex!![found]
+                        return curFrame.oLexOrVivify(found)
                     curFrame = curFrame.outer
                 }
                 curCallerFrame = curCallerFrame.caller
