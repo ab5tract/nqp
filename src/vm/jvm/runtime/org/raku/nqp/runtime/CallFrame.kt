@@ -29,6 +29,16 @@ class CallFrame : Cloneable {
         const val RET_STR = 3
         const val RET_UINT = 10
 
+        /**
+         * Marks a clone-flagged lexical slot whose static value has not
+         * been cloned into the frame yet. A distinct marker rather than
+         * null because null is also a value: a lexical explicitly bound
+         * to null (a cache-miss result, say) must read back as null, not
+         * resurrect the static clone. Binds overwrite the marker without
+         * having to know it exists.
+         */
+        @JvmField val UNVIVIFIED: SixModelObject = object : SixModelObject() {}
+
         // Does work needed to leave this callframe.
         private val exitHandlerCallSite = CallSiteDescriptor(
             byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_OBJ), null)
@@ -175,8 +185,13 @@ class CallFrame : Cloneable {
                 when (sci.oLexStaticFlags!![i].toInt()) {
                     0 ->
                         oLex[i] = oLexStatic[i]
-                    1 ->
-                        oLex[i] = oLexStatic[i]!!.clone(tc)
+                    1 -> {
+                        /* Cloned on first read (oLexOrVivify). The lazy
+                         * timing is load-bearing, not an optimization:
+                         * see that method. */
+                        if (oLexStatic[i] != null)
+                            oLex[i] = UNVIVIFIED
+                    }
                     2 -> {
                         var oLexState = cr.oLexState
                         if (oLexState == null) {
@@ -308,6 +323,26 @@ class CallFrame : Cloneable {
             if (ctx.outer == null)
                 ctx.outer = this
         }
+    }
+
+    /**
+     * The object lexical at idx, vivifying a clone-flagged static value on
+     * its first read, as MoarVM's MVM_frame_vivify_lexical does. The lazy
+     * timing is semantics, not thrift: a P6opaque clone is shallow, so a
+     * clone taken after a BEGIN-compiled closure has written through the
+     * master container shares the master's storage, while an entry-time
+     * clone of the still-empty master shares nothing. Rakudo's traited
+     * variables (Variable.willdo phasers) depend on the former. Every
+     * reader of oLex slots must come through here (or bind first).
+     */
+    fun oLexOrVivify(idx: Int): SixModelObject? {
+        val oLex = this.oLex ?: return null
+        val existing = oLex[idx]
+        if (existing !== UNVIVIFIED)
+            return existing
+        val vivified = codeRef.staticInfo.oLexStatic!![idx]!!.clone(tc)
+        oLex[idx] = vivified
+        return vivified
     }
 
     fun autoClose(wanted: StaticCodeInfo) {

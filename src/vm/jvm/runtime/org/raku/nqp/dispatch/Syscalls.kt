@@ -424,6 +424,42 @@ object Syscalls {
             Ops.jvmfinishnested(args.str(0), args.tc)
             void
         }
+
+        /* Re-points code objects that a BEGIN-time dynamic compilation
+         * bound to its nested unit's code refs at the invoking unit's own
+         * emission of the same cuids. The registry maps cuid to a list of
+         * [original-code-object-or-null, clone...]; the original takes the
+         * unit's code ref itself, each clone a fresh clone of it whose
+         * outer is then captured from the live frames at invocation. Run
+         * from a unit's post-deserialize fixups, so the current frame
+         * belongs to the unit whose code refs are wanted. */
+        define("jvm-repoint-dynamic-code", OBJ, OBJ) { args ->
+            val registry = args.obj(0)
+            val codeType = args.obj(1)
+            val tc = args.tc
+            val cu = tc.curFrame!!.codeRef.staticInfo.compUnit
+            if (registry is org.raku.nqp.sixmodel.reprs.VMHashInstance) {
+                for ((cuid, entries) in registry.storage) {
+                    val target = cu.lookupCodeRef(cuid) ?: continue
+                    if (entries == null) continue
+                    val n = entries.elems(tc)
+                    var i = 0L
+                    while (i < n) {
+                        val codeObj = entries.at_pos_boxed(tc, i)
+                        if (codeObj != null && Ops.isnull(codeObj) == 0L) {
+                            val newDo = if (i == 0L) target else target.clone(tc)
+                            codeObj.bind_attribute_boxed(tc, codeType, "${'$'}!do",
+                                org.raku.nqp.sixmodel.STable.NO_HINT, newDo)
+                            if (codeObj.sc != null)
+                                Ops.scwbObject(tc, codeObj)
+                            Ops.setcodeobj(newDo, codeObj, tc)
+                        }
+                        i++
+                    }
+                }
+            }
+            void
+        }
     }
 
     private fun insertLiteral(args: SyscallArgs, value: DispatchValue): SixModelObject {
