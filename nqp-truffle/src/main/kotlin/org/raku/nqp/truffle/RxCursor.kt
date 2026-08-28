@@ -114,6 +114,19 @@ interface RxCursor {
     /** Captures a cursor a rule produced, under a name. */
     fun captureCursor(name: String, subCursor: Any?)
 
+    /**
+     * Takes back captures, keeping only the first [entries] the engine made.
+     *
+     * The engine holds captures pending and hands them over at the end --
+     * except that a rule's own code (`{ ... }`) is entitled to see the
+     * captures made so far through `$/`, so the engine syncs pending
+     * captures to the cursor before running a callback. A later backtrack
+     * past a synced capture then has to undo the cursor's record of it,
+     * which the bytecode path does through its bstack marks and the engine
+     * does with this.
+     */
+    fun truncateCaptures(entries: Int)
+
     companion object {
         @JvmField
         val NO_BRANCHES = IntArray(0)
@@ -144,6 +157,8 @@ interface RxCursor {
         override fun captureSpan(name: String, from: Int, to: Int) { }
 
         override fun captureCursor(name: String, subCursor: Any?) { }
+
+        override fun truncateCaptures(entries: Int) { }
 
         /* No grammar, so no NFA and no alternation to order. */
         override fun altOrder(name: String, pos: Int, branches: Int): IntArray = NO_BRANCHES
