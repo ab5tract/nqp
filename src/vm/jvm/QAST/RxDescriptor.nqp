@@ -26,6 +26,7 @@ class QAST::RxDescriptor {
     #   uniprop        Unicode property tests, <:Alpha>
     #   subrule-args   subrule calls carrying literal arguments
     #   goal           the `~` construct
+    #   backtrack      backtrackable (non-ratcheted) rules without subrules
     my %rx_no;
     my int $rx_no_read := 0;
     sub rx_refuses(str $feature) {
@@ -118,6 +119,8 @@ class QAST::RxDescriptor {
     has int $!scan;
     has int $!bailed;
     has int $!survey;
+    has int $!backtrackable;
+    has int $!has_sub;
 
     # The descriptor for a QAST::Regex tree, or null when it uses something
     # the engine does not implement yet.
@@ -135,9 +138,16 @@ class QAST::RxDescriptor {
             nqp::existskey(nqp::getenvhash(), 'NQP_RX_SURVEY') ?? 1 !! 0);
         $self.inspect_pass($node);
         $self.walk($node);
+        # Decided after the walk, which is what knows whether any subrule
+        # was called: see inspect_pass for why the pairing is refused.
+        $self.bail('backtrackable rule with subrules')
+            if $self.backtrackable && $self.has_sub;
         $self.report if $self.survey;
         $self.bailed ?? nqp::null() !! $self
     }
+
+    method backtrackable() { $!backtrackable }
+    method has_sub() { $!has_sub }
 
     method survey() { $!survey }
 
@@ -164,13 +174,24 @@ class QAST::RxDescriptor {
     #
     # Two separate things are settled here, both from the pass node:
     #
-    # 1. Whether the rule can be re-entered to yield its next match. The
-    #    bytecode path keeps its choice points in the cursor's bstack, so a
-    #    rule that passed with :backtrack can be resumed later and match
-    #    differently. The engine's choice points live in one match call and
-    #    are gone when it returns, so a resumed rule would answer its first
-    #    match forever -- a wrong parse rather than a slow one. NQP's `token`
-    #    and `rule` are ratcheted and never resumed; `regex` is not.
+    # 1. Whether the rule backtracks, and how far the engine can honor that.
+    #    Backtracking INSIDE one match call is the engine's native
+    #    discipline -- SPLIT choice points, greedy and frugal quantifiers --
+    #    so a backtrackable rule as such is fine. What the engine cannot do
+    #    is re-enter: the bytecode path keeps its choice points in the
+    #    cursor's bstack, so a rule that passed with :backtrack can be
+    #    resumed later (`!cursor_next`) and match differently, while the
+    #    engine's choice points live in one match call and are gone when it
+    #    returns. That bites in one place a parse meets routinely: a
+    #    backtrackable rule that CALLS subrules must resume a subrule's own
+    #    next match when it backtracks past it, and the engine can only
+    #    re-run the call fresh. So that pairing is refused -- decided in
+    #    encode, after the walk, which is when the subrule calls have been
+    #    seen. A backtrackable rule with no subrule calls keeps every choice
+    #    point internal and encodes. Resuming such a rule from OUTSIDE
+    #    (exhaustive `:ex`-style matching of an already-passed cursor) still
+    #    answers no further match; that is the remaining divergence, and
+    #    `NQP_RX_NO=backtrack` refuses the whole feature for bisecting it.
     #
     # 2. The name to pass to !cursor_pass, which is what makes it reduce and
     #    build the match tree. Dropping it would give a rule that matches the
@@ -189,7 +210,10 @@ class QAST::RxDescriptor {
             # A computed name, known only while the rule runs.
             self.bail('computed pass name');
         }
-        self.bail('backtrackable rule') unless $pass.backtrack eq 'r';
+        unless $pass.backtrack eq 'r' {
+            nqp::bindattr_i(self, QAST::RxDescriptor, '$!backtrackable', 1);
+            self.bail('backtrackable rule (refused)') if rx_refuses('backtrack');
+        }
     }
 
     method find_pass($node) {
@@ -291,6 +315,8 @@ class QAST::RxDescriptor {
     # A call through a variable keeps the bytecode path: the engine has a name
     # to call, not a code object to invoke.
     method subrule_call($node) {
+        # Noted for encode's backtrackable check, whatever comes of the call.
+        nqp::bindattr_i(self, QAST::RxDescriptor, '$!has_sub', 1);
         return self.bail('subrule via a variable')
             unless nqp::istype($node[0], QAST::Node)
                 && nqp::elems($node[0]) >= 1

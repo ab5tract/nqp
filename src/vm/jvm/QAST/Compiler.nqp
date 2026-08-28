@@ -6356,14 +6356,17 @@ class QAST::CompilerJAST {
     # the cursor, whose $!pos is -3 until the rule finishes -- reading it
     # there would start every match at a negative offset.
     #
-    # The restart slot is not consulted because it cannot be set: only a rule
-    # that passed with :backtrack is ever resumed, and the descriptor refuses
-    # those.
+    # The restart slot IS consulted, though the engine cannot honor it: a
+    # rule that passed with :backtrack can be resumed for its next match,
+    # and the engine's choice points were gone when the first match
+    # returned. rxmatch answers a restart by failing the cursor -- "no
+    # further match" -- which keeps a resumption from re-answering the
+    # first match forever.
     method engine_jast($node, $desc) {
         my %*REG;
         my $prefix := self.unique('rxe') ~ '_';
         my $reglist := nqp::split(' ',
-            'start o cur o curclass o tgt s pos i selffrom i callback o');
+            'start o cur o curclass o tgt s pos i selffrom i restart i callback o');
         while $reglist {
             my $reg := nqp::shift($reglist);
             my $rt  := nqp::shift($reglist);
@@ -6432,7 +6435,17 @@ class QAST::CompilerJAST {
                     QAST::Var.new( :name('self'), :scope('local') ),
                     QAST::Var.new( :name(%*REG<curclass>), :scope('local') ),
                     QAST::SVal.new( :value('$!from') )
-                ))
+                )),
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name(%*REG<restart>), :scope('local'), :returns(int) ),
+                QAST::Op.new(
+                    :op('unbox_i'),
+                    QAST::Op.new(
+                        :op('atpos'),
+                        QAST::Var.new( :name(%*REG<start>), :scope('local') ),
+                        QAST::IVal.new( :value(5) )
+                    )))
         ), :want($RT_VOID));
         $il.append($pro.jast);
         $*STACK.obtain(NQPMu, $pro);
@@ -6459,11 +6472,12 @@ class QAST::CompilerJAST {
         $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<selffrom> ));
+        $il.append(JAST::Instruction.new( :op('lload'), %*REG<restart> ));
         $il.append(JAST::Instruction.new( :op('aload'), %*REG<callback> ));
         $il.append($ALOAD_1);
         $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_RXENGINE,
             'rxmatch', $TYPE_SMO, $TYPE_STR, $TYPE_SMO, $TYPE_SMO, $TYPE_STR,
-            'Long', 'Long', $TYPE_SMO, $TYPE_TC ));
+            'Long', 'Long', 'Long', $TYPE_SMO, $TYPE_TC ));
 
         result($il, $RT_OBJ)
     }
