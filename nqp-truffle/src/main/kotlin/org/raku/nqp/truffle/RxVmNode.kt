@@ -63,6 +63,13 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
          */
         var pending = if (program.captures == 0) NO_PENDING else arrayOfNulls<Any?>(16 * PENDING_WIDTH)
         var pendingTop = 0
+        /* How much of the pending list has been synced to the cursor. A
+         * rule's own code (`{ ... }`) reads the captures made so far
+         * through `$/`, so pending captures are handed over before a
+         * callback runs; a backtrack past them takes them back through
+         * truncateCaptures. Zero for the great many rules whose callbacks
+         * never fire. */
+        var syncedTop = 0
 
         var pc = 0
         var pos = startPos
@@ -71,7 +78,9 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
             var failed = false
             when (code[pc]) {
                 RxProgram.MATCH -> {
-                    if (pendingTop != 0) flush(cursor, pending, pendingTop)
+                    /* Whatever a callback sync already handed over stays;
+                     * only the remainder is flushed. */
+                    if (pendingTop > syncedTop) sync(cursor, pending, syncedTop, pendingTop)
                     return pos
                 }
 
@@ -272,6 +281,13 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
 
                 RxProgram.QASTNODE -> {
                     val flags = code[pc + 2]
+                    /* The captures made so far become visible on the cursor
+                     * first: the code is entitled to read them through $/,
+                     * which it builds from the cursor's own capture stack. */
+                    if (pendingTop > syncedTop) {
+                        sync(cursor, pending, syncedTop, pendingTop)
+                        syncedTop = pendingTop
+                    }
                     /* The code runs either way -- a `{ ... }` is there for its
                      * effect -- and only a zero-width one is allowed to decide
                      * anything by its answer. */
@@ -418,12 +434,23 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
             }
 
             if (failed) {
-                if (choiceTop == 0) return NO_MATCH
+                if (choiceTop == 0) {
+                    /* Anything synced to the cursor was made on a path that
+                     * has now failed whole. */
+                    if (syncedTop > 0) truncate(cursor, 0)
+                    return NO_MATCH
+                }
                 choiceTop -= CHOICE_WIDTH
                 pc = choices[choiceTop]
                 pos = choices[choiceTop + 1]
-                /* Anything captured on the abandoned path goes with it. */
+                /* Anything captured on the abandoned path goes with it --
+                 * including its record on the cursor, when a callback had
+                 * the captures synced across. */
                 pendingTop = choices[choiceTop + 2]
+                if (syncedTop > pendingTop) {
+                    truncate(cursor, pendingTop / PENDING_WIDTH)
+                    syncedTop = pendingTop
+                }
             }
         }
     }
@@ -516,8 +543,8 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
             cursor.altOrder(name, pos, branches)
 
         @TruffleBoundary
-        private fun flush(cursor: RxCursor, pending: Array<Any?>, top: Int) {
-            var i = 0
+        private fun sync(cursor: RxCursor, pending: Array<Any?>, from: Int, top: Int) {
+            var i = from
             while (i < top) {
                 val name = pending[i] as String
                 if (pending[i + 3] === SPAN) {
@@ -527,6 +554,11 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                 }
                 i += PENDING_WIDTH
             }
+        }
+
+        @TruffleBoundary
+        private fun truncate(cursor: RxCursor, entries: Int) {
+            cursor.truncateCaptures(entries)
         }
     }
 }

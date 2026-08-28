@@ -29,6 +29,7 @@ class QAST::RxDescriptor {
     #   backtrack      backtrackable (non-ratcheted) rules without subrules
     #   subrule-callback  subrule calls carried as callback pieces (lexical
     #                     and other computed callees, computed arguments)
+    #   qastnode       `{ ... }` and `<?{ ... }>` run back in the rule's frame
     my %rx_no;
     my int $rx_no_read := 0;
     sub rx_refuses(str $feature) {
@@ -48,7 +49,9 @@ class QAST::RxDescriptor {
     # known to produce a wrong parse, so off has to be the default and turning
     # it on has to be an act of intent rather than an omission.
     #
-    #   qastnode       `{ ... }` and `<?{ ... }>` run back in the rule's frame
+    # (No feature currently sits here. qastnode graduated to NQP_RX_NO once
+    # its wrong parse was traced to captures the cursor could not yet see:
+    # the engine now syncs pending captures before a callback runs.)
     my %rx_try;
     my int $rx_try_read := 0;
     sub rx_tries(str $feature) {
@@ -86,6 +89,17 @@ class QAST::RxDescriptor {
     my int $F_NEGATE     := 1;
     my int $F_ZEROWIDTH  := 2;
     my int $F_IGNORECASE := 4;
+
+    # Ops that walk the frame or caller chain at run time; a callback piece
+    # containing one refuses the rule (see reads_frame_ops).
+    my %frame_ops := nqp::hash(
+        'ctx', 1, 'ctxcaller', 1, 'ctxcallerskipthunks', 1,
+        'ctxouter', 1, 'ctxouterskipthunks', 1,
+        'curcode', 1, 'callercode', 1,
+        'getlexdyn', 1, 'getlexreldyn', 1, 'getlexrelcaller', 1,
+        'getlexcaller', 1, 'getlexouter', 1, 'getlexrel', 1,
+        'savecapture', 1, 'usecapture', 1, 'takedispatcher', 1,
+    );
 
     # cclass names to the engine's predicate kinds.
     my %cclass := nqp::hash(
@@ -145,6 +159,18 @@ class QAST::RxDescriptor {
         # was called: see inspect_pass for why the pairing is refused.
         $self.bail('backtrackable rule with subrules')
             if $self.backtrackable && $self.has_sub;
+        # PROVISIONAL: a rule with very many callback pieces stays on the
+        # bytecode path. The callback dispatch compiles into one generated
+        # method, and rakudo's comp_unit -- sixty-odd `:my` pieces of
+        # substantial code -- broke its emission ("JAST node isn't a
+        # JAST::Class"; the JVM's 64KB method limit is the suspect). Such
+        # once-per-parse rules gain nothing from the engine anyway. Lift
+        # this by splitting the dispatch across methods if a hot rule ever
+        # hits it; NQP_RX_SURVEY names what the cap refuses.
+        $self.bail('qastnode-heavy rule ('
+                ~ nqp::elems(nqp::getattr($self, QAST::RxDescriptor, '@!callbacks'))
+                ~ ' pieces)')
+            if nqp::elems(nqp::getattr($self, QAST::RxDescriptor, '@!callbacks')) > 16;
         $self.report if $self.survey;
         $self.bailed ?? nqp::null() !! $self
     }
@@ -356,11 +382,15 @@ class QAST::RxDescriptor {
             !! 'subrule via a variable (refused)')
             if rx_refuses('subrule-callback');
 
-        # Same limit as qastnode: the piece lands in a block the backend
-        # invents, which reaches the rule's lexicals but not its locals.
+        # Same limits as qastnode: the piece lands in a block the backend
+        # invents, which reaches the rule's lexicals but not its locals,
+        # and runs one frame deeper than the inline call it replaces.
         my str $lowered := self.reads_outer_local($node[0], nqp::hash());
         return self.bail('subrule call over a lowered local ' ~ $lowered)
             if $lowered;
+        my str $walker := self.reads_frame_ops($node[0], nqp::hash());
+        return self.bail('subrule call walks the caller chain (' ~ $walker ~ ')')
+            if $walker;
 
         my @callargs := nqp::clone($node[0].list);
         my $target := nqp::shift(@callargs);
@@ -432,6 +462,39 @@ class QAST::RxDescriptor {
     # the whole value of this check: "a lowered local" does not say whether
     # the rule is unreachable or whether one well-known variable is in the
     # way of every codeblock alike.
+    # Whether a subtree runs an op that walks the frame or caller chain at
+    # run time. A callback piece runs one frame DEEPER than the inline code
+    # it replaces -- inside the callback closure -- and these ops count
+    # frames: nqp::getlexdyn starts at the CALLER by design, which inline
+    # means "past the rule's own declaration to the rule's caller", and from
+    # the closure means "at the rule itself". That is how nibbler's
+    # `:my $OLDRX := nqp::getlexdyn('%*RX')` read back the rule's own fresh
+    # hash instead of the enclosing rule's populated one, and every <sym>
+    # downstream saw an empty %*RX. Ordinary lexical and contextual variable
+    # access is compiled against the real nesting and stays correct; only
+    # the explicit walkers shift meaning, so only they refuse the rule.
+    # The list mirrors the FRAME-OPS set rakudo's var-lowering treats as
+    # flatten-blockers, for the same reason in the other direction.
+    method reads_frame_ops($node, %seen) {
+        # QAST trees share subtrees; without the %seen guard this walk
+        # re-traverses every shared node once per path to it, and on
+        # BOOTSTRAP-sized pieces that ballooned the compile by gigabytes
+        # in seconds. One visit per node identity is all the answer needs.
+        my str $id := ~nqp::objectid($node);
+        return '' if nqp::existskey(%seen, $id);
+        nqp::bindkey(%seen, $id, 1);
+        if nqp::istype($node, QAST::Op) && nqp::existskey(%frame_ops, $node.op) {
+            return $node.op;
+        }
+        for @($node) {
+            if nqp::istype($_, QAST::Node) {
+                my str $found := self.reads_frame_ops($_, %seen);
+                return $found if $found;
+            }
+        }
+        ''
+    }
+
     method reads_outer_local($node, %seen) {
         return '' unless nqp::istype($node, QAST::Node);
         return '' if nqp::istype($node, QAST::Block);
@@ -658,7 +721,7 @@ class QAST::RxDescriptor {
             # without checking. The previous guess here was wrong --
             # NQP::Actions.variable_declarator hoists `my $x` into $BLOCK[0],
             # so declarations were never the problem.
-            return self.bail('rxtype qastnode') unless rx_tries('qastnode');
+            return self.bail('rxtype qastnode (refused)') if rx_refuses('qastnode');
             return self.bail('qastnode without a body') unless nqp::elems($node) == 1;
 
             # The block is nested inside the rule's, so it reaches the rule's
@@ -671,6 +734,9 @@ class QAST::RxDescriptor {
             my str $lowered := self.reads_outer_local($node[0], nqp::hash());
             return self.bail('qastnode over a lowered local ' ~ $lowered)
                 if $lowered;
+            my str $walker := self.reads_frame_ops($node[0], nqp::hash());
+            return self.bail('qastnode walks the caller chain (' ~ $walker ~ ')')
+                if $walker;
 
             self.emit($QASTNODE);
             self.emit(nqp::elems(@!callbacks));
