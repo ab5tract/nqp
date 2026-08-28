@@ -106,6 +106,11 @@ class RxProgram private constructor(
          * consumed, so there is no pair to keep whole. */
         const val NL = 24
 
+        /* callback(idx), flags, capture(idx+1 or 0) -- a subrule call routed
+         * through the rule's callback block (see RxTree.SubCallback). The
+         * same boundary as SUB, reached through a different door. */
+        const val SUB_CB = 25
+
         /* CHAR flags. */
         const val F_NEGATE = 1
         const val F_ZEROWIDTH = 2
@@ -216,6 +221,17 @@ class RxProgram private constructor(
                     (if (node.negate) F_NEGATE else 0) or
                         (if (node.zeroWidth) F_ZEROWIDTH else 0),
                 )
+
+                is RxTree.SubCallback -> {
+                    val capture = if (node.capture == null) 0 else constant(node.capture) + 1
+                    op(
+                        SUB_CB, node.index,
+                        (if (node.negate) F_NEGATE else 0) or
+                            (if (node.zeroWidth) F_ZEROWIDTH else 0),
+                        capture,
+                    )
+                    if (node.capture != null) captures++
+                }
 
                 is RxTree.UniProp -> op(
                     UNIPROP, constant(node.property),

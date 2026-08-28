@@ -115,6 +115,18 @@ class RxDescriptor private constructor(
                 )
             }
 
+            SUBCB -> {
+                val index = code[at++]
+                val flags = code[at++]
+                val capture = code[at++]
+                RxTree.SubCallback(
+                    index,
+                    (flags and RxProgram.F_ZEROWIDTH) != 0,
+                    (flags and RxProgram.F_NEGATE) != 0,
+                    if (capture == 0) null else pool[capture - 1] as String,
+                )
+            }
+
             else -> throw IllegalArgumentException("unknown descriptor tag $tag")
         }
     }
@@ -173,6 +185,12 @@ class RxDescriptor private constructor(
         const val ALT_LTM = 12   // pool(name), ratchet, count, children...
         const val UNIPROP = 13   // pool(property), flags
         const val QASTNODE = 14  // callback index, flags
+
+        /* callback index, flags, pool(capture)+1 or 0 -- a subrule call the
+         * direct SUB form cannot carry (a lexical or computed callee,
+         * computed arguments), run as a callback piece whose value is the
+         * subcursor. */
+        const val SUBCB = 15
 
         /* Subrule argument kinds. The pool is strings, so an int argument
          * travels as its decimal text and is read back here, once. */
