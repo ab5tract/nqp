@@ -1902,6 +1902,9 @@ class NQP::RegexActions is QRegex::P6Regex::Actions {
         }
         elsif $name eq 'sym' {
             my str $fullrxname := %*RX<name>;
+            nqp::say("SYMDEBUG id=" ~ nqp::objectid(%*RX) ~ " exists=" ~ nqp::existskey(%*RX, 'name')
+                ~ " keys=" ~ nqp::elems(%*RX) ~ " fullrxname=[" ~ $fullrxname ~ "]")
+                if nqp::getenvhash()<NQP_RX_SYMDEBUG>;
             my str $rxname := "";
             my int $loc := nqp::index($fullrxname, ':sym');
             if $loc >= 0 {
