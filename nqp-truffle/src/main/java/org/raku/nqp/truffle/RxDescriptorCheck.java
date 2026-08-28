@@ -30,6 +30,7 @@ public final class RxDescriptorCheck {
         @Override public boolean charProp(String property, int pos) { return false; }
         @Override public boolean callbackHolds(int index, int pos) { return true; }
         @Override public Object callbackCursor(int index, int pos) { return null; }
+        @Override public void truncateCaptures(int entries) { }
     }
 
     /**
@@ -50,6 +51,7 @@ public final class RxDescriptorCheck {
         }
         @Override public boolean callbackHolds(int index, int pos) { return true; }
         @Override public Object callbackCursor(int index, int pos) { return null; }
+        @Override public void truncateCaptures(int entries) { }
     }
 
     /**
@@ -152,6 +154,7 @@ public final class RxDescriptorCheck {
             return answer;
         }
         @Override public Object callbackCursor(int index, int pos) { return null; }
+        @Override public void truncateCaptures(int entries) { }
     }
 
     /**
@@ -267,6 +270,7 @@ public final class RxDescriptorCheck {
         @Override public boolean charProp(String property, int pos) { return false; }
         @Override public boolean callbackHolds(int index, int pos) { return true; }
         @Override public Object callbackCursor(int index, int pos) { return null; }
+        @Override public void truncateCaptures(int entries) { }
     }
 
     /**

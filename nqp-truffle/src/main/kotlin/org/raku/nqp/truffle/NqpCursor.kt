@@ -38,6 +38,11 @@ class NqpCursor(
 
     private var callbackClosure: SixModelObject? = null
 
+    /* Where the engine's own captures start on the cursor's stacks; -1
+     * until the first capture records them. See truncateCaptures. */
+    private var captureBaseC: Int = -1
+    private var captureBaseB: Int = -1
+
     override fun target(): String = target
 
     override fun eos(): Int = target.length
@@ -114,6 +119,7 @@ class NqpCursor(
     override fun callbackCursor(index: Int, pos: Int): Any? = runCallback(index, pos)
 
     private fun runCallback(index: Int, pos: Int): SixModelObject? {
+        if (TRACE) System.err.println("rx{ callback $index @ $pos")
         var closure = callbackClosure
         if (closure == null) {
             closure = Ops.takeclosure(callback, tc)
@@ -192,6 +198,21 @@ class NqpCursor(
     }
 
     override fun captureCursor(name: String, subCursor: Any?) {
+        /* The bases are read before the first capture lands, so truncation
+         * knows where the engine's own contributions start. !cursor_capture
+         * grows the cstack by one and the bstack by one four-int frame per
+         * capture, and undoing a capture takes both back. */
+        if (captureBaseC < 0) {
+            /* A cursor that has captured nothing yet holds a TYPE OBJECT in
+             * $!cstack (Cursor.nqp tests nqp::defined, not null), so the
+             * guard here is concreteness, not nullness. */
+            val cstack = Ops.getattr(cursor, cursorClass, "\$!cstack", tc)
+            captureBaseC = if (cstack == null || Ops.isconcrete(cstack, tc) == 0L) 0
+                           else cstack.elems(tc).toInt()
+            val bstack = Ops.getattr(cursor, cursorClass, "\$!bstack", tc)
+            captureBaseB = if (bstack == null || Ops.isconcrete(bstack, tc) == 0L) 0
+                           else bstack.elems(tc).toInt()
+        }
         val capture = Ops.findmethod(cursor, "!cursor_capture", tc)
         Ops.invokeDirect(
             tc, capture, INVOCANT_OBJ_STR,
@@ -199,7 +220,22 @@ class NqpCursor(
         )
     }
 
+    override fun truncateCaptures(entries: Int) {
+        /* Only ever called after a sync, so the bases are set. Concreteness
+         * guards for the same reason as above. */
+        val cstack = Ops.getattr(cursor, cursorClass, "\$!cstack", tc)
+        if (cstack != null && Ops.isconcrete(cstack, tc) != 0L) {
+            cstack.set_elems(tc, (captureBaseC + entries).toLong())
+        }
+        val bstack = Ops.getattr(cursor, cursorClass, "\$!bstack", tc)
+        if (bstack != null && Ops.isconcrete(bstack, tc) != 0L) {
+            bstack.set_elems(tc, (captureBaseB + 4L * entries))
+        }
+    }
+
     companion object {
+        private val TRACE: Boolean = System.getenv("NQP_RX_TRACE") != null
+
         private val INVOCANT =
             CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null)
         private val INVOCANT_INT = CallSiteDescriptor(
