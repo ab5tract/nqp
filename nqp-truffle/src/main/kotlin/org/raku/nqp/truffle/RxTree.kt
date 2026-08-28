@@ -32,7 +32,11 @@ object RxTree {
         val negate: Boolean,
         val zeroWidth: Boolean,
         val ignoreCase: Boolean,
-    ) : Node
+        val ignoreMark: Boolean,
+    ) : Node {
+        constructor(text: String, negate: Boolean, zeroWidth: Boolean, ignoreCase: Boolean) :
+            this(text, negate, zeroWidth, ignoreCase, false)
+    }
 
     /**
      * One character's worth of test: rxtype cclass, enumcharlist and
@@ -178,6 +182,23 @@ object RxTree {
         constructor(name: String, zeroWidth: Boolean, negate: Boolean, capture: String?) :
             this(name, zeroWidth, negate, capture, null)
     }
+
+    /**
+     * rxtype dynquant: a quantifier whose bounds the rule evaluates at
+     * match time -- `x ** {$n}`. The bounds expression lives in the rule's
+     * callback block at [index] and answers a two-int array of (min, max),
+     * -1 meaning unbounded; min 0 with max 0 matches nothing at all.
+     * Greedy, frugal and ratchet mean what they do on [Quant], and the
+     * separator sits BETWEEN repetitions the same way.
+     */
+    @JvmRecord
+    data class DynQuant(
+        val body: Node,
+        val index: Int,
+        val greedy: Boolean,
+        val ratchet: Boolean,
+        val separator: Node?,
+    ) : Node
 
     /**
      * A subrule call the direct [Sub] form cannot carry: a lexical or other
