@@ -65,6 +65,15 @@ object RxTree {
     data class Alt(val branches: List<Node>) : Node
 
     /**
+     * rxtype conj/conjseq: `a && b`. Every branch must match the SAME span
+     * -- the first branch decides it, each later one starts over at the
+     * same position and has to end exactly where the first did. Zero-width
+     * puts the position back once every branch has agreed.
+     */
+    @JvmRecord
+    data class Conj(val branches: List<Node>, val zeroWidth: Boolean) : Node
+
+    /**
      * rxtype alt WITH a name: longest-token-match.
      *
      * The branch order is not the source order. It comes from an NFA the
