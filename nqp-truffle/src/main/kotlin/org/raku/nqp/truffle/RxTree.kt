@@ -32,7 +32,11 @@ object RxTree {
         val negate: Boolean,
         val zeroWidth: Boolean,
         val ignoreCase: Boolean,
-    ) : Node
+        val ignoreMark: Boolean,
+    ) : Node {
+        constructor(text: String, negate: Boolean, zeroWidth: Boolean, ignoreCase: Boolean) :
+            this(text, negate, zeroWidth, ignoreCase, false)
+    }
 
     /**
      * One character's worth of test: rxtype cclass, enumcharlist and
@@ -63,6 +67,15 @@ object RxTree {
     /** rxtype alt with no name: the branches are tried in source order. */
     @JvmRecord
     data class Alt(val branches: List<Node>) : Node
+
+    /**
+     * rxtype conj/conjseq: `a && b`. Every branch must match the SAME span
+     * -- the first branch decides it, each later one starts over at the
+     * same position and has to end exactly where the first did. Zero-width
+     * puts the position back once every branch has agreed.
+     */
+    @JvmRecord
+    data class Conj(val branches: List<Node>, val zeroWidth: Boolean) : Node
 
     /**
      * rxtype alt WITH a name: longest-token-match.
@@ -169,6 +182,23 @@ object RxTree {
         constructor(name: String, zeroWidth: Boolean, negate: Boolean, capture: String?) :
             this(name, zeroWidth, negate, capture, null)
     }
+
+    /**
+     * rxtype dynquant: a quantifier whose bounds the rule evaluates at
+     * match time -- `x ** {$n}`. The bounds expression lives in the rule's
+     * callback block at [index] and answers a two-int array of (min, max),
+     * -1 meaning unbounded; min 0 with max 0 matches nothing at all.
+     * Greedy, frugal and ratchet mean what they do on [Quant], and the
+     * separator sits BETWEEN repetitions the same way.
+     */
+    @JvmRecord
+    data class DynQuant(
+        val body: Node,
+        val index: Int,
+        val greedy: Boolean,
+        val ratchet: Boolean,
+        val separator: Node?,
+    ) : Node
 
     /**
      * A subrule call the direct [Sub] form cannot carry: a lexical or other
