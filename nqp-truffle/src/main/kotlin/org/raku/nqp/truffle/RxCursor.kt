@@ -129,6 +129,13 @@ interface RxCursor {
     fun callbackName(index: Int, pos: Int): String
 
     /**
+     * Asks a subcursor for its next match: the engine side of backtracking
+     * INTO a subrule, which the bytecode path does through the bstack. The
+     * answer is a cursor like [callSubrule]'s, read with [reached].
+     */
+    fun nextMatch(subCursor: Any?): Any?
+
+    /**
      * Takes back captures, keeping only the first [entries] the engine made.
      *
      * The engine holds captures pending and hands them over at the end --
@@ -173,6 +180,9 @@ interface RxCursor {
 
         override fun callbackName(index: Int, pos: Int): String =
             throw UnsupportedOperationException("no rule code without a grammar: callback $index")
+
+        override fun nextMatch(subCursor: Any?): Any? =
+            throw UnsupportedOperationException("no subrules without a grammar")
 
         override fun captureSpan(name: String, from: Int, to: Int) { }
 
