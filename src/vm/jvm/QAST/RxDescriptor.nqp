@@ -92,6 +92,7 @@ class QAST::RxDescriptor {
     my int $F_NEGATE     := 1;
     my int $F_ZEROWIDTH  := 2;
     my int $F_IGNORECASE := 4;
+    my int $F_IGNOREMARK := 8;
 
     # Ops that walk the frame or caller chain at run time; a callback piece
     # containing one refuses the rule (see reads_frame_ops).
@@ -529,6 +530,8 @@ class QAST::RxDescriptor {
         my str $subtype := $node.subtype;
         $flags := $flags + $F_IGNORECASE
             if $subtype eq 'ignorecase' || $subtype eq 'ignorecase+ignoremark';
+        $flags := $flags + $F_IGNOREMARK
+            if $subtype eq 'ignoremark' || $subtype eq 'ignorecase+ignoremark';
         $flags
     }
 
@@ -619,11 +622,6 @@ class QAST::RxDescriptor {
             self.walk($_) for @kept;
         }
         elsif $rxtype eq 'literal' {
-            # An ignoremark literal needs the mark-insensitive comparisons
-            # the bytecode path calls into; not encoded.
-            my str $subtype := $node.subtype;
-            return self.bail('ignoremark literal')
-                if $subtype eq 'ignoremark' || $subtype eq 'ignorecase+ignoremark';
             self.emit($LITERAL);
             self.emit(self.constant(~$node[0]));
             self.emit(self.flags($node));
