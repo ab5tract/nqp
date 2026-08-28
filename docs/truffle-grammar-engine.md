@@ -110,6 +110,20 @@ terminally deprecated method). That is not cosmetic: those warnings land on
 stderr ahead of the compiler's own output and broke `t/nqp/114-pod-panic.t`,
 which asserts on the first line of it.
 
+## Status: feature-complete, sweep-green (2026-08-29)
+
+Every bytecode grammar-engine piece is ported: qastnode, subrule calls of
+every shape (named, lexical, computed arguments), backtrackable rules with
+full cursor re-entry (`!cursor_next`, exhaustive matching at bytecode
+parity, backtracking INTO subrules), dynamically-bounded quantifiers,
+conjunctions, ignoremark literals, uniprop pairs, computed pass names, and
+rules of any piece count via the grouped callback dispatch. The remaining
+bytecode rules are guards, not gaps: pieces that walk the caller chain,
+pieces over optimizer-lowered locals, and shapes the bytecode path cannot
+compile either. First fully green sweep: 377 files across twelve t/
+suites, 35/35 chunks, zero failures -- including the CRLF files that were
+the standing baseline red.
+
 ## What the engine covers, and how to find out what to do next
 
 Coverage grows one rxtype at a time, and the honest measure of it is how many
