@@ -384,7 +384,49 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     pc += 3
                 }
 
-                RxProgram.SUB_CB -> {
+                RxProgram.DYNQ_BOUNDS -> {
+                    val r = code[pc + 1]
+                    val b = callbackBounds(cursor, code[pc + 2], pos)
+                    regs[r] = b[0]
+                    regs[r + 1] = b[1]
+                    regs[r + 2] = 0
+                    pc = if (b[0] == 0 && b[1] == 0) code[pc + 3] else pc + 4
+                }
+
+                RxProgram.DYNQ_STEP -> {                RxProgram.DYNQ_STEP -> {
+                    val r = code[pc + 1]
+                    val min = regs[r]
+                    val max = regs[r + 1]
+                    val rep = regs[r + 2]
+                    val bodyPc = if (rep == 0) code[pc + 2] else code[pc + 3]
+                    if (rep < min) {
+                        pc = bodyPc
+                    } else if (max != -1 && rep >= max) {
+                        pc = code[pc + 4]
+                    } else {
+                        val greedy = code[pc + 5] != 0
+                        if (choiceTop + CHOICE_WIDTH > choices.size) {
+                            choices = grow(choices)
+                        }
+                        choices[choiceTop] = if (greedy) code[pc + 4] else bodyPc
+                        choices[choiceTop + 1] = pos
+                        choices[choiceTop + 2] = pendingTop
+                        choiceTop += CHOICE_WIDTH
+                        pc = if (greedy) bodyPc else code[pc + 4]
+                    }
+                }
+
+                RxProgram.REG_TO_POS -> {                RxProgram.DYNQ_NEXT -> {
+                    val r = code[pc + 1]
+                    if (pos == regs[code[pc + 2]] && regs[r + 2] >= regs[r]) {
+                        failed = true
+                    } else {
+                        regs[r + 2]++
+                        pc = code[pc + 3]
+                    }
+                }
+
+                RxProgram.SUB_CB -> {                RxProgram.SUB_CB -> {
                     val flags = code[pc + 2]
                     val sub = callbackCursor(cursor, code[pc + 1], pos)
                     val r = reached(cursor, sub)
@@ -526,6 +568,11 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
         @TruffleBoundary
         private fun callbackCursor(cursor: RxCursor, index: Int, pos: Int): Any? =
             cursor.callbackCursor(index, pos)
+
+        @TruffleBoundary
+        private fun callbackBounds(cursor: RxCursor, index: Int, pos: Int): IntArray =
+            cursor.callbackBounds(index, pos)
+
 
         @TruffleBoundary
         private fun reached(cursor: RxCursor, subCursor: Any?): Int = cursor.reached(subCursor)

@@ -111,6 +111,29 @@ class RxProgram private constructor(
          * same boundary as SUB, reached through a different door. */
         const val SUB_CB = 25
 
+        /*
+         * A dynamically-bounded quantifier (RxTree.DynQuant) compiles to
+         * three opcodes around its body:
+         *
+         *   DYNQ_BOUNDS r, cb, out -- the callback answers (min, max) into
+         *     regs[r], regs[r+1], -1 meaning unbounded; regs[r+2] is the
+         *     repetition count, zeroed. min 0 with max 0 matches nothing:
+         *     jump straight to out.
+         *   DYNQ_STEP r, first, again, out, greedy -- the per-iteration
+         *     decision: below min the body is mandatory; at max the loop is
+         *     over; in between it is a choice point, greedy preferring the
+         *     body and frugal the exit. The first iteration enters at
+         *     `first`, later ones at `again`, which is where a separator
+         *     lives.
+         *   DYNQ_NEXT r, mark, step -- close of one body: a body that
+         *     consumed nothing past the minimum would loop forever, so it
+         *     fails instead (the same job EMPTY_CHECK does for the static
+         *     quantifier); otherwise count it and go round.
+         */
+        const val DYNQ_BOUNDS = 26
+        const val DYNQ_STEP = 27
+        const val DYNQ_NEXT = 28
+
         /* CHAR flags. */
         const val F_NEGATE = 1
         const val F_ZEROWIDTH = 2
@@ -199,6 +222,8 @@ class RxProgram private constructor(
                 is RxTree.AltLtm -> emitAltLtm(node)
 
                 is RxTree.Quant -> emitQuant(node)
+
+                is RxTree.DynQuant -> emitDynQuant(node)
 
                 is RxTree.Sub -> {
                     /* Zero means the result is not captured; otherwise the
@@ -347,6 +372,48 @@ class RxProgram private constructor(
             }
             val out = here()
             for (jump in jumps) patch(jump + 1, out)
+
+            if (cut >= 0) op(CUT, cut)
+        }
+
+        /*
+         * DYNQ_BOUNDS r cb OUT
+         * step: DYNQ_STEP r FIRST AGAIN OUT greedy
+         * FIRST: MARK m ; <body> ; DYNQ_NEXT r m step
+         * AGAIN: <sep> ; JMP FIRST     (AGAIN is FIRST when there is none)
+         * OUT:
+         * wrapped in CUT_MARK/CUT when ratcheted, like any quantifier.
+         */
+        fun emitDynQuant(quant: RxTree.DynQuant) {
+            val cut = if (quant.ratchet) reg() else -1
+            if (cut >= 0) op(CUT_MARK, cut)
+
+            val r = reg(); reg(); reg()   // min, max, rep -- consecutive
+            val mark = reg()
+            val bounds = op(DYNQ_BOUNDS, r, quant.index, 0)
+            val step = here()
+            val stepAt = op(DYNQ_STEP, r, 0, 0, 0, if (quant.greedy) 1 else 0)
+            /* The step is re-entered per repetition and can stack one choice
+             * point per repetition, like a SPLIT in a loop. */
+            splits++
+
+            val first = here()
+            patch(stepAt + 2, first)
+            op(MARK, mark)
+            emit(quant.body)
+            op(DYNQ_NEXT, r, mark, step)
+
+            if (quant.separator == null) {
+                patch(stepAt + 3, first)
+            } else {
+                patch(stepAt + 3, here())
+                emit(quant.separator)
+                op(JMP, first)
+            }
+
+            val out = here()
+            patch(bounds + 3, out)
+            patch(stepAt + 4, out)
 
             if (cut >= 0) op(CUT, cut)
         }
