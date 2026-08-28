@@ -53,13 +53,14 @@ interface GrammarEngine {
 /**
  * Finds the grammar engine, or establishes that there isn't one.
  *
- * A missing engine is a supported state, not an error: a regex whose shape
- * the engine does not cover keeps the bytecode path, and so does every regex
- * when `NQP_JVM_NO_TRUFFLE` is set. What is *not* supported is an engine that
- * quietly fails to load and leaves everything looking merely slow, so
- * anything other than a plain absence is reported, and `NQP_JVM_TRUFFLE=require`
- * turns absence itself into a failure -- which is what a benchmark or a test
- * that means to measure the engine should set.
+ * A missing engine is a supported state only for a build without the truffle
+ * module on the class path: a regex whose shape the engine does not cover
+ * keeps the bytecode path, and nothing else does -- there is no whole-engine
+ * toggle. What is *not* supported is an engine that quietly fails to load and
+ * leaves everything looking merely slow, so anything other than a plain
+ * absence is reported, and `NQP_JVM_TRUFFLE=require` turns absence itself
+ * into a failure -- which is what a benchmark or a test that means to
+ * measure the engine should set.
  */
 object GrammarEngines {
     private const val IMPL = "org.raku.nqp.truffle.TruffleGrammarEngine"
@@ -107,10 +108,8 @@ object GrammarEngines {
      *
      * Whether a regex reaches here at all was settled when it was compiled:
      * a rule the engine covers has no bytecode matcher to fall back to, so
-     * a missing engine here is a real error rather than a slower path. That
-     * is why `NQP_JVM_NO_TRUFFLE` has to be set for the compile and the run
-     * alike -- it decides whether descriptors are emitted in the first place,
-     * and a tree compiled with them cannot be run without the engine.
+     * a missing engine here is a real error rather than a slower path -- a
+     * tree compiled with descriptors cannot be run without the engine.
      */
     @JvmStatic
     fun rxmatch(
@@ -124,8 +123,8 @@ object GrammarEngines {
         tc: ThreadContext,
     ): SixModelObject {
         val engine = engine ?: throw IllegalStateException(
-            "this code was compiled with the grammar engine, which is not available at run time." +
-            " NQP_JVM_NO_TRUFFLE has to be set for the compile and the run alike, or for neither.")
+            "this code was compiled with the grammar engine, which is not available at run time:" +
+            " the truffle module is missing from the class path.")
         val program = programs.computeIfAbsent(encoded) { engine.compile(it) }
         if (trace) traceEnter(encoded, target, from)
         val result = engine.match(
@@ -187,10 +186,6 @@ object GrammarEngines {
     }
 
     private fun load(): GrammarEngine? {
-        if (System.getenv("NQP_JVM_NO_TRUFFLE") != null) {
-            check(!required) { "NQP_JVM_TRUFFLE=require conflicts with NQP_JVM_NO_TRUFFLE" }
-            return null
-        }
         try {
             val cls = Class.forName(IMPL, true, ClassLoader.getSystemClassLoader())
             return cls.getDeclaredConstructor().newInstance() as GrammarEngine
