@@ -653,6 +653,8 @@ grammar NQP::Grammar is HLL::Grammar {
               %*RX<r>    := $<sym> eq 'token' || $<sym> eq 'rule';
               %*RX<name> := $<deflongname> ?? $<deflongname>.made !! "!!LATENAME!!" ~ ~$<latename>;
               %*RX<code> := $*W.create_code($*W.cur_lexpad(), %*RX<name>, 0, :code_type_name<NQPRegex>);
+              nqp::say("RXWRITE id=" ~ nqp::objectid(%*RX) ~ " name=[" ~ %*RX<name> ~ "]")
+                  if nqp::getenvhash()<NQP_RX_SYMDEBUG>;
           }
           '{'<p6regex=.LANG('Regex','nibbler')>'}'<?ENDSTMT>
         ]
