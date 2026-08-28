@@ -240,8 +240,20 @@ class QAST::RxDescriptor {
             $!pass_name := $pass.name();
         }
         elsif nqp::elems($pass) == 1 {
-            # A computed name, known only while the rule runs.
-            self.bail('computed pass name');
+            # A computed name, known only while the rule runs -- the
+            # late-bound `regex ::($name)` form, where the name is a lexical
+            # read. It travels as callback piece zero (inspect_pass runs
+            # before the walk, so the list is empty here), marked in the
+            # wire by a NUL-prefixed pass name the engine resolves at pass
+            # time.
+            my str $lowered := self.reads_outer_local($pass[0], nqp::hash());
+            return self.bail('computed pass name over a lowered local ' ~ $lowered)
+                if $lowered;
+            my str $walker := self.reads_frame_ops($pass[0], nqp::hash());
+            return self.bail('computed pass name walks the caller chain (' ~ $walker ~ ')')
+                if $walker;
+            $!pass_name := "\x[0]cb:" ~ nqp::elems(@!callbacks);
+            nqp::push(@!callbacks, $pass[0]);
         }
         unless $pass.backtrack eq 'r' {
             nqp::bindattr_i(self, QAST::RxDescriptor, '$!backtrackable', 1);

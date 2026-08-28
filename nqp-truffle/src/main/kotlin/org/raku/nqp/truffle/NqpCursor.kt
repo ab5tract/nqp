@@ -118,6 +118,10 @@ class NqpCursor(
     /** A callback piece whose value is a subrule call's cursor. */
     override fun callbackCursor(index: Int, pos: Int): Any? = runCallback(index, pos)
 
+    /** A computed pass name: the piece answers the string. */
+    override fun callbackName(index: Int, pos: Int): String =
+        Ops.unbox_s(runCallback(index, pos), tc) ?: ""
+
     /** A dynamic quantifier's bounds: the piece answers a two-int array. */
     override fun callbackBounds(index: Int, pos: Int): IntArray {
         val bounds = runCallback(index, pos)
