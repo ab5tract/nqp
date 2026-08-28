@@ -782,14 +782,87 @@ class QAST::RxDescriptor {
             nqp::push(@!callbacks, $node[0]);
         }
         elsif $rxtype eq 'uniprop' {
-            # <:Alpha>. The pair form, <:Block("Basic Latin")>, smartmatches
-            # the property's VALUE against a matcher the cursor supplies, so
-            # it is a call rather than a test and stays on the bytecode path.
-            return self.bail('uniprop pair') unless nqp::elems($node) == 1;
             return self.bail('rxtype uniprop') if rx_refuses('uniprop');
-            self.emit($UNIPROP);
-            self.emit(self.constant(~$node[0]));
-            self.emit(self.flags($node));
+            if nqp::elems($node) == 1 {
+                self.emit($UNIPROP);
+                self.emit(self.constant(~$node[0]));
+                self.emit(self.flags($node));
+            }
+            else {
+                # The pair form, <:Block("Basic Latin")>: the property's
+                # VALUE at this position is smartmatched against the given
+                # matcher, delegated through the cursor so a grammar can
+                # override it. That is a call, so it runs as a callback
+                # piece -- a zero-width test built the way the bytecode
+                # path's uniprop_pair builds it, reaching the target and
+                # position through $/'s cursor methods rather than the
+                # rule frame's registers -- followed by a consuming ANY
+                # when the assertion consumes.
+                my str $lowered := self.reads_outer_local($node[1], nqp::hash());
+                return self.bail('uniprop pair over a lowered local ' ~ $lowered)
+                    if $lowered;
+                my str $walker := self.reads_frame_ops($node[1], nqp::hash());
+                return self.bail('uniprop pair walks the caller chain (' ~ $walker ~ ')')
+                    if $walker;
+
+                my str $prop    := ~$node[0];
+                my int $by_name := $prop eq 'name' || $prop eq 'Name';
+                my $cursor := QAST::Var.new( :name("\$\xa2"), :scope('lexical') );
+                my str $ord     := QAST::Node.unique('rxup_ord');
+                my str $val     := QAST::Node.unique('rxup_val');
+                my str $matcher := QAST::Node.unique('rxup_matcher');
+                my sub localvar(str $name, *%opts) {
+                    QAST::Var.new( :name($name), :scope('local'), |%opts )
+                }
+                my sub propcode() {
+                    QAST::Op.new( :op('unipropcode'), QAST::SVal.new( :value($prop) ) )
+                }
+                my sub accepts($arg) {
+                    QAST::Op.new( :op('unbox_i'),
+                        QAST::Op.new(
+                            :op('callmethod'), :name('!DELEGATE_ACCEPTS'),
+                            $cursor, localvar($matcher), $arg ))
+                }
+                my $piece := QAST::Stmts.new(
+                    QAST::Op.new( :op('bind'),
+                        localvar($ord, :decl('var'), :returns(int)),
+                        QAST::Op.new( :op('ordat'),
+                            QAST::Op.new( :op('callmethod'), :name('target'), $cursor ),
+                            QAST::Op.new( :op('callmethod'), :name('pos'), $cursor ))),
+                    QAST::Op.new( :op('bind'),
+                        localvar($val, :decl('var'), :returns(str)),
+                        $by_name
+                            ?? QAST::Op.new( :op('getuniname'), localvar($ord, :returns(int)) )
+                            !! QAST::Op.new( :op('getuniprop_str'),
+                                   localvar($ord, :returns(int)), propcode() )),
+                    QAST::Op.new( :op('bind'),
+                        localvar($matcher, :decl('var')),
+                        $node[1] ));
+                $piece.push($by_name
+                    ?? accepts(localvar($val, :returns(str)))
+                    !! QAST::Op.new( :op('if'),
+                           QAST::Op.new( :op('chars'), localvar($val, :returns(str)) ),
+                           accepts(localvar($val, :returns(str))),
+                           accepts(QAST::Op.new( :op('getuniprop_int'),
+                               localvar($ord, :returns(int)), propcode() )) ));
+
+                # One node to the parent's count, even when the test and
+                # the consuming ANY are two: a SEQ holds them.
+                my int $consumes := $node.subtype ne 'zerowidth';
+                if $consumes {
+                    self.emit($SEQ);
+                    self.emit(2);
+                }
+                self.emit($QASTNODE);
+                self.emit(nqp::elems(@!callbacks));
+                self.emit($F_ZEROWIDTH + ($node.negate ?? $F_NEGATE !! 0));
+                nqp::push(@!callbacks, $piece);
+                if $consumes {
+                    self.emit($CCLASS);
+                    self.emit(0);  # any
+                    self.emit(0);
+                }
+            }
         }
         elsif $rxtype eq 'subrule' {
             self.subrule_call($node);
