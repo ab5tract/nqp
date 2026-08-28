@@ -104,6 +104,13 @@ class TruffleGrammarEngine : GrammarEngine {
             call(tc, cursor, "!cursor_fail")
         } else if (p.passName.isEmpty()) {
             call(tc, cursor, "!cursor_pass", end)
+        } else if (p.passName.startsWith("\u0000cb:")) {
+            /* A computed pass name -- the late-bound `regex ::($name)`
+             * form. The NUL-prefixed marker carries the callback index of
+             * the piece that answers the name, resolved now, at pass time,
+             * the same moment the bytecode path evaluates it. */
+            val name = rx.callbackName(p.passName.substring(4).toInt(), end)
+            call(tc, cursor, "!cursor_pass", end, name)
         } else {
             call(tc, cursor, "!cursor_pass", end, p.passName)
         }

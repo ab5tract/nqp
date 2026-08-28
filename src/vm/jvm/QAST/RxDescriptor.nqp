@@ -30,6 +30,7 @@ class QAST::RxDescriptor {
     #   subrule-callback  subrule calls carried as callback pieces (lexical
     #                     and other computed callees, computed arguments)
     #   qastnode       `{ ... }` and `<?{ ... }>` run back in the rule's frame
+    #   dynquant       `x ** {$n}`, bounds evaluated at match time
     my %rx_no;
     my int $rx_no_read := 0;
     sub rx_refuses(str $feature) {
@@ -81,6 +82,8 @@ class QAST::RxDescriptor {
     my int $UNIPROP := 13;
     my int $QASTNODE := 14;
     my int $SUBCB   := 15;
+    my int $DYNQUANT := 16;
+    my int $CONJ    := 17;
 
     # Subrule argument kinds, matching RxDescriptor.java.
     my int $ARG_STR := 0;
@@ -89,6 +92,7 @@ class QAST::RxDescriptor {
     my int $F_NEGATE     := 1;
     my int $F_ZEROWIDTH  := 2;
     my int $F_IGNORECASE := 4;
+    my int $F_IGNOREMARK := 8;
 
     # Ops that walk the frame or caller chain at run time; a callback piece
     # containing one refuses the rule (see reads_frame_ops).
@@ -236,8 +240,20 @@ class QAST::RxDescriptor {
             $!pass_name := $pass.name();
         }
         elsif nqp::elems($pass) == 1 {
-            # A computed name, known only while the rule runs.
-            self.bail('computed pass name');
+            # A computed name, known only while the rule runs -- the
+            # late-bound `regex ::($name)` form, where the name is a lexical
+            # read. It travels as callback piece zero (inspect_pass runs
+            # before the walk, so the list is empty here), marked in the
+            # wire by a NUL-prefixed pass name the engine resolves at pass
+            # time.
+            my str $lowered := self.reads_outer_local($pass[0], nqp::hash());
+            return self.bail('computed pass name over a lowered local ' ~ $lowered)
+                if $lowered;
+            my str $walker := self.reads_frame_ops($pass[0], nqp::hash());
+            return self.bail('computed pass name walks the caller chain (' ~ $walker ~ ')')
+                if $walker;
+            $!pass_name := "\x[0]cb:" ~ nqp::elems(@!callbacks);
+            nqp::push(@!callbacks, $pass[0]);
         }
         unless $pass.backtrack eq 'r' {
             nqp::bindattr_i(self, QAST::RxDescriptor, '$!backtrackable', 1);
@@ -526,6 +542,8 @@ class QAST::RxDescriptor {
         my str $subtype := $node.subtype;
         $flags := $flags + $F_IGNORECASE
             if $subtype eq 'ignorecase' || $subtype eq 'ignorecase+ignoremark';
+        $flags := $flags + $F_IGNOREMARK
+            if $subtype eq 'ignoremark' || $subtype eq 'ignorecase+ignoremark';
         $flags
     }
 
@@ -616,11 +634,6 @@ class QAST::RxDescriptor {
             self.walk($_) for @kept;
         }
         elsif $rxtype eq 'literal' {
-            # An ignoremark literal needs the mark-insensitive comparisons
-            # the bytecode path calls into; not encoded.
-            my str $subtype := $node.subtype;
-            return self.bail('ignoremark literal')
-                if $subtype eq 'ignoremark' || $subtype eq 'ignorecase+ignoremark';
             self.emit($LITERAL);
             self.emit(self.constant(~$node[0]));
             self.emit(self.flags($node));
@@ -687,6 +700,43 @@ class QAST::RxDescriptor {
             self.walk($node[0]);
             self.walk($node[1]) if $sep;
         }
+        elsif $rxtype eq 'dynquant' {
+            # `x ** {$n}` and friends: the bounds are an expression the rule
+            # evaluates at match time, answering a two-int array of (min,
+            # max), -1 meaning unbounded -- and min 0 with max 0 matches
+            # nothing at all. The expression runs back in the rule's frame
+            # on the callback channel, under the same limits as any piece.
+            return self.bail('rxtype dynquant (refused)') if rx_refuses('dynquant');
+            my $bounds := $node[1];
+            my str $lowered := self.reads_outer_local($bounds, nqp::hash());
+            return self.bail('dynquant bounds over a lowered local ' ~ $lowered)
+                if $lowered;
+            my str $walker := self.reads_frame_ops($bounds, nqp::hash());
+            return self.bail('dynquant bounds walk the caller chain (' ~ $walker ~ ')')
+                if $walker;
+            my int $sep := nqp::elems($node) > 2 ?? 1 !! 0;
+            self.emit($DYNQUANT);
+            self.emit(nqp::elems(@!callbacks));
+            self.emit($node.backtrack eq 'f' ?? 0 !! 1);
+            self.emit(($node.backtrack || 'g') eq 'r' ?? 1 !! 0);
+            self.emit($sep);
+            nqp::push(@!callbacks, $bounds);
+            self.walk($node[0]);
+            self.walk($node[2]) if $sep;
+        }
+        elsif $rxtype eq 'conj' || $rxtype eq 'conjseq' {
+            # `a && b`: every branch must match the SAME span. The first
+            # branch decides it; each later branch starts over at the same
+            # position and has to end exactly where the first did. The
+            # zerowidth subtype looks without consuming: the position is
+            # put back where it started once every branch has agreed.
+            return self.bail('conj without branches')
+                unless nqp::elems($node) >= 1;
+            self.emit($CONJ);
+            self.emit(nqp::elems($node));
+            self.emit($node.subtype eq 'zerowidth' ?? 1 !! 0);
+            for @($node) { self.walk($_) }
+        }
         elsif $rxtype eq 'qastnode' {
             # `{ ... }`, `<?{ ... }>`, `:my $x := ...`: arbitrary NQP code,
             # compiled by the bytecode path straight into the matcher's own
@@ -744,14 +794,87 @@ class QAST::RxDescriptor {
             nqp::push(@!callbacks, $node[0]);
         }
         elsif $rxtype eq 'uniprop' {
-            # <:Alpha>. The pair form, <:Block("Basic Latin")>, smartmatches
-            # the property's VALUE against a matcher the cursor supplies, so
-            # it is a call rather than a test and stays on the bytecode path.
-            return self.bail('uniprop pair') unless nqp::elems($node) == 1;
             return self.bail('rxtype uniprop') if rx_refuses('uniprop');
-            self.emit($UNIPROP);
-            self.emit(self.constant(~$node[0]));
-            self.emit(self.flags($node));
+            if nqp::elems($node) == 1 {
+                self.emit($UNIPROP);
+                self.emit(self.constant(~$node[0]));
+                self.emit(self.flags($node));
+            }
+            else {
+                # The pair form, <:Block("Basic Latin")>: the property's
+                # VALUE at this position is smartmatched against the given
+                # matcher, delegated through the cursor so a grammar can
+                # override it. That is a call, so it runs as a callback
+                # piece -- a zero-width test built the way the bytecode
+                # path's uniprop_pair builds it, reaching the target and
+                # position through $/'s cursor methods rather than the
+                # rule frame's registers -- followed by a consuming ANY
+                # when the assertion consumes.
+                my str $lowered := self.reads_outer_local($node[1], nqp::hash());
+                return self.bail('uniprop pair over a lowered local ' ~ $lowered)
+                    if $lowered;
+                my str $walker := self.reads_frame_ops($node[1], nqp::hash());
+                return self.bail('uniprop pair walks the caller chain (' ~ $walker ~ ')')
+                    if $walker;
+
+                my str $prop    := ~$node[0];
+                my int $by_name := $prop eq 'name' || $prop eq 'Name';
+                my $cursor := QAST::Var.new( :name("\$\xa2"), :scope('lexical') );
+                my str $ord     := QAST::Node.unique('rxup_ord');
+                my str $val     := QAST::Node.unique('rxup_val');
+                my str $matcher := QAST::Node.unique('rxup_matcher');
+                my sub localvar(str $name, *%opts) {
+                    QAST::Var.new( :name($name), :scope('local'), |%opts )
+                }
+                my sub propcode() {
+                    QAST::Op.new( :op('unipropcode'), QAST::SVal.new( :value($prop) ) )
+                }
+                my sub accepts($arg) {
+                    QAST::Op.new( :op('unbox_i'),
+                        QAST::Op.new(
+                            :op('callmethod'), :name('!DELEGATE_ACCEPTS'),
+                            $cursor, localvar($matcher), $arg ))
+                }
+                my $piece := QAST::Stmts.new(
+                    QAST::Op.new( :op('bind'),
+                        localvar($ord, :decl('var'), :returns(int)),
+                        QAST::Op.new( :op('ordat'),
+                            QAST::Op.new( :op('callmethod'), :name('target'), $cursor ),
+                            QAST::Op.new( :op('callmethod'), :name('pos'), $cursor ))),
+                    QAST::Op.new( :op('bind'),
+                        localvar($val, :decl('var'), :returns(str)),
+                        $by_name
+                            ?? QAST::Op.new( :op('getuniname'), localvar($ord, :returns(int)) )
+                            !! QAST::Op.new( :op('getuniprop_str'),
+                                   localvar($ord, :returns(int)), propcode() )),
+                    QAST::Op.new( :op('bind'),
+                        localvar($matcher, :decl('var')),
+                        $node[1] ));
+                $piece.push($by_name
+                    ?? accepts(localvar($val, :returns(str)))
+                    !! QAST::Op.new( :op('if'),
+                           QAST::Op.new( :op('chars'), localvar($val, :returns(str)) ),
+                           accepts(localvar($val, :returns(str))),
+                           accepts(QAST::Op.new( :op('getuniprop_int'),
+                               localvar($ord, :returns(int)), propcode() )) ));
+
+                # One node to the parent's count, even when the test and
+                # the consuming ANY are two: a SEQ holds them.
+                my int $consumes := $node.subtype ne 'zerowidth';
+                if $consumes {
+                    self.emit($SEQ);
+                    self.emit(2);
+                }
+                self.emit($QASTNODE);
+                self.emit(nqp::elems(@!callbacks));
+                self.emit($F_ZEROWIDTH + ($node.negate ?? $F_NEGATE !! 0));
+                nqp::push(@!callbacks, $piece);
+                if $consumes {
+                    self.emit($CCLASS);
+                    self.emit(0);  # any
+                    self.emit(0);
+                }
+            }
         }
         elsif $rxtype eq 'subrule' {
             self.subrule_call($node);
