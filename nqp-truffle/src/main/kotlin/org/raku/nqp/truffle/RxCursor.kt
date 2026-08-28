@@ -161,12 +161,12 @@ interface RxCursor {
         override fun callbackCursor(index: Int, pos: Int): Any? =
             throw UnsupportedOperationException("no rule code without a grammar: callback $index")
 
+        override fun callbackBounds(index: Int, pos: Int): IntArray =
+            throw UnsupportedOperationException("no rule code without a grammar: callback $index")
+
         override fun captureSpan(name: String, from: Int, to: Int) { }
 
         override fun captureCursor(name: String, subCursor: Any?) { }
-
-        override fun callbackBounds(index: Int, pos: Int): IntArray =
-            throw UnsupportedOperationException("no rule code without a grammar: callback $index")
 
         override fun truncateCaptures(entries: Int) { }
 

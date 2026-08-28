@@ -148,6 +148,7 @@ class RxProgram private constructor(
         const val F_NEGATE = 1
         const val F_ZEROWIDTH = 2
         const val F_IGNORECASE = 4
+        const val F_IGNOREMARK = 8
 
         /*
          * The pseudo-codepoint a CR directly followed by LF reads as. NFG
@@ -212,7 +213,8 @@ class RxProgram private constructor(
                 is RxTree.Literal -> {
                     val flags = (if (node.negate) F_NEGATE else 0) or
                         (if (node.zeroWidth) F_ZEROWIDTH else 0) or
-                        (if (node.ignoreCase) F_IGNORECASE else 0)
+                        (if (node.ignoreCase) F_IGNORECASE else 0) or
+                        (if (node.ignoreMark) F_IGNOREMARK else 0)
                     /* Most literals in a grammar are one character; comparing
                      * a codepoint beats a region match against a one-char
                      * string. */
