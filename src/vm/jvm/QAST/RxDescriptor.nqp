@@ -83,6 +83,7 @@ class QAST::RxDescriptor {
     my int $QASTNODE := 14;
     my int $SUBCB   := 15;
     my int $DYNQUANT := 16;
+    my int $CONJ    := 17;
 
     # Subrule argument kinds, matching RxDescriptor.java.
     my int $ARG_STR := 0;
@@ -712,6 +713,19 @@ class QAST::RxDescriptor {
             nqp::push(@!callbacks, $bounds);
             self.walk($node[0]);
             self.walk($node[2]) if $sep;
+        }
+        elsif $rxtype eq 'conj' || $rxtype eq 'conjseq' {
+            # `a && b`: every branch must match the SAME span. The first
+            # branch decides it; each later branch starts over at the same
+            # position and has to end exactly where the first did. The
+            # zerowidth subtype looks without consuming: the position is
+            # put back where it started once every branch has agreed.
+            return self.bail('conj without branches')
+                unless nqp::elems($node) >= 1;
+            self.emit($CONJ);
+            self.emit(nqp::elems($node));
+            self.emit($node.subtype eq 'zerowidth' ?? 1 !! 0);
+            for @($node) { self.walk($_) }
         }
         elsif $rxtype eq 'qastnode' {
             # `{ ... }`, `<?{ ... }>`, `:my $x := ...`: arbitrary NQP code,
