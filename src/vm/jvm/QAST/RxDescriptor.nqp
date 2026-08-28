@@ -93,6 +93,7 @@ class QAST::RxDescriptor {
     my int $F_ZEROWIDTH  := 2;
     my int $F_IGNORECASE := 4;
     my int $F_IGNOREMARK := 8;
+    my int $F_SUBRATCHET := 16;
 
     # Ops that walk the frame or caller chain at run time; a callback piece
     # containing one refuses the rule (see reads_frame_ops).
@@ -159,10 +160,6 @@ class QAST::RxDescriptor {
             nqp::existskey(nqp::getenvhash(), 'NQP_RX_SURVEY') ?? 1 !! 0);
         $self.inspect_pass($node);
         $self.walk($node);
-        # Decided after the walk, which is what knows whether any subrule
-        # was called: see inspect_pass for why the pairing is refused.
-        $self.bail('backtrackable rule with subrules')
-            if $self.backtrackable && $self.has_sub;
         $self.report if $self.survey;
         $self.bailed ?? nqp::null() !! $self
     }
@@ -289,7 +286,10 @@ class QAST::RxDescriptor {
     method encoded() {
         my @out;
         nqp::push(@out, 'rxd ');
-        nqp::push(@out, ~$!scan);
+        # Bit 0: the rule scans. Bit 1: the rule is resumable -- it passed
+        # with :backtrack, so !cursor_next may re-enter it for its next
+        # match, and the engine keeps its choice points to answer that.
+        nqp::push(@out, ~($!scan + ($!backtrackable ?? 2 !! 0)));
         nqp::push(@out, ' ');
         nqp::push(@out, ~nqp::elems(@!code));
         for @!code {
@@ -363,7 +363,8 @@ class QAST::RxDescriptor {
         if $named && !nqp::isnull(@args) {
             self.emit($SUB);
             self.emit(self.constant($node[0][0].value));
-            self.emit(self.flags($node));
+            self.emit(self.flags($node)
+                + ($node.backtrack eq 'r' ?? $F_SUBRATCHET !! 0));
             # A capturing subrule's own cursor is the capture.
             self.emit($node.subtype eq 'capture'
                 ?? self.constant(~$node.name) + 1
@@ -405,7 +406,8 @@ class QAST::RxDescriptor {
 
         self.emit($SUBCB);
         self.emit(nqp::elems(@!callbacks));
-        self.emit(self.flags($node));
+        self.emit(self.flags($node)
+            + ($node.backtrack eq 'r' ?? $F_SUBRATCHET !! 0));
         self.emit($node.subtype eq 'capture'
             ?? self.constant(~$node.name) + 1
             !! 0);

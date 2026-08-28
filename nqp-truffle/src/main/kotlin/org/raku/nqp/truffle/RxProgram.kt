@@ -149,6 +149,7 @@ class RxProgram private constructor(
         const val F_ZEROWIDTH = 2
         const val F_IGNORECASE = 4
         const val F_IGNOREMARK = 8
+        const val F_SUBRATCHET = 16
 
         /*
          * The pseudo-codepoint a CR directly followed by LF reads as. NFG
@@ -261,7 +262,8 @@ class RxProgram private constructor(
                     op(
                         SUB, constant(node.name),
                         (if (node.negate) F_NEGATE else 0) or
-                            (if (node.zeroWidth) F_ZEROWIDTH else 0),
+                            (if (node.zeroWidth) F_ZEROWIDTH else 0) or
+                            (if (node.ratchet) F_SUBRATCHET else 0),
                         capture, args,
                     )
                     if (node.capture != null) captures++
@@ -278,7 +280,8 @@ class RxProgram private constructor(
                     op(
                         SUB_CB, node.index,
                         (if (node.negate) F_NEGATE else 0) or
-                            (if (node.zeroWidth) F_ZEROWIDTH else 0),
+                            (if (node.zeroWidth) F_ZEROWIDTH else 0) or
+                            (if (node.ratchet) F_SUBRATCHET else 0),
                         capture,
                     )
                     if (node.capture != null) captures++

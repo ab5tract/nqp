@@ -86,6 +86,16 @@ public final class RxLanguage extends TruffleLanguage<RxLanguage.Ctx> {
             String target = (String) args[0];
             int pos = args.length > 1 ? (Integer) args[1] : 0;
             RxCursor cursor = args.length > 2 ? (RxCursor) args[2] : new RxCursor.OfString(target);
+            // Resumability rides two optional trailing arguments: a one-slot
+            // array the match leaves its live choice state in, and a saved
+            // state to resume from instead of starting fresh.
+            @SuppressWarnings("unchecked")
+            RxVmNode.EngineState[] stateOut =
+                args.length > 3 ? (RxVmNode.EngineState[]) args[3] : null;
+            RxVmNode.EngineState resume =
+                args.length > 4 ? (RxVmNode.EngineState) args[4] : null;
+            if (resume != null) return vm.resume(cursor, resume, stateOut);
+            if (stateOut != null) return vm.match(cursor, pos, stateOut);
             return vm.match(cursor, pos);
         }
     }
