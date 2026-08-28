@@ -134,6 +134,16 @@ class RxProgram private constructor(
         const val DYNQ_STEP = 27
         const val DYNQ_NEXT = 28
 
+        /* reg -- pos := regs[reg]. */
+        const val REG_TO_POS = 29
+
+        /* reg -- fail unless pos == regs[reg]. With REG_TO_POS and MARK
+         * this is all a conjunction needs: mark the start, run the first
+         * branch, mark its end, then run each later branch from the start
+         * and require it to land exactly on the end. Straight-line code,
+         * so a backtrack into a branch re-runs the check on the way out. */
+        const val POS_EQ_REG = 30
+
         /* CHAR flags. */
         const val F_NEGATE = 1
         const val F_ZEROWIDTH = 2
@@ -224,6 +234,20 @@ class RxProgram private constructor(
                 is RxTree.Quant -> emitQuant(node)
 
                 is RxTree.DynQuant -> emitDynQuant(node)
+
+                is RxTree.Conj -> {
+                    val start = reg()
+                    val end = reg()
+                    op(MARK, start)
+                    emit(node.branches[0])
+                    op(MARK, end)
+                    for (i in 1 until node.branches.size) {
+                        op(REG_TO_POS, start)
+                        emit(node.branches[i])
+                        op(POS_EQ_REG, end)
+                    }
+                    if (node.zeroWidth) op(REG_TO_POS, start)
+                }
 
                 is RxTree.Sub -> {
                     /* Zero means the result is not captured; otherwise the

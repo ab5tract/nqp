@@ -416,7 +416,20 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     }
                 }
 
-                RxProgram.REG_TO_POS -> {                RxProgram.DYNQ_NEXT -> {
+                RxProgram.REG_TO_POS -> {                RxProgram.REG_TO_POS -> {
+                    pos = regs[code[pc + 1]]
+                    pc += 2
+                }
+
+                RxProgram.POS_EQ_REG -> {
+                    if (pos != regs[code[pc + 1]]) {
+                        failed = true
+                    } else {
+                        pc += 2
+                    }
+                }
+
+                RxProgram.DYNQ_NEXT -> {                RxProgram.DYNQ_NEXT -> {
                     val r = code[pc + 1]
                     if (pos == regs[code[pc + 2]] && regs[r + 2] >= regs[r]) {
                         failed = true

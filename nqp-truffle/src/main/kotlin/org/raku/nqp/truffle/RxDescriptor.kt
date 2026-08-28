@@ -97,6 +97,14 @@ class RxDescriptor private constructor(
                 RxTree.DynQuant(body, index, greedy, ratchet, if (separated) node() else null)
             }
 
+            CONJ -> {
+                val count = code[at++]
+                val zeroWidth = code[at++] != 0
+                val branches = ArrayList<RxTree.Node>(count)
+                repeat(count) { branches.add(node()) }
+                RxTree.Conj(branches, zeroWidth)
+            }
+
             CAPTURE -> {
                 val name = pool[code[at++]] as String
                 RxTree.Capture(name, node())
@@ -206,6 +214,10 @@ class RxDescriptor private constructor(
          * match time (`x ** {$n}`): the callback answers a two-int array
          * of (min, max), -1 meaning unbounded. */
         const val DYNQUANT = 16
+
+        /* count, zerowidth, children... -- rxtype conj/conjseq: every
+         * branch must match the same span; the first decides it. */
+        const val CONJ = 17
 
         /* Subrule argument kinds. The pool is strings, so an int argument
          * travels as its decimal text and is read back here, once. */
