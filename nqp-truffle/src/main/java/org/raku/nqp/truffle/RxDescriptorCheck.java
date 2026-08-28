@@ -29,6 +29,8 @@ public final class RxDescriptorCheck {
         @Override public int[] altOrder(String name, int pos, int branches) { return order; }
         @Override public boolean charProp(String property, int pos) { return false; }
         @Override public boolean callbackHolds(int index, int pos) { return true; }
+        @Override public Object callbackCursor(int index, int pos) { return null; }
+        @Override public void truncateCaptures(int entries) { }
     }
 
     /**
@@ -48,6 +50,8 @@ public final class RxDescriptorCheck {
             return property.equals("Alpha") && Character.isLetter(target.charAt(pos));
         }
         @Override public boolean callbackHolds(int index, int pos) { return true; }
+        @Override public Object callbackCursor(int index, int pos) { return null; }
+        @Override public void truncateCaptures(int entries) { }
     }
 
     /**
@@ -149,6 +153,8 @@ public final class RxDescriptorCheck {
             ran.append(index).append('@').append(pos).append(' ');
             return answer;
         }
+        @Override public Object callbackCursor(int index, int pos) { return null; }
+        @Override public void truncateCaptures(int entries) { }
     }
 
     /**
@@ -263,6 +269,8 @@ public final class RxDescriptorCheck {
         @Override public int[] altOrder(String name, int pos, int branches) { return NO_BRANCHES; }
         @Override public boolean charProp(String property, int pos) { return false; }
         @Override public boolean callbackHolds(int index, int pos) { return true; }
+        @Override public Object callbackCursor(int index, int pos) { return null; }
+        @Override public void truncateCaptures(int entries) { }
     }
 
     /**

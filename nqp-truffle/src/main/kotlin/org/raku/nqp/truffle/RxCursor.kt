@@ -97,6 +97,15 @@ interface RxCursor {
     fun callbackHolds(index: Int, pos: Int): Boolean
 
     /**
+     * Runs one piece of the rule's own code whose value is a subrule call's
+     * cursor -- an invocation the descriptor could not carry directly (a
+     * lexical rule, computed arguments) travels as a callback piece instead
+     * of a [callSubrule] name. Same channel as [callbackHolds]; the answer
+     * is the subcursor rather than a truth.
+     */
+    fun callbackCursor(index: Int, pos: Int): Any?
+
+    /**
      * Captures a span of the target under a name, building whatever cursor
      * NQP wants to represent it.
      */
@@ -104,6 +113,19 @@ interface RxCursor {
 
     /** Captures a cursor a rule produced, under a name. */
     fun captureCursor(name: String, subCursor: Any?)
+
+    /**
+     * Takes back captures, keeping only the first [entries] the engine made.
+     *
+     * The engine holds captures pending and hands them over at the end --
+     * except that a rule's own code (`{ ... }`) is entitled to see the
+     * captures made so far through `$/`, so the engine syncs pending
+     * captures to the cursor before running a callback. A later backtrack
+     * past a synced capture then has to undo the cursor's record of it,
+     * which the bytecode path does through its bstack marks and the engine
+     * does with this.
+     */
+    fun truncateCaptures(entries: Int)
 
     companion object {
         @JvmField
@@ -129,9 +151,14 @@ interface RxCursor {
         override fun callbackHolds(index: Int, pos: Int): Boolean =
             throw UnsupportedOperationException("no rule code without a grammar: callback $index")
 
+        override fun callbackCursor(index: Int, pos: Int): Any? =
+            throw UnsupportedOperationException("no rule code without a grammar: callback $index")
+
         override fun captureSpan(name: String, from: Int, to: Int) { }
 
         override fun captureCursor(name: String, subCursor: Any?) { }
+
+        override fun truncateCaptures(entries: Int) { }
 
         /* No grammar, so no NFA and no alternation to order. */
         override fun altOrder(name: String, pos: Int, branches: Int): IntArray = NO_BRANCHES
