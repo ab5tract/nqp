@@ -88,6 +88,15 @@ class RxDescriptor private constructor(
                 )
             }
 
+            DYNQUANT -> {
+                val index = code[at++]
+                val greedy = code[at++] != 0
+                val ratchet = code[at++] != 0
+                val separated = code[at++] != 0
+                val body = node()
+                RxTree.DynQuant(body, index, greedy, ratchet, if (separated) node() else null)
+            }
+
             CAPTURE -> {
                 val name = pool[code[at++]] as String
                 RxTree.Capture(name, node())
@@ -191,6 +200,12 @@ class RxDescriptor private constructor(
          * computed arguments), run as a callback piece whose value is the
          * subcursor. */
         const val SUBCB = 15
+
+        /* callback index, greedy, ratchet, separated, body, separator when
+         * separated -- a quantifier whose bounds the rule evaluates at
+         * match time (`x ** {$n}`): the callback answers a two-int array
+         * of (min, max), -1 meaning unbounded. */
+        const val DYNQUANT = 16
 
         /* Subrule argument kinds. The pool is strings, so an int argument
          * travels as its decimal text and is read back here, once. */

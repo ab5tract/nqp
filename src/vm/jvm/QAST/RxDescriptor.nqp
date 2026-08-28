@@ -30,6 +30,7 @@ class QAST::RxDescriptor {
     #   subrule-callback  subrule calls carried as callback pieces (lexical
     #                     and other computed callees, computed arguments)
     #   qastnode       `{ ... }` and `<?{ ... }>` run back in the rule's frame
+    #   dynquant       `x ** {$n}`, bounds evaluated at match time
     my %rx_no;
     my int $rx_no_read := 0;
     sub rx_refuses(str $feature) {
@@ -81,6 +82,7 @@ class QAST::RxDescriptor {
     my int $UNIPROP := 13;
     my int $QASTNODE := 14;
     my int $SUBCB   := 15;
+    my int $DYNQUANT := 16;
 
     # Subrule argument kinds, matching RxDescriptor.java.
     my int $ARG_STR := 0;
@@ -686,6 +688,30 @@ class QAST::RxDescriptor {
             self.emit($sep);
             self.walk($node[0]);
             self.walk($node[1]) if $sep;
+        }
+        elsif $rxtype eq 'dynquant' {
+            # `x ** {$n}` and friends: the bounds are an expression the rule
+            # evaluates at match time, answering a two-int array of (min,
+            # max), -1 meaning unbounded -- and min 0 with max 0 matches
+            # nothing at all. The expression runs back in the rule's frame
+            # on the callback channel, under the same limits as any piece.
+            return self.bail('rxtype dynquant (refused)') if rx_refuses('dynquant');
+            my $bounds := $node[1];
+            my str $lowered := self.reads_outer_local($bounds, nqp::hash());
+            return self.bail('dynquant bounds over a lowered local ' ~ $lowered)
+                if $lowered;
+            my str $walker := self.reads_frame_ops($bounds, nqp::hash());
+            return self.bail('dynquant bounds walk the caller chain (' ~ $walker ~ ')')
+                if $walker;
+            my int $sep := nqp::elems($node) > 2 ?? 1 !! 0;
+            self.emit($DYNQUANT);
+            self.emit(nqp::elems(@!callbacks));
+            self.emit($node.backtrack eq 'f' ?? 0 !! 1);
+            self.emit(($node.backtrack || 'g') eq 'r' ?? 1 !! 0);
+            self.emit($sep);
+            nqp::push(@!callbacks, $bounds);
+            self.walk($node[0]);
+            self.walk($node[2]) if $sep;
         }
         elsif $rxtype eq 'qastnode' {
             # `{ ... }`, `<?{ ... }>`, `:my $x := ...`: arbitrary NQP code,

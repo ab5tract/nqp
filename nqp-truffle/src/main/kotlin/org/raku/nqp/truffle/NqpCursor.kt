@@ -118,6 +118,15 @@ class NqpCursor(
     /** A callback piece whose value is a subrule call's cursor. */
     override fun callbackCursor(index: Int, pos: Int): Any? = runCallback(index, pos)
 
+    /** A dynamic quantifier's bounds: the piece answers a two-int array. */
+    override fun callbackBounds(index: Int, pos: Int): IntArray {
+        val bounds = runCallback(index, pos)
+        return intArrayOf(
+            Ops.atpos_i(bounds, 0, tc).toInt(),
+            Ops.atpos_i(bounds, 1, tc).toInt(),
+        )
+    }
+
     private fun runCallback(index: Int, pos: Int): SixModelObject? {
         if (TRACE) System.err.println("rx{ callback $index @ $pos")
         var closure = callbackClosure

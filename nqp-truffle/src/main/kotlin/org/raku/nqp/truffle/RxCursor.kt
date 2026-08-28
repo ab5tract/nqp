@@ -115,6 +115,13 @@ interface RxCursor {
     fun captureCursor(name: String, subCursor: Any?)
 
     /**
+     * Runs the callback piece holding a dynamic quantifier's bounds
+     * expression (`x ** {$n}`) and answers (min, max), -1 meaning
+     * unbounded. Same channel as [callbackHolds].
+     */
+    fun callbackBounds(index: Int, pos: Int): IntArray
+
+    /**
      * Takes back captures, keeping only the first [entries] the engine made.
      *
      * The engine holds captures pending and hands them over at the end --
@@ -157,6 +164,9 @@ interface RxCursor {
         override fun captureSpan(name: String, from: Int, to: Int) { }
 
         override fun captureCursor(name: String, subCursor: Any?) { }
+
+        override fun callbackBounds(index: Int, pos: Int): IntArray =
+            throw UnsupportedOperationException("no rule code without a grammar: callback $index")
 
         override fun truncateCaptures(entries: Int) { }
 
