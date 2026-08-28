@@ -171,6 +171,19 @@ object RxTree {
     }
 
     /**
+     * A subrule call the direct [Sub] form cannot carry: a lexical or other
+     * computed callee, or computed arguments. The whole invocation lives in
+     * the rule's callback block at [index], the same channel a `{ ... }`
+     * uses, and its value is the subcursor. Everything after the call --
+     * negate, zero-width, capture -- works exactly as for [Sub].
+     */
+    @JvmRecord
+    data class SubCallback(
+        val index: Int,
+        val zeroWidth: Boolean,
+        val negate: Boolean,
+        val capture: String?,
+    ) : Node
 
     /** rxtype subcapture. */
     @JvmRecord

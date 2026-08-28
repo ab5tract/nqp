@@ -97,6 +97,15 @@ interface RxCursor {
     fun callbackHolds(index: Int, pos: Int): Boolean
 
     /**
+     * Runs one piece of the rule's own code whose value is a subrule call's
+     * cursor -- an invocation the descriptor could not carry directly (a
+     * lexical rule, computed arguments) travels as a callback piece instead
+     * of a [callSubrule] name. Same channel as [callbackHolds]; the answer
+     * is the subcursor rather than a truth.
+     */
+    fun callbackCursor(index: Int, pos: Int): Any?
+
+    /**
      * Captures a span of the target under a name, building whatever cursor
      * NQP wants to represent it.
      */
@@ -127,6 +136,9 @@ interface RxCursor {
                 "no Unicode properties without a runtime: $property")
 
         override fun callbackHolds(index: Int, pos: Int): Boolean =
+            throw UnsupportedOperationException("no rule code without a grammar: callback $index")
+
+        override fun callbackCursor(index: Int, pos: Int): Any? =
             throw UnsupportedOperationException("no rule code without a grammar: callback $index")
 
         override fun captureSpan(name: String, from: Int, to: Int) { }
