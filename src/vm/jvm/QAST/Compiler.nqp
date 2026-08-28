@@ -6496,6 +6496,20 @@ class QAST::CompilerJAST {
     # see -- the same reason a rule whose code reads a lowered local is
     # refused outright.
     method rx_callback_block($desc) {
+        self.rx_callback_block_for($desc.callbacks, 0)
+    }
+
+    # A rule with very many pieces cannot dispatch them all in one block:
+    # each generated method is capped at 64KB of bytecode, and comp_unit's
+    # sixty-odd `:my` pieces broke emission outright. Above the group size
+    # the pieces split into nested blocks of at most that many, the outer
+    # block dispatching on index range and forwarding its arguments. The
+    # pieces then run one frame deeper, which is safe for the same reason
+    # the callback block itself is: compile-time nesting and run-time frame
+    # nesting gain the same level in the same place, and the ops that could
+    # tell the difference already refuse the rule (reads_frame_ops).
+    method rx_callback_block_for(@bodies, int $base) {
+        my int $GROUP := 12;
         my $idx   := QAST::Node.unique('rxcb_idx');
         my $cur   := QAST::Node.unique('rxcb_cur');
         my $class := QAST::Node.unique('rxcb_class');
@@ -6505,34 +6519,66 @@ class QAST::CompilerJAST {
             QAST::Var.new( :name($name), :scope('local'), |%opts )
         }
 
-        # Chosen from the last back, so each `if` wraps the ones after it.
-        my @bodies := $desc.callbacks;
-        my $dispatch := QAST::Op.new( :op('null') );
-        my int $i := nqp::elems(@bodies);
-        while $i > 0 {
-            $i := $i - 1;
-            $dispatch := QAST::Op.new(
-                :op('if'),
-                QAST::Op.new( :op('iseq_i'), local($idx), QAST::IVal.new( :value($i) ) ),
-                # What the bytecode path does before the code runs: the
-                # position it is looking at goes on the cursor, and $¢ names
-                # the cursor, because the code is written to read both.
-                QAST::Stmts.new(
+        my $dispatch;
+        if nqp::elems(@bodies) > $GROUP {
+            # Range dispatch over groups. Built LOW to HIGH so the highest
+            # range test lands outermost -- with the nesting the other way,
+            # every index above the first group's floor would take the first
+            # branch and dispatch to nothing.
+            $dispatch := QAST::Op.new( :op('null') );
+            my int $start := 0;
+            while $start < nqp::elems(@bodies) {
+                my @group;
+                my int $g := $start;
+                while $g < nqp::elems(@bodies) && $g < $start + $GROUP {
+                    nqp::push(@group, @bodies[$g]);
+                    $g := $g + 1;
+                }
+                $dispatch := QAST::Op.new(
+                    :op('if'),
+                    QAST::Op.new( :op('isge_i'), local($idx),
+                        QAST::IVal.new( :value($base + $start) ) ),
                     QAST::Op.new(
-                        :op('bindattr_i'),
-                        local($cur), local($class),
-                        QAST::SVal.new( :value('$!pos') ),
-                        local($pos)
+                        :op('call'),
+                        self.rx_callback_block_for(@group, $base + $start),
+                        local($idx), local($cur), local($class), local($pos)
                     ),
-                    QAST::Op.new(
-                        :op('bind'),
-                        QAST::Var.new( :name("\$\xa2"), :scope('lexical') ),
-                        local($cur)
+                    $dispatch
+                );
+                $start := $start + $GROUP;
+            }
+        }
+        else {
+            # Chosen from the last back, so each `if` wraps the ones after it.
+            $dispatch := QAST::Op.new( :op('null') );
+            my int $i := nqp::elems(@bodies);
+            while $i > 0 {
+                $i := $i - 1;
+                $dispatch := QAST::Op.new(
+                    :op('if'),
+                    QAST::Op.new( :op('iseq_i'), local($idx),
+                        QAST::IVal.new( :value($base + $i) ) ),
+                    # What the bytecode path does before the code runs: the
+                    # position it is looking at goes on the cursor, and $¢
+                    # names the cursor, because the code is written to read
+                    # both.
+                    QAST::Stmts.new(
+                        QAST::Op.new(
+                            :op('bindattr_i'),
+                            local($cur), local($class),
+                            QAST::SVal.new( :value('$!pos') ),
+                            local($pos)
+                        ),
+                        QAST::Op.new(
+                            :op('bind'),
+                            QAST::Var.new( :name("\$\xa2"), :scope('lexical') ),
+                            local($cur)
+                        ),
+                        @bodies[$i]
                     ),
-                    @bodies[$i]
-                ),
-                $dispatch
-            );
+                    $dispatch
+                );
+            }
         }
 
         QAST::Block.new(

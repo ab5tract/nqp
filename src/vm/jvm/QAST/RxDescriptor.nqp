@@ -163,18 +163,6 @@ class QAST::RxDescriptor {
         # was called: see inspect_pass for why the pairing is refused.
         $self.bail('backtrackable rule with subrules')
             if $self.backtrackable && $self.has_sub;
-        # PROVISIONAL: a rule with very many callback pieces stays on the
-        # bytecode path. The callback dispatch compiles into one generated
-        # method, and rakudo's comp_unit -- sixty-odd `:my` pieces of
-        # substantial code -- broke its emission ("JAST node isn't a
-        # JAST::Class"; the JVM's 64KB method limit is the suspect). Such
-        # once-per-parse rules gain nothing from the engine anyway. Lift
-        # this by splitting the dispatch across methods if a hot rule ever
-        # hits it; NQP_RX_SURVEY names what the cap refuses.
-        $self.bail('qastnode-heavy rule ('
-                ~ nqp::elems(nqp::getattr($self, QAST::RxDescriptor, '@!callbacks'))
-                ~ ' pieces)')
-            if nqp::elems(nqp::getattr($self, QAST::RxDescriptor, '@!callbacks')) > 16;
         $self.report if $self.survey;
         $self.bailed ?? nqp::null() !! $self
     }
