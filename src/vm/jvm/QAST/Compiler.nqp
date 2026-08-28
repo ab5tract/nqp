@@ -6300,14 +6300,11 @@ class QAST::CompilerJAST {
 
     # The descriptor for this rule, or null to keep the bytecode path.
     #
-    # NQP_JVM_NO_TRUFFLE has to be set for the compile and the run alike: it
-    # decides here whether descriptors are emitted, and a rule compiled to a
-    # descriptor has no matcher to fall back on if the engine is missing when
-    # it runs.
+    # There is no whole-engine toggle: every rule the descriptor can encode
+    # runs on the engine, and the bytecode path exists only for the rules
+    # that still bail (NQP_RX_SURVEY names them). The NQP_RX_* triage knobs
+    # below narrow the encodable set per rule or per feature for bisection.
     method rx_descriptor($node) {
-        return nqp::null()
-            if nqp::existskey(nqp::getenvhash(), 'NQP_JVM_NO_TRUFFLE');
-
         my $desc := QAST::RxDescriptor.encode($node);
         return nqp::null() if nqp::isnull($desc);
 
