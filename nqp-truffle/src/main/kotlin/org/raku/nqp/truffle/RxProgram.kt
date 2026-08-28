@@ -111,6 +111,19 @@ class RxProgram private constructor(
         const val F_ZEROWIDTH = 2
         const val F_IGNORECASE = 4
 
+        /*
+         * The pseudo-codepoint a CR directly followed by LF reads as. NFG
+         * backends fuse the pair into one grapheme; these strings are not
+         * NFG, so the engine synthesizes the fusion at match time: a
+         * consuming atom positioned on the pair sees this value -- which no
+         * codepoint test recognises -- and a successful match consumes both
+         * characters. Character lists do the reverse on their side: an
+         * adjacent CR LF in an enumcharlist is one member, equal only to
+         * this. Negative, like MoarVM's synthetics, so it can never collide
+         * with a real codepoint.
+         */
+        const val CRLF = -0x0D0A
+
         /** Compiles a pattern tree. Runs once, when the pattern is first seen. */
         @JvmStatic
         @TruffleBoundary
