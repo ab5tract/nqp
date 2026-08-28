@@ -37,6 +37,7 @@ class RxDescriptor private constructor(
                     (flags and RxProgram.F_NEGATE) != 0,
                     (flags and RxProgram.F_ZEROWIDTH) != 0,
                     (flags and RxProgram.F_IGNORECASE) != 0,
+                    (flags and RxProgram.F_IGNOREMARK) != 0,
                 )
             }
 
@@ -127,6 +128,23 @@ class RxDescriptor private constructor(
                 )
             }
 
+            DYNQUANT -> {
+                val index = code[at++]
+                val greedy = code[at++] != 0
+                val ratchet = code[at++] != 0
+                val separated = code[at++] != 0
+                val body = node()
+                RxTree.DynQuant(body, index, greedy, ratchet, if (separated) node() else null)
+            }
+
+            CONJ -> {
+                val count = code[at++]
+                val zeroWidth = code[at++] != 0
+                val branches = ArrayList<RxTree.Node>(count)
+                repeat(count) { branches.add(node()) }
+                RxTree.Conj(branches, zeroWidth)
+            }
+
             else -> throw IllegalArgumentException("unknown descriptor tag $tag")
         }
     }
@@ -191,6 +209,16 @@ class RxDescriptor private constructor(
          * computed arguments), run as a callback piece whose value is the
          * subcursor. */
         const val SUBCB = 15
+
+        /* callback index, greedy, ratchet, separated, body, separator when
+         * separated -- a quantifier whose bounds the rule evaluates at
+         * match time (`x ** {$n}`): the callback answers a two-int array
+         * of (min, max), -1 meaning unbounded. */
+        const val DYNQUANT = 16
+
+        /* count, zerowidth, children... -- rxtype conj/conjseq: every
+         * branch must match the same span; the first decides it. */
+        const val CONJ = 17
 
         /* Subrule argument kinds. The pool is strings, so an int argument
          * travels as its decimal text and is read back here, once. */

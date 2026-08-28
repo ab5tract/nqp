@@ -93,8 +93,16 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                      * one grapheme and a lone CR is not it. A literal that
                      * carries the "\r\n" itself compares both characters and
                      * is unaffected. */
-                    val hit = pos + text.length <= eos &&
-                        target.regionMatches(pos, text, 0, text.length, ignoreCase) &&
+                    val compared = if ((flags and RxProgram.F_IGNOREMARK) != 0) {
+                        /* The mark-insensitive comparisons live in the
+                         * runtime, same as the bytecode path's eqatim. */
+                        pos + text.length <= eos &&
+                            literalIgnoreMark(target, text, pos, ignoreCase)
+                    } else {
+                        pos + text.length <= eos &&
+                            target.regionMatches(pos, text, 0, text.length, ignoreCase)
+                    }
+                    val hit = compared &&
                         !(text.isNotEmpty() && text[text.length - 1] == '\r' &&
                             pos + text.length < eos && target[pos + text.length] == '\n')
                     if (hit == ((flags and RxProgram.F_NEGATE) != 0)) {
@@ -384,6 +392,61 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     pc += 3
                 }
 
+                RxProgram.DYNQ_BOUNDS -> {
+                    val r = code[pc + 1]
+                    val b = callbackBounds(cursor, code[pc + 2], pos)
+                    regs[r] = b[0]
+                    regs[r + 1] = b[1]
+                    regs[r + 2] = 0
+                    pc = if (b[0] == 0 && b[1] == 0) code[pc + 3] else pc + 4
+                }
+
+                RxProgram.DYNQ_STEP -> {
+                    val r = code[pc + 1]
+                    val min = regs[r]
+                    val max = regs[r + 1]
+                    val rep = regs[r + 2]
+                    val bodyPc = if (rep == 0) code[pc + 2] else code[pc + 3]
+                    if (rep < min) {
+                        pc = bodyPc
+                    } else if (max != -1 && rep >= max) {
+                        pc = code[pc + 4]
+                    } else {
+                        val greedy = code[pc + 5] != 0
+                        if (choiceTop + CHOICE_WIDTH > choices.size) {
+                            choices = grow(choices)
+                        }
+                        choices[choiceTop] = if (greedy) code[pc + 4] else bodyPc
+                        choices[choiceTop + 1] = pos
+                        choices[choiceTop + 2] = pendingTop
+                        choiceTop += CHOICE_WIDTH
+                        pc = if (greedy) bodyPc else code[pc + 4]
+                    }
+                }
+
+                RxProgram.REG_TO_POS -> {
+                    pos = regs[code[pc + 1]]
+                    pc += 2
+                }
+
+                RxProgram.POS_EQ_REG -> {
+                    if (pos != regs[code[pc + 1]]) {
+                        failed = true
+                    } else {
+                        pc += 2
+                    }
+                }
+
+                RxProgram.DYNQ_NEXT -> {
+                    val r = code[pc + 1]
+                    if (pos == regs[code[pc + 2]] && regs[r + 2] >= regs[r]) {
+                        failed = true
+                    } else {
+                        regs[r + 2]++
+                        pc = code[pc + 3]
+                    }
+                }
+
                 RxProgram.SUB_CB -> {
                     val flags = code[pc + 2]
                     val sub = callbackCursor(cursor, code[pc + 1], pos)
@@ -526,6 +589,17 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
         @TruffleBoundary
         private fun callbackCursor(cursor: RxCursor, index: Int, pos: Int): Any? =
             cursor.callbackCursor(index, pos)
+
+        @TruffleBoundary
+        private fun callbackBounds(cursor: RxCursor, index: Int, pos: Int): IntArray =
+            cursor.callbackBounds(index, pos)
+
+        @TruffleBoundary
+        private fun literalIgnoreMark(
+            target: String, text: String, pos: Int, alsoCase: Boolean,
+        ): Boolean =
+            (if (alsoCase) org.raku.nqp.runtime.Ops.eqaticim(target, text, pos.toLong())
+             else org.raku.nqp.runtime.Ops.eqatim(target, text, pos.toLong())) != 0L
 
         @TruffleBoundary
         private fun reached(cursor: RxCursor, subCursor: Any?): Int = cursor.reached(subCursor)

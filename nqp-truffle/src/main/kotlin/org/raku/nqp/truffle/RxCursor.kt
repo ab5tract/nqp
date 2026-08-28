@@ -115,6 +115,20 @@ interface RxCursor {
     fun captureCursor(name: String, subCursor: Any?)
 
     /**
+     * Runs the callback piece holding a dynamic quantifier's bounds
+     * expression (`x ** {$n}`) and answers (min, max), -1 meaning
+     * unbounded. Same channel as [callbackHolds].
+     */
+    fun callbackBounds(index: Int, pos: Int): IntArray
+
+    /**
+     * Runs the callback piece holding a computed pass name -- the
+     * late-bound `regex ::($name)` form -- and answers the name the
+     * rule reduces under. Same channel as [callbackHolds].
+     */
+    fun callbackName(index: Int, pos: Int): String
+
+    /**
      * Takes back captures, keeping only the first [entries] the engine made.
      *
      * The engine holds captures pending and hands them over at the end --
@@ -152,6 +166,12 @@ interface RxCursor {
             throw UnsupportedOperationException("no rule code without a grammar: callback $index")
 
         override fun callbackCursor(index: Int, pos: Int): Any? =
+            throw UnsupportedOperationException("no rule code without a grammar: callback $index")
+
+        override fun callbackBounds(index: Int, pos: Int): IntArray =
+            throw UnsupportedOperationException("no rule code without a grammar: callback $index")
+
+        override fun callbackName(index: Int, pos: Int): String =
             throw UnsupportedOperationException("no rule code without a grammar: callback $index")
 
         override fun captureSpan(name: String, from: Int, to: Int) { }
