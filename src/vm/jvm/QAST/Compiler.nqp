@@ -6300,14 +6300,11 @@ class QAST::CompilerJAST {
 
     # The descriptor for this rule, or null to keep the bytecode path.
     #
-    # NQP_JVM_NO_TRUFFLE has to be set for the compile and the run alike: it
-    # decides here whether descriptors are emitted, and a rule compiled to a
-    # descriptor has no matcher to fall back on if the engine is missing when
-    # it runs.
+    # There is no whole-engine toggle: every rule the descriptor can encode
+    # runs on the engine, and the bytecode path exists only for the rules
+    # that still bail (NQP_RX_SURVEY names them). The NQP_RX_* triage knobs
+    # below narrow the encodable set per rule or per feature for bisection.
     method rx_descriptor($node) {
-        return nqp::null()
-            if nqp::existskey(nqp::getenvhash(), 'NQP_JVM_NO_TRUFFLE');
-
         my $desc := QAST::RxDescriptor.encode($node);
         return nqp::null() if nqp::isnull($desc);
 
@@ -6359,14 +6356,17 @@ class QAST::CompilerJAST {
     # the cursor, whose $!pos is -3 until the rule finishes -- reading it
     # there would start every match at a negative offset.
     #
-    # The restart slot is not consulted because it cannot be set: only a rule
-    # that passed with :backtrack is ever resumed, and the descriptor refuses
-    # those.
+    # The restart slot IS consulted, though the engine cannot honor it: a
+    # rule that passed with :backtrack can be resumed for its next match,
+    # and the engine's choice points were gone when the first match
+    # returned. rxmatch answers a restart by failing the cursor -- "no
+    # further match" -- which keeps a resumption from re-answering the
+    # first match forever.
     method engine_jast($node, $desc) {
         my %*REG;
         my $prefix := self.unique('rxe') ~ '_';
         my $reglist := nqp::split(' ',
-            'start o cur o curclass o tgt s pos i selffrom i callback o');
+            'start o cur o curclass o tgt s pos i selffrom i restart i callback o');
         while $reglist {
             my $reg := nqp::shift($reglist);
             my $rt  := nqp::shift($reglist);
@@ -6435,7 +6435,17 @@ class QAST::CompilerJAST {
                     QAST::Var.new( :name('self'), :scope('local') ),
                     QAST::Var.new( :name(%*REG<curclass>), :scope('local') ),
                     QAST::SVal.new( :value('$!from') )
-                ))
+                )),
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name(%*REG<restart>), :scope('local'), :returns(int) ),
+                QAST::Op.new(
+                    :op('unbox_i'),
+                    QAST::Op.new(
+                        :op('atpos'),
+                        QAST::Var.new( :name(%*REG<start>), :scope('local') ),
+                        QAST::IVal.new( :value(5) )
+                    )))
         ), :want($RT_VOID));
         $il.append($pro.jast);
         $*STACK.obtain(NQPMu, $pro);
@@ -6462,11 +6472,12 @@ class QAST::CompilerJAST {
         $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<selffrom> ));
+        $il.append(JAST::Instruction.new( :op('lload'), %*REG<restart> ));
         $il.append(JAST::Instruction.new( :op('aload'), %*REG<callback> ));
         $il.append($ALOAD_1);
         $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_RXENGINE,
             'rxmatch', $TYPE_SMO, $TYPE_STR, $TYPE_SMO, $TYPE_SMO, $TYPE_STR,
-            'Long', 'Long', $TYPE_SMO, $TYPE_TC ));
+            'Long', 'Long', 'Long', $TYPE_SMO, $TYPE_TC ));
 
         result($il, $RT_OBJ)
     }
