@@ -99,6 +99,10 @@ object GrammarEngines {
      */
     private val trace: Boolean = System.getenv("NQP_RX_TRACE") != null
 
+    /** The call site for a no-argument method call on the cursor. */
+    private val INVOCANT =
+        CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null)
+
     /** The engine, or null when regexes should take the bytecode path. */
     @JvmStatic
     fun get(): GrammarEngine? = engine
@@ -119,9 +123,21 @@ object GrammarEngines {
         target: String,
         from: Long,
         invocantFrom: Long,
+        restart: Long,
         callback: SixModelObject?,
         tc: ThreadContext,
     ): SixModelObject {
+        /* A resumed rule (`!cursor_next` on a cursor that passed with
+         * :backtrack) re-enters with the restart flag set and expects its
+         * NEXT match. The engine's choice points were gone the moment the
+         * first match returned, so the honest next answer is "none" --
+         * failing here, rather than re-running, keeps a resumption from
+         * re-answering the first match forever. */
+        if (restart != 0L) {
+            val fail = Ops.findmethod(cursor, "!cursor_fail", tc)
+            Ops.invokeDirect(tc, fail, INVOCANT, arrayOf<Any?>(cursor))
+            return cursor
+        }
         val engine = engine ?: throw IllegalStateException(
             "this code was compiled with the grammar engine, which is not available at run time:" +
             " the truffle module is missing from the class path.")
