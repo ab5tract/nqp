@@ -368,6 +368,27 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     pc += 3
                 }
 
+                RxProgram.SUB_CB -> {
+                    val flags = code[pc + 2]
+                    val sub = callbackCursor(cursor, code[pc + 1], pos)
+                    val r = reached(cursor, sub)
+                    val matched = r != NO_MATCH
+                    if (matched == ((flags and RxProgram.F_NEGATE) != 0)) {
+                        failed = true
+                    } else {
+                        if (matched && (flags and RxProgram.F_ZEROWIDTH) == 0) pos = r
+                        if (matched && code[pc + 3] != 0) {
+                            if (pendingTop + PENDING_WIDTH > pending.size) pending = grow(pending)
+                            pending[pendingTop] = pool[code[pc + 3] - 1]
+                            pending[pendingTop + 1] = sub
+                            pending[pendingTop + 2] = null
+                            pending[pendingTop + 3] = null
+                            pendingTop += PENDING_WIDTH
+                        }
+                        pc += 4
+                    }
+                }
+
                 RxProgram.SUB -> {
                     val name = pool[code[pc + 1]] as String
                     val flags = code[pc + 2]
@@ -474,6 +495,10 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
         @TruffleBoundary
         private fun callSubrule(cursor: RxCursor, name: String, pos: Int, args: RxArgs?): Any? =
             cursor.callSubrule(name, pos, args)
+
+        @TruffleBoundary
+        private fun callbackCursor(cursor: RxCursor, index: Int, pos: Int): Any? =
+            cursor.callbackCursor(index, pos)
 
         @TruffleBoundary
         private fun reached(cursor: RxCursor, subCursor: Any?): Int = cursor.reached(subCursor)

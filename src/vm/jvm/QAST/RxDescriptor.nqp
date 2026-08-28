@@ -27,6 +27,8 @@ class QAST::RxDescriptor {
     #   subrule-args   subrule calls carrying literal arguments
     #   goal           the `~` construct
     #   backtrack      backtrackable (non-ratcheted) rules without subrules
+    #   subrule-callback  subrule calls carried as callback pieces (lexical
+    #                     and other computed callees, computed arguments)
     my %rx_no;
     my int $rx_no_read := 0;
     sub rx_refuses(str $feature) {
@@ -75,6 +77,7 @@ class QAST::RxDescriptor {
     my int $ALT_LTM := 12;
     my int $UNIPROP := 13;
     my int $QASTNODE := 14;
+    my int $SUBCB   := 15;
 
     # Subrule argument kinds, matching RxDescriptor.java.
     my int $ARG_STR := 0;
@@ -317,28 +320,62 @@ class QAST::RxDescriptor {
     method subrule_call($node) {
         # Noted for encode's backtrackable check, whatever comes of the call.
         nqp::bindattr_i(self, QAST::RxDescriptor, '$!has_sub', 1);
-        return self.bail('subrule via a variable')
-            unless nqp::istype($node[0], QAST::Node)
-                && nqp::elems($node[0]) >= 1
-                && nqp::istype($node[0][0], QAST::SVal);
+
+        my int $named := nqp::istype($node[0], QAST::Node)
+            && nqp::elems($node[0]) >= 1
+            && nqp::istype($node[0][0], QAST::SVal);
 
         # The arguments are collected BEFORE anything is emitted, because one
-        # of them may refuse the rule and a half-written node would leave the
-        # code array describing something that is not there. They still take
-        # pool slots first, which costs nothing: the pool is indexed, not
-        # ordered.
-        my @args := self.subrule_args($node[0]);
-        return nqp::null if nqp::isnull(@args);
+        # of them may decline and a half-written node would leave the code
+        # array describing something that is not there. They still take pool
+        # slots first, which costs nothing: the pool is indexed, not ordered.
+        my @args := $named ?? self.subrule_args($node[0]) !! nqp::null;
+        if $named && !nqp::isnull(@args) {
+            self.emit($SUB);
+            self.emit(self.constant($node[0][0].value));
+            self.emit(self.flags($node));
+            # A capturing subrule's own cursor is the capture.
+            self.emit($node.subtype eq 'capture'
+                ?? self.constant(~$node.name) + 1
+                !! 0);
+            self.emit(nqp::div_i(nqp::elems(@args), 2));
+            self.emit($_) for @args;
+            return 1;
+        }
 
-        self.emit($SUB);
-        self.emit(self.constant($node[0][0].value));
+        # Anything the direct form cannot carry -- a lexical rule or other
+        # computed callee, an argument that is not a source literal, a named
+        # or flattened argument -- runs as a callback piece instead: the
+        # whole invocation, evaluated back in the rule's own frame, exactly
+        # the way the bytecode path's "normal invocation" arm evaluates it.
+        # The callback dispatch has already bound $!pos and $\xa2 when the
+        # piece runs, which is the same prologue the direct call gets, and
+        # the piece's value is the subcursor.
+        return self.bail($named
+            ?? 'subrule with unencodable arguments (refused)'
+            !! 'subrule via a variable (refused)')
+            if rx_refuses('subrule-callback');
+
+        # Same limit as qastnode: the piece lands in a block the backend
+        # invents, which reaches the rule's lexicals but not its locals.
+        my str $lowered := self.reads_outer_local($node[0], nqp::hash());
+        return self.bail('subrule call over a lowered local ' ~ $lowered)
+            if $lowered;
+
+        my @callargs := nqp::clone($node[0].list);
+        my $target := nqp::shift(@callargs);
+        my $cursor := QAST::Var.new( :name("\$\xa2"), :scope('lexical') );
+        my $piece := $named
+            ?? QAST::Op.new( :op('callmethod'), :name(~$target.value), $cursor, |@callargs )
+            !! QAST::Op.new( :op('call'), $target, $cursor, |@callargs );
+
+        self.emit($SUBCB);
+        self.emit(nqp::elems(@!callbacks));
         self.emit(self.flags($node));
-        # A capturing subrule's own cursor is the capture.
         self.emit($node.subtype eq 'capture'
             ?? self.constant(~$node.name) + 1
             !! 0);
-        self.emit(nqp::div_i(nqp::elems(@args), 2));
-        self.emit($_) for @args;
+        nqp::push(@!callbacks, $piece);
     }
 
     # (kind, pool index) per argument, or null when one of them cannot travel.
@@ -348,14 +385,14 @@ class QAST::RxDescriptor {
     # engine has no access to. Literals are worth having because the rules
     # that report errors are almost all called with them -- <.panic('...')>,
     # <.obs('x', 'y')>, and the <.FAILGOAL(...)> every `~` ends in.
+    # Answers null, without bailing, for anything the direct form cannot
+    # carry -- the caller falls back to the callback form, which evaluates
+    # the invocation in the rule's own frame and so takes any argument.
     method subrule_args($call) {
         my @args;
         my int $i := 1;
         my int $n := nqp::elems($call);
-        if $n > 1 && rx_refuses('subrule-args') {
-            self.bail('subrule with literal arguments');
-            return nqp::null;
-        }
+        return nqp::null if $n > 1 && rx_refuses('subrule-args');
         while $i < $n {
             my $arg := $call[$i];
             # A named or flattened argument arrives at the callee differently
@@ -363,7 +400,6 @@ class QAST::RxDescriptor {
             # positional. Encoding one as the other would call the rule with
             # arguments it did not ask for.
             if $arg.named || $arg.flat {
-                self.bail('subrule with a named or flattened argument');
                 return nqp::null;
             }
             elsif nqp::istype($arg, QAST::SVal) {
@@ -376,7 +412,6 @@ class QAST::RxDescriptor {
                 nqp::push(@args, self.constant(~$arg.value));
             }
             else {
-                self.bail('subrule with computed arguments');
                 return nqp::null;
             }
             $i := $i + 1;

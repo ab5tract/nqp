@@ -107,7 +107,13 @@ class NqpCursor(
      * The truth of the result is what `<?{ ... }>` turns on; a plain
      * `{ ... }` is run for its effect and the answer is ignored.
      */
-    override fun callbackHolds(index: Int, pos: Int): Boolean {
+    override fun callbackHolds(index: Int, pos: Int): Boolean =
+        Ops.istrue(runCallback(index, pos), tc) != 0L
+
+    /** A callback piece whose value is a subrule call's cursor. */
+    override fun callbackCursor(index: Int, pos: Int): Any? = runCallback(index, pos)
+
+    private fun runCallback(index: Int, pos: Int): SixModelObject? {
         var closure = callbackClosure
         if (closure == null) {
             closure = Ops.takeclosure(callback, tc)
@@ -117,7 +123,7 @@ class NqpCursor(
             tc, closure, CALLBACK,
             arrayOf<Any?>(index.toLong(), cursor, cursorClass, pos.toLong()),
         )
-        return Ops.istrue(Ops.result_o(tc.curFrame!!), tc) != 0L
+        return Ops.result_o(tc.curFrame!!)
     }
 
     override fun captureSpan(name: String, from: Int, to: Int) {
