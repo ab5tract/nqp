@@ -38,6 +38,7 @@ class TruffleGrammarEngine : GrammarEngine {
         val target: CallTarget,
         val passName: String,
         val scan: Boolean,
+        val resumable: Boolean,
     )
 
     override fun compile(encoded: String): Any {
@@ -49,7 +50,7 @@ class TruffleGrammarEngine : GrammarEngine {
         val target = RxLanguage.PARSED[encoded]
             ?: throw IllegalStateException("the language parsed no matcher for: $encoded")
         val d = RxWire.decode(encoded)
-        return Program(target, d.passName, d.scan)
+        return Program(target, d.passName, d.scan, d.resumable)
     }
 
     override fun match(
@@ -60,13 +61,54 @@ class TruffleGrammarEngine : GrammarEngine {
         target: String,
         from: Int,
         invocantFrom: Int,
+        restart: Boolean,
+        invocant: SixModelObject?,
         callback: SixModelObject?,
     ): SixModelObject {
         val p = program as Program
         val rx = NqpCursor(tc, cursor, cursorClass, target, callback)
 
+        if (restart) {
+            /* `!cursor_next`: the invocant is the previously PASSED cursor,
+             * whose saved choice state answers "the next match". The state
+             * is taken, resumed -- entering the loop failing, which pops the
+             * most recent choice point -- and stored again if the new pass
+             * still has choices left. No state means nothing left to offer.
+             * The new cursor already carries clones of the old cstack and
+             * bstack, courtesy of !cursor_start_all's restart branch. */
+            val state = if (invocant == null) null else STATES.remove(invocant)
+            if (state == null) {
+                call(tc, cursor, "!cursor_fail")
+                return cursor
+            }
+            rx.setCaptureBases(state.captureBaseC, state.captureBaseB)
+            val stateOut = arrayOfNulls<RxVmNode.EngineState>(1)
+            var end2 = p.target.call(target, 0, rx, stateOut, state) as Int
+            var at2 = state.scanAt
+            if (end2 < 0 && at2 >= 0) {
+                /* The resumed choices are exhausted; the scan is the next
+                 * one. Retry whole matches from the following positions,
+                 * exactly what the bytecode path's scan marks resume to. */
+                val eos = target.length
+                at2 += if (at2 < eos - 1 && target[at2] == '\r' && target[at2 + 1] == '\n') 2 else 1
+                while (at2 <= eos) {
+                    end2 = p.target.call(target, at2, rx, stateOut) as Int
+                    if (end2 >= 0) break
+                    at2 += if (at2 < eos - 1 && target[at2] == '\r' && target[at2 + 1] == '\n') 2 else 1
+                }
+            }
+            if (end2 >= 0 && at2 >= 0) {
+                Ops.bindattr_i(cursor, cursorClass, "\$!from", at2.toLong(), tc)
+                if (stateOut[0] == null) stateOut[0] = RxVmNode.EngineState.scanOnly(at2)
+                else stateOut[0]?.scanAt = at2
+            }
+            finish(tc, cursor, cursorClass, rx, p, end2, stateOut[0])
+            return cursor
+        }
+
         var at = from
         var end: Int
+        val stateOut = if (p.resumable) arrayOfNulls<RxVmNode.EngineState>(1) else null
         /* A scan retries the whole body one character further along until it
          * matches. It applies only when the invocant's $!from is -1, which is
          * a top-level parse; a subrule is called at a position and must match
@@ -76,7 +118,7 @@ class TruffleGrammarEngine : GrammarEngine {
             val eos = target.length
             end = RxVmNode.NO_MATCH
             while (at <= eos) {
-                end = p.target.call(target, at, rx) as Int
+                end = p.target.call(target, at, rx, stateOut) as Int
                 if (end >= 0) break
                 /* By atom, not by char: a CR directly followed by LF is one
                  * fused pair (RxProgram.CRLF), and an NFG backend has no
@@ -86,7 +128,7 @@ class TruffleGrammarEngine : GrammarEngine {
             }
             if (end < 0) at = from
         } else {
-            end = p.target.call(target, at, rx) as Int
+            end = p.target.call(target, at, rx, stateOut) as Int
         }
 
         /* Where the match began is the cursor's $!from, and the scan is what
@@ -96,13 +138,36 @@ class TruffleGrammarEngine : GrammarEngine {
             Ops.bindattr_i(cursor, cursorClass, "\$!from", at.toLong(), tc)
         }
 
-        /* The bytecode path ends the same two ways, and a cursor that was
-         * neither passed nor failed is not a usable match result. The name is
-         * what makes !cursor_pass reduce; without it a rule would match the
-         * right span and build nothing. */
+        if (end >= 0 && p.scan && invocantFrom == -1 && stateOut != null) {
+            /* A scanning rule can always offer later start positions, even
+             * when the match itself left no choice points. */
+            if (stateOut[0] == null) stateOut[0] = RxVmNode.EngineState.scanOnly(at)
+            else stateOut[0]?.scanAt = at
+        }
+        finish(tc, cursor, cursorClass, rx, p, end, stateOut?.get(0))
+        return cursor
+    }
+
+    /**
+     * Ends a match the way the bytecode path does -- fail, or pass under
+     * the rule's name -- and, for a resumable rule that still has choice
+     * points, records the engine state under the passed cursor and marks
+     * the cursor restartable so `!cursor_next` comes back here.
+     */
+    private fun finish(
+        tc: ThreadContext,
+        cursor: SixModelObject,
+        cursorClass: SixModelObject,
+        rx: NqpCursor,
+        p: Program,
+        end: Int,
+        state: RxVmNode.EngineState?,
+    ) {
         if (end < 0) {
             call(tc, cursor, "!cursor_fail")
-        } else if (p.passName.isEmpty()) {
+            return
+        }
+        if (p.passName.isEmpty()) {
             call(tc, cursor, "!cursor_pass", end)
         } else if (p.passName.startsWith("\u0000cb:")) {
             /* A computed pass name -- the late-bound `regex ::($name)`
@@ -114,7 +179,25 @@ class TruffleGrammarEngine : GrammarEngine {
         } else {
             call(tc, cursor, "!cursor_pass", end, p.passName)
         }
-        return cursor
+        if (p.resumable && state != null) {
+            /* What !cursor_pass with :backtrack would have done: keep the
+             * rule re-enterable. The pass above nulled the bstack, and the
+             * restart branch of !cursor_start_all clones it, so it has to
+             * be an (empty) array rather than null. */
+            val bases = rx.captureBases()
+            state.captureBaseC = bases[0]
+            state.captureBaseB = bases[1]
+            Ops.bindattr(cursor, cursorClass, "\$!restart",
+                Ops.getattr(cursor, cursorClass, "\$!regexsub", tc), tc)
+            val bstack = Ops.getattr(cursor, cursorClass, "\$!bstack", tc)
+            if (bstack == null || Ops.isnull(bstack) != 0L ||
+                Ops.isconcrete(bstack, tc) == 0L
+            ) {
+                Ops.bindattr(cursor, cursorClass, "\$!bstack",
+                    Ops.create(Ops.bootintarray(tc), tc), tc)
+            }
+            STATES[cursor] = state
+        }
     }
 
     /**
@@ -143,6 +226,13 @@ class TruffleGrammarEngine : GrammarEngine {
     }
 
     companion object {
+        /* The saved choice state of every resumable cursor that PASSED with
+         * something left to offer; `!cursor_next` takes it back out. Weak
+         * on the cursor so an abandoned match does not pin its state. */
+        private val STATES =
+            java.util.Collections.synchronizedMap(
+                java.util.WeakHashMap<SixModelObject, RxVmNode.EngineState>())
+
         private val INVOCANT =
             CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null)
         private val INVOCANT_INT = CallSiteDescriptor(
