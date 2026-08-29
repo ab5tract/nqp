@@ -110,6 +110,20 @@ terminally deprecated method). That is not cosmetic: those warnings land on
 stderr ahead of the compiler's own output and broke `t/nqp/114-pod-panic.t`,
 which asserts on the first line of it.
 
+## Status: feature-complete, sweep-green (2026-08-29)
+
+Every bytecode grammar-engine piece is ported: qastnode, subrule calls of
+every shape (named, lexical, computed arguments), backtrackable rules with
+full cursor re-entry (`!cursor_next`, exhaustive matching at bytecode
+parity, backtracking INTO subrules), dynamically-bounded quantifiers,
+conjunctions, ignoremark literals, uniprop pairs, computed pass names, and
+rules of any piece count via the grouped callback dispatch. The remaining
+bytecode rules are guards, not gaps: pieces that walk the caller chain,
+pieces over optimizer-lowered locals, and shapes the bytecode path cannot
+compile either. First fully green sweep: 377 files across twelve t/
+suites, 35/35 chunks, zero failures -- including the CRLF files that were
+the standing baseline red.
+
 ## What the engine covers, and how to find out what to do next
 
 Coverage grows one rxtype at a time, and the honest measure of it is how many
@@ -184,13 +198,15 @@ What the next groups are worth, by the same subtraction:
 | resumable (`regex`) rules              |   +35 |
 | subrule calls through a variable       |    +7 |
 
-## Coming back for the rule's own code — written, and NOT working
+## Coming back for the rule's own code — working since 2026-08-28
 
 `{ ... }`, `<?{ ... }>` and `:my $x := ...` are arbitrary NQP, and the
 bytecode path compiles them straight into the matcher's frame where they can
-read the rule's lexicals. `qastnode` is the largest thing the engine does not
-cover: 203 of the 1105 rules in rakudo's Raku grammar mention it, and 93 are
-blocked by nothing else.
+read the rule's lexicals. `qastnode` was the largest thing the engine did not
+cover: 203 of the 1105 rules in rakudo's Raku grammar mention it, and 93 were
+blocked by nothing else. It is on by default now (`NQP_RX_NO=qastnode`
+refuses it); the two wrong-parse causes and their fixes are described at the
+end of this section.
 
 The attempt here does not move the code — it **comes back for it**:
 
@@ -204,45 +220,45 @@ The attempt here does not move the code — it **comes back for it**:
   `rxmatch` is a static call and pushes no frame of its own, so `tc.curFrame`
   is still the rule's own frame.
 
-**It produces a wrong parse, so it is off by default.** `NQP_RX_TRY=qastnode`
-turns it on. What is known:
+**The wrong parse had two causes, both fixed (nqp 257968d1d):**
 
-* nqp bootstraps and compiles itself with it enabled, and then the first
-  program compiled by a stage whose *own* code carries descriptors mis-parses:
-  `package_def` reaches `install_package_symbol` with an NQPMu where a
-  capture should be.
-* Refusing `qastnode` alone makes that build green, so the mechanism is the
-  cause and nothing else in the engine is.
+* **Captures.** A `{ ... }` reads the captures made so far through `$/`,
+  which `$¢.MATCH` builds from the cursor's capture stack — and the engine
+  held captures pending until the match ended, so mid-rule code saw none
+  (`package_def` reached `install_package_symbol` with an NQPMu where a
+  capture should be). The engine now syncs pending captures to the cursor
+  before a callback runs, takes them back (cstack plus the bstack frames
+  `!cursor_capture` grew) when it backtracks past them, and the final flush
+  hands over only the remainder.
+* **Frame-counting ops.** A piece runs one frame deeper than the inline
+  code it replaces, and ops that COUNT frames shift meaning by exactly that
+  frame: `nqp::getlexdyn` starts at the caller by design, so nibbler's
+  `:my $OLDRX := nqp::getlexdyn('%*RX')` reached past the rule's own fresh
+  `%*RX` when inline and read back the rule's own empty one from the
+  closure — every `<sym>` downstream resolved against nothing. A piece
+  containing a frame- or caller-walking op refuses the rule
+  (`reads_frame_ops`, the same op set rakudo's var-lowering poisons on,
+  memoized per node identity because QAST shares subtrees and a naive walk
+  ballooned BOOTSTRAP's compile by gigabytes).
 
-**The constraint any fix has to satisfy**, which is established rather than
-guessed: lexical access on this backend is **depth-indexed, resolved at
-compile time**. `as_jast(QAST::Var)` for a lexical not in the current block
-walks `BlockInfo.outer()` counting frames (`$scopes`) and emits an access at
-that depth — see `Compiler.nqp`, the `scope eq 'lexical'` branch. So compile-
-time block nesting and run-time frame nesting must correspond exactly. Insert
-a block and every lexical underneath it moves a level; that is only safe if
-the frame chain gains exactly one level in the same place, which is what
-`takeclosure` is doing here.
+The earlier depth-indexing constraint holds and is what the design already
+satisfies: ordinary lexical and contextual access from a piece is compiled
+against the real nesting, and `takeclosure` at the moment a callback fires
+gives the frame chain the matching extra level. What it cannot fix is the
+runtime frame-walkers above, which is why they refuse rather than encode.
 
-Also relevant: a codeblock is not bare code.
-`QRegex::P6Regex::Actions.codeblock` wraps every `{ ... }` in a nested
-`QAST::Block` of its own with `blocktype('immediate')`, so re-parenting moves
-*two* levels of nesting, not one, and an immediate block's outer is found by a
-different mechanism from a closure's. A sound version may have to reuse
-*that* block as the callback — turning it from immediate into a closure value
-— rather than wrap it in a new one.
+Two structural limits stay:
 
-That last part is a hypothesis, not a finding: do not build on it without
-checking. The previous guess in this same spot was wrong —
-`NQP::Actions.variable_declarator` does hoist `my $x` into the enclosing
-block's `$BLOCK[0]`, so a `:my` inside a regex leaves only a reference or a
-bind behind, not a declaration, and declarations were never the problem.
-
-A second limit is real whatever the cause: `NQP::Optimizer` turns a lexical
-that no *inner block* uses into a local, and cannot know about a block the
-backend invents afterwards. A local lives in one frame and cannot be named
-from another, so a rule whose code touches one is refused outright
-(`qastnode over a lowered local`).
+* `NQP::Optimizer` turns a lexical that no *inner block* uses into a local,
+  and cannot know about a block the backend invents afterwards. A local
+  lives in one frame and cannot be named from another, so a rule whose code
+  touches one is refused outright (`qastnode over a lowered local`).
+* PROVISIONAL: a rule with more than 16 pieces stays on the bytecode path —
+  the callback dispatch compiles into one generated method, and rakudo's
+  `comp_unit` (sixty-odd `:my` pieces) broke its emission ("JAST node isn't
+  a JAST::Class", the 64KB method limit is the suspect). Once-per-parse
+  rules gain nothing from the engine; split the dispatch across methods if
+  a hot rule ever hits the cap.
 
 ## Why the engine is Kotlin
 
