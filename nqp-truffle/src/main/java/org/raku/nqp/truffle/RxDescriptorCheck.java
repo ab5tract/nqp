@@ -32,6 +32,7 @@ public final class RxDescriptorCheck {
         @Override public Object callbackCursor(int index, int pos) { return null; }
         @Override public int[] callbackBounds(int index, int pos) { return new int[] { 0, 0 }; }
         @Override public String callbackName(int index, int pos) { return ""; }
+        @Override public Object nextMatch(Object subCursor) { return null; }
         @Override public void truncateCaptures(int entries) { }
     }
 
@@ -55,6 +56,7 @@ public final class RxDescriptorCheck {
         @Override public Object callbackCursor(int index, int pos) { return null; }
         @Override public int[] callbackBounds(int index, int pos) { return new int[] { 0, 0 }; }
         @Override public String callbackName(int index, int pos) { return ""; }
+        @Override public Object nextMatch(Object subCursor) { return null; }
         @Override public void truncateCaptures(int entries) { }
     }
 
@@ -160,6 +162,7 @@ public final class RxDescriptorCheck {
         @Override public Object callbackCursor(int index, int pos) { return null; }
         @Override public int[] callbackBounds(int index, int pos) { return new int[] { 0, 0 }; }
         @Override public String callbackName(int index, int pos) { return ""; }
+        @Override public Object nextMatch(Object subCursor) { return null; }
         @Override public void truncateCaptures(int entries) { }
     }
 
@@ -278,6 +281,7 @@ public final class RxDescriptorCheck {
         @Override public Object callbackCursor(int index, int pos) { return null; }
         @Override public int[] callbackBounds(int index, int pos) { return new int[] { 0, 0 }; }
         @Override public String callbackName(int index, int pos) { return ""; }
+        @Override public Object nextMatch(Object subCursor) { return null; }
         @Override public void truncateCaptures(int entries) { }
     }
 

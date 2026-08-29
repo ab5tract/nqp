@@ -178,9 +178,12 @@ object RxTree {
         val negate: Boolean,
         val capture: String?,
         val args: RxArgs?,
+        val ratchet: Boolean,
     ) : Node {
         constructor(name: String, zeroWidth: Boolean, negate: Boolean, capture: String?) :
-            this(name, zeroWidth, negate, capture, null)
+            this(name, zeroWidth, negate, capture, null, true)
+        constructor(name: String, zeroWidth: Boolean, negate: Boolean, capture: String?, args: RxArgs?) :
+            this(name, zeroWidth, negate, capture, args, true)
     }
 
     /**
@@ -213,6 +216,7 @@ object RxTree {
         val zeroWidth: Boolean,
         val negate: Boolean,
         val capture: String?,
+        val ratchet: Boolean,
     ) : Node
 
     /** rxtype subcapture. */

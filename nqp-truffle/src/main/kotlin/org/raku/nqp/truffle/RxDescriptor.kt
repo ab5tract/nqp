@@ -86,6 +86,7 @@ class RxDescriptor private constructor(
                     (flags and RxProgram.F_NEGATE) != 0,
                     if (capture == 0) null else pool[capture - 1] as String,
                     args(),
+                    (flags and RxProgram.F_SUBRATCHET) != 0,
                 )
             }
 
@@ -125,6 +126,7 @@ class RxDescriptor private constructor(
                     (flags and RxProgram.F_ZEROWIDTH) != 0,
                     (flags and RxProgram.F_NEGATE) != 0,
                     if (capture == 0) null else pool[capture - 1] as String,
+                    (flags and RxProgram.F_SUBRATCHET) != 0,
                 )
             }
 

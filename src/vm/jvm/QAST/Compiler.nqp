@@ -6473,11 +6473,12 @@ class QAST::CompilerJAST {
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<selffrom> ));
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<restart> ));
+        $il.append(JAST::Instruction.new( :op('aload'), 'self' ));
         $il.append(JAST::Instruction.new( :op('aload'), %*REG<callback> ));
         $il.append($ALOAD_1);
         $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_RXENGINE,
             'rxmatch', $TYPE_SMO, $TYPE_STR, $TYPE_SMO, $TYPE_SMO, $TYPE_STR,
-            'Long', 'Long', 'Long', $TYPE_SMO, $TYPE_TC ));
+            'Long', 'Long', 'Long', $TYPE_SMO, $TYPE_SMO, $TYPE_TC ));
 
         result($il, $RT_OBJ)
     }
