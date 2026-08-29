@@ -36,6 +36,9 @@ object RxWire {
      * @param scan whether the rule may retry at later start positions. It is
      *   a property of the rule rather than an opcode because the retry loop
      *   has to update `$!from` on the cursor, which a program cannot do.
+     * @param resumable whether the rule passes with :backtrack, so that
+     *   `!cursor_next` may re-enter it for its next match; the engine keeps
+     *   its choice points after a pass to answer that.
      */
     @JvmRecord
     data class Descriptor(
@@ -43,15 +46,20 @@ object RxWire {
         val pool: Array<Any?>,
         val passName: String,
         val scan: Boolean,
+        val resumable: Boolean,
     )
 
     @JvmStatic
     fun isDescriptor(source: String): Boolean = source.startsWith(MAGIC)
 
     @JvmStatic
-    fun encode(code: IntArray, pool: Array<Any?>, passName: String, scan: Boolean): String {
+    @JvmOverloads
+    fun encode(
+        code: IntArray, pool: Array<Any?>, passName: String, scan: Boolean,
+        resumable: Boolean = false,
+    ): String {
         val out = StringBuilder(MAGIC)
-        out.append(if (scan) 1 else 0).append(' ')
+        out.append((if (scan) 1 else 0) or (if (resumable) 2 else 0)).append(' ')
         out.append(code.size)
         for (c in code) out.append(' ').append(c)
         out.append(' ').append(pool.size)
@@ -69,14 +77,17 @@ object RxWire {
         require(isDescriptor(source)) { "not a regex descriptor" }
         val input = Reader(source, MAGIC.length)
 
-        val scan = input.nextInt() != 0
+        val flags = input.nextInt()
         val code = IntArray(input.nextInt())
         for (i in code.indices) code[i] = input.nextInt()
 
         val pool = arrayOfNulls<Any?>(input.nextInt())
         for (i in pool.indices) pool[i] = input.nextChunk()
 
-        return Descriptor(code, pool, input.nextChunk(), scan)
+        return Descriptor(
+            code, pool, input.nextChunk(),
+            (flags and 1) != 0, (flags and 2) != 0,
+        )
     }
 
     /** Reads the format's two token shapes, and insists the input is well formed. */

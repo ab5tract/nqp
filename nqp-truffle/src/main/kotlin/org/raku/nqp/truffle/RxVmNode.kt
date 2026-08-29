@@ -27,7 +27,23 @@ import com.oracle.truffle.api.nodes.Node
 class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
 
     fun match(cursor: RxCursor, startPos: Int): Int =
-        run(cursor, cursor.target(), cursor.eos(), startPos)
+        run(cursor, cursor.target(), cursor.eos(), startPos, null, null)
+
+    /**
+     * Matches, and on success leaves the live choice state in [stateOut]
+     * slot 0 when there is anything left to resume -- which is what makes
+     * a rule that passed with :backtrack re-enterable.
+     */
+    fun match(cursor: RxCursor, startPos: Int, stateOut: Array<EngineState?>): Int =
+        run(cursor, cursor.target(), cursor.eos(), startPos, null, stateOut)
+
+    /**
+     * Resumes a previous match from its saved choice state: the engine
+     * side of `!cursor_next`. Enters the loop failing, which pops the
+     * most recent choice point exactly as an in-match failure would.
+     */
+    fun resume(cursor: RxCursor, state: EngineState, stateOut: Array<EngineState?>): Int =
+        run(cursor, cursor.target(), cursor.eos(), 0, state, stateOut)
 
     /*
      * Deliberately not @ExplodeLoop. Exploding along the program's control
@@ -38,16 +54,27 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
      * the program, since the code array is compilation-final; it just keeps a
      * loop rather than unrolling one.
      */
-    private fun run(cursor: RxCursor, target: String, eos: Int, startPos: Int): Int {
+    private fun run(
+        cursor: RxCursor,
+        target: String,
+        eos: Int,
+        startPos: Int,
+        resumeFrom: EngineState?,
+        stateOut: Array<EngineState?>?,
+    ): Int {
         val code = program.code
         val pool = program.pool
 
         /* Sized to what this program can actually use, and skipped altogether
          * when it uses none: a scan enters here once per position, so an
          * array allocated per match is one per character of the target. */
-        val regs = if (program.registers == 0) EMPTY else IntArray(program.registers)
-        var choices = IntArray(program.choiceDepth * CHOICE_WIDTH)
-        var choiceTop = 0
+        val regs = resumeFrom?.regs
+            ?: if (program.registers == 0) EMPTY else IntArray(program.registers)
+        var choices = resumeFrom?.choices ?: IntArray(program.choiceDepth * CHOICE_WIDTH)
+        /* One slot per choice record: a non-null entry is a subrule the
+         * engine can ask for its next match instead of merely re-running. */
+        var retries = resumeFrom?.retries ?: arrayOfNulls<SubRetry?>(choices.size / CHOICE_WIDTH)
+        var choiceTop = resumeFrom?.choiceTop ?: 0
         /* Captures are recorded as they are passed, and taken back when a
          * choice point before them is resumed; that is what the undo log is
          * for. The bytecode engine unwinds its capture stack for the same
@@ -61,26 +88,42 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
          * same reason. Held as (name, from, to) with a null name meaning the
          * cursor at that slot is the capture instead.
          */
-        var pending = if (program.captures == 0) NO_PENDING else arrayOfNulls<Any?>(16 * PENDING_WIDTH)
-        var pendingTop = 0
+        var pending = resumeFrom?.pending
+            ?: if (program.captures == 0) NO_PENDING else arrayOfNulls<Any?>(16 * PENDING_WIDTH)
+        var pendingTop = resumeFrom?.pendingTop ?: 0
         /* How much of the pending list has been synced to the cursor. A
          * rule's own code (`{ ... }`) reads the captures made so far
          * through `$/`, so pending captures are handed over before a
          * callback runs; a backtrack past them takes them back through
          * truncateCaptures. Zero for the great many rules whose callbacks
          * never fire. */
-        var syncedTop = 0
+        var syncedTop = resumeFrom?.syncedTop ?: 0
 
         var pc = 0
         var pos = startPos
+        /* A resumed match starts by failing: that pops the most recent
+         * choice point, which is exactly what "the next match" means. */
+        var pendingFail = resumeFrom != null
 
         while (true) {
-            var failed = false
-            when (code[pc]) {
+            var failed = pendingFail
+            pendingFail = false
+            if (!failed) when (code[pc]) {
                 RxProgram.MATCH -> {
                     /* Whatever a callback sync already handed over stays;
                      * only the remainder is flushed. */
-                    if (pendingTop > syncedTop) sync(cursor, pending, syncedTop, pendingTop)
+                    if (pendingTop > syncedTop) {
+                        sync(cursor, pending, syncedTop, pendingTop)
+                        syncedTop = pendingTop
+                    }
+                    /* A resumable rule with live choice points leaves them
+                     * for !cursor_next; everything the arrays hold below the
+                     * tops is exactly the state a resumed run needs. */
+                    if (stateOut != null && choiceTop > 0) {
+                        stateOut[0] = EngineState(
+                            choices, retries, choiceTop, regs,
+                            pending, pendingTop, syncedTop)
+                    }
                     return pos
                 }
 
@@ -240,7 +283,9 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                 RxProgram.SPLIT -> {
                     if (choiceTop + CHOICE_WIDTH > choices.size) {
                         choices = grow(choices)
+                        retries = retries.copyOf(choices.size / CHOICE_WIDTH)
                     }
+                    retries[choiceTop / CHOICE_WIDTH] = null
                     choices[choiceTop] = code[pc + 2]
                     choices[choiceTop + 1] = pos
                     choices[choiceTop + 2] = pendingTop
@@ -350,7 +395,9 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                         for (i in order.size - 1 downTo 1) {
                             if (choiceTop + CHOICE_WIDTH > choices.size) {
                                 choices = grow(choices)
+                                retries = retries.copyOf(choices.size / CHOICE_WIDTH)
                             }
+                            retries[choiceTop / CHOICE_WIDTH] = null
                             choices[choiceTop] = code[pc + 3 + order[i]]
                             choices[choiceTop + 1] = pos
                             choices[choiceTop + 2] = pendingTop
@@ -415,7 +462,9 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                         val greedy = code[pc + 5] != 0
                         if (choiceTop + CHOICE_WIDTH > choices.size) {
                             choices = grow(choices)
+                            retries = retries.copyOf(choices.size / CHOICE_WIDTH)
                         }
+                        retries[choiceTop / CHOICE_WIDTH] = null
                         choices[choiceTop] = if (greedy) code[pc + 4] else bodyPc
                         choices[choiceTop + 1] = pos
                         choices[choiceTop + 2] = pendingTop
@@ -455,6 +504,22 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     if (matched == ((flags and RxProgram.F_NEGATE) != 0)) {
                         failed = true
                     } else {
+                        if (SUBRETRY && matched && (flags and RxProgram.F_NEGATE) == 0 &&
+                            (flags and RxProgram.F_SUBRATCHET) == 0
+                        ) {
+                            if (choiceTop + CHOICE_WIDTH > choices.size) {
+                                choices = grow(choices)
+                                retries = retries.copyOf(choices.size / CHOICE_WIDTH)
+                            }
+                            retries[choiceTop / CHOICE_WIDTH] = SubRetry(
+                                sub,
+                                if (code[pc + 3] == 0) null else pool[code[pc + 3] - 1] as String,
+                                pc + 4, (flags and RxProgram.F_ZEROWIDTH) != 0)
+                            choices[choiceTop] = -1
+                            choices[choiceTop + 1] = pos
+                            choices[choiceTop + 2] = pendingTop
+                            choiceTop += CHOICE_WIDTH
+                        }
                         if (matched && (flags and RxProgram.F_ZEROWIDTH) == 0) pos = r
                         if (matched && code[pc + 3] != 0) {
                             if (pendingTop + PENDING_WIDTH > pending.size) pending = grow(pending)
@@ -478,6 +543,28 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     if (matched == ((flags and RxProgram.F_NEGATE) != 0)) {
                         failed = true
                     } else {
+                        /* A backtrackable subrule that matched is a choice
+                         * point of its own kind: backtracking past it asks
+                         * the SUBCURSOR for its next match rather than
+                         * re-running the call, which is the bstack contract.
+                         * Recorded before pos moves so the choice restores
+                         * the pre-call position when the retries run out. */
+                        if (SUBRETRY && matched && (flags and RxProgram.F_NEGATE) == 0 &&
+                            (flags and RxProgram.F_SUBRATCHET) == 0
+                        ) {
+                            if (choiceTop + CHOICE_WIDTH > choices.size) {
+                                choices = grow(choices)
+                                retries = retries.copyOf(choices.size / CHOICE_WIDTH)
+                            }
+                            retries[choiceTop / CHOICE_WIDTH] = SubRetry(
+                                sub,
+                                if (code[pc + 3] == 0) null else pool[code[pc + 3] - 1] as String,
+                                pc + 5, (flags and RxProgram.F_ZEROWIDTH) != 0)
+                            choices[choiceTop] = -1
+                            choices[choiceTop + 1] = pos
+                            choices[choiceTop + 2] = pendingTop
+                            choiceTop += CHOICE_WIDTH
+                        }
                         if (matched && (flags and RxProgram.F_ZEROWIDTH) == 0) pos = r
                         /* A capturing subrule keeps the cursor it made; that
                          * cursor is the capture, not the span it covered. */
@@ -503,6 +590,42 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     if (syncedTop > 0) truncate(cursor, 0)
                     return NO_MATCH
                 }
+                val slot = choiceTop / CHOICE_WIDTH - 1
+                val retry = retries[slot]
+                if (retry != null) {
+                    /* Backtracking into a subrule: take back what the call
+                     * contributed, then ask the subcursor for its NEXT
+                     * match. When it has one, the choice point stays -- with
+                     * the new cursor -- and the match continues after the
+                     * call; when it has none, the choice point goes and the
+                     * failure keeps walking. */
+                    pendingTop = choices[choiceTop - CHOICE_WIDTH + 2]
+                    if (syncedTop > pendingTop) {
+                        truncate(cursor, pendingTop / PENDING_WIDTH)
+                        syncedTop = pendingTop
+                    }
+                    val next = nextMatch(cursor, retry.cursor)
+                    val r = reached(cursor, next)
+                    if (r != NO_MATCH) {
+                        retries[slot] = SubRetry(next, retry.capName, retry.contPc, retry.zeroWidth)
+                        pos = if (retry.zeroWidth) choices[choiceTop - CHOICE_WIDTH + 1] else r
+                        if (retry.capName != null) {
+                            if (pendingTop + PENDING_WIDTH > pending.size) pending = grow(pending)
+                            pending[pendingTop] = retry.capName
+                            pending[pendingTop + 1] = next
+                            pending[pendingTop + 2] = null
+                            pending[pendingTop + 3] = null
+                            pendingTop += PENDING_WIDTH
+                        }
+                        pc = retry.contPc
+                        continue
+                    }
+                    retries[slot] = null
+                    choiceTop -= CHOICE_WIDTH
+                    pos = choices[choiceTop + 1]
+                    pendingFail = true
+                    continue
+                }
                 choiceTop -= CHOICE_WIDTH
                 pc = choices[choiceTop]
                 pos = choices[choiceTop + 1]
@@ -518,7 +641,67 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
         }
     }
 
+    /**
+     * A choice point that is a subrule's own next match: [cursor] is the
+     * subcursor that matched last, [capName] the capture it lands under (or
+     * null), [contPc] where the program continues after the call, and
+     * [zeroWidth] whether the call consumed nothing.
+     */
+    class SubRetry(
+        @JvmField val cursor: Any?,
+        @JvmField val capName: String?,
+        @JvmField val contPc: Int,
+        @JvmField val zeroWidth: Boolean,
+    )
+
+    /**
+     * Everything a passed match needs to answer `!cursor_next`: the live
+     * choice stack and its subrule retries, the registers, and the capture
+     * bookkeeping. Held per passed cursor by the engine; resuming enters
+     * the loop failing, which pops the most recent choice point.
+     */
+    class EngineState(
+        @JvmField val choices: IntArray,
+        @JvmField val retries: Array<SubRetry?>,
+        @JvmField val choiceTop: Int,
+        @JvmField val regs: IntArray,
+        @JvmField val pending: Array<Any?>,
+        @JvmField val pendingTop: Int,
+        @JvmField val syncedTop: Int,
+    ) {
+        companion object {
+            /** A state with nothing to resume but the scan itself. */
+            @JvmStatic
+            fun scanOnly(at: Int): EngineState {
+                val s = EngineState(
+                    IntArray(0), arrayOfNulls(0), 0, IntArray(0),
+                    arrayOfNulls(0), 0, 0)
+                s.scanAt = at
+                return s
+            }
+        }
+
+        /* Where the engine's captures started on the passed cursor's
+         * stacks, carried across so a resumed run truncates correctly. */
+        @JvmField var captureBaseC: Int = -1
+        @JvmField var captureBaseB: Int = -1
+
+        /* The position a scanning top-level match succeeded at, or -1 when
+         * the rule was not scanning. When every choice point of a resumed
+         * match is exhausted, the scan itself is the next choice: the
+         * engine retries whole matches from the following position, which
+         * is what the bytecode path's scan marks on the bstack amount to. */
+        @JvmField var scanAt: Int = -1
+    }
+
     companion object {
+        /* Kill-switch for the newest of the backtracking machinery: set
+         * NQP_RX_NO_SUBRETRY to stop subrule calls becoming re-enterable
+         * choice points, for bisecting a wrong parse. Runtime-side because
+         * the feature is; the NQP_RX_NO knobs govern only what the encoder
+         * emits. */
+        @JvmField val SUBRETRY: Boolean = System.getenv("NQP_RX_NO_SUBRETRY") == null
+
         /** No match. */
         const val NO_MATCH = -1
 
@@ -593,6 +776,10 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
         @TruffleBoundary
         private fun callbackBounds(cursor: RxCursor, index: Int, pos: Int): IntArray =
             cursor.callbackBounds(index, pos)
+
+        @TruffleBoundary
+        private fun nextMatch(cursor: RxCursor, subCursor: Any?): Any? =
+            cursor.nextMatch(subCursor)
 
         @TruffleBoundary
         private fun literalIgnoreMark(

@@ -89,6 +89,18 @@ class NqpCursor(
         return Ops.result_o(tc.curFrame!!)
     }
 
+    override fun nextMatch(subCursor: Any?): Any? {
+        if (subCursor !is SixModelObject) return null
+        val next = Ops.findmethod(subCursor, "!cursor_next", tc)
+        Ops.invokeDirect(tc, next, INVOCANT, arrayOf<Any?>(subCursor))
+        return Ops.result_o(tc.curFrame!!)
+    }
+
+    /* The engine snapshots and restores these across a pass/resume pair,
+     * so a resumed run truncates the (cloned) capture stacks correctly. */
+    fun captureBases(): IntArray = intArrayOf(captureBaseC, captureBaseB)
+    fun setCaptureBases(c: Int, b: Int) { captureBaseC = c; captureBaseB = b }
+
     override fun reached(subCursor: Any?): Int {
         if (subCursor !is SixModelObject) return RxVmNode.NO_MATCH
         val pos = Ops.getattr_i(subCursor, cursorClass, "\$!pos", tc)
