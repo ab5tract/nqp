@@ -179,6 +179,9 @@ object RxTree {
         val capture: String?,
         val args: RxArgs?,
         val ratchet: Boolean,
+        /* The callee reads the calling cursor's capture stack (!BACKREF):
+         * pending captures must be synced onto the cursor before the call. */
+        val readsCstack: Boolean = false,
     ) : Node {
         constructor(name: String, zeroWidth: Boolean, negate: Boolean, capture: String?) :
             this(name, zeroWidth, negate, capture, null, true)

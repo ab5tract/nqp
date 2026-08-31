@@ -94,6 +94,9 @@ class QAST::RxDescriptor {
     my int $F_IGNORECASE := 4;
     my int $F_IGNOREMARK := 8;
     my int $F_SUBRATCHET := 16;
+    # The callee reads the caller cursor's capture stack, so the engine's
+    # pending captures must be synced onto the cursor before the call.
+    my int $F_CSTACK     := 32;
 
     # Ops that walk the frame or caller chain at run time; a callback piece
     # containing one refuses the rule (see reads_frame_ops).
@@ -361,10 +364,20 @@ class QAST::RxDescriptor {
         # slots first, which costs nothing: the pool is indexed, not ordered.
         my @args := $named ?? self.subrule_args($node[0]) !! nqp::null;
         if $named && !nqp::isnull(@args) {
+            # !BACKREF walks the calling cursor's capture stack to find what
+            # $<name> matched; the engine keeps captures pending until pass,
+            # so the call must be flagged to sync them onto the cursor first
+            # -- otherwise every backreference in an engine rule silently
+            # fails. Flagged at encode time so the many ordinary subrule
+            # calls pay nothing.
+            my str $callee := ~$node[0][0].value;
+            my int $reads-cstack := $callee eq '!BACKREF'
+              || $callee eq '!BACKREF-LATEST-CAPTURE';
             self.emit($SUB);
             self.emit(self.constant($node[0][0].value));
             self.emit(self.flags($node)
-                + ($node.backtrack eq 'r' ?? $F_SUBRATCHET !! 0));
+                + ($node.backtrack eq 'r' ?? $F_SUBRATCHET !! 0)
+                + ($reads-cstack ?? $F_CSTACK !! 0));
             # A capturing subrule's own cursor is the capture.
             self.emit($node.subtype eq 'capture'
                 ?? self.constant(~$node.name) + 1
