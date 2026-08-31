@@ -14,6 +14,16 @@ import org.raku.nqp.runtime.ThreadContext
 class BindFailureException(val record: DispatchRecord, val flag: Long) : ControlException()
 
 /**
+ * Thrown to abandon a frame whose signature binding failed, when the
+ * language's bind_error handler produced a result value in its place --
+ * the way it does when the failure was a Junction argument and the call
+ * was autothreaded. The nearest invoker (Ops.invokeDirect) catches this
+ * and makes the value the call's result, standing in for MoarVM's
+ * special-return from MVM_args_bind_failed.
+ */
+class BindReturnException(val value: org.raku.nqp.sixmodel.SixModelObject?) : ControlException()
+
+/**
  * Signature binding failure, as reported by nqp::assertparamcheck.
  *
  * A dispatch can ask (with dispatcher-resume-on-bind-failure) for a bind
@@ -73,6 +83,12 @@ object BindFailure {
         if (handler != null && csd != null && args != null && code != null) {
             Ops.invokeDirect(tc, handler, captureCallSite,
                 arrayOf<Any?>(Ops.savecapture(tc, csd, args), code))
+            /* The handler throwing is the error case. Returning a value means
+             * it stood in for the call -- a Junction argument was autothreaded
+             * -- and that value is the failed call's result. */
+            val produced = Ops.result_o(frame)
+            if (produced != null)
+                throw BindReturnException(produced)
         }
         throw ExceptionHandling.dieInternal(tc, "Bind check failed")
     }

@@ -2796,8 +2796,18 @@ object Ops {
             }
         }
 
+        val callerFrame = tc.curFrame
         try {
             ArgsExpectation.invokeByExpectation(tc, cr, callSite, argList)
+        }
+        catch (r: org.raku.nqp.dispatch.BindReturnException) {
+            /* The callee's signature bind failed on a Junction argument and
+             * the language's bind_error handler autothreaded the call: its
+             * result IS the call's result. The callee frame has already
+             * unwound; land the value where a normal return would have. */
+            val caller = callerFrame ?: tc.dummyCaller
+            caller.oRet = r.value
+            caller.retType = CallFrame.RET_OBJ.toByte()
         }
         catch (e: ControlException) {
             throw e
