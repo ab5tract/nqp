@@ -173,8 +173,18 @@ internal class AutosplitMethodWriter(
             simpleEffects[Opcodes.MONITORENTER] = StackEffect("L", "")
             simpleEffects[Opcodes.MONITOREXIT] = StackEffect("L", "")
             simpleEffects[Opcodes.NOP] = StackEffect("")
-            simpleEffects[Opcodes.PUTFIELD] = StackEffect("X", "")
-            simpleEffects[Opcodes.PUTSTATIC] = StackEffect("X", "X", "")
+            /* putfield pops the objectref AND the value; putstatic only the
+             * value (JVMS 6.5). These two were transposed -- in the original
+             * Java too, dormant for years: exception edges reset the modeled
+             * stack (thrown()), so the phantom extra slot each putfield left
+             * behind only mattered at a join of NORMAL paths with unequal
+             * putfield counts. The loop-control handler shape (redo/next
+             * jumping from inside a catch back into the body) is exactly
+             * that, and blew up type inference with "Insn N can be reached
+             * with stack sizes of 0 and 1" on any autosplit-sized mainline
+             * containing one. */
+            simpleEffects[Opcodes.PUTFIELD] = StackEffect("X", "X", "")
+            simpleEffects[Opcodes.PUTSTATIC] = StackEffect("X", "")
             simpleEffects[Opcodes.RETURN] = StackEffect("")
             simpleEffects[Opcodes.SALOAD] = StackEffect("[S", "I", "", "I")
             simpleEffects[Opcodes.SASTORE] = StackEffect("[S", "I", "I", "")
@@ -855,6 +865,8 @@ internal class AutosplitMethodWriter(
             nlocal = Math.max(nlocal, (an as VarInsnNode).`var` + size)
         }
 
+        val traceInsn = System.getenv("NQP_AUTOSPLIT_TRACE_INSN")?.toIntOrNull() ?: -1
+
         val state = TypeInference(insnList.size)
         val initial = Frame(arrayOf(), 0, 0)
         initial.grow(nlocal + 10)
@@ -883,7 +895,38 @@ internal class AutosplitMethodWriter(
             for (ce in successors[insn]) {
                 // assume exceptions follow non-exceptions
                 if (ce.exn != null) inf.thrown(ce.exn)
-                state.merge(ce.to, inf)
+                if (traceInsn >= 0 && ce.to == traceInsn) {
+                    System.err.printf("merge into %d from %d (exn=%s) stack=[%s]\n",
+                        ce.to, insn, ce.exn ?: "no",
+                        Arrays.toString(Arrays.copyOfRange(inf.stack, inf.sbase, inf.sp)))
+                    for (j in maxOf(0, insn - 30)..minOf(insnList.size - 1, insn + 1)) {
+                        val nod = insnList[j]
+                        val detail = when (nod) {
+                            is FieldInsnNode -> "${nod.owner}.${nod.name} : ${nod.desc}"
+                            is MethodInsnNode -> "${nod.owner}.${nod.name}"
+                            is LdcInsnNode -> "ldc ${nod.cst}"
+                            is VarInsnNode -> "var ${nod.`var`}"
+                            is JumpInsnNode -> "-> " + insnList.indexOf(nod.label)
+                            else -> ""
+                        }
+                        System.err.printf("  src insn %d: %s opcode=%d %s\n", j, nod.javaClass.simpleName, nod.getOpcode(), detail)
+                    }
+                }
+                try {
+                    state.merge(ce.to, inf)
+                } catch (e: RuntimeException) {
+                    if (System.getenv("NQP_AUTOSPLIT_DEBUG") != null) {
+                        System.err.printf("autosplit merge failure in %s: insn %d -> %d (exn edge: %s)\n",
+                            name, insn, ce.to, ce.exn ?: "no")
+                        System.err.printf("incoming frame: [%s]\n", inf.describe())
+                        state.frames[ce.to]?.let { System.err.printf("existing frame: [%s]\n", it.describe()) }
+                        for (j in maxOf(0, minOf(insn, ce.to) - 12)..minOf(insnList.size - 1, maxOf(insn, ce.to) + 3)) {
+                            val nod = insnList[j]
+                            System.err.printf("  insn %d: %s opcode=%d\n", j, nod.javaClass.simpleName, nod.getOpcode())
+                        }
+                    }
+                    throw e
+                }
             }
             step++
             if (DEBUG_FRAGMENT && (step % 10000) == 0) System.out.printf("Inference step %d\n", step)
