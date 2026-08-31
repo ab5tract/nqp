@@ -136,13 +136,28 @@ class RxProgram private constructor(
 
         /* reg -- pos := regs[reg]. */
         const val REG_TO_POS = 29
+        /* arm1, arm2, mark register -- a SPLIT that also marks the iteration
+         * entry position, saving the previous mark in the choice point so a
+         * backtrack into an earlier iteration's body restores it. A mark in
+         * a bare register goes stale the moment backtracking rewinds past
+         * the iteration that set it, and a stale mark lets an empty
+         * iteration through EMPTY_CHECK -- a zero-progress loop that grows
+         * the choice stack without bound. */
+        const val LOOP_SPLIT = 30
 
         /* reg -- fail unless pos == regs[reg]. With REG_TO_POS and MARK
          * this is all a conjunction needs: mark the start, run the first
          * branch, mark its end, then run each later branch from the start
          * and require it to land exactly on the end. Straight-line code,
-         * so a backtrack into a branch re-runs the check on the way out. */
-        const val POS_EQ_REG = 30
+         * so a backtrack into a branch re-runs the check on the way out.
+         *
+         * 31, not 30: LOOP_SPLIT took 30 while this was already 30, and
+         * with two when-branches on the same constant every conjunction
+         * ran the loop handler -- which reads a 2-int instruction as a
+         * 4-int one and jumps into data. Purely internal numbering (the
+         * wire format's tags are their own space), so renumbering is the
+         * whole fix; the assertion in init { } keeps it from recurring. */
+        const val POS_EQ_REG = 31
 
         /* CHAR flags. */
         const val F_NEGATE = 1
@@ -150,6 +165,9 @@ class RxProgram private constructor(
         const val F_IGNORECASE = 4
         const val F_IGNOREMARK = 8
         const val F_SUBRATCHET = 16
+        /* The callee reads the caller cursor's capture stack (!BACKREF):
+         * pending captures must be synced before the call. */
+        const val F_CSTACK = 32
 
         /*
          * The pseudo-codepoint a CR directly followed by LF reads as. NFG
@@ -163,6 +181,23 @@ class RxProgram private constructor(
          * with a real codepoint.
          */
         const val CRLF = -0x0D0A
+
+        /* Every opcode, exactly once. A duplicate number means two when-
+         * branches on the same constant, the first silently shadowing the
+         * second -- LOOP_SPLIT = POS_EQ_REG = 30 made every conjunction run
+         * the loop handler, which reads a 2-int instruction as a 4-int one
+         * and jumps into data. New opcodes go on this list. */
+        init {
+            val opcodes = intArrayOf(
+                MATCH, CHAR, ONE, ANCHOR, SPLIT, JMP, SUB, MARK, EMPTY_CHECK,
+                CAP_START, CAP_END, ADVANCE, DIGIT, WORD, SPACE, ANY,
+                CUT_MARK, CUT, ALT_LTM, ONE_ZW, UNIPROP, QASTNODE, NL,
+                SUB_CB, DYNQ_BOUNDS, DYNQ_STEP, DYNQ_NEXT, REG_TO_POS,
+                LOOP_SPLIT, POS_EQ_REG)
+            check(opcodes.distinct().size == opcodes.size) {
+                "duplicate rx opcode number: " + opcodes.toList()
+            }
+        }
 
         /** Compiles a pattern tree. Runs once, when the pattern is first seen. */
         @JvmStatic
@@ -263,7 +298,8 @@ class RxProgram private constructor(
                         SUB, constant(node.name),
                         (if (node.negate) F_NEGATE else 0) or
                             (if (node.zeroWidth) F_ZEROWIDTH else 0) or
-                            (if (node.ratchet) F_SUBRATCHET else 0),
+                            (if (node.ratchet) F_SUBRATCHET else 0) or
+                            (if (node.readsCstack) F_CSTACK else 0),
                         capture, args,
                     )
                     if (node.capture != null) captures++
@@ -483,9 +519,14 @@ class RxProgram private constructor(
             if (quant.max < 0) {
                 val r = reg()
                 val loop = here()
-                val split = op(SPLIT, 0, 0)
+                val split = op(LOOP_SPLIT, 0, 0, r)
                 val body = here()
-                op(MARK, r)
+                /* A frugal loop only ever enters its body by popping the
+                 * split's choice point -- which restores the PREVIOUS mark.
+                 * Re-mark at body entry so EMPTY_CHECK sees this iteration's
+                 * own start. The greedy loop falls through from LOOP_SPLIT,
+                 * which marked already. */
+                if (!quant.greedy) op(MARK, r)
                 emit(quant.body)
                 op(EMPTY_CHECK, r)
                 op(JMP, loop)
@@ -540,9 +581,11 @@ class RxProgram private constructor(
             if (quant.max < 0) {
                 val r = reg()
                 val loop = here()
-                val split = op(SPLIT, 0, 0)
+                val split = op(LOOP_SPLIT, 0, 0, r)
                 val again = here()
-                op(MARK, r)
+                /* As in emitQuantBody: frugal entry is via the popped choice,
+                 * whose restore put back the previous mark. */
+                if (!quant.greedy) op(MARK, r)
                 emit(sep)
                 emit(quant.body)
                 /* A separator and a body that between them consumed nothing
