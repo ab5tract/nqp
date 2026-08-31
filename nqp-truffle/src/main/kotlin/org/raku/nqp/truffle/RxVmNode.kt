@@ -105,7 +105,11 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
          * choice point, which is exactly what "the next match" means. */
         var pendingFail = resumeFrom != null
 
+        var debugSteps = 0L
         while (true) {
+            if (MAX_STEPS > 0 && ++debugSteps > MAX_STEPS)
+                throw RuntimeException(
+                    "rx step budget exceeded: pc=$pc pos=$pos choiceTop=$choiceTop pendingTop=$pendingTop")
             var failed = pendingFail
             pendingFail = false
             if (!failed) when (code[pc]) {
@@ -289,7 +293,30 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     choices[choiceTop] = code[pc + 2]
                     choices[choiceTop + 1] = pos
                     choices[choiceTop + 2] = pendingTop
+                    choices[choiceTop + 3] = 0
                     choiceTop += CHOICE_WIDTH
+                    pc = code[pc + 1]
+                }
+
+                RxProgram.LOOP_SPLIT -> {
+                    /* A SPLIT that also marks the iteration entry: the old
+                     * mark rides in the choice point, and popping it puts the
+                     * mark back -- so EMPTY_CHECK always compares against the
+                     * entry of the iteration actually being run, even after
+                     * backtracking into an earlier one. */
+                    val r = code[pc + 3]
+                    if (choiceTop + CHOICE_WIDTH > choices.size) {
+                        choices = grow(choices)
+                        retries = retries.copyOf(choices.size / CHOICE_WIDTH)
+                    }
+                    retries[choiceTop / CHOICE_WIDTH] = null
+                    choices[choiceTop] = code[pc + 2]
+                    choices[choiceTop + 1] = pos
+                    choices[choiceTop + 2] = pendingTop
+                    choices[choiceTop + 3] = r + 1
+                    choices[choiceTop + 4] = regs[r]
+                    choiceTop += CHOICE_WIDTH
+                    regs[r] = pos
                     pc = code[pc + 1]
                 }
 
@@ -401,6 +428,7 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                             choices[choiceTop] = code[pc + 3 + order[i]]
                             choices[choiceTop + 1] = pos
                             choices[choiceTop + 2] = pendingTop
+                            choices[choiceTop + 3] = 0
                             choiceTop += CHOICE_WIDTH
                         }
                         pc = code[pc + 3 + order[0]]
@@ -441,6 +469,12 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
 
                 RxProgram.DYNQ_BOUNDS -> {
                     val r = code[pc + 1]
+                    /* Same as SUB_CB: the bounds code may read $/ and with it
+                     * the captures made so far. */
+                    if (pendingTop > syncedTop) {
+                        sync(cursor, pending, syncedTop, pendingTop)
+                        syncedTop = pendingTop
+                    }
                     val b = callbackBounds(cursor, code[pc + 2], pos)
                     regs[r] = b[0]
                     regs[r + 1] = b[1]
@@ -498,6 +532,15 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
 
                 RxProgram.SUB_CB -> {
                     val flags = code[pc + 2]
+                    /* The captures made so far become visible on the cursor
+                     * first, as for QASTNODE: the called code may read them --
+                     * !BACKREF walks the cursor's capture stack to find what
+                     * $<name> matched, and an unsynced stack made every
+                     * backreference in an engine rule silently fail. */
+                    if (pendingTop > syncedTop) {
+                        sync(cursor, pending, syncedTop, pendingTop)
+                        syncedTop = pendingTop
+                    }
                     val sub = callbackCursor(cursor, code[pc + 1], pos)
                     val r = reached(cursor, sub)
                     val matched = r != NO_MATCH
@@ -518,6 +561,7 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                             choices[choiceTop] = -1
                             choices[choiceTop + 1] = pos
                             choices[choiceTop + 2] = pendingTop
+                            choices[choiceTop + 3] = 0
                             choiceTop += CHOICE_WIDTH
                         }
                         if (matched && (flags and RxProgram.F_ZEROWIDTH) == 0) pos = r
@@ -537,6 +581,15 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     val name = pool[code[pc + 1]] as String
                     val flags = code[pc + 2]
                     val args = if (code[pc + 4] == 0) null else pool[code[pc + 4] - 1] as RxArgs
+                    /* Flagged at encode time: the callee (!BACKREF) walks the
+                     * caller cursor's capture stack, so the captures made so
+                     * far must be on it. Ordinary subrule calls skip this. */
+                    if (TRACE_SYNC) System.err.println(
+                        "rx SUB $name flags=$flags pending=$pendingTop synced=$syncedTop")
+                    if ((flags and RxProgram.F_CSTACK) != 0 && pendingTop > syncedTop) {
+                        sync(cursor, pending, syncedTop, pendingTop)
+                        syncedTop = pendingTop
+                    }
                     val sub = callSubrule(cursor, name, pos, args)
                     val r = reached(cursor, sub)
                     val matched = r != NO_MATCH
@@ -563,6 +616,7 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                             choices[choiceTop] = -1
                             choices[choiceTop + 1] = pos
                             choices[choiceTop + 2] = pendingTop
+                            choices[choiceTop + 3] = 0
                             choiceTop += CHOICE_WIDTH
                         }
                         if (matched && (flags and RxProgram.F_ZEROWIDTH) == 0) pos = r
@@ -623,12 +677,19 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     retries[slot] = null
                     choiceTop -= CHOICE_WIDTH
                     pos = choices[choiceTop + 1]
+                    if (choices[choiceTop + 3] != 0)
+                        regs[choices[choiceTop + 3] - 1] = choices[choiceTop + 4]
                     pendingFail = true
                     continue
                 }
                 choiceTop -= CHOICE_WIDTH
                 pc = choices[choiceTop]
                 pos = choices[choiceTop + 1]
+                /* A LOOP_SPLIT's choice carries the empty-check mark it
+                 * displaced; put it back so the mark always describes the
+                 * iteration actually being run. */
+                if (choices[choiceTop + 3] != 0)
+                    regs[choices[choiceTop + 3] - 1] = choices[choiceTop + 4]
                 /* Anything captured on the abandoned path goes with it --
                  * including its record on the cursor, when a callback had
                  * the captures synced across. */
@@ -702,10 +763,19 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
          * emits. */
         @JvmField val SUBRETRY: Boolean = System.getenv("NQP_RX_NO_SUBRETRY") == null
 
+        /* Debug: trace subrule calls' capture-sync decisions. */
+        @JvmField val TRACE_SYNC: Boolean = System.getenv("NQP_RX_TRACE_SYNC") != null
+
+        /* Debug: abort a run after this many steps with a state summary. */
+        @JvmField val MAX_STEPS: Long = System.getenv("NQP_RX_MAXSTEPS")?.toLongOrNull() ?: 0L
+
         /** No match. */
         const val NO_MATCH = -1
 
-        private const val CHOICE_WIDTH = 3   // pc, pos, pending-capture height
+        /* pc, pos, pending-capture height, mark-register + 1 (0 for none),
+         * saved mark. The last two carry a LOOP_SPLIT's empty-check mark so
+         * a backtrack into an earlier iteration restores it; see LOOP_SPLIT. */
+        private const val CHOICE_WIDTH = 5
         private const val PENDING_WIDTH = 4  // name, from|cursor, to, kind
 
         private val SPAN = Any()
