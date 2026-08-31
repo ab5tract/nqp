@@ -228,10 +228,18 @@ class TruffleGrammarEngine : GrammarEngine {
     companion object {
         /* The saved choice state of every resumable cursor that PASSED with
          * something left to offer; `!cursor_next` takes it back out. Weak
-         * on the cursor so an abandoned match does not pin its state. */
+         * on the cursor so an abandoned match does not pin its state --
+         * but an EngineState holds pending captures strongly, and a
+         * WeakHashMap only expunges on access, so between eval-server runs
+         * these entries pinned each finished run's whole universe. Cleared
+         * at every run boundary like the other engine caches. */
         private val STATES =
             java.util.Collections.synchronizedMap(
                 java.util.WeakHashMap<SixModelObject, RxVmNode.EngineState>())
+
+        init {
+            org.raku.nqp.dispatch.DispatchBootstrap.registerResettable { STATES.clear() }
+        }
 
         private val INVOCANT =
             CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null)
