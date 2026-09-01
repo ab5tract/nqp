@@ -295,6 +295,7 @@ class QAST::TruffleEncoder {
     my int $W_COERCE := 16;
     my int $W_PARAMS := 17;
     my int $W_GETLEXOUTER := 18;
+    my int $W_CODEREF := 19;
 
     # Types, matching both NqpWire and this backend's $RT_* numbering.
     my int $T_OBJ := 0;
@@ -437,6 +438,20 @@ class QAST::TruffleEncoder {
         op3('isinvokable', 90, $T_INT, 'o');
         op3('setelems', 91, $T_OBJ, 'oi');
         op3('existspos', 92, $T_INT, 'oi');
+        op3('clone_nd', 93, $T_OBJ, 'o');
+        op3('setcodeobj', 94, $T_OBJ, 'oo');
+        op3('getcurhllsym', 95, $T_OBJ, 's');
+        op3('takeclosure', 96, $T_OBJ, 'o');
+        op3('getcodeobj', 97, $T_OBJ, 'o');
+        op3('curcode', 98, $T_OBJ, '');
+        op3('p6capturelex', 100, $T_OBJ, 'o');
+        op3('p6sink', 101, $T_OBJ, 'o');
+        op3('p6store', 102, $T_OBJ, 'oo');
+        op3('p6box_i', 103, $T_OBJ, 'i');
+        op3('p6box_n', 104, $T_OBJ, 'n');
+        op3('p6box_s', 105, $T_OBJ, 's');
+        op3('p6definite', 106, $T_OBJ, 'o');
+        op3('p6bindattrinvres', 107, $T_OBJ, 'ooso');
         1
     }
 
@@ -469,7 +484,7 @@ class QAST::TruffleEncoder {
         $idx
     }
 
-    method encode_block($node, $block) {
+    method encode_block($node, $block, $comp) {
         run_init();
         return '' unless $code_run;
         my str $name := $node.name;
@@ -484,7 +499,8 @@ class QAST::TruffleEncoder {
             'code', nqp::list(), 'pool', nqp::list(), 'pooli', nqp::hash(),
             'own', nqp::hash(), 'locals', nqp::hash(), 'ltypes', nqp::list(),
             'params', nqp::list(), 'decls', nqp::list(),
-            'block', $block, 'qast', $node, 'dispatches', 0);
+            'nested', nqp::list(),
+            'block', $block, 'qast', $node, 'comp', $comp, 'dispatches', 0);
         epush(%e, 1);   # wire version
         epush(%e, 0);   # result type, patched below
         epush(%e, 0);   # local count, patched below
@@ -496,10 +512,16 @@ class QAST::TruffleEncoder {
             CATCH { $err := $! }
         }
         if !nqp::isnull($err) {
+            # Only a deliberate refusal falls back to bytecode; any other
+            # exception is a real compile error that must stay loud -- a
+            # swallowed one lets a block that should refuse to compile
+            # compile.
+            my str $msg := nqp::getmessage($err);
+            nqp::rethrow($err) if nqp::index($msg, 'code-bail') < 0;
             if $code_bail_p {
                 nqp::say('code bail: '
                     ~ ($name eq '' ?? '<anon ' ~ $node.cuid ~ '>' !! $name)
-                    ~ ' ' ~ nqp::getmessage($err));
+                    ~ ' ' ~ $msg);
             }
             return '';
         }
@@ -519,6 +541,21 @@ class QAST::TruffleEncoder {
             elsif $kind eq 'static' { $block.add_lexical($var, :is_static) }
             elsif $kind eq 'cont' { $block.add_lexical($var, :is_cont) }
             elsif $kind eq 'state' { $block.add_lexical($var, :is_state) }
+        }
+
+        # Nested blocks compile only now, against the committed lexical
+        # table; a die in one of them is a real compile error, exactly as
+        # it would be on the bytecode path. The code refs patch in after.
+        for %e<nested> -> $nb {
+            my $blk := $nb[1];
+            unless $*CODEREFS.know_cuid($blk.cuid) {
+                my $r := $comp.as_jast($blk);
+                $*STACK.obtain(NQPMu, $r);
+            }
+            # Positions were recorded before the local types were spliced
+            # into the header; account for the shift.
+            nqp::bindpos(@code, $nb[0] + nqp::elems(@ltypes),
+                $comp.cuid_to_qbid($blk.cuid));
         }
 
         my @out := ['nqpp ', ~nqp::elems(@code)];
@@ -584,6 +621,7 @@ class QAST::TruffleEncoder {
         my @save := %e<code>;
         my @p := nqp::list();
         %e<code> := @p;
+        nqp::bindkey(%e, 'inparams', 1);
         epush(%e, $pos_required);
         epush(%e, $pos_slurpy ?? -1 !! $pos_required + $pos_optional);
         epush(%e, nqp::elems(@params));
@@ -611,9 +649,25 @@ class QAST::TruffleEncoder {
             else {
                 epush(%e, 0);
             }
+            # Param tasks -- the declaration's children, run after the
+            # bind, exactly as emit_param_tasks does on the bytecode path.
+            my @tasks;
+            for @($p) {
+                nqp::push(@tasks, $_) if nqp::istype($_, QAST::Node);
+            }
+            epush(%e, nqp::elems(@tasks));
+            for @tasks {
+                self.encode_node($_, %e, $T_VOID);
+            }
         }
         %e<code> := @save;
+        nqp::bindkey(%e, 'inparams', 0);
         nqp::splice(%e<code>, @p, $params_at + 1, 0);
+        # Everything the walk recorded by position sits after the
+        # placeholder this prologue was just spliced over; shift it.
+        for %e<nested> -> $nb {
+            nqp::bindpos($nb, 0, $nb[0] + nqp::elems(@p)) if $nb[0] > $params_at;
+        }
     }
 
     # Encodes one node, coercing its value to $want when the types allow
@@ -640,9 +694,29 @@ class QAST::TruffleEncoder {
             return self.encode_var($n, %e, nqp::null(), $want);
         }
         if nqp::istype($n, QAST::Want) {
-            # This backend always takes the default child and post-coerces
-            # (see as_jast(QAST::Want)); mirror that exactly.
-            return self.encode_node($n[0], %e, $want);
+            # Mirror the compiler's want() selector: a typed or void want
+            # picks the matching variant ('v' hides BEGIN-parked dead code
+            # like the runtime ENUM_VALUES call); anything else takes the
+            # default and post-coerces.
+            my $sel := $n[0];
+            if $want == $T_VOID || $want == $T_INT
+                || $want == $T_NUM || $want == $T_STR {
+                my str $char := $want == $T_VOID ?? 'v'
+                    !! $want == $T_INT ?? 'I'
+                    !! $want == $T_NUM ?? 'N' !! 'S';
+                my int $i := 1;
+                my int $nn := nqp::elems(@($n));
+                while $i < $nn {
+                    if nqp::index($n[$i], $char) >= 0 {
+                        $sel := $n[$i + 1];
+                        $i := $nn;
+                    }
+                    else {
+                        $i := $i + 2;
+                    }
+                }
+            }
+            return self.encode_node($sel, %e, $want);
         }
         if nqp::istype($n, QAST::IVal) {
             epush(%e, $W_IVAL);
@@ -678,7 +752,28 @@ class QAST::TruffleEncoder {
             return self.encode_stmts_children($n, %e, $want);
         }
         if nqp::istype($n, QAST::Block) {
-            cbail('nested block');
+            my str $bt := $n.blocktype;
+            if $bt eq '' || $bt eq 'declaration' || $bt eq 'declaration_static' {
+                cbail('nested block in a parameter default')
+                    if nqp::existskey(%e, 'inparams') && %e<inparams>;
+                # Reference it exactly as a BVal would; the compilation is
+                # deferred until this block has committed (registered its
+                # lexicals), so the nested block resolves outers against
+                # the real table and a later bail leaves no orphans.
+                epush(%e, $W_CODEREF);
+                nqp::push(%e<nested>, [nqp::elems(%e<code>), $n]);
+                epush(%e, 0);   # qbid, patched after the deferred compile
+                return $T_OBJ;
+            }
+            cbail('block ' ~ $bt);
+        }
+        if nqp::istype($n, QAST::BVal) {
+            cbail('bval to an uncompiled block')
+                unless $*CODEREFS.know_cuid($n.value.cuid);
+            epush(%e, $W_CODEREF);
+            nqp::push(%e<nested>, [nqp::elems(%e<code>), $n.value]);
+            epush(%e, 0);
+            return $T_OBJ;
         }
         if nqp::istype($n, QAST::Regex) {
             cbail('regex');
@@ -694,6 +789,29 @@ class QAST::TruffleEncoder {
         my int $count := nqp::elems(@kids);
         if $count == 0 {
             epush(%e, $W_NULLC);
+            return $T_OBJ;
+        }
+        # An explicit resultchild (topicalization save/restore wraps the
+        # real result) rides a scratch local: the designated child's value
+        # is stored, the rest run void, and the local is the value.
+        my $rc := nqp::can($n, 'resultchild') ?? $n.resultchild !! nqp::null();
+        my int $has_rc := !nqp::isnull($rc) && nqp::defined($rc) && $rc != $count - 1;
+        if $has_rc {
+            my int $tmp := new_elocal(%e, $T_OBJ);
+            epush(%e, $W_STMTS);
+            epush(%e, $count + 1);
+            my int $i := 0;
+            while $i < $count {
+                if $i == $rc {
+                    epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $tmp);
+                    self.encode_child(@kids[$i], %e, $T_OBJ);
+                }
+                else {
+                    self.encode_node(@kids[$i], %e, $T_VOID);
+                }
+                $i++;
+            }
+            epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
             return $T_OBJ;
         }
         epush(%e, $W_STMTS);
@@ -755,12 +873,56 @@ class QAST::TruffleEncoder {
             cbail('chain arity') unless nqp::elems(@($op)) == 2;
             epush(%e, $W_DISPATCH);
             %e<dispatches> := %e<dispatches> + 1;
+            epush(%e, rt_of($op.returns));
             epush(%e, epool(%e, 'lang-call'));
             epush(%e, 3);
             epush(%e, $T_OBJ); epush(%e, $T_OBJ); epush(%e, $T_OBJ);
             self.encode_op_named_lexical_decont($op.name, %e);
             self.encode_child($op[0], %e, $T_OBJ);
             self.encode_child($op[1], %e, $T_OBJ);
+            return rt_of($op.returns);
+        }
+        if $name eq 'dispatch' {
+            # The generic dispatch-by-name op several desugars produce;
+            # the first child names the dispatcher.
+            cbail('computed dispatch name') unless nqp::istype($op[0], QAST::SVal);
+            my @args;
+            my int $i := 1;
+            while $i < nqp::elems(@($op)) {
+                nqp::push(@args, $op[$i]);
+                $i := $i + 1;
+            }
+            @args := self.reorder_args(@args);
+            my int $rt := rt_of($op.returns);
+            epush(%e, $W_DISPATCH);
+            %e<dispatches> := %e<dispatches> + 1;
+            epush(%e, $rt);
+            epush(%e, epool(%e, $op[0].value));
+            epush(%e, nqp::elems(@args));
+            my @fp := self.encode_arg_flags(@args, %e);
+            self.encode_args(@args, %e, @fp);
+            return $rt;
+        }
+        if $name eq 'p6assign' {
+            # The registered desugar for p6assign, mirrored: bind the
+            # container to a scratch local, raku-assign, answer the
+            # container.
+            cbail('p6assign arity') unless nqp::elems(@($op)) == 2;
+            my int $tmp := new_elocal(%e, $T_OBJ);
+            epush(%e, $W_STMTS); epush(%e, 2);
+            epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $tmp);
+            self.encode_child($op[0], %e, $T_OBJ);
+            epush(%e, $W_STMTS); epush(%e, 2);
+            epush(%e, $W_DISPATCH);
+            %e<dispatches> := %e<dispatches> + 1;
+            epush(%e, $T_OBJ);
+            epush(%e, epool(%e, 'raku-assign'));
+            epush(%e, 2);
+            epush(%e, $T_OBJ); epush(%e, $T_OBJ);
+            epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+            epush(%e, $W_OPCALL); epush(%e, 51); epush(%e, 1);   # decont
+            self.encode_child($op[1], %e, $T_OBJ);
+            epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
             return $T_OBJ;
         }
         if $name eq 'stmts' || $name eq 'stmt' {
@@ -864,12 +1026,14 @@ class QAST::TruffleEncoder {
         else {
             cbail('call with no callee');
         }
+        @args := self.reorder_args(@args);
         epush(%e, $W_DISPATCH);
         %e<dispatches> := %e<dispatches> + 1;
+        epush(%e, rt_of($op.returns));
         epush(%e, epool(%e, 'lang-call'));
         epush(%e, 1 + nqp::elems(@args));
         epush(%e, $T_OBJ);
-        self.encode_arg_flags(@args, %e);
+        my @fp := self.encode_arg_flags(@args, %e);
         if nqp::isnull($callee) {
             self.encode_op_named_lexical_decont($op.name, %e);
         }
@@ -882,8 +1046,8 @@ class QAST::TruffleEncoder {
             epush(%e, $W_OPCALL); epush(%e, 51); epush(%e, 1);   # decont
             self.encode_child($callee, %e, $T_OBJ);
         }
-        self.encode_args(@args, %e);
-        $T_OBJ
+        self.encode_args(@args, %e, @fp);
+        rt_of($op.returns)
     }
 
     # lang-meth-call: decont(invocant), the name, the invocant again, then
@@ -899,15 +1063,17 @@ class QAST::TruffleEncoder {
             cbail('callmethod with no name') unless nqp::elems(@kids);
             $namenode := nqp::shift(@kids);
         }
+        @kids := self.reorder_args(@kids);
         my int $tmp := new_elocal(%e, $T_OBJ);
         epush(%e, $W_DISPATCH);
         %e<dispatches> := %e<dispatches> + 1;
+        epush(%e, rt_of($op.returns));
         epush(%e, epool(%e, 'lang-meth-call'));
         epush(%e, 3 + nqp::elems(@kids));
         epush(%e, $T_OBJ);
         epush(%e, $T_STR);
         epush(%e, $T_OBJ);
-        self.encode_arg_flags(@kids, %e);
+        my @fp := self.encode_arg_flags(@kids, %e);
         epush(%e, $W_OPCALL); epush(%e, 51); epush(%e, 1);   # decont
         epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $tmp);
         self.encode_child($inv, %e, $T_OBJ);
@@ -919,8 +1085,8 @@ class QAST::TruffleEncoder {
             self.encode_child($namenode, %e, $T_STR);
         }
         epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
-        self.encode_args(@kids, %e);
-        $T_OBJ
+        self.encode_args(@kids, %e, @fp);
+        rt_of($op.returns)
     }
 
     method encode_op_named_lexical_decont(str $name, %e) {
@@ -928,21 +1094,55 @@ class QAST::TruffleEncoder {
         self.encode_lexget($name, %e);
     }
 
-    method encode_arg_flags(@args, %e) {
-        for @args -> $a {
-            my int $flag := $T_OBJ;
-            my $named := nqp::can($a, 'named') ?? $a.named !! '';
-            my $flat  := nqp::can($a, 'flat') ?? $a.flat !! 0;
-            $flag := $flag + 4 if $named;
-            $flag := $flag + 8 if $flat;
-            epush(%e, $flag);
-            epush(%e, epool(%e, ~$named)) if $named;
+    # Positionals before nameds, the same stable reorder
+    # process_args_onto_stack does -- the dispatch machinery indexes
+    # positionals as the leading slots.
+    method reorder_args(@args) {
+        my @pos;
+        my @named;
+        for @args {
+            my $n := nqp::can($_, 'named') ?? $_.named !! '';
+            nqp::push($n ?? @named !! @pos, $_);
         }
+        for @named { nqp::push(@pos, $_) }
+        @pos
     }
 
-    method encode_args(@args, %e) {
+    # Argument flags carry each argument's NATURAL type, exactly as the
+    # bytecode path's process_args does -- a dispatcher is entitled to
+    # read a capture argument as native int, and an obj-boxed one breaks
+    # it. The flag slots are reserved first (wire order is flags before
+    # children) and patched once each child's type is known; a flattening
+    # argument stays obj, as it does on the bytecode path.
+    method encode_arg_flags(@args, %e) {
+        my @flagpos;
         for @args -> $a {
-            self.encode_child($a, %e, $T_OBJ);
+            my $named := nqp::can($a, 'named') ?? $a.named !! '';
+            nqp::push(@flagpos, nqp::elems(%e<code>));
+            epush(%e, 0);
+            epush(%e, epool(%e, ~$named)) if $named;
+        }
+        @flagpos
+    }
+
+    method encode_args(@args, %e, @flagpos) {
+        my int $i := 0;
+        for @args -> $a {
+            my $named := nqp::can($a, 'named') ?? $a.named !! '';
+            my $flat  := nqp::can($a, 'flat') ?? $a.flat !! 0;
+            my int $t;
+            if $flat {
+                self.encode_child($a, %e, $T_OBJ);
+                $t := $T_OBJ;
+            }
+            else {
+                $t := self.encode_node($a, %e, $T_ANY);
+            }
+            my int $flag := $t;
+            $flag := $flag + 4 if $named;
+            $flag := $flag + 8 if $flat;
+            nqp::bindpos(%e<code>, @flagpos[$i], $flag);
+            $i := $i + 1;
         }
     }
 
@@ -952,8 +1152,44 @@ class QAST::TruffleEncoder {
         my str $scope := $var.scope;
         my str $decl := $var.decl;
 
+        if $decl eq 'contvar' && $scope eq 'local' {
+            # The declaration IS the expression: clone the prototype
+            # container into the local unless something (a lowered
+            # parameter) bound it already, and answer the local -- the
+            # exact shape the bytecode declaration compiles to.
+            cbail('bind to a contvar declaration') unless nqp::isnull($bindval);
+            my $proto := $var.value;
+            my $sc := nqp::getobjsc($proto);
+            cbail('local contvar proto not in an SC') if nqp::isnull($sc);
+            self.declare_elocal($var, %e, $T_OBJ);
+            my int $idx := %e<locals>{$name}[0];
+            epush(%e, $W_STMTS); epush(%e, 2);
+            epush(%e, $W_IFS);
+            epush(%e, $T_INT);
+            epush(%e, 0);
+            epush(%e, 0);
+            epush(%e, $W_OPCALL); epush(%e, 52); epush(%e, 1);   # isnull
+            epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $idx);
+            epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $idx);
+            epush(%e, $W_OPCALL); epush(%e, 93); epush(%e, 1);   # clone_nd
+            epush(%e, $W_WVAL);
+            epush(%e, epool(%e, nqp::scgethandle($sc)));
+            epush(%e, nqp::scgetobjidx($sc, $proto));
+            epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $idx);
+            return $T_OBJ;
+        }
         if $decl ne '' {
             self.encode_decl($var, %e, $decl, $scope);
+        }
+
+        # A read in void context compiles to nothing, exactly as the
+        # bytecode path nops it -- and that is semantics, not tidiness: an
+        # emitted read of a contvar would clone the container early and
+        # sever the lazy first-toucher sharing the traited-variable
+        # pattern depends on.
+        if $want == $T_VOID && nqp::isnull($bindval) {
+            epush(%e, $W_NULLC);
+            return $T_OBJ;
         }
 
         # Scope from the symbol tables when not spelled out, the same walk
@@ -1128,7 +1364,7 @@ class QAST::TruffleEncoder {
             nqp::push(%e<decls>, ['static', $var]);
         }
         elsif $decl eq 'contvar' {
-            cbail('local contvar') unless $scope eq 'lexical';
+            cbail('contvar scope ' ~ $scope) unless $scope eq 'lexical';
             %e<own>{$name} := $T_OBJ;
             nqp::push(%e<decls>, ['cont', $var]);
         }
