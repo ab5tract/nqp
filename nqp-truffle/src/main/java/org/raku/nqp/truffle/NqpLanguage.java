@@ -21,14 +21,14 @@ import com.oracle.truffle.api.library.ExportMessage;
  * backend encodes a code object into a program at compile time, and this
  * language only decodes and runs it. Nothing parses source text.
  *
- * <p>What parse accepts today is only the {@code qt-test:} scaffolding the
- * skeleton harness ({@link QtCheck}) drives; the encoder's wire form joins
+ * <p>What parse accepts today is only the {@code code-test:} scaffolding the
+ * skeleton harness ({@link NqpCheck}) drives; the encoder's wire form joins
  * it when Phase 2 puts real code on this road.
  */
-@TruffleLanguage.Registration(id = QtLanguage.ID, name = "NQP Code", version = "0.1")
-public final class QtLanguage extends TruffleLanguage<QtLanguage.Ctx> {
+@TruffleLanguage.Registration(id = NqpLanguage.ID, name = "NQP Code", version = "0.1")
+public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
 
-    public static final String ID = "nqp-qt";
+    public static final String ID = "nqp-code";
 
     public static final class Ctx { }
 
@@ -36,27 +36,27 @@ public final class QtLanguage extends TruffleLanguage<QtLanguage.Ctx> {
 
     @Override protected CallTarget parse(ParsingRequest request) {
         String source = request.getSource().getCharacters().toString();
-        if (!source.startsWith("qt-test:")) {
+        if (!source.startsWith("code-test:")) {
             throw new IllegalArgumentException(
-                "nqp-qt has no encoder wire format yet; only qt-test: sources run");
+                "nqp-code has no encoder wire format yet; only code-test: sources run");
         }
-        CallTarget target = canned(source.substring("qt-test:".length()));
+        CallTarget target = canned(source.substring("code-test:".length()));
         return new RxLanguage.ConstantRootNode(this, new Program(target)).getCallTarget();
     }
 
     /**
      * Canned programs, exercising the generated interpreter's basics:
      * constants, arguments, locals, custom operations, branches and loops.
-     * Scaffolding for {@link QtCheck}; deleted when real programs arrive.
+     * Scaffolding for {@link NqpCheck}; deleted when real programs arrive.
      */
     private CallTarget canned(String which) {
-        BytecodeParser<QtRootNodeGen.Builder> parser = switch (which) {
-            case "add" -> QtLanguage::buildAdd;
-            case "fib", "serial" -> QtLanguage::buildFib;
+        BytecodeParser<NqpRootNodeGen.Builder> parser = switch (which) {
+            case "add" -> NqpLanguage::buildAdd;
+            case "fib", "serial" -> NqpLanguage::buildFib;
             default -> throw new IllegalArgumentException("no canned program " + which);
         };
-        BytecodeRootNodes<QtRootNode> nodes =
-            QtRootNodeGen.create(this, BytecodeConfig.DEFAULT, parser);
+        BytecodeRootNodes<NqpRootNode> nodes =
+            NqpRootNodeGen.create(this, BytecodeConfig.DEFAULT, parser);
         if (which.equals("serial")) {
             nodes = roundTrip(nodes);
         }
@@ -69,7 +69,7 @@ public final class QtLanguage extends TruffleLanguage<QtLanguage.Ctx> {
      * is exactly this byte stream. Constants are longs today; the encoder's
      * wire format decides the real tag set when it lands.
      */
-    private BytecodeRootNodes<QtRootNode> roundTrip(BytecodeRootNodes<QtRootNode> nodes) {
+    private BytecodeRootNodes<NqpRootNode> roundTrip(BytecodeRootNodes<NqpRootNode> nodes) {
         try {
             var bytes = new java.io.ByteArrayOutputStream();
             nodes.serialize(new java.io.DataOutputStream(bytes), (ctx, out, obj) -> {
@@ -80,7 +80,7 @@ public final class QtLanguage extends TruffleLanguage<QtLanguage.Ctx> {
                 }
             });
             var in = new java.io.DataInputStream(new java.io.ByteArrayInputStream(bytes.toByteArray()));
-            return QtRootNodeGen.deserialize(this, BytecodeConfig.DEFAULT,
+            return NqpRootNodeGen.deserialize(this, BytecodeConfig.DEFAULT,
                 () -> in, (ctx, input) -> input.readLong());
         } catch (java.io.IOException e) {
             throw new RuntimeException(e);
@@ -88,7 +88,7 @@ public final class QtLanguage extends TruffleLanguage<QtLanguage.Ctx> {
     }
 
     /** arg0 + arg1 */
-    private static void buildAdd(QtRootNodeGen.Builder b) {
+    private static void buildAdd(NqpRootNodeGen.Builder b) {
         b.beginRoot();
         b.beginReturn();
         b.beginAddI();
@@ -100,7 +100,7 @@ public final class QtLanguage extends TruffleLanguage<QtLanguage.Ctx> {
     }
 
     /** Iterative fib(arg0): locals and a while loop. */
-    private static void buildFib(QtRootNodeGen.Builder b) {
+    private static void buildFib(NqpRootNodeGen.Builder b) {
         b.beginRoot();
         var a = b.createLocal();
         var c = b.createLocal();

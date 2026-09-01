@@ -4138,8 +4138,8 @@ class QAST::CompilerJAST {
 
     multi method as_jast(QAST::CompUnit $cu, :$want) {
         # Truffle-migration coverage survey (Phase 1): reporting only, and
-        # only when its knobs are set; see QAST::QtEncoder.
-        QAST::QtEncoder.survey_cu($cu);
+        # only when its knobs are set; see QAST::TruffleEncoder.
+        QAST::TruffleEncoder.survey_cu($cu);
 
         # A compilation-unit-wide source of IDs for handlers.
         my $*EH_IDX := 1;
