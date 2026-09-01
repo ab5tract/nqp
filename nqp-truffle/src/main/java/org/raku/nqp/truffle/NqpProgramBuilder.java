@@ -30,10 +30,13 @@ final class NqpProgramBuilder {
     private BytecodeLocal sink;
     private BytecodeLocal tmp;
 
+    private final NqpWire.Program program;
+
     private NqpProgramBuilder(NqpRootNodeGen.Builder b, NqpWire.Program p) {
         this.b = b;
         this.code = p.code();
         this.pool = p.pool();
+        this.program = p;
     }
 
     /** Builds the one root node for a program. */
@@ -47,8 +50,19 @@ final class NqpProgramBuilder {
         for (int i = 0; i < nlocals; i++) locals[i] = b.createLocal();
         sink = b.createLocal();
         tmp = b.createLocal();
+        // JVM method locals start zeroed; engine locals match, so a QAST
+        // local read before its first bind answers what bytecode answers.
+        for (int i = 0; i < nlocals; i++) {
+            b.beginStoreLocal(locals[i]);
+            switch (program.localType(i)) {
+                case NqpWire.T_INT -> b.emitLoadConstant(0L);
+                case NqpWire.T_NUM -> b.emitLoadConstant(0.0d);
+                default -> b.emitNullC();
+            }
+            b.endStoreLocal();
+        }
         b.beginReturn();
-        walk(2, true);
+        walk(program.treeStart(), true);
         b.endReturn();
         b.endRoot();
     }

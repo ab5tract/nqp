@@ -12,9 +12,12 @@ package org.raku.nqp.truffle;
  *   nqpp &lt;nints&gt; &lt;int&gt;... &lt;npool&gt; (&lt;len&gt;:&lt;chars&gt;)...
  * </pre>
  *
- * The int stream is [version, nlocals, tree...]; the tree is a prefix
- * walk. All 64-bit and floating values ride in the string pool and are
- * parsed at decode, so the int stream stays 32-bit clean.
+ * The int stream is [version, nlocals, localType*nlocals, tree...]; the
+ * tree is a prefix walk. Local types let the builder default-initialize
+ * every engine local (0, 0e0, null) the way JVM method locals are -- a
+ * QAST local may legitimately be read before its first bind. All 64-bit
+ * and floating values ride in the string pool and are parsed at decode,
+ * so the int stream stays 32-bit clean.
  *
  * Tree tags. Types are 0=obj 1=int(long) 2=num(double) 3=str.
  *
@@ -74,7 +77,11 @@ public final class NqpWire {
     public static final int T_NUM = 2;
     public static final int T_STR = 3;
 
-    public record Program(int[] code, String[] pool, int nlocals) { }
+    public record Program(int[] code, String[] pool, int nlocals) {
+        /** The tree starts after version, nlocals, and the local types. */
+        public int treeStart() { return 2 + nlocals; }
+        public int localType(int i) { return code[2 + i]; }
+    }
 
     public static boolean isProgram(String source) {
         return source.startsWith(MAGIC);
