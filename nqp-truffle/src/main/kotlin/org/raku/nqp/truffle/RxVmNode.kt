@@ -251,7 +251,11 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                         failed = true
                     } else {
                         val cp = atomAt(target, pos, eos)
-                        val inClass = cp == RxProgram.CRLF || Character.isWhitespace(cp)
+                        /* CCLASS_WHITESPACE, not Character.isWhitespace: the
+                         * latter excludes NBSP and NEL, which nqp's \s
+                         * includes (see Ops.iscclass). */
+                        val inClass = cp == RxProgram.CRLF || cp in 9..13 ||
+                            cp == 0x85 || Character.isSpaceChar(cp)
                         if (inClass == (code[pc + 1] != 0)) {
                             failed = true
                         } else {
@@ -803,8 +807,16 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
             when (ANCHOR_KINDS[kind]) {
                 RxTree.Anchor.Kind.BOS -> pos == 0
                 RxTree.Anchor.Kind.EOS -> pos == eos
-                RxTree.Anchor.Kind.BOL -> pos == 0 || target[pos - 1] == '\n'
-                RxTree.Anchor.Kind.EOL -> pos == eos || target[pos] == '\n'
+                /* The reference semantics are the bytecode path's bol/eol
+                 * emission (QAST::Compiler), which tests CCLASS_NEWLINE --
+                 * not just '\n' -- and refuses the position past a trailing
+                 * newline: a line neither starts at end-of-string after a
+                 * final newline (bol) nor ends right after one (eol). */
+                RxTree.Anchor.Kind.BOL ->
+                    pos == 0 || (pos < eos && isNl(target[pos - 1]))
+                RxTree.Anchor.Kind.EOL ->
+                    (pos < eos && isNl(target[pos]))
+                        || (pos == eos && (pos == 0 || !isNl(target[pos - 1])))
                 RxTree.Anchor.Kind.LWB ->
                     pos < eos && isWord(target, pos) && (pos == 0 || !isWord(target, pos - 1))
                 RxTree.Anchor.Kind.RWB ->
@@ -820,6 +832,13 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
             val c = target[pos]
             return Character.isLetterOrDigit(c) || c == '_'
         }
+
+        /* CCLASS_NEWLINE, inlined from Ops.iscclass so the anchor test
+         * stays a few char compares under partial evaluation. */
+        private fun isNl(c: Char): Boolean =
+            c == '\n' || c == '\u000B' || c == '\u000C' || c == '\r' ||
+            c == '\u0085' || c == '\u2029' ||
+            Character.getType(c) == Character.LINE_SEPARATOR.toInt()
 
         /*
          * The atom at a position: the codepoint there, except that a CR
