@@ -502,6 +502,9 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                         choices[choiceTop] = if (greedy) code[pc + 4] else bodyPc
                         choices[choiceTop + 1] = pos
                         choices[choiceTop + 2] = pendingTop
+                        /* No displaced mark -- and a stale value here would
+                         * make the pop restore a register it never saved. */
+                        choices[choiceTop + 3] = 0
                         choiceTop += CHOICE_WIDTH
                         pc = if (greedy) bodyPc else code[pc + 4]
                     }
@@ -634,7 +637,13 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     }
                 }
 
-                else -> throw IllegalStateException("bad opcode " + code[pc])
+                else -> throw IllegalStateException(
+                    "bad opcode " + code[pc] + " at pc=" + pc
+                    + " pos=" + pos + " choiceTop=" + choiceTop
+                    + " window=" + java.util.Arrays.toString(
+                        code.copyOfRange(maxOf(0, pc - 6), minOf(code.size, pc + 6)))
+                    + " choices=" + java.util.Arrays.toString(
+                        choices.copyOfRange(0, minOf(choices.size, choiceTop + CHOICE_WIDTH))))
             }
 
             if (failed) {
