@@ -38,6 +38,11 @@ public final class NqpCodeEngine implements CodeEngine {
         try {
             // The program stores its own return value, typed; see StoreRet.
             ((CallTarget) program).call(cu, tc, cf, csd, args);
+        } catch (NqpUnwind wrapped) {
+            /* An unwind no handler region in the program claimed: hand the
+             * naked host exception back to the bytecode frames above, which
+             * catch UnwindException by type (see NqpUnwind). */
+            throw wrapped.unwind;
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
             /* A continuation is being captured through this frame, and an
              * engine frame has no resume machinery yet: replaying it would

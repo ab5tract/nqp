@@ -47,6 +47,16 @@ package org.raku.nqp.truffle;
  *    hasDefault. Emitted only as the first child of the root STMTS.
  * 18 GETLEXOUTER pName
  * 19 CODEREF qbid               cu.lookupCodeRef, the BVal road
+ * 20 LOOPH until condType lastId nrId outerIdx cond body
+ *    a while/until loop WITH last/next/redo handlers: the encoder
+ *    registered lastId (LAST) and nrId (NEXT|REDO) rows in the block's
+ *    handler table; the builder emits the same delimited TryCatch shape
+ *    the bytecode path does (curHandler=lastId around cond+loop, nrId
+ *    around the body; body catch routes NEXT/REDO, loop catch swallows
+ *    LAST; outerIdx restored after). Value null, like LOOP.
+ * 21 JNULL                      a Java null: what aconst_null answers
+ *    (fresh object locals, valueless else branches) -- NOT the VMNull
+ *    singleton NULLC stands for.
  * </pre>
  */
 public final class NqpWire {
@@ -75,6 +85,8 @@ public final class NqpWire {
     public static final int PARAMS = 17;
     public static final int GETLEXOUTER = 18;
     public static final int CODEREF = 19;
+    public static final int LOOPH = 20;
+    public static final int JNULL = 21;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;
