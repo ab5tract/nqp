@@ -10,7 +10,7 @@ import com.oracle.truffle.api.nodes.RootNode;
 /**
  * The Bytecode DSL root node general code runs on — the interpreter half of
  * the jast2bc-to-Truffle migration (docs/jvm-truffle-migration.md in
- * rakudo). The processor generates {@code QtRootNodeGen} from this spec:
+ * rakudo). The processor generates {@code NqpRootNodeGen} from this spec:
  * cached and uncached tiers, OSR, and a serializable bytecode form, which
  * is what answers both per-code-object node memory for the setting and the
  * precompiled-jar story.
@@ -28,13 +28,13 @@ import com.oracle.truffle.api.nodes.RootNode;
  * is Java, like everything annotation-processed here.
  */
 @GenerateBytecode(
-    languageClass = QtLanguage.class,
+    languageClass = NqpLanguage.class,
     enableUncachedInterpreter = true,
     enableSerialization = true,
     boxingEliminationTypes = { long.class })
-public abstract class QtRootNode extends RootNode implements BytecodeRootNode {
+public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
 
-    protected QtRootNode(QtLanguage language, FrameDescriptor frameDescriptor) {
+    protected NqpRootNode(NqpLanguage language, FrameDescriptor frameDescriptor) {
         super(language, frameDescriptor);
     }
 
