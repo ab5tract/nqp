@@ -1,0 +1,176 @@
+package org.raku.nqp.truffle;
+
+import com.oracle.truffle.api.CallTarget;
+import com.oracle.truffle.api.TruffleLanguage;
+import com.oracle.truffle.api.bytecode.BytecodeConfig;
+import com.oracle.truffle.api.bytecode.BytecodeParser;
+import com.oracle.truffle.api.bytecode.BytecodeRootNodes;
+import com.oracle.truffle.api.interop.ArityException;
+import com.oracle.truffle.api.interop.InteropLibrary;
+import com.oracle.truffle.api.interop.TruffleObject;
+import com.oracle.truffle.api.library.ExportLibrary;
+import com.oracle.truffle.api.library.ExportMessage;
+
+/**
+ * The Truffle language general NQP/Raku code runs in — the target of the
+ * jast2bc-to-Truffle migration (docs/jvm-truffle-migration.md in rakudo).
+ * The grammar engine's {@link RxLanguage} stays its own language: its parse
+ * builds matchers, and the two coverage stories grow independently.
+ *
+ * <p>Like the regex engine, code arrives here already compiled: the QAST
+ * backend encodes a code object into a program at compile time, and this
+ * language only decodes and runs it. Nothing parses source text.
+ *
+ * <p>What parse accepts today is only the {@code qt-test:} scaffolding the
+ * skeleton harness ({@link QtCheck}) drives; the encoder's wire form joins
+ * it when Phase 2 puts real code on this road.
+ */
+@TruffleLanguage.Registration(id = QtLanguage.ID, name = "NQP Code", version = "0.1")
+public final class QtLanguage extends TruffleLanguage<QtLanguage.Ctx> {
+
+    public static final String ID = "nqp-qt";
+
+    public static final class Ctx { }
+
+    @Override protected Ctx createContext(Env env) { return new Ctx(); }
+
+    @Override protected CallTarget parse(ParsingRequest request) {
+        String source = request.getSource().getCharacters().toString();
+        if (!source.startsWith("qt-test:")) {
+            throw new IllegalArgumentException(
+                "nqp-qt has no encoder wire format yet; only qt-test: sources run");
+        }
+        CallTarget target = canned(source.substring("qt-test:".length()));
+        return new RxLanguage.ConstantRootNode(this, new Program(target)).getCallTarget();
+    }
+
+    /**
+     * Canned programs, exercising the generated interpreter's basics:
+     * constants, arguments, locals, custom operations, branches and loops.
+     * Scaffolding for {@link QtCheck}; deleted when real programs arrive.
+     */
+    private CallTarget canned(String which) {
+        BytecodeParser<QtRootNodeGen.Builder> parser = switch (which) {
+            case "add" -> QtLanguage::buildAdd;
+            case "fib", "serial" -> QtLanguage::buildFib;
+            default -> throw new IllegalArgumentException("no canned program " + which);
+        };
+        BytecodeRootNodes<QtRootNode> nodes =
+            QtRootNodeGen.create(this, BytecodeConfig.DEFAULT, parser);
+        if (which.equals("serial")) {
+            nodes = roundTrip(nodes);
+        }
+        return nodes.getNode(0).getCallTarget();
+    }
+
+    /**
+     * Serializes a program and reads it back, which is the whole of the
+     * precompilation story in miniature: what travels in a jar in Phase 4
+     * is exactly this byte stream. Constants are longs today; the encoder's
+     * wire format decides the real tag set when it lands.
+     */
+    private BytecodeRootNodes<QtRootNode> roundTrip(BytecodeRootNodes<QtRootNode> nodes) {
+        try {
+            var bytes = new java.io.ByteArrayOutputStream();
+            nodes.serialize(new java.io.DataOutputStream(bytes), (ctx, out, obj) -> {
+                if (obj instanceof Long l) {
+                    out.writeLong(l);
+                } else {
+                    throw new java.io.IOException("unserializable constant: " + obj);
+                }
+            });
+            var in = new java.io.DataInputStream(new java.io.ByteArrayInputStream(bytes.toByteArray()));
+            return QtRootNodeGen.deserialize(this, BytecodeConfig.DEFAULT,
+                () -> in, (ctx, input) -> input.readLong());
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** arg0 + arg1 */
+    private static void buildAdd(QtRootNodeGen.Builder b) {
+        b.beginRoot();
+        b.beginReturn();
+        b.beginAddI();
+        b.emitLoadArgument(0);
+        b.emitLoadArgument(1);
+        b.endAddI();
+        b.endReturn();
+        b.endRoot();
+    }
+
+    /** Iterative fib(arg0): locals and a while loop. */
+    private static void buildFib(QtRootNodeGen.Builder b) {
+        b.beginRoot();
+        var a = b.createLocal();
+        var c = b.createLocal();
+        var i = b.createLocal();
+        var t = b.createLocal();
+
+        b.beginStoreLocal(a);
+        b.emitLoadConstant(0L);
+        b.endStoreLocal();
+        b.beginStoreLocal(c);
+        b.emitLoadConstant(1L);
+        b.endStoreLocal();
+        b.beginStoreLocal(i);
+        b.emitLoadArgument(0);
+        b.endStoreLocal();
+
+        b.beginWhile();
+        b.beginGtI();
+        b.emitLoadLocal(i);
+        b.emitLoadConstant(0L);
+        b.endGtI();
+        b.beginBlock();
+        b.beginStoreLocal(t);
+        b.beginAddI();
+        b.emitLoadLocal(a);
+        b.emitLoadLocal(c);
+        b.endAddI();
+        b.endStoreLocal();
+        b.beginStoreLocal(a);
+        b.emitLoadLocal(c);
+        b.endStoreLocal();
+        b.beginStoreLocal(c);
+        b.emitLoadLocal(t);
+        b.endStoreLocal();
+        b.beginStoreLocal(i);
+        b.beginSubI();
+        b.emitLoadLocal(i);
+        b.emitLoadConstant(1L);
+        b.endSubI();
+        b.endStoreLocal();
+        b.endBlock();
+        b.endWhile();
+
+        b.beginReturn();
+        b.emitLoadLocal(a);
+        b.endReturn();
+        b.endRoot();
+    }
+
+    /**
+     * What eval hands back: an executable over the program's call target.
+     * Polyglot hands numbers over as whatever fits, so arguments are
+     * widened to long here, once, at the boundary.
+     */
+    @ExportLibrary(InteropLibrary.class)
+    public static final class Program implements TruffleObject {
+        private final CallTarget target;
+
+        Program(CallTarget target) { this.target = target; }
+
+        public CallTarget callTarget() { return target; }
+
+        @ExportMessage boolean isExecutable() { return true; }
+
+        @ExportMessage Object execute(Object[] args) throws ArityException {
+            Object[] widened = new Object[args.length];
+            for (int i = 0; i < args.length; i++) {
+                widened[i] = args[i] instanceof Number n ? n.longValue() : args[i];
+            }
+            return target.call(widened);
+        }
+    }
+}
