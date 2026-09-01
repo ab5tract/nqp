@@ -1,5 +1,6 @@
 package org.raku.nqp.truffle;
 
+import com.oracle.truffle.api.bytecode.BytecodeNode;
 import com.oracle.truffle.api.bytecode.BytecodeRootNode;
 import com.oracle.truffle.api.bytecode.ConstantOperand;
 import com.oracle.truffle.api.bytecode.GenerateBytecode;
@@ -14,6 +15,7 @@ import org.raku.nqp.runtime.CallFrame;
 import org.raku.nqp.runtime.CallSiteDescriptor;
 import org.raku.nqp.runtime.CompilationUnit;
 import org.raku.nqp.runtime.ThreadContext;
+import org.raku.nqp.runtime.UnwindException;
 
 /**
  * The Bytecode DSL root node general code runs on — the interpreter half of
@@ -68,6 +70,20 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
 
     private static CompilationUnit cu(VirtualFrame f) {
         return (CompilationUnit) f.getArguments()[ARG_CU];
+    }
+
+    /**
+     * A host {@link UnwindException} would be rethrown past every
+     * in-program TryCatch (the dispatch loop intercepts only Truffle
+     * exceptions), so wrap it in {@link NqpUnwind} here. Programs with no
+     * handler regions never catch the wrapper; it propagates out and
+     * {@code CodeEngines.codeRun} unwraps it at the engine boundary.
+     */
+    @Override
+    public Throwable interceptInternalException(Throwable t, VirtualFrame frame,
+                                                BytecodeNode bytecodeNode, int bci) {
+        if (t instanceof UnwindException u) return new NqpUnwind(u);
+        return t;
     }
 
     // NQP's int is 64-bit throughout; these mirror nqp::add_i and friends.
@@ -177,10 +193,21 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         }
     }
 
-    /** The null SMO constant. */
+    /**
+     * The null SMO constant — the VMNull singleton, exactly what the
+     * bytecode path's {@code Ops.createNull} answers for nqp::null().
+     * A Java null is NOT the same thing observably: bindattr stores it
+     * as never-initialized (attrinited answers 0), and isnull goes by
+     * identity. Positions where the bytecode path really has a Java
+     * null (fresh object locals, valueless else branches) use the
+     * builder's LoadNull instead.
+     */
     @Operation
     public static final class NullC {
-        @Specialization static Object doNull() { return null; }
+        @Specialization
+        static Object doNull(VirtualFrame f) {
+            return org.raku.nqp.runtime.Ops.createNull(tc(f));
+        }
     }
 
     /** A code ref of this unit by block id -- what a BVal compiles to. */
@@ -298,6 +325,47 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
             CallFrame cf = (CallFrame) f.getArguments()[ARG_CF];
             if (cf != null) NqpOps.storeReturnTyped(type, v, cf);
             return v;
+        }
+    }
+
+    /* ----- unwind handling, mirroring the emitted handler regions ----- */
+
+    /**
+     * The dynamic handler cursor: what {@code delimit_handler} emits as a
+     * {@code putfield curHandler} pair around every protected region.
+     */
+    @Operation
+    @ConstantOperand(type = int.class, name = "id")
+    public static final class SetCurHandler {
+        @Specialization
+        static void doSet(VirtualFrame f, int id) {
+            cf(f).curHandler = id;
+        }
+    }
+
+    /**
+     * The catch arm of a loop body's NEXT|REDO region: the unwind_check
+     * (rethrow anything not aimed at this handler in this unit, redirect
+     * labeled unwinds outward), then answers 1 for REDO and 0 for NEXT.
+     */
+    @Operation
+    @ConstantOperand(type = int.class, name = "target")
+    @ConstantOperand(type = int.class, name = "outer")
+    public static final class LoopBodyUnwind {
+        @Specialization
+        static long doRoute(VirtualFrame f, int target, int outer, Object ex) {
+            return NqpOps.loopBodyUnwind(ex, target, outer, cu(f), tc(f));
+        }
+    }
+
+    /** The catch arm of a loop's LAST region: unwind_check, then swallow. */
+    @Operation
+    @ConstantOperand(type = int.class, name = "target")
+    @ConstantOperand(type = int.class, name = "outer")
+    public static final class LoopLastUnwind {
+        @Specialization
+        static void doRoute(VirtualFrame f, int target, int outer, Object ex) {
+            NqpOps.loopLastUnwind(ex, target, outer, cu(f), tc(f));
         }
     }
 
