@@ -88,7 +88,7 @@ object NqpSources {
         // Before the compiler, which asks it to flatten each regex.
         "src/vm/jvm/QAST/RxDescriptor.nqp",
         // Likewise: the compiler runs its coverage survey per unit.
-        "src/vm/jvm/QAST/QtEncoder.nqp",
+        "src/vm/jvm/QAST/TruffleEncoder.nqp",
         "src/vm/jvm/QAST/Compiler.nqp",
     )
 

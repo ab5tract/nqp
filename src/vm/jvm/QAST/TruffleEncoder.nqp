@@ -12,17 +12,17 @@
 #   so the unit of measurement is blocks closed out, not ops implemented.
 #   The survey records every reason a block bails, not just the first.
 # - Changing the committed set must cost a run, not a rebuild (a QAST
-#   rebuild is ~12 minutes end to end). NQP_QT_ALSO treats extra tags as
-#   covered, NQP_QT_NO refuses covered ones; both take the tag spellings
+#   rebuild is ~12 minutes end to end). NQP_CODE_ALSO treats extra tags as
+#   covered, NQP_CODE_NO refuses covered ones; both take the tag spellings
 #   the survey itself prints (op:handle, var:lexicalref, node:VM, regex).
 #
-# Knobs (all compile-time, read once; output is nqp::say with a "qt "
+# Knobs (all compile-time, read once; output is nqp::say with a "code "
 # prefix, greppable out of a build log the same way NQP_RX_SURVEY is):
-#   NQP_QT_REPORT=1        per-compilation-unit summary and top bail tags
-#   NQP_QT_SURVEY=1        one line per block with every reason it bails
-#   NQP_QT_ALSO=a,b        treat these tags as covered for this run
-#   NQP_QT_NO=a,b          treat these covered tags as refused
-class QAST::QtEncoder {
+#   NQP_CODE_REPORT=1        per-compilation-unit summary and top bail tags
+#   NQP_CODE_SURVEY=1        one line per block with every reason it bails
+#   NQP_CODE_ALSO=a,b        treat these tags as covered for this run
+#   NQP_CODE_NO=a,b          treat these covered tags as refused
+class QAST::TruffleEncoder {
     # The committed first tranche, from the Phase 1 op census (migration
     # doc, 2026-09-01): the ~20 census heads plus the structural, primitive
     # and rakudo ops that always travel with them. Exceptions and handlers
@@ -31,9 +31,9 @@ class QAST::QtEncoder {
     # the measurement that phase is scheduled on.
     my %covered;
     my int $init_done := 0;
-    my int $qt_on := 0;
-    my int $qt_report := 0;
-    my int $qt_survey := 0;
+    my int $code_on := 0;
+    my int $code_report := 0;
+    my int $code_survey := 0;
 
     my $ops := 'if unless while until repeat_while repeat_until for bind
         call callmethod callstatic chain chainstatic locallifetime null
@@ -64,18 +64,18 @@ class QAST::QtEncoder {
         return 0 if $init_done;
         $init_done := 1;
         my %env := nqp::getenvhash();
-        $qt_report := nqp::existskey(%env, 'NQP_QT_REPORT') ?? 1 !! 0;
-        $qt_survey := nqp::existskey(%env, 'NQP_QT_SURVEY') ?? 1 !! 0;
-        $qt_on := $qt_report || $qt_survey;
-        return 0 unless $qt_on;
+        $code_report := nqp::existskey(%env, 'NQP_CODE_REPORT') ?? 1 !! 0;
+        $code_survey := nqp::existskey(%env, 'NQP_CODE_SURVEY') ?? 1 !! 0;
+        $code_on := $code_report || $code_survey;
+        return 0 unless $code_on;
 
         for nqp::split(' ', subst_ws($ops))    { %covered{'op:' ~ $_} := 1 }
         for nqp::split(' ', subst_ws($scopes)) { %covered{'var:' ~ $_} := 1 }
-        if nqp::existskey(%env, 'NQP_QT_ALSO') {
-            for nqp::split(',', %env<NQP_QT_ALSO>) { %covered{$_} := 1 }
+        if nqp::existskey(%env, 'NQP_CODE_ALSO') {
+            for nqp::split(',', %env<NQP_CODE_ALSO>) { %covered{$_} := 1 }
         }
-        if nqp::existskey(%env, 'NQP_QT_NO') {
-            for nqp::split(',', %env<NQP_QT_NO>) { nqp::deletekey(%covered, $_) }
+        if nqp::existskey(%env, 'NQP_CODE_NO') {
+            for nqp::split(',', %env<NQP_CODE_NO>) { nqp::deletekey(%covered, $_) }
         }
         1
     }
@@ -92,7 +92,7 @@ class QAST::QtEncoder {
 
     method survey_cu($cu) {
         init();
-        return 0 unless $qt_on;
+        return 0 unless $code_on;
 
         my %st := nqp::hash('blocks', nqp::list(), 'seen', nqp::hash());
         self.survey_block($cu[0], %st) if nqp::elems(@($cu)) && nqp::istype($cu[0], QAST::Block);
@@ -115,13 +115,13 @@ class QAST::QtEncoder {
         nqp::push(%st<blocks>, %blk);
         self.tag(%blk, 'exit-handler') if $node.has_exit_handler;
         self.walk_children($node, %blk, %st);
-        if $qt_survey {
+        if $code_survey {
             my str $name := %blk<name> eq '' ?? '<anon ' ~ $cuid ~ '>' !! %blk<name>;
             my @reasons;
             for %blk<reasons> { nqp::push(@reasons, $_.key) }
             nqp::say(nqp::elems(@reasons)
-                ?? 'qt survey: ' ~ $name ~ ' BAIL ' ~ nqp::join(';', @reasons)
-                !! 'qt survey: ' ~ $name ~ ' OK');
+                ?? 'code survey: ' ~ $name ~ ' BAIL ' ~ nqp::join(';', @reasons)
+                !! 'code survey: ' ~ $name ~ ' OK');
         }
         1
     }
@@ -190,7 +190,7 @@ class QAST::QtEncoder {
     }
 
     method report($cu, %st) {
-        return 0 unless $qt_report;
+        return 0 unless $code_report;
         my @blocks := %st<blocks>;
         my int $total := nqp::elems(@blocks);
         my int $ok := 0;
@@ -198,7 +198,7 @@ class QAST::QtEncoder {
         my int $ok_nodes := 0;
         # Per-tag: how many blocks it blocks, and how many it alone blocks.
         # "Sole" is the free prioritization signal; the honest yield of a
-        # tag group still needs an NQP_QT_ALSO run, exactly like NQP_RX_NO.
+        # tag group still needs an NQP_CODE_ALSO run, exactly like NQP_RX_NO.
         my %blocked;
         my %sole;
         for @blocks -> %blk {
@@ -221,11 +221,11 @@ class QAST::QtEncoder {
         }
         my str $name := nqp::elems(@blocks) ?? @blocks[0]<name> !! '';
         $name := '<anon>' if $name eq '';
-        nqp::say('qt cu hll=' ~ $cu.hll ~ ' ' ~ $name
+        nqp::say('code cu hll=' ~ $cu.hll ~ ' ' ~ $name
             ~ ' blocks ' ~ $total ~ ' ok ' ~ $ok ~ ' (' ~ pct($ok, $total) ~ ')'
             ~ ' nodes ' ~ $nodes ~ ' in-ok ' ~ $ok_nodes ~ ' (' ~ pct($ok_nodes, $nodes) ~ ')');
         for top_tags(%blocked, 20) -> $tag {
-            nqp::say('qt bail ' ~ $tag ~ ' blocks ' ~ %blocked{$tag}
+            nqp::say('code bail ' ~ $tag ~ ' blocks ' ~ %blocked{$tag}
                 ~ ' sole ' ~ (nqp::existskey(%sole, $tag) ?? %sole{$tag} !! 0));
         }
         1
