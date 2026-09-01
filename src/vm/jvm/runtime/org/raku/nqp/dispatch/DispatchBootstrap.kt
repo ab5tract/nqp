@@ -128,6 +128,7 @@ object DispatchBootstrap {
         for (site in linked) site.reset()
         org.raku.nqp.runtime.Ops.resetHelperDispatchSites()
         org.raku.nqp.runtime.GrammarEngines.clearProgramCache()
+        org.raku.nqp.runtime.CodeEngines.clearProgramCache()
         for (action in resettables) action.run()
     }
 
