@@ -272,4 +272,36 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
             return NqpOps.lastParamExisted(tc(f));
         }
     }
+
+    /**
+     * The typed return-register store, inside the program because only
+     * the encoder knows the block's static result type -- a null str and
+     * a null obj are indistinguishable as values. Passes the value
+     * through so a harness run without a CallFrame still answers.
+     */
+    @Operation
+    @ConstantOperand(type = int.class, name = "type")
+    public static final class StoreRet {
+        @Specialization
+        static Object doStore(VirtualFrame f, int type, Object v) {
+            CallFrame cf = (CallFrame) f.getArguments()[ARG_CF];
+            if (cf != null) NqpOps.storeReturnTyped(type, v, cf);
+            return v;
+        }
+    }
+
+    /**
+     * The named-argument rejection the invoker's args-expectation check
+     * does for compiled blocks; an engine block routes around that check
+     * and so re-makes it here, against its declared named parameters.
+     */
+    @Operation
+    @ConstantOperand(type = Object.class, name = "allowed")
+    public static final class CheckNamedAllowed {
+        @Specialization
+        static Object doCheck(VirtualFrame f, Object allowed, Object csd) {
+            NqpOps.checkNoExtraNamed(cf(f), csd, (String[]) allowed);
+            return null;
+        }
+    }
 }

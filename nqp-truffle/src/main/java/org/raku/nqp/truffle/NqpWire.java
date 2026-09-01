@@ -12,7 +12,8 @@ package org.raku.nqp.truffle;
  *   nqpp &lt;nints&gt; &lt;int&gt;... &lt;npool&gt; (&lt;len&gt;:&lt;chars&gt;)...
  * </pre>
  *
- * The int stream is [version, nlocals, localType*nlocals, tree...]; the
+ * The int stream is [version, resultType, nlocals, localType*nlocals,
+ * tree...]; the
  * tree is a prefix walk. Local types let the builder default-initialize
  * every engine local (0, 0e0, null) the way JVM method locals are -- a
  * QAST local may legitimately be read before its first bind. All 64-bit
@@ -32,8 +33,8 @@ package org.raku.nqp.truffle;
  *  8 LEXBIND type pName child
  *  9 LOCGET type idx
  * 10 LOCBIND type idx child
- * 11 IFV condType hasElse cond then [else]   value-producing; no else = null
- * 12 IFS condType hasElse cond then [else]   statement, value null
+ * 11 IFV condType negate hasElse cond then [else]  value; no else = null
+ * 12 IFS condType negate hasElse cond then [else]  statement, value null
  * 13 LOOP until repeat condType cond body    value null
  * 14 DISPATCH pName nargs (flag [pName])* child*   Dispatch.dispatchUncached
  *    flag bits: 0-1 arg type (obj/str used), 2 named, 3 flat
@@ -78,9 +79,10 @@ public final class NqpWire {
     public static final int T_STR = 3;
 
     public record Program(int[] code, String[] pool, int nlocals) {
-        /** The tree starts after version, nlocals, and the local types. */
-        public int treeStart() { return 2 + nlocals; }
-        public int localType(int i) { return code[2 + i]; }
+        /** The tree starts after version, result type, nlocals, types. */
+        public int treeStart() { return 3 + nlocals; }
+        public int resultType() { return code[1]; }
+        public int localType(int i) { return code[3 + i]; }
     }
 
     public static boolean isProgram(String source) {
@@ -100,7 +102,7 @@ public final class NqpWire {
         int npool = parseInt(s, cursor);
         String[] pool = new String[npool];
         for (int i = 0; i < npool; i++) pool[i] = parsePooled(s, cursor);
-        return new Program(code, pool, code[1]);
+        return new Program(code, pool, code[2]);
     }
 
     private static int parseInt(String s, int[] cursor) {

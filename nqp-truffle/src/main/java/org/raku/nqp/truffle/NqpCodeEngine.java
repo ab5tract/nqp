@@ -35,9 +35,9 @@ public final class NqpCodeEngine implements CodeEngine {
     @Override
     public void run(Object program, CompilationUnit cu, ThreadContext tc, CallFrame cf,
                     CallSiteDescriptor csd, Object[] args) {
-        Object result;
         try {
-            result = ((CallTarget) program).call(cu, tc, cf, csd, args);
+            // The program stores its own return value, typed; see StoreRet.
+            ((CallTarget) program).call(cu, tc, cf, csd, args);
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
             /* A continuation is being captured through this frame, and an
              * engine frame has no resume machinery yet: replaying it would
@@ -48,7 +48,6 @@ public final class NqpCodeEngine implements CodeEngine {
                 + (cf.codeRef == null ? "<anon>" : cf.codeRef.name)
                 + "); this block shape must stay on the bytecode path", sse);
         }
-        NqpOps.storeReturn(result, cf);
     }
 
     private static final class Holder {
