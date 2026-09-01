@@ -149,8 +149,15 @@ class RxProgram private constructor(
          * this is all a conjunction needs: mark the start, run the first
          * branch, mark its end, then run each later branch from the start
          * and require it to land exactly on the end. Straight-line code,
-         * so a backtrack into a branch re-runs the check on the way out. */
-        const val POS_EQ_REG = 30
+         * so a backtrack into a branch re-runs the check on the way out.
+         *
+         * 31, not 30: LOOP_SPLIT took 30 while this was already 30, and
+         * with two when-branches on the same constant every conjunction
+         * ran the loop handler -- which reads a 2-int instruction as a
+         * 4-int one and jumps into data. Purely internal numbering (the
+         * wire format's tags are their own space), so renumbering is the
+         * whole fix; the assertion in init { } keeps it from recurring. */
+        const val POS_EQ_REG = 31
 
         /* CHAR flags. */
         const val F_NEGATE = 1
@@ -174,6 +181,23 @@ class RxProgram private constructor(
          * with a real codepoint.
          */
         const val CRLF = -0x0D0A
+
+        /* Every opcode, exactly once. A duplicate number means two when-
+         * branches on the same constant, the first silently shadowing the
+         * second -- LOOP_SPLIT = POS_EQ_REG = 30 made every conjunction run
+         * the loop handler, which reads a 2-int instruction as a 4-int one
+         * and jumps into data. New opcodes go on this list. */
+        init {
+            val opcodes = intArrayOf(
+                MATCH, CHAR, ONE, ANCHOR, SPLIT, JMP, SUB, MARK, EMPTY_CHECK,
+                CAP_START, CAP_END, ADVANCE, DIGIT, WORD, SPACE, ANY,
+                CUT_MARK, CUT, ALT_LTM, ONE_ZW, UNIPROP, QASTNODE, NL,
+                SUB_CB, DYNQ_BOUNDS, DYNQ_STEP, DYNQ_NEXT, REG_TO_POS,
+                LOOP_SPLIT, POS_EQ_REG)
+            check(opcodes.distinct().size == opcodes.size) {
+                "duplicate rx opcode number: " + opcodes.toList()
+            }
+        }
 
         /** Compiles a pattern tree. Runs once, when the pattern is first seen. */
         @JvmStatic
