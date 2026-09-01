@@ -694,9 +694,29 @@ class QAST::TruffleEncoder {
             return self.encode_var($n, %e, nqp::null(), $want);
         }
         if nqp::istype($n, QAST::Want) {
-            # This backend always takes the default child and post-coerces
-            # (see as_jast(QAST::Want)); mirror that exactly.
-            return self.encode_node($n[0], %e, $want);
+            # Mirror the compiler's want() selector: a typed or void want
+            # picks the matching variant ('v' hides BEGIN-parked dead code
+            # like the runtime ENUM_VALUES call); anything else takes the
+            # default and post-coerces.
+            my $sel := $n[0];
+            if $want == $T_VOID || $want == $T_INT
+                || $want == $T_NUM || $want == $T_STR {
+                my str $char := $want == $T_VOID ?? 'v'
+                    !! $want == $T_INT ?? 'I'
+                    !! $want == $T_NUM ?? 'N' !! 'S';
+                my int $i := 1;
+                my int $nn := nqp::elems(@($n));
+                while $i < $nn {
+                    if nqp::index($n[$i], $char) >= 0 {
+                        $sel := $n[$i + 1];
+                        $i := $nn;
+                    }
+                    else {
+                        $i := $i + 2;
+                    }
+                }
+            }
+            return self.encode_node($sel, %e, $want);
         }
         if nqp::istype($n, QAST::IVal) {
             epush(%e, $W_IVAL);
