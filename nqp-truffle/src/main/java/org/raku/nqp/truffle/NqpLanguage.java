@@ -34,11 +34,28 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
 
     @Override protected Ctx createContext(Env env) { return new Ctx(); }
 
+    /**
+     * The program call target for each source parsed, by source text —
+     * the same raw-CallTarget handoff the rx engine uses: eval answers a
+     * polyglot Value, and calling through one boxes everything, so the
+     * embedder ({@link NqpCodeEngine}) collects the target from here.
+     */
+    static final java.util.concurrent.ConcurrentHashMap<String, CallTarget> PARSED =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
     @Override protected CallTarget parse(ParsingRequest request) {
         String source = request.getSource().getCharacters().toString();
+        if (NqpWire.isProgram(source)) {
+            NqpWire.Program p = NqpWire.decode(source);
+            BytecodeRootNodes<NqpRootNode> nodes = NqpRootNodeGen.create(
+                this, BytecodeConfig.DEFAULT, b -> NqpProgramBuilder.build(b, p));
+            CallTarget target = nodes.getNode(0).getCallTarget();
+            PARSED.put(source, target);
+            return new RxLanguage.ConstantRootNode(this, new Program(target)).getCallTarget();
+        }
         if (!source.startsWith("code-test:")) {
             throw new IllegalArgumentException(
-                "nqp-code has no encoder wire format yet; only code-test: sources run");
+                "nqp-code runs encoded programs (nqpp ...) and code-test: harness sources");
         }
         CallTarget target = canned(source.substring("code-test:".length()));
         return new RxLanguage.ConstantRootNode(this, new Program(target)).getCallTarget();
