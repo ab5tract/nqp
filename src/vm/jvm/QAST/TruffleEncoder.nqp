@@ -771,6 +771,29 @@ class QAST::TruffleEncoder {
             epush(%e, $W_NULLC);
             return $T_OBJ;
         }
+        # An explicit resultchild (topicalization save/restore wraps the
+        # real result) rides a scratch local: the designated child's value
+        # is stored, the rest run void, and the local is the value.
+        my $rc := nqp::can($n, 'resultchild') ?? $n.resultchild !! nqp::null();
+        my int $has_rc := !nqp::isnull($rc) && nqp::defined($rc) && $rc != $count - 1;
+        if $has_rc {
+            my int $tmp := new_elocal(%e, $T_OBJ);
+            epush(%e, $W_STMTS);
+            epush(%e, $count + 1);
+            my int $i := 0;
+            while $i < $count {
+                if $i == $rc {
+                    epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $tmp);
+                    self.encode_child(@kids[$i], %e, $T_OBJ);
+                }
+                else {
+                    self.encode_node(@kids[$i], %e, $T_VOID);
+                }
+                $i++;
+            }
+            epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+            return $T_OBJ;
+        }
         epush(%e, $W_STMTS);
         epush(%e, $count);
         my int $i := 0;
@@ -1137,6 +1160,16 @@ class QAST::TruffleEncoder {
         }
         if $decl ne '' {
             self.encode_decl($var, %e, $decl, $scope);
+        }
+
+        # A read in void context compiles to nothing, exactly as the
+        # bytecode path nops it -- and that is semantics, not tidiness: an
+        # emitted read of a contvar would clone the container early and
+        # sever the lazy first-toucher sharing the traited-variable
+        # pattern depends on.
+        if $want == $T_VOID && nqp::isnull($bindval) {
+            epush(%e, $W_NULLC);
+            return $T_OBJ;
         }
 
         # Scope from the symbol tables when not spelled out, the same walk
