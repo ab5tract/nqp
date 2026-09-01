@@ -4696,7 +4696,7 @@ class QAST::CompilerJAST {
                 my $*WANT;
                 my str $engine_prog := '';
                 unless $*COMP_MODE || $node.custom_args {
-                    $engine_prog := QAST::TruffleEncoder.encode_block($node, $block);
+                    $engine_prog := QAST::TruffleEncoder.encode_block($node, $block, self);
                 }
                 if $engine_prog ne '' {
                     $engine_body := 1;

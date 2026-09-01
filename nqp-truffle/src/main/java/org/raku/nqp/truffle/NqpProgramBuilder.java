@@ -330,6 +330,14 @@ final class NqpProgramBuilder {
             }
             if (emit) endBindTarget(scope);
             if (kind == 0) posIdx++;
+            // Param tasks: whatever the declaration carried as children
+            // (the bytecode path's emit_param_tasks), run after the bind.
+            int ntasks = code[at++];
+            for (int t = 0; t < ntasks; t++) {
+                if (emit) beginSink();
+                at = walk(at, emit);
+                if (emit) endSink();
+            }
         }
         if (emit && !namedSlurpy) {
             // The invoker's expectation check would have rejected extra
