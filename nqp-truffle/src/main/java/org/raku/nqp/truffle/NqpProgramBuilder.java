@@ -197,9 +197,10 @@ final class NqpProgramBuilder {
                 return at;
             }
             case NqpWire.DISPATCH: {
-                String name = pool[code[at + 1]];
-                int nargs = code[at + 2];
-                at += 3;
+                int rtype = code[at + 1];
+                String name = pool[code[at + 2]];
+                int nargs = code[at + 3];
+                at += 4;
                 byte[] flags = new byte[nargs];
                 java.util.ArrayList<String> names = new java.util.ArrayList<>();
                 for (int i = 0; i < nargs; i++) {
@@ -220,7 +221,7 @@ final class NqpProgramBuilder {
                 }
                 CallSiteDescriptor csd = new CallSiteDescriptor(flags,
                     names.isEmpty() ? null : names.toArray(new String[0]));
-                if (emit) b.beginDispatchOp(name, csd);
+                if (emit) b.beginDispatchOp(rtype, name, csd);
                 for (int i = 0; i < nargs; i++) at = walk(at, emit);
                 if (emit) b.endDispatchOp();
                 return at;
@@ -247,6 +248,9 @@ final class NqpProgramBuilder {
                 return params(at, emit);
             case NqpWire.GETLEXOUTER:
                 if (emit) b.emitLexOuterGet(pool[code[at + 1]]);
+                return at + 2;
+            case NqpWire.CODEREF:
+                if (emit) b.emitCodeRefGet(code[at + 1]);
                 return at + 2;
             default:
                 throw new IllegalStateException("nqpp: unknown tag " + tag + " at " + at);

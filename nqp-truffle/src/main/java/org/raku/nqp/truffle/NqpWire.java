@@ -36,7 +36,7 @@ package org.raku.nqp.truffle;
  * 11 IFV condType negate hasElse cond then [else]  value; no else = null
  * 12 IFS condType negate hasElse cond then [else]  statement, value null
  * 13 LOOP until repeat condType cond body    value null
- * 14 DISPATCH pName nargs (flag [pName])* child*   Dispatch.dispatchUncached
+ * 14 DISPATCH rtype pName nargs (flag [pName])* child*  dispatchUncached
  *    flag bits: 0-1 arg type (obj/str used), 2 named, 3 flat
  * 15 OPCALL opId nargs child*  the NqpOps table
  * 16 COERCE kind child         kinds in NqpOps
@@ -45,6 +45,7 @@ package org.raku.nqp.truffle;
  *    is a pool name), 1 local (target is a local index); optionality is
  *    hasDefault. Emitted only as the first child of the root STMTS.
  * 18 GETLEXOUTER pName
+ * 19 CODEREF qbid               cu.lookupCodeRef, the BVal road
  * </pre>
  */
 public final class NqpWire {
@@ -72,6 +73,7 @@ public final class NqpWire {
     public static final int COERCE = 16;
     public static final int PARAMS = 17;
     public static final int GETLEXOUTER = 18;
+    public static final int CODEREF = 19;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;
