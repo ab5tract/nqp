@@ -136,8 +136,15 @@ abstract class GenerateRunnerTask : DefaultTask() {
             |# NQP_JVM_MAXHEAP caps the heap (default 4g). The Makefile runner
             |# uses -XX:+AggressiveHeap (~half of physical RAM per JVM), which
             |# can stall a swapless machine when several runners overlap.
+            |#
+            |# -Xss64m: grammar rules recurse one Java frame chain per rule
+            |# nesting level, and a big enough source (rakudo's RakuAST class
+            |# files, parsed by raku-ast-compiler.nqp) overflows the default
+            |# main-thread stack -- sometimes, since frame sizes depend on
+            |# what the JIT has gotten to. Rakudo's runners have carried the
+            |# same flag since its VarLowering overflowed the same way.
             |$truffleSetup
-            |exec java -Dnqp.execname="${'$'}EXEC" --enable-native-access=ALL-UNNAMED${'$'}{TRUFFLE_NATIVE} --sun-misc-unsafe-memory-access=allow -Xmx"${'$'}{NQP_JVM_MAXHEAP:-4g}" -XX:+AllowParallelDefineClass ${'$'}TRUFFLE -Xbootclasspath/a:"${bootEntries.joinToString(":")}" -cp "${'$'}CP" nqp "${'$'}@"
+            |exec java -Dnqp.execname="${'$'}EXEC" --enable-native-access=ALL-UNNAMED${'$'}{TRUFFLE_NATIVE} --sun-misc-unsafe-memory-access=allow -Xmx"${'$'}{NQP_JVM_MAXHEAP:-4g}" -Xss64m -XX:+AllowParallelDefineClass ${'$'}TRUFFLE -Xbootclasspath/a:"${bootEntries.joinToString(":")}" -cp "${'$'}CP" nqp "${'$'}@"
             |""".trimMargin()
         val file = output.get().asFile
         file.writeText(script)
