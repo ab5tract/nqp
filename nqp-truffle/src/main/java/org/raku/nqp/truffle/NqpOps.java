@@ -49,9 +49,11 @@ final class NqpOps {
         OP_UNBOX_I = 75, OP_UNBOX_N = 76, OP_UNBOX_S = 77,
         OP_BOX_I = 78, OP_BOX_N = 79, OP_BOX_S = 80,
         OP_GETATTR = 81, OP_BINDATTR = 82,
-        OP_ORD = 83, OP_NULL_S = 84, OP_ISTRUE_S = 85;
+        OP_ORD = 83, OP_NULL_S = 84, OP_ISTRUE_S = 85,
+        OP_GETLEXDYN = 86, OP_BINDLEXDYN = 87, OP_FORCEOUTERCTX = 88,
+        OP_CAN = 89, OP_ISINVOKABLE = 90, OP_SETELEMS = 91, OP_EXISTSPOS = 92;
 
-    static final int OP_COUNT = 86;
+    static final int OP_COUNT = 93;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -106,12 +108,12 @@ final class NqpOps {
             case OP_CHR: return Ops.chr(lng(a[0]), tc);
             case OP_JOIN: return Ops.join(str(a[0]), smo(a[1]), tc);
             case OP_SPLIT: return Ops.split(str(a[0]), str(a[1]), tc);
-            case OP_ISEQ_S: return b(str(a[0]).equals(str(a[1])));
-            case OP_ISNE_S: return b(!str(a[0]).equals(str(a[1])));
-            case OP_ISLT_S: return b(str(a[0]).compareTo(str(a[1])) < 0);
-            case OP_ISLE_S: return b(str(a[0]).compareTo(str(a[1])) <= 0);
-            case OP_ISGT_S: return b(str(a[0]).compareTo(str(a[1])) > 0);
-            case OP_ISGE_S: return b(str(a[0]).compareTo(str(a[1])) >= 0);
+            case OP_ISEQ_S: return b(ns(a[0]).equals(ns(a[1])));
+            case OP_ISNE_S: return b(!ns(a[0]).equals(ns(a[1])));
+            case OP_ISLT_S: return b(ns(a[0]).compareTo(ns(a[1])) < 0);
+            case OP_ISLE_S: return b(ns(a[0]).compareTo(ns(a[1])) <= 0);
+            case OP_ISGT_S: return b(ns(a[0]).compareTo(ns(a[1])) > 0);
+            case OP_ISGE_S: return b(ns(a[0]).compareTo(ns(a[1])) >= 0);
             case OP_DECONT: return Ops.decont(smo(a[0]), tc);
             case OP_ISNULL: return Ops.isnull(smo(a[0]));
             case OP_ISCONCRETE: return Ops.isconcrete(smo(a[0]), tc);
@@ -145,8 +147,15 @@ final class NqpOps {
             case OP_GETATTR: return Ops.getattr(smo(a[0]), smo(a[1]), str(a[2]), tc);
             case OP_BINDATTR: return Ops.bindattr(smo(a[0]), smo(a[1]), str(a[2]), smo(a[3]), tc);
             case OP_ORD: return Ops.ordfirst(str(a[0]));
-            case OP_NULL_S: return "";
+            case OP_NULL_S: return null;   // the null str, which isnull_s sees
             case OP_ISTRUE_S: return Ops.istrue_s(str(a[0]));
+            case OP_GETLEXDYN: return Ops.getlexdyn(str(a[0]), tc);
+            case OP_BINDLEXDYN: return Ops.bindlexdyn(str(a[0]), smo(a[1]), tc);
+            case OP_FORCEOUTERCTX: return Ops.forceouterctx(smo(a[0]), smo(a[1]), tc);
+            case OP_CAN: return Ops.can(smo(a[0]), str(a[1]), tc);
+            case OP_ISINVOKABLE: return Ops.isinvokable(smo(a[0]), tc);
+            case OP_SETELEMS: return Ops.setelems(smo(a[0]), lng(a[1]), tc);
+            case OP_EXISTSPOS: return Ops.existspos(smo(a[0]), lng(a[1]), tc);
             default:
                 throw new IllegalStateException("nqpp: unknown op id " + id);
         }
@@ -255,15 +264,34 @@ final class NqpOps {
         return tc.lastParameterExisted != 0;
     }
 
-    /* ----- the typed return-register store run() finishes with ----- */
+    /* ----- the typed return-register store the program ends with ----- */
 
     @TruffleBoundary
-    static void storeReturn(Object v, CallFrame cf) {
-        if (v == null || v instanceof SixModelObject) Ops.return_o((SixModelObject) v, cf);
-        else if (v instanceof Long l) Ops.return_i(l, cf);
-        else if (v instanceof Double d) Ops.return_n(d, cf);
-        else if (v instanceof String s) Ops.return_s(s, cf);
-        else throw new IllegalStateException("nqpp: unreturnable value " + v.getClass());
+    static void storeReturnTyped(int type, Object v, CallFrame cf) {
+        switch (type) {
+            case NqpWire.T_INT -> Ops.return_i(lng(v), cf);
+            case NqpWire.T_NUM -> Ops.return_n(dbl(v), cf);
+            case NqpWire.T_STR -> Ops.return_s((String) v, cf);
+            default -> Ops.return_o((SixModelObject) v, cf);
+        }
+    }
+
+    /**
+     * The named-argument rejection the invoker's expectation check would
+     * have done: a block with no named slurpy accepts exactly its
+     * declared named parameters.
+     */
+    @TruffleBoundary
+    static void checkNoExtraNamed(CallFrame cf, Object csdO, String[] allowed) {
+        CallSiteDescriptor csd = (CallSiteDescriptor) csdO;
+        String[] names = csd.names;
+        if (names == null) return;
+        outer:
+        for (String n : names) {
+            for (String a : allowed) if (a.equals(n)) continue outer;
+            throw org.raku.nqp.runtime.ExceptionHandling.dieInternal(
+                cf.tc, "Unexpected named argument '" + n + "' passed");
+        }
     }
 
     /* ----- unwrap helpers; a miss is an encoder type bug, said loudly ----- */
@@ -279,8 +307,15 @@ final class NqpOps {
     }
 
     private static String str(Object v) {
+        if (v == null) return null;   // the null str travels as absence
         if (v instanceof String s) return s;
         throw new IllegalStateException("nqpp: expected str, got " + kind(v));
+    }
+
+    /** Null-safe: the null str compares as the empty string. */
+    private static String ns(Object v) {
+        String s = str(v);
+        return s == null ? "" : s;
     }
 
     private static SixModelObject smo(Object v) {

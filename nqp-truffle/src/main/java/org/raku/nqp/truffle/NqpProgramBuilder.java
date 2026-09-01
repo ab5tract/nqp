@@ -62,7 +62,9 @@ final class NqpProgramBuilder {
             b.endStoreLocal();
         }
         b.beginReturn();
+        b.beginStoreRet(program.resultType());
         walk(program.treeStart(), true);
+        b.endStoreRet();
         b.endReturn();
         b.endRoot();
     }
@@ -136,9 +138,10 @@ final class NqpProgramBuilder {
             }
             case NqpWire.IFV: {
                 int condType = code[at + 1];
-                int hasElse = code[at + 2];
+                int negate = code[at + 2];
+                int hasElse = code[at + 3];
                 if (emit) b.beginConditional();
-                at = walkCond(at + 3, condType, 0, emit);
+                at = walkCond(at + 4, condType, negate, emit);
                 at = walk(at, emit);
                 if (hasElse != 0) {
                     at = walk(at, emit);
@@ -150,10 +153,11 @@ final class NqpProgramBuilder {
             }
             case NqpWire.IFS: {
                 int condType = code[at + 1];
-                int hasElse = code[at + 2];
+                int negate = code[at + 2];
+                int hasElse = code[at + 3];
                 if (emit) b.beginBlock();
                 if (emit) b.beginIfThenElse();
-                at = walkCond(at + 3, condType, 0, emit);
+                at = walkCond(at + 4, condType, negate, emit);
                 if (emit) beginSink();
                 at = walk(at, emit);
                 if (emit) endSink();
@@ -281,6 +285,8 @@ final class NqpProgramBuilder {
             b.endStoreLocal();
         }
         int posIdx = 0;
+        boolean namedSlurpy = false;
+        java.util.ArrayList<String> namedAllowed = new java.util.ArrayList<>();
         for (int i = 0; i < n; i++) {
             int kind = code[at];
             int type = code[at + 1];
@@ -289,6 +295,8 @@ final class NqpProgramBuilder {
             at += 4;
             String named = null;
             if (kind == 2 || kind == 3) named = pool[code[at++]];
+            if (kind == 2) namedAllowed.add(named);
+            if (kind == 3) namedSlurpy = true;
             int hasDefault = code[at++];
             if (type != NqpWire.T_OBJ)
                 throw new IllegalStateException("nqpp: typed parameters not yet encoded");
@@ -318,6 +326,15 @@ final class NqpProgramBuilder {
             }
             if (emit) endBindTarget(scope);
             if (kind == 0) posIdx++;
+        }
+        if (emit && !namedSlurpy) {
+            // The invoker's expectation check would have rejected extra
+            // named arguments before the call; re-make it here.
+            beginSink();
+            b.beginCheckNamedAllowed(namedAllowed.toArray(new String[0]));
+            b.emitLoadLocal(csdL);
+            b.endCheckNamedAllowed();
+            endSink();
         }
         if (emit) {
             b.emitNullC();
