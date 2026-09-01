@@ -183,6 +183,16 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization static Object doNull() { return null; }
     }
 
+    /** A code ref of this unit by block id -- what a BVal compiles to. */
+    @Operation
+    @ConstantOperand(type = int.class, name = "qbid")
+    public static final class CodeRefGet {
+        @Specialization
+        static Object doGet(VirtualFrame f, int qbid) {
+            return cu(f).lookupCodeRef(qbid);
+        }
+    }
+
     /* ----- calls ----- */
 
     /**
@@ -193,13 +203,14 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
      * comes from taking exactly the road the emitted bytecode takes.
      */
     @Operation
+    @ConstantOperand(type = int.class, name = "rtype")
     @ConstantOperand(type = String.class, name = "name")
     @ConstantOperand(type = Object.class, name = "csd")
     public static final class DispatchOp {
         @Specialization
-        static Object doDispatch(VirtualFrame f, String name, Object csd,
+        static Object doDispatch(VirtualFrame f, int rtype, String name, Object csd,
                                  @Variadic Object[] args) {
-            return NqpOps.dispatch(name, (CallSiteDescriptor) csd, args, tc(f), cf(f));
+            return NqpOps.dispatch(rtype, name, (CallSiteDescriptor) csd, args, tc(f), cf(f));
         }
     }
 

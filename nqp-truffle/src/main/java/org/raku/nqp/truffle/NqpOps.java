@@ -51,9 +51,14 @@ final class NqpOps {
         OP_GETATTR = 81, OP_BINDATTR = 82,
         OP_ORD = 83, OP_NULL_S = 84, OP_ISTRUE_S = 85,
         OP_GETLEXDYN = 86, OP_BINDLEXDYN = 87, OP_FORCEOUTERCTX = 88,
-        OP_CAN = 89, OP_ISINVOKABLE = 90, OP_SETELEMS = 91, OP_EXISTSPOS = 92;
+        OP_CAN = 89, OP_ISINVOKABLE = 90, OP_SETELEMS = 91, OP_EXISTSPOS = 92,
+        OP_CLONE_ND = 93, OP_SETCODEOBJ = 94, OP_GETCURHLLSYM = 95,
+        OP_TAKECLOSURE = 96, OP_GETCODEOBJ = 97, OP_CURCODE = 98,
+        OP_P6CAPTURELEX = 100, OP_P6SINK = 101, OP_P6STORE = 102,
+        OP_P6BOX_I = 103, OP_P6BOX_N = 104, OP_P6BOX_S = 105,
+        OP_P6DEFINITE = 106, OP_P6BINDATTRINVRES = 107;
 
-    static final int OP_COUNT = 93;
+    static final int OP_COUNT = 108;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -62,6 +67,14 @@ final class NqpOps {
 
     @TruffleBoundary
     static Object run(int id, Object[] a, CompilationUnit cu, ThreadContext tc, CallFrame cf) {
+        try {
+            return run0(id, a, cu, tc, cf);
+        } catch (IllegalStateException e) {
+            throw new IllegalStateException(e.getMessage() + " (op id " + id + ")", e);
+        }
+    }
+
+    private static Object run0(int id, Object[] a, CompilationUnit cu, ThreadContext tc, CallFrame cf) {
         switch (id) {
             case OP_SAY: return Ops.say(str(a[0]), tc);
             case OP_PRINT: return Ops.print(str(a[0]), tc);
@@ -156,6 +169,24 @@ final class NqpOps {
             case OP_ISINVOKABLE: return Ops.isinvokable(smo(a[0]), tc);
             case OP_SETELEMS: return Ops.setelems(smo(a[0]), lng(a[1]), tc);
             case OP_EXISTSPOS: return Ops.existspos(smo(a[0]), lng(a[1]), tc);
+            case OP_CLONE_ND: return Ops.clone_nd(smo(a[0]), tc);
+            case OP_SETCODEOBJ: return Ops.setcodeobj(smo(a[0]), smo(a[1]), tc);
+            case OP_GETCURHLLSYM: return Ops.getcurhllsym(str(a[0]), tc);
+            case OP_TAKECLOSURE: return Ops.takeclosure(smo(a[0]), tc);
+            case OP_GETCODEOBJ: return Ops.getcodeobj(smo(a[0]), tc);
+            case OP_CURCODE: return Ops.curcode(tc);
+            case OP_P6CAPTURELEX: return rak(Rak.P6CAPTURELEX, a[0], tc);
+            case OP_P6SINK: return rak(Rak.P6SINK, a[0], tc);
+            case OP_P6STORE: return rak2(Rak.P6STORE, a[0], a[1], tc);
+            case OP_P6BOX_I: return rakRaw(Rak.P6BOX_I, lng(a[0]), tc);
+            case OP_P6BOX_N: return rakRaw(Rak.P6BOX_N, dbl(a[0]), tc);
+            case OP_P6BOX_S: return rakRaw(Rak.P6BOX_S, str(a[0]), tc);
+            case OP_P6DEFINITE: return rak(Rak.P6DEFINITE, a[0], tc);
+            case OP_P6BINDATTRINVRES: {
+                try {
+                    return Rak.P6BINDATTRINVRES.invoke(smo(a[0]), smo(a[1]), str(a[2]), smo(a[3]), tc);
+                } catch (Throwable t) { throw sneaky(t); }
+            }
             default:
                 throw new IllegalStateException("nqpp: unknown op id " + id);
         }
@@ -179,10 +210,15 @@ final class NqpOps {
     }
 
     @TruffleBoundary
-    static Object dispatch(String name, CallSiteDescriptor csd, Object[] args,
+    static Object dispatch(int rtype, String name, CallSiteDescriptor csd, Object[] args,
                            ThreadContext tc, CallFrame cf) {
         org.raku.nqp.dispatch.Dispatch.dispatchUncached(tc, name, csd, args);
-        return Ops.result_o(cf);
+        switch (rtype) {
+            case NqpWire.T_INT: return Ops.result_i(cf);
+            case NqpWire.T_NUM: return Ops.result_n(cf);
+            case NqpWire.T_STR: return Ops.result_s(cf);
+            default: return Ops.result_o(cf);
+        }
     }
 
     @TruffleBoundary
@@ -292,6 +328,66 @@ final class NqpOps {
             throw org.raku.nqp.runtime.ExceptionHandling.dieInternal(
                 cf.tc, "Unexpected named argument '" + n + "' passed");
         }
+    }
+
+    /* ----- the rakudo runtime, reached by reflection: nqp-truffle cannot
+     * link against rakudo's jar at build time, but at run time RakOps is
+     * on the boot classpath like the rest of the runtime. Loaded on
+     * first use; an nqp-only process never touches it. ----- */
+
+    private static final class Rak {
+        static final java.lang.invoke.MethodHandle P6CAPTURELEX;
+        static final java.lang.invoke.MethodHandle P6SINK;
+        static final java.lang.invoke.MethodHandle P6STORE;
+        static final java.lang.invoke.MethodHandle P6BOX_I;
+        static final java.lang.invoke.MethodHandle P6BOX_N;
+        static final java.lang.invoke.MethodHandle P6BOX_S;
+        static final java.lang.invoke.MethodHandle P6DEFINITE;
+        static final java.lang.invoke.MethodHandle P6BINDATTRINVRES;
+        static {
+            try {
+                Class<?> c = Class.forName("org.raku.rakudo.RakOps");
+                var l = java.lang.invoke.MethodHandles.publicLookup();
+                Class<?> SMO = SixModelObject.class;
+                Class<?> TC = ThreadContext.class;
+                java.lang.invoke.MethodType mt;
+                mt = java.lang.invoke.MethodType.methodType(SMO, SMO, TC);
+                P6CAPTURELEX = l.findStatic(c, "p6capturelex", mt);
+                P6SINK = l.findStatic(c, "p6sink", mt);
+                P6DEFINITE = l.findStatic(c, "p6definite", mt);
+                P6STORE = l.findStatic(c, "p6store",
+                    java.lang.invoke.MethodType.methodType(SMO, SMO, SMO, TC));
+                P6BOX_I = l.findStatic(c, "p6box_i",
+                    java.lang.invoke.MethodType.methodType(SMO, long.class, TC));
+                P6BOX_N = l.findStatic(c, "p6box_n",
+                    java.lang.invoke.MethodType.methodType(SMO, double.class, TC));
+                P6BOX_S = l.findStatic(c, "p6box_s",
+                    java.lang.invoke.MethodType.methodType(SMO, String.class, TC));
+                P6BINDATTRINVRES = l.findStatic(c, "p6bindattrinvres",
+                    java.lang.invoke.MethodType.methodType(SMO, SMO, SMO, String.class, SMO, TC));
+            } catch (ReflectiveOperationException e) {
+                throw new ExceptionInInitializerError(e);
+            }
+        }
+    }
+
+    private static Object rak(java.lang.invoke.MethodHandle h, Object a, ThreadContext tc) {
+        try { return h.invoke(smo(a), tc); } catch (Throwable t) { throw sneaky(t); }
+    }
+
+    private static Object rak2(java.lang.invoke.MethodHandle h, Object a, Object b2, ThreadContext tc) {
+        try { return h.invoke(smo(a), smo(b2), tc); } catch (Throwable t) { throw sneaky(t); }
+    }
+
+    private static Object rakRaw(java.lang.invoke.MethodHandle h, Object a, ThreadContext tc) {
+        try { return h.invoke(a, tc); } catch (Throwable t) { throw sneaky(t); }
+    }
+
+    /** Rethrows anything unwrapped -- control exceptions must pass. */
+    private static RuntimeException sneaky(Throwable t) {
+        if (t instanceof RuntimeException r) throw r;
+        if (t instanceof Error e) throw e;
+        throw new RuntimeException(t);
     }
 
     /* ----- unwrap helpers; a miss is an encoder type bug, said loudly ----- */
