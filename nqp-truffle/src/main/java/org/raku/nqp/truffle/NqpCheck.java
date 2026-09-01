@@ -66,6 +66,7 @@ public final class NqpCheck {
         // pool: 0="0" 1="1" 2="30"
         pool.add("0"); pool.add("1"); pool.add("30");
         c.add(NqpWire.VERSION);
+        c.add(NqpWire.T_INT);                       // result type
         c.add(4);                                   // locals: a c i t
         for (int i = 0; i < 4; i++) c.add(NqpWire.T_INT);
         c.add(NqpWire.STMTS); c.add(5);
