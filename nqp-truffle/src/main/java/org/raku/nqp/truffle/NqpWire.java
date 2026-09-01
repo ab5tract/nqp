@@ -40,7 +40,8 @@ package org.raku.nqp.truffle;
  *    flag bits: 0-1 arg type (obj/str used), 2 named, 3 flat
  * 15 OPCALL opId nargs child*  the NqpOps table
  * 16 COERCE kind child         kinds in NqpOps
- * 17 PARAMS required accepted n (kind type scope target [pName] hasDefault [default])*
+ * 17 PARAMS required accepted n
+ *    (kind type scope target [pName] hasDefault [default] ntasks task*)*
  *    kind 0 pos, 1 pos-slurpy, 2 named, 3 named-slurpy; scope 0 lex (target
  *    is a pool name), 1 local (target is a local index); optionality is
  *    hasDefault. Emitted only as the first child of the root STMTS.

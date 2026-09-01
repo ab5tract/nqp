@@ -649,6 +649,16 @@ class QAST::TruffleEncoder {
             else {
                 epush(%e, 0);
             }
+            # Param tasks -- the declaration's children, run after the
+            # bind, exactly as emit_param_tasks does on the bytecode path.
+            my @tasks;
+            for @($p) {
+                nqp::push(@tasks, $_) if nqp::istype($_, QAST::Node);
+            }
+            epush(%e, nqp::elems(@tasks));
+            for @tasks {
+                self.encode_node($_, %e, $T_VOID);
+            }
         }
         %e<code> := @save;
         nqp::bindkey(%e, 'inparams', 0);
@@ -839,6 +849,7 @@ class QAST::TruffleEncoder {
                 nqp::push(@args, $op[$i]);
                 $i := $i + 1;
             }
+            @args := self.reorder_args(@args);
             my int $rt := rt_of($op.returns);
             epush(%e, $W_DISPATCH);
             %e<dispatches> := %e<dispatches> + 1;
@@ -972,6 +983,7 @@ class QAST::TruffleEncoder {
         else {
             cbail('call with no callee');
         }
+        @args := self.reorder_args(@args);
         epush(%e, $W_DISPATCH);
         %e<dispatches> := %e<dispatches> + 1;
         epush(%e, rt_of($op.returns));
@@ -1008,6 +1020,7 @@ class QAST::TruffleEncoder {
             cbail('callmethod with no name') unless nqp::elems(@kids);
             $namenode := nqp::shift(@kids);
         }
+        @kids := self.reorder_args(@kids);
         my int $tmp := new_elocal(%e, $T_OBJ);
         epush(%e, $W_DISPATCH);
         %e<dispatches> := %e<dispatches> + 1;
@@ -1036,6 +1049,20 @@ class QAST::TruffleEncoder {
     method encode_op_named_lexical_decont(str $name, %e) {
         epush(%e, $W_OPCALL); epush(%e, 51); epush(%e, 1);   # decont
         self.encode_lexget($name, %e);
+    }
+
+    # Positionals before nameds, the same stable reorder
+    # process_args_onto_stack does -- the dispatch machinery indexes
+    # positionals as the leading slots.
+    method reorder_args(@args) {
+        my @pos;
+        my @named;
+        for @args {
+            my $n := nqp::can($_, 'named') ?? $_.named !! '';
+            nqp::push($n ?? @named !! @pos, $_);
+        }
+        for @named { nqp::push(@pos, $_) }
+        @pos
     }
 
     # Argument flags carry each argument's NATURAL type, exactly as the
