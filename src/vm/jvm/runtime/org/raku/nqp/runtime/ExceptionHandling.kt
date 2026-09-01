@@ -244,6 +244,14 @@ object ExceptionHandling {
             EX_BLOCK -> {
                 try {
                     tc.handlers.add(HandlerInfo(exObj, handlerInfo))
+                    if (System.getenv("NQP_EH_DEBUG") != null) {
+                        val h = Ops.getlex_o(handlerFrame!!, handlerInfo[4].toInt())
+                        System.err.println("EX_BLOCK frame=" + handlerFrame.codeRef.name
+                            + " lexidx=" + handlerInfo[4] + " handler="
+                            + (if (h == null) "NULL" else h.javaClass.simpleName)
+                            + " curFrame=" + (tc.curFrame?.codeRef?.name ?: "?")
+                            + " olex=" + (handlerFrame.codeRef.staticInfo.oLexicalNames?.joinToString(",") ?: "?"))
+                    }
                     if (resume != null)
                         resume.resumeNext()
                     else
