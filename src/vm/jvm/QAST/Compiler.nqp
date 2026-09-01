@@ -4681,15 +4681,42 @@ class QAST::CompilerJAST {
             my $*BLOCK_TA := BlockTempAlloc.new();
             my $*TA := $*BLOCK_TA;
 
-            # Compile method body.
+            # Compile method body -- or hand it whole to the code engine.
+            # The choice is made here, at compile time, exactly as it is
+            # for regexes: an encoded block's body is one codeRun call
+            # (parameter binding included), and there is no bytecode body
+            # to fall back to. Only runtime-compiled units are eligible;
+            # precompiled code is Phase 4 of the migration.
             my $body;
+            my int $engine_body := 0;
             my $*STACK := StackState.new();
             my $*NEED_ARGS_ARRAY := 0;
             {
                 my $*BLOCK := $block;
                 my $*WANT;
-                $body := self.compile_all_the_stmts($node.list, :node($node.node));
-                $*STACK.obtain(NQPMu, $body);
+                my str $engine_prog := '';
+                unless $*COMP_MODE || $node.custom_args {
+                    $engine_prog := QAST::TruffleEncoder.encode_block($node, $block);
+                }
+                if $engine_prog ne '' {
+                    $engine_body := 1;
+                    my $il := JAST::InstructionList.new();
+                    $il.append(JAST::PushSVal.new( :value($engine_prog) ));
+                    $il.append($ALOAD_0);
+                    $il.append($ALOAD_1);
+                    $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
+                    $il.append(JAST::Instruction.new( :op('aload'), 'csd' ));
+                    $il.append(JAST::Instruction.new( :op('aload'), '__args' ));
+                    $il.append(JAST::Instruction.new( :op('invokestatic'),
+                        'Lorg/raku/nqp/runtime/CodeEngines;', 'codeRun', 'Void',
+                        $TYPE_STR, $TYPE_CU, $TYPE_TC, $TYPE_CF, $TYPE_CSD, "[$TYPE_OBJ" ));
+                    $body := result($il, $RT_VOID);
+                    $*STACK.obtain(NQPMu, $body);
+                }
+                else {
+                    $body := self.compile_all_the_stmts($node.list, :node($node.node));
+                    $*STACK.obtain(NQPMu, $body);
+                }
             }
 
             # Stash lexical names.
@@ -4700,8 +4727,10 @@ class QAST::CompilerJAST {
             $*JMETH.cr_slex(@lex_names[$RT_STR]);
 
             # If we have custom args processing, we always take an args array.
+            # An engine body does too: arity check and parameter binding
+            # happen inside the program, from the raw csd and args.
             my $il := JAST::InstructionList.new();
-            if $node.custom_args {
+            if $node.custom_args || $engine_body {
                 $*JMETH.add_argument('__args', "[$TYPE_OBJ");
             }
             elsif !self.try_setup_args_expectation($*JMETH, $block, $il) {
@@ -4860,10 +4889,13 @@ class QAST::CompilerJAST {
             # Add method body JAST.
             $il.append($body.jast);
 
-            # Store return value.
-            $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
-            $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
-                'return_' ~ typechar($body.type), 'Void', jtype($body.type), $TYPE_CF ));
+            # Store return value. An engine body already stored it, typed,
+            # inside codeRun.
+            unless $engine_body {
+                $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
+                $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
+                    'return_' ~ typechar($body.type), 'Void', jtype($body.type), $TYPE_CF ));
+            }
 
             # Make sure this goes before the body.
             my int $save_sites := $block.num_save_sites;
