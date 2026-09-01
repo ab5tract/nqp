@@ -144,10 +144,10 @@ tasks.register<JavaExec>("rxcheck") {
     }
 }
 
-tasks.register<JavaExec>("qtcheck") {
+tasks.register<JavaExec>("nqpcheck") {
     group = "verification"
-    description = "Smoke-checks the Bytecode DSL interpreter for general code."
-    mainClass = "org.raku.nqp.truffle.QtCheck"
+    description = "Smoke-checks the Bytecode DSL interpreter for general NQP code."
+    mainClass = "org.raku.nqp.truffle.NqpCheck"
     classpath = harnessClasspath()
     val truffleModules = configurations.runtimeClasspath
     doFirst {
