@@ -298,11 +298,46 @@ class QAST::TruffleEncoder {
     my int $W_CODEREF := 19;
     my int $W_LOOPH := 20;
     my int $W_JNULL := 21;
+    my int $W_HANDLE := 22;
+    my int $W_HANDLEPAYLOAD := 23;
 
-    # Handler categories, matching ExceptionHandling on the runtime side.
-    my int $EX_CAT_NEXT := 4;
-    my int $EX_CAT_REDO := 8;
-    my int $EX_CAT_LAST := 16;
+    # Handler categories, matching ExceptionHandling on the runtime side
+    # (and the Compiler's own copies).
+    my int $EX_CAT_CATCH   := 1;
+    my int $EX_CAT_ANY     := 2;
+    my int $EX_CAT_NEXT    := 4;
+    my int $EX_CAT_REDO    := 8;
+    my int $EX_CAT_LAST    := 16;
+    my int $EX_CAT_RETURN  := 32;
+    my int $EX_CAT_TAKE    := 128;
+    my int $EX_CAT_WARN    := 256;
+    my int $EX_CAT_SUCCEED := 512;
+    my int $EX_CAT_PROCEED := 1024;
+    my int $EX_CAT_LABELED := 4096;
+    my int $EX_CAT_AWAIT   := 8192;
+    my int $EX_CAT_EMIT    := 16384;
+    my int $EX_CAT_DONE    := 32768;
+    my int $EX_CAT_CONTROL := $EX_CAT_NEXT +| $EX_CAT_REDO +| $EX_CAT_LAST +|
+                              $EX_CAT_TAKE +| $EX_CAT_WARN +|
+                              $EX_CAT_SUCCEED +| $EX_CAT_PROCEED +|
+                              $EX_CAT_AWAIT +| $EX_CAT_EMIT +| $EX_CAT_DONE +|
+                              $EX_CAT_RETURN +| $EX_CAT_ANY;
+    my %handler_names := nqp::hash(
+        'CATCH',   $EX_CAT_CATCH,
+        'CONTROL', $EX_CAT_CONTROL,
+        'NEXT',    $EX_CAT_NEXT,
+        'LAST',    $EX_CAT_LAST,
+        'REDO',    $EX_CAT_REDO,
+        'TAKE',    $EX_CAT_TAKE,
+        'WARN',    $EX_CAT_WARN,
+        'PROCEED', $EX_CAT_PROCEED,
+        'SUCCEED', $EX_CAT_SUCCEED,
+        'AWAIT',   $EX_CAT_AWAIT,
+        'EMIT',    $EX_CAT_EMIT,
+        'DONE',    $EX_CAT_DONE,
+        'RETURN',  $EX_CAT_RETURN,
+        'ANY',     $EX_CAT_ANY,
+    );
 
     # Types, matching both NqpWire and this backend's $RT_* numbering.
     my int $T_OBJ := 0;
@@ -459,6 +494,11 @@ class QAST::TruffleEncoder {
         op3('p6box_s', 105, $T_OBJ, 's');
         op3('p6definite', 106, $T_OBJ, 'o');
         op3('p6bindattrinvres', 107, $T_OBJ, 'ooso');
+        # 108 is `control`, encoded as a special case with a synthetic
+        # category argument.
+        op3('lastexpayload', 109, $T_OBJ, '');
+        op3('throwpayloadlex', 110, $T_OBJ, 'io');
+        op3('throwpayloadlexcaller', 111, $T_OBJ, 'io');
         1
     }
 
@@ -961,6 +1001,120 @@ class QAST::TruffleEncoder {
         }
         if $name eq 'null' {
             epush(%e, $W_NULLC);
+            return $T_OBJ;
+        }
+        if $name eq 'handle' {
+            my @children := nqp::clone($op.list);
+            cbail('handle no children') unless nqp::elems(@children) >= 1;
+            my $protected := nqp::shift(@children);
+            return self.encode_node($protected, %e, $want)
+                unless nqp::elems(@children);
+
+            # The category-dispatch closure, synthesized exactly as the
+            # bytecode path's handle op synthesizes it. It compiles as an
+            # ordinary nested block through the deferred road; the handler
+            # expressions inside it are bytecode, whatever they contain.
+            my int $mask := 0;
+            my int $cares := 0;
+            my $hblock := QAST::Block.new(
+                QAST::Op.new(
+                    :op('bind'),
+                    QAST::Var.new( :name('__category__'), :scope('local'), :decl('var') ),
+                    QAST::Op.new(
+                        :op('getextype'),
+                        QAST::Op.new( :op('exception') )
+                    )));
+            my $push_target := $hblock;
+            my int $ci := 0;
+            my int $cn := nqp::elems(@children);
+            while $ci < $cn {
+                my $type := @children[$ci];
+                my $handler := @children[$ci + 1];
+                $ci := $ci + 2;
+                $cares := 1 if $type eq 'CONTROL' || $type eq 'LABELED';
+                if $type eq 'LABELED' {
+                    $hblock.push(QAST::Op.new(
+                        :op('if'),
+                        QAST::Op.new(
+                            :op('bitand_i'),
+                            QAST::Var.new( :name('__category__'), :scope('local') ),
+                            QAST::IVal.new( :value($EX_CAT_LABELED) )
+                        ),
+                        QAST::Op.new(
+                            :op('unless'),
+                            QAST::Op.new(
+                                :op('iseq_i'),
+                                QAST::Op.new( :op('where'),
+                                    QAST::Op.new( :op('getpayload'),
+                                        QAST::Op.new( :op('exception') ) )
+                                ),
+                                QAST::Op.new( :op('where'), $handler )
+                            ),
+                            QAST::Op.new( :op('rethrow'),
+                                QAST::Op.new( :op('exception') ) )
+                        )
+                    ));
+                }
+                else {
+                    cbail('handle type ' ~ $type)
+                        unless nqp::existskey(%handler_names, $type);
+                    my int $cat_mask := %handler_names{$type};
+                    my $check := QAST::Op.new(
+                        :op('if'),
+                        QAST::Op.new(
+                            :op('bitand_i'),
+                            QAST::Var.new( :name('__category__'), :scope('local') ),
+                            QAST::IVal.new( :value($cat_mask) )
+                        ),
+                        $handler
+                    );
+                    $push_target.push($check);
+                    $push_target := $check;
+                    $mask := nqp::bitor_i($mask, $cat_mask);
+                }
+            }
+
+            # The lexical the dispatcher lives in. Its name is unique, so
+            # the eager declaration a later bail strands is only an unused
+            # slot -- the bytecode path then declares its own !HANDLER_.
+            my str $hname := QAST::Node.unique('!HANDLER_');
+            %e<block>.add_lexical(QAST::Var.new( :name($hname) ));
+            my int $lexidx := %e<block>.lexical_idx($hname);
+            my int $outer := %e<hidx>;
+            my int $hid := &*REGISTER_BLOCK_HANDLER($outer, $mask, $lexidx);
+
+            # Bind the closure, then the guarded region; the pair is a
+            # two-statement STMTS whose value is the handle's.
+            epush(%e, $W_STMTS); epush(%e, 2);
+            epush(%e, $W_LEXBIND); epush(%e, $T_OBJ); epush(%e, epool(%e, $hname));
+            epush(%e, $W_OPCALL); epush(%e, 96); epush(%e, 1);   # takeclosure
+            epush(%e, $W_CODEREF);
+            nqp::push(%e<nested>, [nqp::elems(%e<code>), $hblock]);
+            epush(%e, 0);
+            epush(%e, $W_HANDLE);
+            epush(%e, $hid);
+            epush(%e, $outer);
+            epush(%e, $cares);
+            %e<hidx> := $hid;
+            self.encode_node($protected, %e, $T_OBJ);
+            %e<hidx> := $outer;
+            return $T_OBJ;
+        }
+        if $name eq 'handlepayload' {
+            cbail('handlepayload arity') unless nqp::elems(@($op)) == 3;
+            my str $type := $op[1];
+            cbail('handlepayload type ' ~ $type)
+                unless nqp::existskey(%handler_names, $type);
+            my int $mask := %handler_names{$type};
+            my int $outer := %e<hidx>;
+            my int $hid := &*REGISTER_UNWIND_HANDLER($outer, $mask, :ex_obj(1));
+            epush(%e, $W_HANDLEPAYLOAD);
+            epush(%e, $hid);
+            epush(%e, $outer);
+            %e<hidx> := $hid;
+            self.encode_node($op[0], %e, $T_OBJ);
+            %e<hidx> := $outer;
+            self.encode_node($op[2], %e, $T_OBJ);
             return $T_OBJ;
         }
         if $name eq 'control' {

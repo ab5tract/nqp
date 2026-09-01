@@ -283,6 +283,105 @@ final class NqpProgramBuilder {
                 b.endBlock();
                 return walk(bodyAt, false);
             }
+            case NqpWire.HANDLE: {
+                // The handle op's nesting, reconstructed: an inner TryCatch
+                // makes host throwables into nqp exceptions FROM INSIDE the
+                // outer region (so a CATCH in this very frame can take
+                // them), the outer one runs unwind_check and takes the
+                // handler's result, honoring cf.exitAfterUnwind with an
+                // early typed return. The dispatcher closure was bound to
+                // its lexical by ordinary tags just before this node.
+                int hid = code[at + 1];
+                int outerIdx = code[at + 2];
+                int cares = code[at + 3];
+                int childAt = at + 4;
+                if (!emit) return walk(childAt, false);
+
+                BytecodeLocal resL = b.createLocal();
+                b.beginBlock();
+                b.beginTryCatch();
+                {   // try: protected code under hid, host errors converted.
+                    b.beginBlock();
+                    b.emitSetCurHandler(hid);
+                    b.beginTryCatch();
+                    {
+                        b.beginStoreLocal(resL);
+                        walk(childAt, true);
+                        b.endStoreLocal();
+                    }
+                    {
+                        b.beginHostErrToUnwind();
+                        b.emitLoadException();
+                        b.endHostErrToUnwind();
+                    }
+                    b.endTryCatch();
+                    b.emitSetCurHandler(outerIdx);
+                    b.endBlock();
+                }
+                {   // catch: unwind check, result, exit-after-unwind.
+                    b.beginBlock();
+                    b.emitSetCurHandler(outerIdx);
+                    b.beginStoreLocal(resL);
+                    b.beginHandleUnwind(hid, outerIdx, cares);
+                    b.emitLoadException();
+                    b.endHandleUnwind();
+                    b.endStoreLocal();
+                    b.beginIfThen();
+                    b.emitExitAfterUnwind();
+                    b.beginReturn();
+                    b.beginStoreRet(NqpWire.T_OBJ);
+                    b.emitLoadLocal(resL);
+                    b.endStoreRet();
+                    b.endReturn();
+                    b.endIfThen();
+                    b.endBlock();
+                }
+                b.endTryCatch();
+                b.emitLoadLocal(resL);
+                b.endBlock();
+                return walk(childAt, false);
+            }
+            case NqpWire.HANDLEPAYLOAD: {
+                // The throwpayloadlex catcher: no host-error conversion, no
+                // exit check -- the catch runs unwind_check, discards the
+                // unwind, and evaluates the handler expression here (it
+                // reads nqp::lastexpayload, published by invokeHandler).
+                int hid = code[at + 1];
+                int outerIdx = code[at + 2];
+                int protAt = at + 3;
+                int handlerAt = walk(protAt, false);
+                if (!emit) return walk(handlerAt, false);
+
+                BytecodeLocal resL = b.createLocal();
+                b.beginBlock();
+                b.beginTryCatch();
+                {
+                    b.beginBlock();
+                    b.emitSetCurHandler(hid);
+                    b.beginStoreLocal(resL);
+                    walk(protAt, true);
+                    b.endStoreLocal();
+                    b.emitSetCurHandler(outerIdx);
+                    b.endBlock();
+                }
+                {
+                    b.beginBlock();
+                    b.emitSetCurHandler(outerIdx);
+                    beginSink();
+                    b.beginHandleUnwind(hid, outerIdx, 0);
+                    b.emitLoadException();
+                    b.endHandleUnwind();
+                    endSink();
+                    b.beginStoreLocal(resL);
+                    walk(handlerAt, true);
+                    b.endStoreLocal();
+                    b.endBlock();
+                }
+                b.endTryCatch();
+                b.emitLoadLocal(resL);
+                b.endBlock();
+                return walk(handlerAt, false);
+            }
             case NqpWire.DISPATCH: {
                 int rtype = code[at + 1];
                 String name = pool[code[at + 2]];
