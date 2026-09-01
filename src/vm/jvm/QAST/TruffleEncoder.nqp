@@ -296,6 +296,13 @@ class QAST::TruffleEncoder {
     my int $W_PARAMS := 17;
     my int $W_GETLEXOUTER := 18;
     my int $W_CODEREF := 19;
+    my int $W_LOOPH := 20;
+    my int $W_JNULL := 21;
+
+    # Handler categories, matching ExceptionHandling on the runtime side.
+    my int $EX_CAT_NEXT := 4;
+    my int $EX_CAT_REDO := 8;
+    my int $EX_CAT_LAST := 16;
 
     # Types, matching both NqpWire and this backend's $RT_* numbering.
     my int $T_OBJ := 0;
@@ -500,7 +507,8 @@ class QAST::TruffleEncoder {
             'own', nqp::hash(), 'locals', nqp::hash(), 'ltypes', nqp::list(),
             'params', nqp::list(), 'decls', nqp::list(),
             'nested', nqp::list(),
-            'block', $block, 'qast', $node, 'comp', $comp, 'dispatches', 0);
+            'block', $block, 'qast', $node, 'comp', $comp, 'dispatches', 0,
+            'hidx', 0);
         epush(%e, 1);   # wire version
         epush(%e, 0);   # result type, patched below
         epush(%e, 0);   # local count, patched below
@@ -592,7 +600,7 @@ class QAST::TruffleEncoder {
                 $i == $n - 1 ?? $T_ANY !! $T_VOID);
             $i++;
         }
-        if $n == 0 { epush(%e, $W_NULLC) }
+        if $n == 0 { epush(%e, $W_JNULL) }
         self.patch_params($params_at, %e);
         $rtype
     }
@@ -788,7 +796,7 @@ class QAST::TruffleEncoder {
         }
         my int $count := nqp::elems(@kids);
         if $count == 0 {
-            epush(%e, $W_NULLC);
+            epush(%e, $W_JNULL);
             return $T_OBJ;
         }
         # An explicit resultchild (topicalization save/restore wraps the
@@ -837,11 +845,6 @@ class QAST::TruffleEncoder {
             return self.encode_if($op, %e, $want, $name eq 'unless' ?? 1 !! 0);
         }
         if $name eq 'while' || $name eq 'until' {
-            # A loop normally registers last/next/redo unwind handlers; an
-            # engine frame has none, and the runtime resolving a callee's
-            # `last` would silently target an OUTER loop instead. Only a
-            # loop compiled :nohandler is honest to encode; handlers are
-            # Phase 3's ControlFlowException work.
             my int $nohandler := 0;
             my @operands;
             for @($op) {
@@ -849,16 +852,41 @@ class QAST::TruffleEncoder {
                 elsif $_.named eq 'label' { cbail('labeled loop') }
                 else { nqp::push(@operands, $_) }
             }
-            cbail('loop with handlers') unless $nohandler;
             cbail('loop shape') unless nqp::elems(@operands) == 2;
-            epush(%e, $W_LOOP);
+            if $nohandler {
+                epush(%e, $W_LOOP);
+                epush(%e, $name eq 'until' ?? 1 !! 0);
+                epush(%e, 0);
+                my int $ct_at := nqp::elems(%e<code>);
+                epush(%e, 0);
+                my int $condt := self.encode_node(@operands[0], %e, $T_ANY);
+                nqp::bindpos(%e<code>, $ct_at, $condt);
+                self.encode_node(@operands[1], %e, $T_VOID);
+                return $T_OBJ;
+            }
+            # A handled loop: register the same LAST and NEXT|REDO rows the
+            # bytecode path registers -- the runtime's handler walk reads
+            # them from this block's StaticCodeInfo through the live
+            # CallFrame -- and let the program delimit the regions and
+            # catch the unwinds (W_LOOPH). Rows registered before a later
+            # bail are harmless orphans: the walk follows the curHandler
+            # chain, and nothing ever names an orphan's id.
+            my int $outer := %e<hidx>;
+            my int $lid := &*REGISTER_UNWIND_HANDLER($outer, $EX_CAT_LAST, :ex_obj(1));
+            my int $nrid := &*REGISTER_UNWIND_HANDLER($lid, $EX_CAT_NEXT +| $EX_CAT_REDO, :ex_obj(1));
+            epush(%e, $W_LOOPH);
             epush(%e, $name eq 'until' ?? 1 !! 0);
-            epush(%e, 0);
             my int $ct_at := nqp::elems(%e<code>);
             epush(%e, 0);
+            epush(%e, $lid);
+            epush(%e, $nrid);
+            epush(%e, $outer);
+            %e<hidx> := $lid;
             my int $condt := self.encode_node(@operands[0], %e, $T_ANY);
             nqp::bindpos(%e<code>, $ct_at, $condt);
+            %e<hidx> := $nrid;
             self.encode_node(@operands[1], %e, $T_VOID);
+            %e<hidx> := $outer;
             return $T_OBJ;
         }
         if $name eq 'call' || $name eq 'callstatic' {
@@ -933,6 +961,28 @@ class QAST::TruffleEncoder {
         }
         if $name eq 'null' {
             epush(%e, $W_NULLC);
+            return $T_OBJ;
+        }
+        if $name eq 'control' {
+            # next/last/redo: the same dynamic category throw the bytecode
+            # path makes (Ops.throwcatdyn_c); the result, should a block
+            # handler resume, is read from the frame's return register.
+            my str $kind := $op.name;
+            for @($op) {
+                cbail('labeled control') if $_.named eq 'label';
+            }
+            my int $cat := $kind eq 'next' ?? $EX_CAT_NEXT
+                        !! $kind eq 'redo' ?? $EX_CAT_REDO
+                        !! $kind eq 'last' ?? $EX_CAT_LAST
+                        !! 0;
+            cbail('control ' ~ $kind) unless $cat;
+            # A control throw runs whatever handler catches it.
+            %e<dispatches> := %e<dispatches> + 1;
+            epush(%e, $W_OPCALL);
+            epush(%e, 108);   # OP_CONTROL
+            epush(%e, 1);
+            epush(%e, $W_IVAL);
+            epush(%e, epool(%e, ~$cat));
             return $T_OBJ;
         }
         if $name eq 'getlexouter' {
@@ -1188,7 +1238,7 @@ class QAST::TruffleEncoder {
         # sever the lazy first-toucher sharing the traited-variable
         # pattern depends on.
         if $want == $T_VOID && nqp::isnull($bindval) {
-            epush(%e, $W_NULLC);
+            epush(%e, $W_JNULL);
             return $T_OBJ;
         }
 

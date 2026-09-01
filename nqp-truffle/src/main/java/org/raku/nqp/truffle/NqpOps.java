@@ -5,8 +5,10 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import org.raku.nqp.runtime.CallFrame;
 import org.raku.nqp.runtime.CallSiteDescriptor;
 import org.raku.nqp.runtime.CompilationUnit;
+import org.raku.nqp.runtime.ExceptionHandling;
 import org.raku.nqp.runtime.Ops;
 import org.raku.nqp.runtime.ThreadContext;
+import org.raku.nqp.runtime.UnwindException;
 import org.raku.nqp.sixmodel.SixModelObject;
 
 /**
@@ -56,9 +58,10 @@ final class NqpOps {
         OP_TAKECLOSURE = 96, OP_GETCODEOBJ = 97, OP_CURCODE = 98,
         OP_P6CAPTURELEX = 100, OP_P6SINK = 101, OP_P6STORE = 102,
         OP_P6BOX_I = 103, OP_P6BOX_N = 104, OP_P6BOX_S = 105,
-        OP_P6DEFINITE = 106, OP_P6BINDATTRINVRES = 107;
+        OP_P6DEFINITE = 106, OP_P6BINDATTRINVRES = 107,
+        OP_CONTROL = 108;
 
-    static final int OP_COUNT = 108;
+    static final int OP_COUNT = 109;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -187,9 +190,57 @@ final class NqpOps {
                     return Rak.P6BINDATTRINVRES.invoke(smo(a[0]), smo(a[1]), str(a[2]), smo(a[3]), tc);
                 } catch (Throwable t) { throw sneaky(t); }
             }
+            case OP_CONTROL: {
+                // The bytecode path's control op: throw the category
+                // dynamically; if a block handler resumes, the result is
+                // waiting in the frame's return register.
+                Ops.throwcatdyn_c(lng(a[0]), tc);
+                return Ops.result_o(cf);
+            }
             default:
                 throw new IllegalStateException("nqpp: unknown op id " + id);
         }
+    }
+
+    /* ----- unwind routing for the program's handler regions ----- */
+
+    /**
+     * The exception a catch arm received, as the runtime's unwind -- or a
+     * rethrow when it is anything else (TryCatch does not filter by type;
+     * the bytecode path's catch is typed to UnwindException, so everything
+     * else must keep flying).
+     */
+    private static UnwindException unwindOf(Object ex) {
+        if (ex instanceof NqpUnwind nu) return nu.unwind;
+        if (ex instanceof RuntimeException re) throw re;
+        throw sneaky((Throwable) ex);
+    }
+
+    /**
+     * The unwind_check the emitted bytecode makes at a catch: an unwind
+     * aimed at a different handler or a different unit keeps flying, and a
+     * labeled unwind that landed here only by category overlap is
+     * redirected outward the same way {@code Ops._rethrow_label} does.
+     */
+    private static UnwindException checkedUnwind(Object ex, int target, int outer,
+                                                 CompilationUnit cu, ThreadContext tc) {
+        UnwindException u = unwindOf(ex);
+        if (u.unwindTarget != target || u.unwindCompUnit != cu) throw u;
+        Ops._rethrow_label(u, outer, tc);
+        return u;
+    }
+
+    @TruffleBoundary
+    static long loopBodyUnwind(Object ex, int target, int outer,
+                               CompilationUnit cu, ThreadContext tc) {
+        UnwindException u = checkedUnwind(ex, target, outer, cu, tc);
+        return (u.category & ExceptionHandling.EX_CAT_REDO) != 0 ? 1L : 0L;
+    }
+
+    @TruffleBoundary
+    static void loopLastUnwind(Object ex, int target, int outer,
+                               CompilationUnit cu, ThreadContext tc) {
+        checkedUnwind(ex, target, outer, cu, tc);
     }
 
     @TruffleBoundary
