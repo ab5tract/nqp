@@ -52,12 +52,14 @@ final class NqpProgramBuilder {
         tmp = b.createLocal();
         // JVM method locals start zeroed; engine locals match, so a QAST
         // local read before its first bind answers what bytecode answers.
+        // For objects that really is a Java null (aconst_null), not the
+        // VMNull singleton NullC now stands for.
         for (int i = 0; i < nlocals; i++) {
             b.beginStoreLocal(locals[i]);
             switch (program.localType(i)) {
                 case NqpWire.T_INT -> b.emitLoadConstant(0L);
                 case NqpWire.T_NUM -> b.emitLoadConstant(0.0d);
-                default -> b.emitNullC();
+                default -> b.emitLoadNull();
             }
             b.endStoreLocal();
         }
@@ -82,7 +84,7 @@ final class NqpProgramBuilder {
                 int n = code[at + 1];
                 at += 2;
                 if (n == 0) {
-                    if (emit) b.emitNullC();
+                    if (emit) b.emitLoadNull();
                     return at;
                 }
                 if (emit && n > 1) b.beginBlock();
@@ -97,6 +99,9 @@ final class NqpProgramBuilder {
             }
             case NqpWire.NULLC:
                 if (emit) b.emitNullC();
+                return at + 1;
+            case NqpWire.JNULL:
+                if (emit) b.emitLoadNull();
                 return at + 1;
             case NqpWire.IVAL:
                 if (emit) b.emitLoadConstant(Long.parseLong(pool[code[at + 1]]));
@@ -146,7 +151,7 @@ final class NqpProgramBuilder {
                 if (hasElse != 0) {
                     at = walk(at, emit);
                 } else {
-                    if (emit) b.emitNullC();
+                    if (emit) b.emitLoadNull();
                 }
                 if (emit) b.endConditional();
                 return at;
@@ -169,7 +174,7 @@ final class NqpProgramBuilder {
                     if (emit) emitNothing();
                 }
                 if (emit) b.endIfThenElse();
-                if (emit) b.emitNullC();
+                if (emit) b.emitLoadNull();
                 if (emit) b.endBlock();
                 return at;
             }
@@ -192,9 +197,91 @@ final class NqpProgramBuilder {
                 at = walk(bodyAt, emit);
                 if (emit) endSink();
                 if (emit) b.endWhile();
-                if (emit) b.emitNullC();
+                if (emit) b.emitLoadNull();
                 if (emit) b.endBlock();
                 return at;
+            }
+            case NqpWire.LOOPH: {
+                // A loop with last/next/redo handlers: the bytecode shape
+                // (Compiler.nqp's while/until emission) reconstructed from
+                // structured operations. Backward jumps aren't a DSL
+                // feature, so REDO is a flag-driven inner loop instead of
+                // a branch to a label; the observable order of events --
+                // curHandler delimiting, unwind_check, category routing --
+                // matches the emitted bytecode exactly.
+                int until = code[at + 1];
+                int condType = code[at + 2];
+                int lastId = code[at + 3];
+                int nrId = code[at + 4];
+                int outerIdx = code[at + 5];
+                int condAt = at + 6;
+                int bodyAt = walk(condAt, false);
+                if (!emit) return walk(bodyAt, false);
+
+                BytecodeLocal redoL = b.createLocal();
+                b.beginBlock();
+                b.beginTryCatch();
+                {   // try: the loop itself, cond and all, under lastId.
+                    b.beginBlock();
+                    b.emitSetCurHandler(lastId);
+                    b.beginWhile();
+                    walkCond(condAt, condType, until, true);
+                    {   // body: run-once-with-redo under nrId.
+                        b.beginBlock();
+                        b.beginStoreLocal(redoL);
+                        b.emitLoadConstant(1L);
+                        b.endStoreLocal();
+                        b.beginWhile();
+                        b.beginNonZero();
+                        b.emitLoadLocal(redoL);
+                        b.endNonZero();
+                        {
+                            b.beginBlock();
+                            b.beginStoreLocal(redoL);
+                            b.emitLoadConstant(0L);
+                            b.endStoreLocal();
+                            b.beginTryCatch();
+                            {
+                                b.beginBlock();
+                                b.emitSetCurHandler(nrId);
+                                beginSink();
+                                walk(bodyAt, true);
+                                endSink();
+                                b.emitSetCurHandler(lastId);
+                                b.endBlock();
+                            }
+                            {   // catch: route NEXT/REDO, rethrow the rest.
+                                b.beginBlock();
+                                b.emitSetCurHandler(lastId);
+                                b.beginStoreLocal(redoL);
+                                b.beginLoopBodyUnwind(nrId, lastId);
+                                b.emitLoadException();
+                                b.endLoopBodyUnwind();
+                                b.endStoreLocal();
+                                b.endBlock();
+                            }
+                            b.endTryCatch();
+                            b.endBlock();
+                        }
+                        b.endWhile();
+                        b.endBlock();
+                    }
+                    b.endWhile();
+                    b.emitSetCurHandler(outerIdx);
+                    b.endBlock();
+                }
+                {   // catch: a LAST aimed here ends the loop quietly.
+                    b.beginBlock();
+                    b.emitSetCurHandler(outerIdx);
+                    b.beginLoopLastUnwind(lastId, outerIdx);
+                    b.emitLoadException();
+                    b.endLoopLastUnwind();
+                    b.endBlock();
+                }
+                b.endTryCatch();
+                b.emitLoadNull();
+                b.endBlock();
+                return walk(bodyAt, false);
             }
             case NqpWire.DISPATCH: {
                 int rtype = code[at + 1];
@@ -349,7 +436,7 @@ final class NqpProgramBuilder {
             endSink();
         }
         if (emit) {
-            b.emitNullC();
+            b.emitLoadNull();
             b.endBlock();
         }
         return at;
@@ -405,7 +492,7 @@ final class NqpProgramBuilder {
     /** A void filler for an empty else branch. */
     private void emitNothing() {
         b.beginStoreLocal(sink);
-        b.emitNullC();
+        b.emitLoadNull();
         b.endStoreLocal();
     }
 }
