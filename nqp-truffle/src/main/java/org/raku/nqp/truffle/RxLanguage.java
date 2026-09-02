@@ -31,6 +31,17 @@ public final class RxLanguage extends TruffleLanguage<RxLanguage.Ctx> {
     @Override protected Ctx createContext(Env env) { return new Ctx(); }
 
     /**
+     * Matchers compile lazily on whichever thread first runs the rule;
+     * the default single-threaded policy would refuse the second
+     * thread's eval (latent here, hit for real by nqp-code's Phase 4
+     * precompiled modules -- see NqpLanguage). No mutable context
+     * state, so shared access is sound.
+     */
+    @Override protected boolean isThreadAccessAllowed(Thread thread, boolean singleThreaded) {
+        return true;
+    }
+
+    /**
      * Parsing a source yields the matcher for it. The tree built here is the
      * pattern, so each distinct pattern gets its own call target and its own
      * compiled code -- a parser for a grammar that only exists at runtime,

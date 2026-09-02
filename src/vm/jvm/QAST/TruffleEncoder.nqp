@@ -275,6 +275,11 @@ class QAST::TruffleEncoder {
     #   NQP_CODE_LEAF=1      refuse blocks that dispatch at all: a block
     #                        that never calls can never be caught inside a
     #                        continuation, so this is the conservative mode
+    #   NQP_CODE_PRECOMP=1   precompiled (comp_mode) units encode too: the
+    #                        program bakes into the emitted class as a
+    #                        string constant, exactly as an rx descriptor
+    #                        does, and runs from the jar with no knob set
+    #                        at run time (Phase 4 of the migration)
 
     # Wire tags; NqpWire.java numbers them identically.
     my int $W_STMTS := 1;
@@ -352,6 +357,7 @@ class QAST::TruffleEncoder {
     my int $code_encoded := 0;
     my int $code_bail_p := 0;
     my int $code_leaf := 0;
+    my int $code_precomp := 0;
     my int $code_skip_anon := 0;
     my int $code_only_set := 0;
     my %code_skip;
@@ -366,6 +372,7 @@ class QAST::TruffleEncoder {
         $code_encoded  := nqp::existskey(%env, 'NQP_CODE_ENCODED') ?? 1 !! 0;
         $code_bail_p   := nqp::existskey(%env, 'NQP_CODE_BAIL') ?? 1 !! 0;
         $code_leaf     := nqp::existskey(%env, 'NQP_CODE_LEAF') ?? 1 !! 0;
+        $code_precomp  := nqp::existskey(%env, 'NQP_CODE_PRECOMP') ?? 1 !! 0;
         $code_skip_anon := nqp::existskey(%env, 'NQP_CODE_SKIP_ANON') ?? 1 !! 0;
         if nqp::existskey(%env, 'NQP_CODE_SKIP') {
             for nqp::split(',', %env<NQP_CODE_SKIP>) { %code_skip{$_} := 1 }
@@ -531,9 +538,10 @@ class QAST::TruffleEncoder {
         $idx
     }
 
-    method encode_block($node, $block, $comp) {
+    method encode_block($node, $block, $comp, :$comp_mode) {
         run_init();
         return '' unless $code_run;
+        return '' if $comp_mode && !$code_precomp;
         my str $name := $node.name;
         return '' if $code_skip_anon && $name eq '';
         return '' if nqp::existskey(%code_skip, $name);
@@ -728,6 +736,12 @@ class QAST::TruffleEncoder {
         my int $kind := coerce_kind($got, $want);
         cbail('no coercion ' ~ $got ~ '->' ~ $want) if $kind < 0;
         nqp::splice(%e<code>, [$W_COERCE, $kind], $mark, 0);
+        # Nested-block qbid slots recorded inside the subtree just moved
+        # two places right; patch their positions as patch_params does,
+        # or the deferred qbid patch lands on the wrong cell.
+        for %e<nested> -> $nb {
+            nqp::bindpos($nb, 0, $nb[0] + 2) if $nb[0] >= $mark;
+        }
         $want
     }
 
@@ -1096,7 +1110,11 @@ class QAST::TruffleEncoder {
             epush(%e, $outer);
             epush(%e, $cares);
             %e<hidx> := $hid;
-            self.encode_node($protected, %e, $T_OBJ);
+            # encode_child, not encode_node: the wire op's value slot is
+            # object-typed, and a protected body whose own result is
+            # native (a block mixing `return` with an int fall-through)
+            # must box on the way in -- StoreRet casts what it is given.
+            self.encode_child($protected, %e, $T_OBJ);
             %e<hidx> := $outer;
             return $T_OBJ;
         }
@@ -1112,9 +1130,9 @@ class QAST::TruffleEncoder {
             epush(%e, $hid);
             epush(%e, $outer);
             %e<hidx> := $hid;
-            self.encode_node($op[0], %e, $T_OBJ);
+            self.encode_child($op[0], %e, $T_OBJ);
             %e<hidx> := $outer;
-            self.encode_node($op[2], %e, $T_OBJ);
+            self.encode_child($op[2], %e, $T_OBJ);
             return $T_OBJ;
         }
         if $name eq 'control' {
