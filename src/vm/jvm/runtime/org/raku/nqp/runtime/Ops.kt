@@ -1059,7 +1059,8 @@ object Ops {
                 /* If our stdin is connected to an output stream of another process, we need to let it run in a thread. */
                 val pc = ProcessChannel(process, process.outputStream,
                     ((`in`.handle as SyncProcessHandle).chan as ProcessChannel).`in`!!)
-                Thread(pc).start()
+                /* A blocking pump: exactly what a virtual thread is for. */
+                Thread.ofVirtual().start(pc)
             }
         }
 
@@ -6994,11 +6995,28 @@ object Ops {
             invokeArgless(tc, code)
         }
     }
+    /* nqp threads are virtual by default (Project Loom): the thread-pool
+     * scheduler's workers and hyper/race batches are exactly the cheap,
+     * blocking-friendly tasks virtual threads are for, and Truffle 25
+     * runs guest code on them (pinning its carrier for the duration,
+     * which a worker would have monopolized anyway). Two carve-outs:
+     * a non-daemon thread must hold the JVM open, which only a platform
+     * thread can, and NQP_JVM_PLATFORM_THREADS=1 restores the old
+     * behavior wholesale as the measurement/kill switch. */
+    private val platformThreadsOnly = System.getenv("NQP_JVM_PLATFORM_THREADS") != null
+
     @JvmStatic
     fun newthread(code: SixModelObject?, appLifetime: Long, tc: ThreadContext): SixModelObject {
         val thread = tc.gc.Thread!!.st.REPR.allocate(tc, tc.gc.Thread!!.st)
-        (thread as VMThreadInstance).thread = Thread(CodeRunnable(tc.gc, thread, code))
-        thread.thread!!.setDaemon(appLifetime != 0L)
+        val body = CodeRunnable(tc.gc, thread, code)
+        thread as VMThreadInstance
+        if (appLifetime != 0L && !platformThreadsOnly) {
+            thread.thread = Thread.ofVirtual().unstarted(body)
+        }
+        else {
+            thread.thread = Thread(body)
+            thread.thread!!.setDaemon(appLifetime != 0L)
+        }
         return thread
     }
 
