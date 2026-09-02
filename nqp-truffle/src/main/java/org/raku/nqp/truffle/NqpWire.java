@@ -57,6 +57,18 @@ package org.raku.nqp.truffle;
  * 21 JNULL                      a Java null: what aconst_null answers
  *    (fresh object locals, valueless else branches) -- NOT the VMNull
  *    singleton NULLC stands for.
+ * 22 HANDLE hid outerIdx cares protected
+ *    the nqp handle op's regions: the encoder registered an EX_BLOCK
+ *    row (hid) whose dispatcher closure it bound to a lexical with
+ *    ordinary tags just before this node; the builder nests the
+ *    bytecode shape -- an inner TryCatch turning host Throwables into
+ *    nqp exceptions (dieInternal), an outer one running unwind_check
+ *    (cares skips the labeled redirect), taking u.result, and honoring
+ *    cf.exitAfterUnwind with an early typed return.
+ * 23 HANDLEPAYLOAD hid outerIdx protected handlerExpr
+ *    the throwpayloadlex catcher: an EX_UNWIND_OBJECT row; the catch
+ *    arm runs unwind_check then evaluates handlerExpr in this frame
+ *    (it reads nqp::lastexpayload, published by invokeHandler).
  * </pre>
  */
 public final class NqpWire {
@@ -87,6 +99,8 @@ public final class NqpWire {
     public static final int CODEREF = 19;
     public static final int LOOPH = 20;
     public static final int JNULL = 21;
+    public static final int HANDLE = 22;
+    public static final int HANDLEPAYLOAD = 23;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;

@@ -1275,6 +1275,28 @@ object Ops {
                 return curFrame.iLex!![found]
             curFrame = curFrame.outer
         }
+        if (System.getenv("NQP_EH_DEBUG") != null) {
+            val sb = StringBuilder("getlex_i MISS '$name' outer chain:")
+            var f = tc.curFrame
+            var i = 0
+            while (f != null && i < 8) {
+                sb.append(" [").append(f.codeRef.name).append("]")
+                f = f.outer
+                i++
+            }
+            System.err.println(sb)
+            var s: StaticCodeInfo? = tc.curFrame?.codeRef?.staticInfo
+            val sb2 = StringBuilder("static chain:")
+            var j = 0
+            while (s != null && j < 8) {
+                sb2.append(" [").append(s.oLexicalNames?.joinToString(",") ?: "-")
+                   .append(if (s.iTryGetLexicalIdx(name) != -1) " HAS-$name" else "")
+                   .append("]")
+                s = s.outerStaticInfo
+                j++
+            }
+            System.err.println(sb2)
+        }
         throw ExceptionHandling.dieInternal(tc, "Lexical '" + name + "' not found")
     }
     @JvmStatic
