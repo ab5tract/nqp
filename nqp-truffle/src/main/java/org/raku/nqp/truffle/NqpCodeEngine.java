@@ -111,7 +111,14 @@ public final class NqpCodeEngine implements CodeEngine {
             frame.resumeNextSave();
             inject = NqpOps.readResult(rtype, cf);
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
-            throw sse;   // resumeNextSave already re-saved this frame
+            /* resumeNextSave already re-saved this frame. Leave it too:
+             * a re-suspending bytecode frame leaves through its postlude,
+             * and skipping this made tc.curFrame point at a frame packed
+             * away in a continuation -- Dispatch.descriptorFor reads
+             * tc.curFrame, so race/hyper runs then resolved callsite
+             * descriptors against the wrong unit. */
+            cf.leave();
+            throw sse;
         } catch (Throwable t) {
             /* Deliver the exception through the yield so the program's
              * handler regions see it as the suspended call's own throw. */
@@ -133,6 +140,9 @@ public final class NqpCodeEngine implements CodeEngine {
         }
         if (r instanceof ContinuationResult cr2) {
             NqpCont.Suspend token = (NqpCont.Suspend) cr2.getResult();
+            /* Same discipline as the catch above: the frame is saved in
+             * the continuation, so leave it before the save propagates. */
+            cf.leave();
             throw token.sse.pushFrame(0, RESUME,
                 new Object[] { cr2, token.rtype }, cf);
         }
