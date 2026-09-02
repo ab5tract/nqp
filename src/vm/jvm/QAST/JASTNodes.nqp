@@ -6,6 +6,7 @@ class JAST::Class is JAST::Node {
     has str $!super;
     has str $!filename;
     has str $!serialized;
+    has str $!codeprograms;
     has @!methods;
     has @!fields;
     has @!nested_classes;
@@ -30,6 +31,11 @@ class JAST::Class is JAST::Node {
     method name(*@value) { @value ?? ($!name := @value[0]) !! $!name }
     method super(*@value) { @value ?? ($!super := @value[0]) !! $!super }
     method serialized(*@value) { @value ?? ($!serialized := @value[0]) !! $!serialized }
+    # The compilation unit's engine programs, joined length-prefixed --
+    # they travel as a jar sidecar like the serialized SC, not as one
+    # string constant per program: the CORE.c pool overflowed at 71010
+    # entries the first time the programs went in as constants.
+    method codeprograms(*@value) { @value ?? ($!codeprograms := @value[0]) !! $!codeprograms }
     method nested_classes(*@value) { @value ?? (@!nested_classes := @value[0]) !! @!nested_classes }
     method methods() { @!methods }
     

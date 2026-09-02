@@ -113,6 +113,24 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
                     jos.write(digest)
                     jos.closeEntry()
 
+                    /* Engine programs ride as their own sidecar; emitted
+                     * bodies reference them by index through
+                     * CodeEngines.codeRunIdx. */
+                    val progs = c.codePrograms
+                    if (progs != null) {
+                        val pdigest = lz4.compress(progs)
+                        val pcrc = CRC32()
+                        pcrc.update(pdigest, 0, pdigest.size)
+                        val jep = JarEntry(c.name + ".codeprograms.lz4")
+                        jep.setMethod(ZipEntry.STORED)
+                        jep.setSize(pdigest.size.toLong())
+                        jep.setCompressedSize(pdigest.size.toLong())
+                        jep.setCrc(pcrc.getValue())
+                        jos.putNextEntry(jep)
+                        jos.write(pdigest)
+                        jos.closeEntry()
+                    }
+
                     /* Nested units (EVALs run while this unit compiled)
                      * whose code refs the serialization points into ride
                      * along, to be loaded back by jvmclaimnested. */
@@ -210,6 +228,7 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
 
         c.name = jastClass.className
         c.serialized = jastClass.serialized
+        c.codePrograms = jastClass.codePrograms?.toByteArray(Charsets.UTF_8)
         c.nestedClassNames = jastClass.nestedClasses
 
         val className = jastClass.className!!.replace('.', '/')
