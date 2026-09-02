@@ -43,6 +43,12 @@ public final class NqpCodeEngine implements CodeEngine {
              * naked host exception back to the bytecode frames above, which
              * catch UnwindException by type (see NqpUnwind). */
             throw wrapped.unwind;
+        } catch (NqpHostError wrapped) {
+            /* Same boundary rule for a wrapped host throwable no handle
+             * region claimed. */
+            if (wrapped.original instanceof RuntimeException re) throw re;
+            if (wrapped.original instanceof Error err) throw err;
+            throw new RuntimeException(wrapped.original);
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
             /* A continuation is being captured through this frame, and an
              * engine frame has no resume machinery yet: replaying it would
