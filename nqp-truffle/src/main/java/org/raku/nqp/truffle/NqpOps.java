@@ -59,9 +59,10 @@ final class NqpOps {
         OP_P6CAPTURELEX = 100, OP_P6SINK = 101, OP_P6STORE = 102,
         OP_P6BOX_I = 103, OP_P6BOX_N = 104, OP_P6BOX_S = 105,
         OP_P6DEFINITE = 106, OP_P6BINDATTRINVRES = 107,
-        OP_CONTROL = 108;
+        OP_CONTROL = 108, OP_LASTEXPAYLOAD = 109,
+        OP_THROWPAYLOADLEX = 110, OP_THROWPAYLOADLEXCALLER = 111;
 
-    static final int OP_COUNT = 109;
+    static final int OP_COUNT = 112;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -197,6 +198,15 @@ final class NqpOps {
                 Ops.throwcatdyn_c(lng(a[0]), tc);
                 return Ops.result_o(cf);
             }
+            case OP_LASTEXPAYLOAD: return Ops.lastexpayload(tc);
+            case OP_THROWPAYLOADLEX: {
+                Ops._throwpayloadlex_c(lng(a[0]), smo(a[1]), tc);
+                return Ops.result_o(cf);
+            }
+            case OP_THROWPAYLOADLEXCALLER: {
+                Ops._throwpayloadlexcaller_c(lng(a[0]), smo(a[1]), tc);
+                return Ops.result_o(cf);
+            }
             default:
                 throw new IllegalStateException("nqpp: unknown op id " + id);
         }
@@ -243,6 +253,52 @@ final class NqpOps {
         checkedUnwind(ex, target, outer, cu, tc);
     }
 
+    /**
+     * The handle/handlepayload catch: unwind_check (skipping the labeled
+     * redirect when the dispatcher block cares about LABELED itself),
+     * then the handler's result off the unwind.
+     */
+    @TruffleBoundary
+    static Object handleUnwind(Object ex, int target, int outer, boolean cares,
+                               CompilationUnit cu, ThreadContext tc) {
+        if (System.getenv("NQP_EH_DEBUG") != null)
+            System.err.println("handleUnwind ex=" + ex.getClass().getSimpleName()
+                + " target=" + target
+                + " uTarget=" + (ex instanceof NqpUnwind nu2 ? nu2.unwind.unwindTarget : -1)
+                + " curFrame=" + (tc.curFrame == null ? "?" : tc.curFrame.codeRef.name));
+        UnwindException u = unwindOf(ex);
+        if (u.unwindTarget != target || u.unwindCompUnit != cu) throw u;
+        if (!cares) Ops._rethrow_label(u, outer, tc);
+        return u.result;
+    }
+
+    /**
+     * The handle op's inner catch (the bytecode path's catch (Throwable)
+     * around the protected region): control-protocol exceptions keep
+     * flying raw; anything else becomes an nqp-level exception. Always
+     * throws.
+     */
+    @TruffleBoundary
+    static void hostErrToUnwind(Object ex, ThreadContext tc) {
+        if (System.getenv("NQP_EH_DEBUG") != null)
+            System.err.println("hostErrToUnwind ex=" + ex.getClass().getSimpleName()
+                + " curFrame=" + (tc.curFrame == null ? "?" : tc.curFrame.codeRef.name));
+        if (ex instanceof NqpHostError he) {
+            if (System.getenv("NQP_EH_DEBUG") != null) {
+                StringBuilder sb = new StringBuilder("hostErrToUnwind curFrame chain:");
+                org.raku.nqp.runtime.CallFrame f = tc.curFrame;
+                for (int i = 0; f != null && i < 6; i++, f = f.caller)
+                    sb.append(" ").append(f.codeRef == null ? "?" : f.codeRef.name);
+                System.err.println(sb);
+            }
+            throw ExceptionHandling.dieInternal(tc, he.original);
+        }
+        // NqpUnwind (headed for the enclosing unwind region) and anything
+        // else pass through untouched.
+        if (ex instanceof RuntimeException re) throw re;
+        throw sneaky((Throwable) ex);
+    }
+
     @TruffleBoundary
     static Object coerce(int kind, Object v, CompilationUnit cu, ThreadContext tc) {
         switch (kind) {
@@ -282,29 +338,82 @@ final class NqpOps {
         }
     }
 
+    /*
+     * Lexical access anchors at the PROGRAM'S OWN CallFrame, never
+     * tc.curFrame: the emitted bytecode reads its lexicals through the cf
+     * register, and tc.curFrame can be stale here -- a host exception
+     * converted at a method boundary (the postlude's dieInternal) throws
+     * its unwind from inside the catch arm, past that method's leave().
+     * The bytecode world never notices; an engine anchored at curFrame
+     * did, the moment a handler region resumed after such an unwind.
+     */
     @TruffleBoundary
-    static Object getlex(int type, String name, ThreadContext tc) {
-        switch (type) {
-            case NqpWire.T_INT: return Ops.getlex_i(name, tc);
-            case NqpWire.T_NUM: return Ops.getlex_n(name, tc);
-            case NqpWire.T_STR: return Ops.getlex_s(name, tc);
-            default: return Ops.getlex(name, tc);
+    static Object getlex(int type, String name, ThreadContext tc, CallFrame cf) {
+        for (CallFrame f = cf; f != null; f = f.outer) {
+            org.raku.nqp.runtime.StaticCodeInfo sci = f.codeRef.staticInfo;
+            switch (type) {
+                case NqpWire.T_INT: {
+                    int i = sci.iTryGetLexicalIdx(name);
+                    if (i != -1) return Ops.getlex_i(f, i);
+                    break;
+                }
+                case NqpWire.T_NUM: {
+                    int i = sci.nTryGetLexicalIdx(name);
+                    if (i != -1) return Ops.getlex_n(f, i);
+                    break;
+                }
+                case NqpWire.T_STR: {
+                    int i = sci.sTryGetLexicalIdx(name);
+                    if (i != -1) return Ops.getlex_s(f, i);
+                    break;
+                }
+                default: {
+                    int i = sci.oTryGetLexicalIdx(name);
+                    if (i != -1) return Ops.getlex_o(f, i);
+                    break;
+                }
+            }
         }
+        throw ExceptionHandling.dieInternal(tc, "Lexical '" + name + "' not found");
     }
 
     @TruffleBoundary
-    static Object bindlex(int type, String name, Object value, ThreadContext tc) {
-        switch (type) {
-            case NqpWire.T_INT: return Ops.bindlex_i(name, lng(value), tc);
-            case NqpWire.T_NUM: return Ops.bindlex_n(name, dbl(value), tc);
-            case NqpWire.T_STR: return Ops.bindlex_s(name, str(value), tc);
-            default: return Ops.bindlex(name, smo(value), tc);
+    static Object bindlex(int type, String name, Object value, ThreadContext tc, CallFrame cf) {
+        for (CallFrame f = cf; f != null; f = f.outer) {
+            org.raku.nqp.runtime.StaticCodeInfo sci = f.codeRef.staticInfo;
+            switch (type) {
+                case NqpWire.T_INT: {
+                    int i = sci.iTryGetLexicalIdx(name);
+                    if (i != -1) return Ops.bindlex_i(lng(value), f, i);
+                    break;
+                }
+                case NqpWire.T_NUM: {
+                    int i = sci.nTryGetLexicalIdx(name);
+                    if (i != -1) return Ops.bindlex_n(dbl(value), f, i);
+                    break;
+                }
+                case NqpWire.T_STR: {
+                    int i = sci.sTryGetLexicalIdx(name);
+                    if (i != -1) return Ops.bindlex_s(str(value), f, i);
+                    break;
+                }
+                default: {
+                    int i = sci.oTryGetLexicalIdx(name);
+                    if (i != -1) return Ops.bindlex_o(smo(value), f, i);
+                    break;
+                }
+            }
         }
+        throw ExceptionHandling.dieInternal(tc, "Lexical '" + name + "' not found");
     }
 
     @TruffleBoundary
-    static Object getlexouter(String name, ThreadContext tc) {
-        return Ops.getlexouter(name, tc);
+    static Object getlexouter(String name, ThreadContext tc, CallFrame cf) {
+        for (CallFrame f = cf.outer; f != null; f = f.outer) {
+            int i = f.codeRef.staticInfo.oTryGetLexicalIdx(name);
+            if (i != -1) return Ops.getlex_o(f, i);
+        }
+        throw ExceptionHandling.dieInternal(tc, "Lexical '" + name + "' not found");
     }
 
     @TruffleBoundary
