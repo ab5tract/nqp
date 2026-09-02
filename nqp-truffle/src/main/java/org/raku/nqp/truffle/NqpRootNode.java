@@ -83,7 +83,12 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public Throwable interceptInternalException(Throwable t, VirtualFrame frame,
                                                 BytecodeNode bytecodeNode, int bci) {
         if (t instanceof UnwindException u) return new NqpUnwind(u);
-        return t;
+        // Other control-flow exceptions (SaveStackException, ResumeException,
+        // thread death) must keep flying untouched; anything else becomes
+        // visible to handle regions, which dieInternal it the way the
+        // bytecode path's catch (Throwable) does.
+        if (t instanceof org.raku.nqp.runtime.ControlException) return t;
+        return new NqpHostError(t);
     }
 
     // NQP's int is 64-bit throughout; these mirror nqp::add_i and friends.
@@ -160,7 +165,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class LexGet {
         @Specialization
         static Object doGet(VirtualFrame f, int type, String name) {
-            return NqpOps.getlex(type, name, tc(f));
+            return NqpOps.getlex(type, name, tc(f), cf(f));
         }
     }
 
@@ -170,7 +175,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class LexBind {
         @Specialization
         static Object doBind(VirtualFrame f, int type, String name, Object v) {
-            return NqpOps.bindlex(type, name, v, tc(f));
+            return NqpOps.bindlex(type, name, v, tc(f), cf(f));
         }
     }
 
@@ -179,7 +184,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class LexOuterGet {
         @Specialization
         static Object doGet(VirtualFrame f, String name) {
-            return NqpOps.getlexouter(name, tc(f));
+            return NqpOps.getlexouter(name, tc(f), cf(f));
         }
     }
 
@@ -366,6 +371,45 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static void doRoute(VirtualFrame f, int target, int outer, Object ex) {
             NqpOps.loopLastUnwind(ex, target, outer, cu(f), tc(f));
+        }
+    }
+
+    /**
+     * The catch arm of a handle/handlepayload region: unwind_check
+     * (cares != 0 skips the labeled redirect, as :handler_cares does),
+     * then the result the block handler left on the unwind.
+     */
+    @Operation
+    @ConstantOperand(type = int.class, name = "target")
+    @ConstantOperand(type = int.class, name = "outer")
+    @ConstantOperand(type = int.class, name = "cares")
+    public static final class HandleUnwind {
+        @Specialization
+        static Object doRoute(VirtualFrame f, int target, int outer, int cares, Object ex) {
+            return NqpOps.handleUnwind(ex, target, outer, cares != 0, cu(f), tc(f));
+        }
+    }
+
+    /**
+     * The handle op's inner catch: a host throwable that is not part of
+     * the control protocol becomes an nqp exception via dieInternal,
+     * thrown from here so the enclosing unwind region can take it.
+     * Never returns normally.
+     */
+    @Operation
+    public static final class HostErrToUnwind {
+        @Specialization
+        static void doConvert(VirtualFrame f, Object ex) {
+            NqpOps.hostErrToUnwind(ex, tc(f));
+        }
+    }
+
+    /** cf.exitAfterUnwind: a handler asked this whole frame to leave. */
+    @Operation
+    public static final class ExitAfterUnwind {
+        @Specialization
+        static boolean doGet(VirtualFrame f) {
+            return cf(f).exitAfterUnwind;
         }
     }
 
