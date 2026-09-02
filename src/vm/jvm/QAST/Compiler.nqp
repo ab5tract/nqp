@@ -4157,6 +4157,10 @@ class QAST::CompilerJAST {
 
         my %*CUID_TO_QBID;
         my $*NEXT_QBID := 0;
+        # Engine programs of jar-bound comp-mode blocks, collected here and
+        # written as one jar sidecar (see JAST::Class.codeprograms); the
+        # emitted bodies reference them by index.
+        my @*ENGINE_PROGRAMS := nqp::list_s();
         # Pre-seed to make sure that qbids correspond to serialization IDs
         my $*COMP_MODE := $cu.compilation_mode;
         # Comp-mode units pair code refs with methods by block id, so the
@@ -4328,6 +4332,17 @@ class QAST::CompilerJAST {
         $mainline_meth.append(JAST::PushIndex.new( :value(self.cuid_to_qbid($cu[0].cuid)) ));
         $mainline_meth.append($IRETURN);
         $*JCLASS.add_method($mainline_meth);
+
+        # Engine programs collected from jar-bound blocks travel as one
+        # sidecar entry; joined here, last, so every block -- the
+        # deserialize and load methods included -- has had its say.
+        if nqp::elems(@*ENGINE_PROGRAMS) {
+            my @joined := [~nqp::elems(@*ENGINE_PROGRAMS)];
+            for @*ENGINE_PROGRAMS -> str $p {
+                nqp::push(@joined, ' ' ~ nqp::chars($p) ~ ':' ~ $p);
+            }
+            $*JCLASS.codeprograms(nqp::join('', @joined));
+        }
 
         return $*JCLASS;
     }
@@ -4704,15 +4719,31 @@ class QAST::CompilerJAST {
                 if $engine_prog ne '' {
                     $engine_body := 1;
                     my $il := JAST::InstructionList.new();
-                    $il.append(JAST::PushSVal.new( :value($engine_prog) ));
+                    # A jar-bound unit's programs travel in one sidecar,
+                    # referenced by index -- one string constant per
+                    # program overflowed CORE.c's constant pool (71010
+                    # entries against the 65535 limit). Everything else
+                    # keeps the string road.
+                    my int $as_index := $*COMP_MODE
+                        && %*COMPILING<%?OPTIONS><target> eq 'jar';
+                    if $as_index {
+                        my int $pidx := nqp::elems(@*ENGINE_PROGRAMS);
+                        nqp::push_s(@*ENGINE_PROGRAMS, $engine_prog);
+                        $il.append(JAST::PushIndex.new( :value($pidx) ));
+                    }
+                    else {
+                        $il.append(JAST::PushSVal.new( :value($engine_prog) ));
+                    }
                     $il.append($ALOAD_0);
                     $il.append($ALOAD_1);
                     $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
                     $il.append(JAST::Instruction.new( :op('aload'), 'csd' ));
                     $il.append(JAST::Instruction.new( :op('aload'), '__args' ));
                     $il.append(JAST::Instruction.new( :op('invokestatic'),
-                        'Lorg/raku/nqp/runtime/CodeEngines;', 'codeRun', 'Void',
-                        $TYPE_STR, $TYPE_CU, $TYPE_TC, $TYPE_CF, $TYPE_CSD, "[$TYPE_OBJ" ));
+                        'Lorg/raku/nqp/runtime/CodeEngines;',
+                        $as_index ?? 'codeRunIdx' !! 'codeRun', 'Void',
+                        ($as_index ?? 'Integer' !! $TYPE_STR),
+                        $TYPE_CU, $TYPE_TC, $TYPE_CF, $TYPE_CSD, "[$TYPE_OBJ" ));
                     $body := result($il, $RT_VOID);
                     $*STACK.obtain(NQPMu, $body);
                 }

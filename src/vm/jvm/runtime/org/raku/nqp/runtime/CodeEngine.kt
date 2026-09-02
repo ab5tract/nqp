@@ -66,6 +66,21 @@ object CodeEngines {
     @JvmStatic
     fun get(): CodeEngine? = engine
 
+    /**
+     * The entry point for jar-bound bodies: the program travels in the
+     * unit's .codeprograms.lz4 sidecar and is referenced by index --
+     * string constants per program overflowed CORE.c's constant pool.
+     */
+    @JvmStatic
+    fun codeRunIdx(
+        idx: Int,
+        cu: CompilationUnit,
+        tc: ThreadContext,
+        cf: CallFrame,
+        csd: CallSiteDescriptor,
+        args: Array<Any?>?,
+    ) = codeRun(cu.engineProgram(idx), cu, tc, cf, csd, args)
+
     /** The entry point generated block bodies call. */
     @JvmStatic
     fun codeRun(
