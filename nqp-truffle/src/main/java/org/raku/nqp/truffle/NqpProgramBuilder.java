@@ -414,7 +414,9 @@ final class NqpProgramBuilder {
                 if (emit) {
                     b.beginBlock();
                     b.beginStoreLocal(dres);
-                    b.beginDispatchOp(rtype, name, csd);
+                    // The constant is the instruction's inline cache as
+                    // well as its shape; see NqpOps.EngineSite.
+                    b.beginDispatchOp(rtype, name, new NqpOps.EngineSite(csd));
                 }
                 for (int i = 0; i < nargs; i++) at = walk(at, emit);
                 if (emit) {

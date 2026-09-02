@@ -263,12 +263,12 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     @Operation
     @ConstantOperand(type = int.class, name = "rtype")
     @ConstantOperand(type = String.class, name = "name")
-    @ConstantOperand(type = Object.class, name = "csd")
+    @ConstantOperand(type = Object.class, name = "site")
     public static final class DispatchOp {
         @Specialization
-        static Object doDispatch(VirtualFrame f, int rtype, String name, Object csd,
+        static Object doDispatch(VirtualFrame f, int rtype, String name, Object site,
                                  @Variadic Object[] args) {
-            return NqpOps.dispatch(rtype, name, (CallSiteDescriptor) csd, args, tc(f), cf(f));
+            return NqpOps.dispatch(rtype, name, (NqpOps.EngineSite) site, args, tc(f), cf(f));
         }
     }
 

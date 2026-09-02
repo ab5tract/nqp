@@ -321,11 +321,37 @@ final class NqpOps {
         }
     }
 
+    /**
+     * One dispatch instruction's constant: its callsite shape plus its
+     * inline cache. Programs are shared process-wide (parsed call targets
+     * live by source text), so this is exactly what an invokedynamic
+     * instruction's DispatchCallSite is on the bytecode side -- and it is
+     * registered for the per-eval-server-run reset for the same reason.
+     *
+     * The cache is not only the optimization tier: an uncached dispatch
+     * RECORDS every time, and a recording is destroyed by a continuation
+     * captured across it (record() pops it on the way out; the resumed
+     * callback then holds captures of a dead recording -- "capture that
+     * is not part of this dispatch" under race/hyper loads). Settled
+     * sites replay their programs with no recording to destroy, which is
+     * why the bytecode world tolerates gather-heavy code.
+     */
+    static final class EngineSite {
+        final CallSiteDescriptor csd;
+        final org.raku.nqp.dispatch.DispatchCallSite site;
+        EngineSite(CallSiteDescriptor csd) {
+            this.csd = csd;
+            this.site = new org.raku.nqp.dispatch.DispatchCallSite(
+                java.lang.invoke.MethodType.methodType(void.class));
+            org.raku.nqp.dispatch.DispatchBootstrap.registerSite(this.site);
+        }
+    }
+
     @TruffleBoundary
-    static Object dispatch(int rtype, String name, CallSiteDescriptor csd, Object[] args,
+    static Object dispatch(int rtype, String name, EngineSite es, Object[] args,
                            ThreadContext tc, CallFrame cf) {
         try {
-            org.raku.nqp.dispatch.Dispatch.dispatchUncached(tc, name, csd, args);
+            org.raku.nqp.dispatch.Dispatch.dispatchWithDescriptor(es.site, name, es.csd, tc, args);
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
             /* A continuation is being captured through this frame: hand a
              * suspend token to the program, which yields it; codeRun makes

@@ -621,9 +621,12 @@ my $chain_codegen := sub ($qastcomp, $op) {
                 $il.append($AASTORE);
                 $ti := $ti + 1;
             }
+            # The emitting class rides along so the descriptor table is
+            # resolved from it, never from a possibly-stale tc.curFrame.
+            $il.append(JAST::PushCVal.new( :value('L' ~ $*JCLASS.name ~ ';') ));
             $il.append(savesite(JAST::Instruction.new( :op('invokestatic'),
                 'Lorg/raku/nqp/dispatch/Dispatch;', 'dispatchWide', 'Void',
-                $TYPE_STR, 'Integer', $TYPE_TC, "[$TYPE_OBJ" )));
+                $TYPE_STR, 'Integer', $TYPE_TC, "[$TYPE_OBJ", 'Ljava/lang/Class;' )));
         }
         $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
         $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
@@ -1644,9 +1647,10 @@ sub emit_wide_dispatch($il, str $dispatcher, $cs_idx, @arg_results) {
         $il.append($AASTORE);
         $i := $i - 1;
     }
+    $il.append(JAST::PushCVal.new( :value('L' ~ $*JCLASS.name ~ ';') ));
     $il.append(savesite(JAST::Instruction.new( :op('invokestatic'),
         'Lorg/raku/nqp/dispatch/Dispatch;', 'dispatchWide', 'Void',
-        $TYPE_STR, 'Integer', $TYPE_TC, "[$TYPE_OBJ" )));
+        $TYPE_STR, 'Integer', $TYPE_TC, "[$TYPE_OBJ", 'Ljava/lang/Class;' )));
 }
 
 # Emit a dispatch on @args, the way the 'dispatch' op does: the dispatcher
