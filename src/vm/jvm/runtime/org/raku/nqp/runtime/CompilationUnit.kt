@@ -378,4 +378,57 @@ abstract class CompilationUnit {
     open fun entryQbid(): Int = -1
 
     open fun serializedCodeRefCount(): Int = -1
+
+    /**
+     * The unit's engine programs, loaded from the jar's .codeprograms.lz4
+     * sidecar on first use. Emitted bodies reference them by index
+     * through [CodeEngines.codeRunIdx]; the sidecar exists because one
+     * string constant per program overflowed CORE.c's constant pool.
+     * Holds only strings, so it pins nothing run-owned.
+     */
+    @Volatile
+    private var enginePrograms: Array<String>? = null
+
+    fun engineProgram(idx: Int): String {
+        var progs = enginePrograms
+        if (progs == null) {
+            synchronized(this) {
+                progs = enginePrograms
+                if (progs == null) {
+                    progs = loadEnginePrograms()
+                    enginePrograms = progs
+                }
+            }
+        }
+        return progs!![idx]
+    }
+
+    private fun loadEnginePrograms(): Array<String> {
+        val name = javaClass.simpleName + ".codeprograms.lz4"
+        val stream = javaClass.getResourceAsStream(name)
+            ?: throw IllegalStateException(
+                "this unit's code was compiled against an engine-program sidecar," +
+                " but $name is missing from its jar")
+        val text = stream.use {
+            String(LibraryLoader.readToHeapBufferLz4(it).let { bb ->
+                val bytes = ByteArray(bb.remaining()); bb.get(bytes); bytes
+            }, Charsets.UTF_8)
+        }
+        /* Format, written by the QAST compiler: "N" then per program
+         * " len:content", len in Java chars (nqp::chars agrees). */
+        var at = text.indexOf(' ')
+        val count = text.substring(0, if (at < 0) text.length else at).toInt()
+        val out = arrayOfNulls<String>(count)
+        var i = 0
+        while (i < count) {
+            at += 1                        // the leading space
+            val colon = text.indexOf(':', at)
+            val len = text.substring(at, colon).toInt()
+            out[i] = text.substring(colon + 1, colon + 1 + len)
+            at = colon + 1 + len
+            i += 1
+        }
+        @Suppress("UNCHECKED_CAST")
+        return out as Array<String>
+    }
 }
