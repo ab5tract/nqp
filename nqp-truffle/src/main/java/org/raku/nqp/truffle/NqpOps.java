@@ -73,6 +73,11 @@ final class NqpOps {
     static Object run(int id, Object[] a, CompilationUnit cu, ThreadContext tc, CallFrame cf) {
         try {
             return run0(id, a, cu, tc, cf);
+        } catch (org.raku.nqp.runtime.SaveStackException sse) {
+            // Any op that reaches user code (a sink, a decont through a
+            // Proxy, a handler-running control) is a suspension point;
+            // every OPCALL site is wrapped, so answer a token uniformly.
+            return new NqpCont.Suspend(sse, NqpWire.T_OBJ);
         } catch (IllegalStateException e) {
             throw new IllegalStateException(e.getMessage() + " (op id " + id + ")", e);
         }
@@ -319,7 +324,19 @@ final class NqpOps {
     @TruffleBoundary
     static Object dispatch(int rtype, String name, CallSiteDescriptor csd, Object[] args,
                            ThreadContext tc, CallFrame cf) {
-        org.raku.nqp.dispatch.Dispatch.dispatchUncached(tc, name, csd, args);
+        try {
+            org.raku.nqp.dispatch.Dispatch.dispatchUncached(tc, name, csd, args);
+        } catch (org.raku.nqp.runtime.SaveStackException sse) {
+            /* A continuation is being captured through this frame: hand a
+             * suspend token to the program, which yields it; codeRun makes
+             * the engine frame a ResumeStatus.Frame from there. */
+            return new NqpCont.Suspend(sse, rtype);
+        }
+        return readResult(rtype, cf);
+    }
+
+    /** The typed read of a call's result off the frame's return registers. */
+    static Object readResult(int rtype, CallFrame cf) {
         switch (rtype) {
             case NqpWire.T_INT: return Ops.result_i(cf);
             case NqpWire.T_NUM: return Ops.result_n(cf);

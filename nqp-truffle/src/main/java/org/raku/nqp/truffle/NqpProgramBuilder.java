@@ -407,9 +407,23 @@ final class NqpProgramBuilder {
                 }
                 CallSiteDescriptor csd = new CallSiteDescriptor(flags,
                     names.isEmpty() ? null : names.toArray(new String[0]));
-                if (emit) b.beginDispatchOp(rtype, name, csd);
+                // Every dispatch is a potential continuation suspension
+                // point: the result rides a local so a suspend token can
+                // be yielded and the resumed value take its place.
+                BytecodeLocal dres = emit ? b.createLocal() : null;
+                if (emit) {
+                    b.beginBlock();
+                    b.beginStoreLocal(dres);
+                    b.beginDispatchOp(rtype, name, csd);
+                }
                 for (int i = 0; i < nargs; i++) at = walk(at, emit);
-                if (emit) b.endDispatchOp();
+                if (emit) {
+                    b.endDispatchOp();
+                    b.endStoreLocal();
+                    emitSuspendCheck(dres);
+                    b.emitLoadLocal(dres);
+                    b.endBlock();
+                }
                 return at;
             }
             case NqpWire.OPCALL: {
@@ -417,10 +431,26 @@ final class NqpProgramBuilder {
                 int nargs = code[at + 2];
                 if (id < 0 || id >= NqpOps.OP_COUNT)
                     throw new IllegalStateException("nqpp: op id out of range: " + id);
+                // Every table op can in principle reach user code (a sink,
+                // a Proxy FETCH, a handler); all sites carry the suspension
+                // tail, and the token check speculates to false in compiled
+                // code.
+                boolean suspendable = true;
+                BytecodeLocal ores = emit && suspendable ? b.createLocal() : null;
+                if (emit && suspendable) {
+                    b.beginBlock();
+                    b.beginStoreLocal(ores);
+                }
                 if (emit) b.beginRunOp(id);
                 at += 3;
                 for (int i = 0; i < nargs; i++) at = walk(at, emit);
                 if (emit) b.endRunOp();
+                if (emit && suspendable) {
+                    b.endStoreLocal();
+                    emitSuspendCheck(ores);
+                    b.emitLoadLocal(ores);
+                    b.endBlock();
+                }
                 return at;
             }
             case NqpWire.COERCE: {
@@ -577,6 +607,28 @@ final class NqpProgramBuilder {
         } else {
             b.endStoreLocal();
         }
+    }
+
+    /**
+     * The suspension tail of a call site: a suspend token in the local is
+     * yielded (codeRun turns the yield into a ResumeStatus.Frame), and
+     * whatever comes back through the resumed yield -- the call's real
+     * result, or an injected exception rethrown by UnpackResumed --
+     * replaces it.
+     */
+    private void emitSuspendCheck(BytecodeLocal t) {
+        b.beginIfThen();
+        b.beginIsSuspend();
+        b.emitLoadLocal(t);
+        b.endIsSuspend();
+        b.beginStoreLocal(t);
+        b.beginUnpackResumed();
+        b.beginYield();
+        b.emitLoadLocal(t);
+        b.endYield();
+        b.endUnpackResumed();
+        b.endStoreLocal();
+        b.endIfThen();
     }
 
     /** Discards the value the wrapped child leaves. */
