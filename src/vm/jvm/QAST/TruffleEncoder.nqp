@@ -736,6 +736,12 @@ class QAST::TruffleEncoder {
         my int $kind := coerce_kind($got, $want);
         cbail('no coercion ' ~ $got ~ '->' ~ $want) if $kind < 0;
         nqp::splice(%e<code>, [$W_COERCE, $kind], $mark, 0);
+        # Nested-block qbid slots recorded inside the subtree just moved
+        # two places right; patch their positions as patch_params does,
+        # or the deferred qbid patch lands on the wrong cell.
+        for %e<nested> -> $nb {
+            nqp::bindpos($nb, 0, $nb[0] + 2) if $nb[0] >= $mark;
+        }
         $want
     }
 
@@ -1104,7 +1110,11 @@ class QAST::TruffleEncoder {
             epush(%e, $outer);
             epush(%e, $cares);
             %e<hidx> := $hid;
-            self.encode_node($protected, %e, $T_OBJ);
+            # encode_child, not encode_node: the wire op's value slot is
+            # object-typed, and a protected body whose own result is
+            # native (a block mixing `return` with an int fall-through)
+            # must box on the way in -- StoreRet casts what it is given.
+            self.encode_child($protected, %e, $T_OBJ);
             %e<hidx> := $outer;
             return $T_OBJ;
         }
@@ -1120,9 +1130,9 @@ class QAST::TruffleEncoder {
             epush(%e, $hid);
             epush(%e, $outer);
             %e<hidx> := $hid;
-            self.encode_node($op[0], %e, $T_OBJ);
+            self.encode_child($op[0], %e, $T_OBJ);
             %e<hidx> := $outer;
-            self.encode_node($op[2], %e, $T_OBJ);
+            self.encode_child($op[2], %e, $T_OBJ);
             return $T_OBJ;
         }
         if $name eq 'control' {
