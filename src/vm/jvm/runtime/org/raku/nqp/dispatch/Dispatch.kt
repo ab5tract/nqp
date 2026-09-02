@@ -77,7 +77,7 @@ object Dispatch {
     @JvmStatic
     fun dispatch(site: DispatchCallSite, siteClass: Class<*>, name: String, csIdx: Int,
                  tc: ThreadContext, args: Array<Any?>) {
-        val d = descriptorForClass(siteClass, csIdx)
+        val d = descriptorForClass(siteClass, csIdx, tc)
         /* Does the descriptor describe THESE arguments? Arity says the
          * descriptor is the wrong one; a type clash with matching arity says
          * the arguments are wrong. Distinguishing those is the whole
@@ -203,7 +203,7 @@ object Dispatch {
     @JvmStatic
     fun dispatchWide(name: String, csIdx: Int, tc: ThreadContext, args: Array<Any?>,
                      siteClass: Class<*>) {
-        dispatchUncached(tc, name, descriptorForClass(siteClass, csIdx), args)
+        dispatchUncached(tc, name, descriptorForClass(siteClass, csIdx, tc), args)
     }
 
     /** A dispatch with no callsite to install anything at. */
@@ -244,11 +244,15 @@ object Dispatch {
                 as org.raku.nqp.runtime.CompilationUnit).getCallSites()
     }
 
-    private fun descriptorForClass(siteClass: Class<*>, csIdx: Int): CallSiteDescriptor =
-        if (csIdx >= 0)
-            siteTables.get(siteClass)[csIdx]
-        else
+    private val oldDescRoad = System.getenv("NQP_DISPATCH_OLDDESC") != null
+
+    private fun descriptorForClass(siteClass: Class<*>, csIdx: Int, tc: ThreadContext): CallSiteDescriptor =
+        if (csIdx < 0)
             Ops.emptyCallSite
+        else if (oldDescRoad)
+            tc.frame.codeRef.staticInfo.compUnit.callSites!![csIdx]
+        else
+            siteTables.get(siteClass)[csIdx]
 
     /** The dispatch whose callbacks are currently running. */
     @JvmStatic

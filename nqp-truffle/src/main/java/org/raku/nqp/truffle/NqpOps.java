@@ -351,7 +351,10 @@ final class NqpOps {
     static Object dispatch(int rtype, String name, EngineSite es, Object[] args,
                            ThreadContext tc, CallFrame cf) {
         try {
-            org.raku.nqp.dispatch.Dispatch.dispatchWithDescriptor(es.site, name, es.csd, tc, args);
+            if (System.getenv("NQP_CODE_UNCACHED") != null)
+                org.raku.nqp.dispatch.Dispatch.dispatchUncached(tc, name, es.csd, args);
+            else
+                org.raku.nqp.dispatch.Dispatch.dispatchWithDescriptor(es.site, name, es.csd, tc, args);
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
             /* A continuation is being captured through this frame: hand a
              * suspend token to the program, which yields it; codeRun makes
