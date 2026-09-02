@@ -35,6 +35,20 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
     @Override protected Ctx createContext(Env env) { return new Ctx(); }
 
     /**
+     * Programs compile lazily, on whichever thread first runs a block --
+     * with precompiled modules (Phase 4) that is routinely a worker
+     * thread, and the default single-threaded policy would refuse the
+     * second thread's eval. The language holds no mutable context state
+     * (Ctx is empty, PARSED is concurrent, and the DSL serializes its
+     * own specialization updates), so shared multi-threaded access is
+     * sound -- and matcher call targets have always been shared across
+     * threads on the rx side.
+     */
+    @Override protected boolean isThreadAccessAllowed(Thread thread, boolean singleThreaded) {
+        return true;
+    }
+
+    /**
      * The program call target for each source parsed, by source text —
      * the same raw-CallTarget handoff the rx engine uses: eval answers a
      * polyglot Value, and calling through one boxes everything, so the

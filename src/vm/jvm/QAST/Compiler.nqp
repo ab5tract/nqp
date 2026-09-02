@@ -4685,8 +4685,10 @@ class QAST::CompilerJAST {
             # The choice is made here, at compile time, exactly as it is
             # for regexes: an encoded block's body is one codeRun call
             # (parameter binding included), and there is no bytecode body
-            # to fall back to. Only runtime-compiled units are eligible;
-            # precompiled code is Phase 4 of the migration.
+            # to fall back to. Precompiled units are eligible when the
+            # encoder's NQP_CODE_PRECOMP knob says so: the program bakes
+            # into the class file as a string constant, exactly as an rx
+            # descriptor does.
             my $body;
             my int $engine_body := 0;
             my $*STACK := StackState.new();
@@ -4695,8 +4697,9 @@ class QAST::CompilerJAST {
                 my $*BLOCK := $block;
                 my $*WANT;
                 my str $engine_prog := '';
-                unless $*COMP_MODE || $node.custom_args {
-                    $engine_prog := QAST::TruffleEncoder.encode_block($node, $block, self);
+                unless $node.custom_args {
+                    $engine_prog := QAST::TruffleEncoder.encode_block($node, $block, self,
+                        :comp_mode($*COMP_MODE));
                 }
                 if $engine_prog ne '' {
                     $engine_body := 1;
