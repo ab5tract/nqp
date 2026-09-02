@@ -47,6 +47,7 @@ import org.raku.nqp.runtime.UnwindException;
     languageClass = NqpLanguage.class,
     enableUncachedInterpreter = true,
     enableSerialization = true,
+    enableYield = true,
     boxingEliminationTypes = { long.class })
 public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
 
@@ -185,6 +186,31 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doGet(VirtualFrame f, String name) {
             return NqpOps.getlexouter(name, tc(f), cf(f));
+        }
+    }
+
+    /* ----- the continuation-suspension protocol (see NqpCont) ----- */
+
+    /** Whether a call answered a suspend token instead of a result. */
+    @Operation
+    public static final class IsSuspend {
+        @Specialization
+        static boolean doCheck(Object v) {
+            return v instanceof NqpCont.Suspend;
+        }
+    }
+
+    /**
+     * The value a resumed yield produced: a real result passes through,
+     * an injected exception is rethrown at the suspension point so the
+     * program's handler regions see it as the call's own throw.
+     */
+    @Operation
+    public static final class UnpackResumed {
+        @Specialization
+        static Object doUnpack(Object v) {
+            if (v instanceof NqpCont.Rethrow r) throw NqpCont.sneaky(r.t);
+            return v;
         }
     }
 
