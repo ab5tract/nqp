@@ -127,6 +127,7 @@ public class LibraryLoader {
         String name = null;
         ByteBuffer classfile = null;
         ByteBuffer serial = null;
+        ByteBuffer progs = null;
         Map<String, ByteBuffer> nested = new HashMap<>();
         try (JarInputStream jis = new JarInputStream(new ByteBufferedInputStream(buffer))) {
             JarEntry je;
@@ -144,6 +145,9 @@ public class LibraryLoader {
                     serial = readToHeapBuffer(jis);
                 else if (jf.endsWith(".serialized") && serial == null)
                     serial = readToHeapBuffer(jis);
+                else if (jf.endsWith(".codeprograms.lz4") && progs == null)
+                    /* The unit's engine programs (see CodeEngines.codeRunIdx). */
+                    progs = readToHeapBuffer(jis);
                 else
                     throw new IllegalArgumentException("Bytecode jar contains unexpected file " + jf);
             }
@@ -152,7 +156,7 @@ public class LibraryLoader {
             throw new IllegalArgumentException("Bytecode jar lacks class file");
         if (serial == null)
             throw new IllegalArgumentException("Bytecode jar lacks serialization file");
-        return new MemoryClassLoader(classfile, serial, nested, parent).loadSerialClass(name);
+        return new MemoryClassLoader(classfile, serial, progs, nested, parent).loadSerialClass(name);
     }
 
     public static void resolveClass(ThreadContext tc, Class<?> c) {
@@ -335,16 +339,18 @@ public class LibraryLoader {
 
         private final WeakReference<ByteBuffer> classfile;
         private final ByteBuffer serial;
+        private final ByteBuffer progs;
         private final Map<String, ByteBuffer> nested;
 
         protected MemoryClassLoader(ByteBuffer classfile, ByteBuffer serial, ByteClassLoader parent) {
-            this(classfile, serial, new HashMap<>(), parent);
+            this(classfile, serial, null, new HashMap<>(), parent);
         }
 
-        protected MemoryClassLoader(ByteBuffer classfile, ByteBuffer serial, Map<String, ByteBuffer> nested, ByteClassLoader parent) {
+        protected MemoryClassLoader(ByteBuffer classfile, ByteBuffer serial, ByteBuffer progs, Map<String, ByteBuffer> nested, ByteClassLoader parent) {
             super(parent);
             this.classfile = new WeakReference(classfile);
             this.serial = serial;
+            this.progs = progs;
             this.nested = nested;
         }
 
@@ -382,10 +388,14 @@ public class LibraryLoader {
 
         @Override
         public InputStream getResourceAsStream(String name) {
-            if (serial == null)
+            /* Serve by suffix: the serialized SC and the engine-program
+             * table are distinct sidecars of the same unit. */
+            ByteBuffer which = name != null && name.endsWith(".codeprograms.lz4")
+                ? progs : serial;
+            if (which == null)
                 return null;
             else try {
-                return ByteBufferedInputStream.copy(serial);
+                return ByteBufferedInputStream.copy(which);
             }
             catch (IllegalArgumentException e) {
                 return null;
