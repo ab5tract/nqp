@@ -553,6 +553,20 @@ class QAST::TruffleEncoder {
         op3('iscont_i', 136, $T_INT, 'o');
         op3('iscont_n', 137, $T_INT, 'o');
         op3('iscont_s', 138, $T_INT, 'o');
+        # Chosen by sole-blocker count over a CORE.c NQP_CODE_REPORT run
+        # (2026-09-03): these seven alone gate ~500 of the setting's
+        # blocks. assign_i/assign_s are NOT here on purpose -- their
+        # bytecode desugar REWRITES the QAST node in place (op('bind'),
+        # scope(...)), and mutating a shared tree during an encode that
+        # may still bail would corrupt it for the bytecode path.
+        op3('hllbool', 148, $T_OBJ, 'i');
+        op3('istype_nd', 149, $T_INT, 'oo');
+        op3('who', 150, $T_OBJ, 'o');
+        op3('getpayload', 151, $T_OBJ, 'o');
+        op3('iterator', 152, $T_OBJ, 'o');
+        op3('iterval', 153, $T_OBJ, 'o');
+        op3('assign', 154, $T_OBJ, 'oo');
+        op3('p6bindassert', 155, $T_OBJ, 'oo');
         1
     }
 
