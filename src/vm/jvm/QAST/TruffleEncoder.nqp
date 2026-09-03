@@ -35,29 +35,24 @@ class QAST::TruffleEncoder {
     my int $code_report := 0;
     my int $code_survey := 0;
 
-    my $ops := 'if unless while until repeat_while repeat_until for bind
-        call callmethod callstatic chain chainstatic locallifetime null
-        say print
-        hllize decont what create clone clone_nd defined
-        isconcrete isnull istype eqaddr iscont iscont_i iscont_n iscont_s
-        getattr getattr_i getattr_n getattr_s
-        bindattr bindattr_i bindattr_n bindattr_s
-        list list_i list_n list_s list_b hash
-        atpos atpos_i atpos_n atpos_s bindpos bindpos_i bindpos_n bindpos_s
-        atkey atkey_i atkey_n atkey_s bindkey bindkey_i bindkey_n bindkey_s
-        existskey deletekey existspos elems setelems
-        push pop shift unshift islist ishash
-        add_i sub_i mul_i div_i mod_i neg_i abs_i
-        bitand_i bitor_i bitxor_i bitshiftl_i bitshiftr_i bitneg_i not_i
-        iseq_i isne_i islt_i isle_i isgt_i isge_i
-        add_n sub_n mul_n div_n neg_n
-        iseq_n isne_n islt_n isle_n isgt_n isge_n
-        concat chars substr index eqat ord chr join split uc lc
-        iseq_s isne_s islt_s isle_s isgt_s isge_s
-        unbox_i unbox_n unbox_s box_i box_n box_s
-        takeclosure getlexouter
-        p6sink p6capturelex p6assign p6store p6bindattrinvres
-        p6bool p6box_i p6box_n p6box_s';
+    # The ops the survey counts as covered are DERIVED from the encoder's
+    # own emit table plus the names encode_op special-cases, never listed
+    # by hand: a hand-written list drifts both ways, and did. Before
+    # 2026-09-02 it still claimed `for`/`repeat_while`/`repeat_until`,
+    # which this encoder has never encoded, while missing every op added
+    # since Phase 1 -- so the report under-counted exactly the coverage
+    # Phase 5's deletion gate is waiting on. Being in the table means the
+    # op has an encoding, not that every use of it encodes (arity and
+    # shape still bail), so the survey stays an upper bound and the honest
+    # yield of a tag group still wants an NQP_CODE_ALSO run.
+    my $extra_ops := 'bind call callmethod callstatic chain chainstatic
+        control defor dispatch getlexouter handle handlepayload if ifnull
+        locallifetime null p6assign p6decontrv p6decontrv_6c stmt stmts
+        unless until while';
+
+    # Node kinds the encoder handles outside the op table.
+    my $covered_nodes := 'QAST::ParamTypeCheck';
+
     my $scopes := 'local lexical contextual attribute positional associative';
 
     sub init() {
@@ -69,8 +64,10 @@ class QAST::TruffleEncoder {
         $code_on := $code_report || $code_survey;
         return 0 unless $code_on;
 
-        for nqp::split(' ', subst_ws($ops))    { %covered{'op:' ~ $_} := 1 }
-        for nqp::split(' ', subst_ws($scopes)) { %covered{'var:' ~ $_} := 1 }
+        covered_from_table();
+        for nqp::split(' ', subst_ws($extra_ops)) { %covered{'op:' ~ $_} := 1 }
+        for nqp::split(' ', subst_ws($scopes))    { %covered{'var:' ~ $_} := 1 }
+        for nqp::split(' ', subst_ws($covered_nodes)) { %covered{'node:' ~ $_} := 1 }
         if nqp::existskey(%env, 'NQP_CODE_ALSO') {
             for nqp::split(',', %env<NQP_CODE_ALSO>) { %covered{$_} := 1 }
         }
@@ -394,6 +391,18 @@ class QAST::TruffleEncoder {
     sub op3(str $name, int $id, int $res, str $args) {
         %emit_ops{$name} := [$id, $res, $args];
     }
+
+    # Every op the emit table knows, as a survey coverage tag. Table keys
+    # may carry an arity suffix (name/N); the tag is the bare name.
+    sub covered_from_table() {
+        emit_init();
+        for %emit_ops {
+            my str $k := $_.key;
+            my int $slash := nqp::index($k, '/');
+            %covered{'op:' ~ ($slash >= 0 ?? nqp::substr($k, 0, $slash) !! $k)} := 1;
+        }
+        1
+    }
     sub emit_init() {
         return 0 if $emit_init_done;
         $emit_init_done := 1;
@@ -506,6 +515,44 @@ class QAST::TruffleEncoder {
         op3('lastexpayload', 109, $T_OBJ, '');
         op3('throwpayloadlex', 110, $T_OBJ, 'io');
         op3('throwpayloadlexcaller', 111, $T_OBJ, 'io');
+        # The routine calling-convention family (Phase 5): what the Phase 1
+        # census said gates two thirds of the setting's blocks.
+        op3('assertparamcheck', 112, $T_OBJ, 'i');
+        op3('bindcomplete', 113, $T_OBJ, '');
+        op3('p6typecheckrv', 114, $T_OBJ, 'ooo');
+        # 115 is p6decontrv_rt, reached only through the p6decontrv
+        # desugar below (the rw split is a compile-time decision).
+        op3('p6decontrv_rt', 115, $T_OBJ, 'ooi');
+        # Attribute access and the typed collection accessors: the
+        # survey's old hand-written list claimed these for a year without
+        # the encoder ever having them (found 2026-09-02 when the list was
+        # replaced by a derivation from this table). Every one is a
+        # fixed-arity runtime call, mapped exactly as Compiler.nqp maps it;
+        # the hinted getattr/bindattr overloads stay bytecode's, since a
+        # hint is a compile-time slot index this encoder does not carry.
+        op3('getattr', 81, $T_OBJ, 'oos');
+        op3('getattr_i', 117, $T_INT, 'oos');
+        op3('getattr_n', 118, $T_NUM, 'oos');
+        op3('getattr_s', 119, $T_STR, 'oos');
+        op3('bindattr', 82, $T_OBJ, 'ooso');
+        op3('bindattr_i', 121, $T_INT, 'oosi');
+        op3('bindattr_n', 122, $T_NUM, 'oosn');
+        op3('bindattr_s', 123, $T_STR, 'ooss');
+        op3('atpos_i', 124, $T_INT, 'oi');
+        op3('atpos_n', 125, $T_NUM, 'oi');
+        op3('atpos_s', 126, $T_STR, 'oi');
+        op3('bindpos_i', 127, $T_INT, 'oii');
+        op3('bindpos_n', 128, $T_NUM, 'oin');
+        op3('bindpos_s', 129, $T_STR, 'ois');
+        op3('atkey_i', 130, $T_INT, 'os');
+        op3('atkey_n', 131, $T_NUM, 'os');
+        op3('atkey_s', 132, $T_STR, 'os');
+        op3('bindkey_i', 133, $T_INT, 'osi');
+        op3('bindkey_n', 134, $T_NUM, 'osn');
+        op3('bindkey_s', 135, $T_STR, 'oss');
+        op3('iscont_i', 136, $T_INT, 'o');
+        op3('iscont_n', 137, $T_INT, 'o');
+        op3('iscont_s', 138, $T_INT, 'o');
         1
     }
 
@@ -840,6 +887,14 @@ class QAST::TruffleEncoder {
         if nqp::istype($n, QAST::Regex) {
             cbail('regex');
         }
+        if nqp::istype($n, QAST::ParamTypeCheck) {
+            # Compiles exactly as emit_param_tasks does: the check value
+            # feeds assertparamcheck, which turns a miss into a bind
+            # failure a multi can try past rather than a throw.
+            epush(%e, $W_OPCALL); epush(%e, 112); epush(%e, 1);
+            self.encode_child($n[0], %e, $T_INT);
+            return $T_OBJ;
+        }
         cbail('node ' ~ $n.HOW.name($n));
     }
 
@@ -941,6 +996,23 @@ class QAST::TruffleEncoder {
             %e<hidx> := $nrid;
             self.encode_node(@operands[1], %e, $T_VOID);
             %e<hidx> := $outer;
+            return $T_OBJ;
+        }
+        if $name eq 'p6decontrv' || $name eq 'p6decontrv_6c' {
+            # Mirror the bytecode emitter's compile-time split: an rw
+            # routine's return passes through untouched; otherwise the
+            # cached-per-routine decont road (wantdecont is a pass-through
+            # on this backend, so the value child encodes directly).
+            cbail('p6decontrv shape')
+                unless nqp::elems(@($op)) == 2 && nqp::istype($op[0], QAST::WVal);
+            if nqp::istrue($op[0].value.rw) {
+                return self.encode_child($op[1], %e, $want == $T_VOID ?? $T_VOID !! $T_OBJ);
+            }
+            epush(%e, $W_OPCALL); epush(%e, 115); epush(%e, 3);
+            self.encode_child($op[0], %e, $T_OBJ);
+            self.encode_child($op[1], %e, $T_OBJ);
+            self.encode_child(QAST::IVal.new(
+                :value($name eq 'p6decontrv_6c' ?? 1 !! 0)), %e, $T_INT);
             return $T_OBJ;
         }
         if $name eq 'call' || $name eq 'callstatic' {

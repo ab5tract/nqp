@@ -60,9 +60,17 @@ final class NqpOps {
         OP_P6BOX_I = 103, OP_P6BOX_N = 104, OP_P6BOX_S = 105,
         OP_P6DEFINITE = 106, OP_P6BINDATTRINVRES = 107,
         OP_CONTROL = 108, OP_LASTEXPAYLOAD = 109,
-        OP_THROWPAYLOADLEX = 110, OP_THROWPAYLOADLEXCALLER = 111;
+        OP_THROWPAYLOADLEX = 110, OP_THROWPAYLOADLEXCALLER = 111,
+        OP_ASSERTPARAMCHECK = 112, OP_BINDCOMPLETE = 113,
+        OP_P6TYPECHECKRV = 114, OP_P6DECONTRV_RT = 115,
+        OP_GETATTR_I = 117, OP_GETATTR_N = 118, OP_GETATTR_S = 119,
+        OP_BINDATTR_I = 121, OP_BINDATTR_N = 122, OP_BINDATTR_S = 123,
+        OP_ATPOS_I = 124, OP_ATPOS_N = 125, OP_ATPOS_S = 126, OP_BINDPOS_I = 127,
+        OP_BINDPOS_N = 128, OP_BINDPOS_S = 129, OP_ATKEY_I = 130, OP_ATKEY_N = 131,
+        OP_ATKEY_S = 132, OP_BINDKEY_I = 133, OP_BINDKEY_N = 134, OP_BINDKEY_S = 135,
+        OP_ISCONT_I = 136, OP_ISCONT_N = 137, OP_ISCONT_S = 138;
 
-    static final int OP_COUNT = 112;
+    static final int OP_COUNT = 139;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -194,6 +202,41 @@ final class NqpOps {
             case OP_P6BINDATTRINVRES: {
                 try {
                     return Rak.P6BINDATTRINVRES.invoke(smo(a[0]), smo(a[1]), str(a[2]), smo(a[3]), tc);
+                } catch (Throwable t) { throw sneaky(t); }
+            }
+            case OP_GETATTR_I: return Ops.getattr_i(smo(a[0]), smo(a[1]), str(a[2]), tc);
+            case OP_GETATTR_N: return Ops.getattr_n(smo(a[0]), smo(a[1]), str(a[2]), tc);
+            case OP_GETATTR_S: return Ops.getattr_s(smo(a[0]), smo(a[1]), str(a[2]), tc);
+            case OP_BINDATTR_I: return Ops.bindattr_i(smo(a[0]), smo(a[1]), str(a[2]), lng(a[3]), tc);
+            case OP_BINDATTR_N: return Ops.bindattr_n(smo(a[0]), smo(a[1]), str(a[2]), dbl(a[3]), tc);
+            case OP_BINDATTR_S: return Ops.bindattr_s(smo(a[0]), smo(a[1]), str(a[2]), str(a[3]), tc);
+            case OP_ATPOS_I: return Ops.atpos_i(smo(a[0]), lng(a[1]), tc);
+            case OP_ATPOS_N: return Ops.atpos_n(smo(a[0]), lng(a[1]), tc);
+            case OP_ATPOS_S: return Ops.atpos_s(smo(a[0]), lng(a[1]), tc);
+            case OP_BINDPOS_I: return Ops.bindpos_i(smo(a[0]), lng(a[1]), lng(a[2]), tc);
+            case OP_BINDPOS_N: return Ops.bindpos_n(smo(a[0]), lng(a[1]), dbl(a[2]), tc);
+            case OP_BINDPOS_S: return Ops.bindpos_s(smo(a[0]), lng(a[1]), str(a[2]), tc);
+            case OP_ATKEY_I: return Ops.atkey_i(smo(a[0]), str(a[1]), tc);
+            case OP_ATKEY_N: return Ops.atkey_n(smo(a[0]), str(a[1]), tc);
+            case OP_ATKEY_S: return Ops.atkey_s(smo(a[0]), str(a[1]), tc);
+            case OP_BINDKEY_I: return Ops.bindkey_i(smo(a[0]), str(a[1]), lng(a[2]), tc);
+            case OP_BINDKEY_N: return Ops.bindkey_n(smo(a[0]), str(a[1]), dbl(a[2]), tc);
+            case OP_BINDKEY_S: return Ops.bindkey_s(smo(a[0]), str(a[1]), str(a[2]), tc);
+            case OP_ISCONT_I: return Ops.iscont_i(smo(a[0]));
+            case OP_ISCONT_N: return Ops.iscont_n(smo(a[0]));
+            case OP_ISCONT_S: return Ops.iscont_s(smo(a[0]));
+            case OP_ASSERTPARAMCHECK:
+                return Ops.assertparamcheck(lng(a[0]), tc);
+            case OP_BINDCOMPLETE:
+                return Ops.bindcomplete(tc);
+            case OP_P6TYPECHECKRV: {
+                try {
+                    return Rak.P6TYPECHECKRV.invoke(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+                } catch (Throwable t) { throw sneaky(t); }
+            }
+            case OP_P6DECONTRV_RT: {
+                try {
+                    return Rak.P6DECONTRV_RT.invoke(smo(a[0]), smo(a[1]), lng(a[2]), tc);
                 } catch (Throwable t) { throw sneaky(t); }
             }
             case OP_CONTROL: {
@@ -550,6 +593,8 @@ final class NqpOps {
         static final java.lang.invoke.MethodHandle P6BOX_S;
         static final java.lang.invoke.MethodHandle P6DEFINITE;
         static final java.lang.invoke.MethodHandle P6BINDATTRINVRES;
+        static final java.lang.invoke.MethodHandle P6TYPECHECKRV;
+        static final java.lang.invoke.MethodHandle P6DECONTRV_RT;
         static {
             try {
                 Class<?> c = Class.forName("org.raku.rakudo.RakOps");
@@ -571,6 +616,10 @@ final class NqpOps {
                     java.lang.invoke.MethodType.methodType(SMO, String.class, TC));
                 P6BINDATTRINVRES = l.findStatic(c, "p6bindattrinvres",
                     java.lang.invoke.MethodType.methodType(SMO, SMO, SMO, String.class, SMO, TC));
+                P6TYPECHECKRV = l.findStatic(c, "p6typecheckrv",
+                    java.lang.invoke.MethodType.methodType(SMO, SMO, SMO, SMO, TC));
+                P6DECONTRV_RT = l.findStatic(c, "p6decontrv_rt",
+                    java.lang.invoke.MethodType.methodType(SMO, SMO, SMO, long.class, TC));
             } catch (ReflectiveOperationException e) {
                 throw new ExceptionInInitializerError(e);
             }
