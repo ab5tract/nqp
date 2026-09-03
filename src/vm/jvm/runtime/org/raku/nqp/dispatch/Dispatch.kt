@@ -75,9 +75,9 @@ object Dispatch {
      * frame the dispatch instruction is in, the same way a call leaves it.
      */
     @JvmStatic
-    fun dispatch(site: DispatchCallSite, name: String, csIdx: Int, tc: ThreadContext,
-                 args: Array<Any?>) {
-        val d = descriptorFor(tc, csIdx)
+    fun dispatch(site: DispatchCallSite, siteClass: Class<*>, name: String, csIdx: Int,
+                 tc: ThreadContext, args: Array<Any?>) {
+        val d = descriptorForClass(siteClass, csIdx, tc)
         /* Does the descriptor describe THESE arguments? Arity says the
          * descriptor is the wrong one; a type clash with matching arity says
          * the arguments are wrong. Distinguishing those is the whole
@@ -97,6 +97,24 @@ object Dispatch {
                     " flags=" + d.argFlags.joinToString(",") + " nargs=" + args.size +
                     " types=" + args.joinToString(",") { x -> x?.javaClass?.simpleName ?: "null" } +
                     " cu=" + tc.frame.codeRef.staticInfo.compUnit.javaClass.name)
+                val emitter = Throwable().stackTrace.getOrNull(1)
+                System.err.println("  emitter=" + emitter?.className + "." + emitter?.methodName +
+                    " tcFrame=" + (tc.frame.codeRef?.name ?: "<anon>") +
+                    "/" + tc.frame.codeRef?.staticInfo?.compUnit?.javaClass?.simpleName?.take(8))
+                /* The frame register vs the real Java stack: descriptorFor
+                 * trusts tc.curFrame, so when these disagree, whoever left
+                 * curFrame stale is the actual bug. */
+                var f = tc.curFrame
+                var i = 0
+                val chain = StringBuilder("curFrame chain:")
+                while (f != null && i < 10) {
+                    chain.append(' ').append(f.codeRef?.name ?: "<anon>")
+                        .append('[').append(f.codeRef?.staticInfo?.compUnit?.javaClass?.simpleName?.take(8) ?: "?")
+                        .append(']')
+                    f = f.caller
+                    i += 1
+                }
+                System.err.println(chain)
                 Throwable("dispatch entry bad").printStackTrace()
             }
         }
@@ -178,6 +196,16 @@ object Dispatch {
         dispatchUncached(tc, name, descriptorFor(tc, csIdx), args)
     }
 
+    /** The wide road with the emitting class passed explicitly (trailing,
+     *  so emission appends one ldc); see [descriptorForClass]. The
+     *  (tc-frame)-trusting overload above stays for classfiles emitted
+     *  before the class argument existed (the bootstrap stage jars). */
+    @JvmStatic
+    fun dispatchWide(name: String, csIdx: Int, tc: ThreadContext, args: Array<Any?>,
+                     siteClass: Class<*>) {
+        dispatchUncached(tc, name, descriptorForClass(siteClass, csIdx, tc), args)
+    }
+
     /** A dispatch with no callsite to install anything at. */
     @JvmStatic
     fun dispatchUncached(tc: ThreadContext, name: String, descriptor: CallSiteDescriptor,
@@ -199,6 +227,33 @@ object Dispatch {
         else
             Ops.emptyCallSite
 
+    /**
+     * The callsite-descriptor table of each compilation-unit class,
+     * resolved from the class itself rather than from tc.curFrame: the
+     * frame register can be stale at a dispatch (a frame that exited
+     * through dieInternal-in-the-catch-arm, or one packed into a
+     * continuation), and a csIdx resolved against the wrong unit's table
+     * yields an unrelated descriptor -- seen as impossible arity/type
+     * skew under race/hyper loads. Descriptors are pure static shape
+     * (flags and names), and getCallSites() builds them from constants
+     * on a bare instance, so caching per Class pins nothing run-owned.
+     */
+    private val siteTables = object : ClassValue<Array<org.raku.nqp.runtime.CallSiteDescriptor>>() {
+        override fun computeValue(type: Class<*>): Array<org.raku.nqp.runtime.CallSiteDescriptor> =
+            (type.getDeclaredConstructor().newInstance()
+                as org.raku.nqp.runtime.CompilationUnit).getCallSites()
+    }
+
+    private val oldDescRoad = System.getenv("NQP_DISPATCH_OLDDESC") != null
+
+    private fun descriptorForClass(siteClass: Class<*>, csIdx: Int, tc: ThreadContext): CallSiteDescriptor =
+        if (csIdx < 0)
+            Ops.emptyCallSite
+        else if (oldDescRoad)
+            tc.frame.codeRef.staticInfo.compUnit.callSites!![csIdx]
+        else
+            siteTables.get(siteClass)[csIdx]
+
     /** The dispatch whose callbacks are currently running. */
     @JvmStatic
     fun currentRecording(tc: ThreadContext): DispatchRecord {
@@ -217,6 +272,7 @@ object Dispatch {
         val chain = if (trace) ArrayList<String>() else null
         tc.dispatchRecords.add(record)
         try {
+            try {
             var callback: DispatchCallback
             var capture: SixModelObject = record.initialCapture
             if (bindFailureOf != null) {
@@ -275,7 +331,27 @@ object Dispatch {
                 bindFailureOf.program!!.bindFailureProgram = program
             else if (site != null && !record.doNotInstall)
                 site.install(program)
-            realize(tc, record, program.outcome)
+            } catch (sse: org.raku.nqp.runtime.SaveStackException) {
+                /* A continuation capture is crossing this recording. The
+                 * recording cannot survive it -- this very Java frame is
+                 * not part of the continuation -- so a resumed callback
+                 * would hold captures of a dead recording and die far
+                 * away in a dispatcher syscall. Refuse here, loudly, the
+                 * way MoarVM refuses captures across a dispatch. */
+                if (System.getenv("NQP_DISPATCH_DEBUG") != null) {
+                    System.err.println("CAPTURE ACROSS RECORDING of " +
+                        (record.currentDispatcher?.id ?: dispatcher?.id ?: "?") +
+                        " on " + Thread.currentThread().name)
+                    Throwable("capture across recording").printStackTrace()
+                }
+                throw ExceptionHandling.dieInternal(tc,
+                    "Cannot capture a continuation across a dispatch recording (" +
+                    (record.currentDispatcher?.id ?: dispatcher?.id ?: "?") + ")")
+            }
+            /* The outcome invocation runs outside the refusal region: the
+             * recording has ended, so a capture through the invoked code
+             * crosses nothing that validation depends on. */
+            realize(tc, record, record.program!!.outcome)
         }
         finally {
             tc.dispatchRecords.removeAt(tc.dispatchRecords.size - 1)
