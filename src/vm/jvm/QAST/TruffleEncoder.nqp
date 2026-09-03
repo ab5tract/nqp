@@ -47,7 +47,8 @@ class QAST::TruffleEncoder {
     # yield of a tag group still wants an NQP_CODE_ALSO run.
     my $extra_ops := 'bind call callmethod callstatic chain chainstatic
         control defor dispatch getlexouter handle handlepayload hash if
-        ifnull locallifetime null p6assign p6decontrv p6decontrv_6c
+        ifnull list list_i list_n list_s locallifetime null p6assign
+        p6decontrv p6decontrv_6c
         repeat_until repeat_while stmt stmts unless until while';
 
     # Node kinds the encoder handles outside the op table.
@@ -587,6 +588,10 @@ class QAST::TruffleEncoder {
         op3('iterkey_s', 156, $T_STR, 'o');
         op3('splice', 157, $T_OBJ, 'ooii');
         op3('how', 158, $T_OBJ, 'o');
+        op3('hlllist', 139, $T_OBJ, '');
+        op3('bootintarray', 142, $T_OBJ, '');
+        op3('bootnumarray', 143, $T_OBJ, '');
+        op3('bootstrarray', 144, $T_OBJ, '');
         1
     }
 
@@ -1103,6 +1108,41 @@ class QAST::TruffleEncoder {
         # 139-147) are still in NqpOps.java, so re-landing it means
         # restoring this branch plus its table rows -- but not before that
         # binder interaction is understood.
+        if $name eq 'list' || $name eq 'list_i'
+            || $name eq 'list_n' || $name eq 'list_s' {
+            # The list constructors, the same desugar Compiler.nqp uses:
+            # create the array type into a scratch local, then push each
+            # child into it. `hash` is DELIBERATELY not here -- it alone
+            # reproduces the BOOTSTRAP binder bug (bisected 2026-09-03 to
+            # OperatorProperties.new); the list family was tested apart
+            # from it and was never implicated.
+            my @children := $op.list;
+            my int $items := nqp::elems(@children);
+            my int $type_op := $name eq 'list_i' ?? 142
+                !! $name eq 'list_n' ?? 143
+                !! $name eq 'list_s' ?? 144 !! 139;
+            my int $push_op := $name eq 'list_i' ?? 145
+                !! $name eq 'list_n' ?? 146
+                !! $name eq 'list_s' ?? 147 !! 61;
+            my int $elem_want := $name eq 'list_i' ?? $T_INT
+                !! $name eq 'list_n' ?? $T_NUM
+                !! $name eq 'list_s' ?? $T_STR !! $T_OBJ;
+            my int $tmp := new_elocal(%e, $T_OBJ);
+            epush(%e, $W_STMTS);
+            epush(%e, $items + 2);
+            epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $tmp);
+            epush(%e, $W_OPCALL); epush(%e, 58); epush(%e, 1);
+            epush(%e, $W_OPCALL); epush(%e, $type_op); epush(%e, 0);
+            my int $i := 0;
+            while $i < $items {
+                epush(%e, $W_OPCALL); epush(%e, $push_op); epush(%e, 2);
+                epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+                self.encode_child(@children[$i], %e, $elem_want);
+                $i++;
+            }
+            epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+            return $T_OBJ;
+        }
         if $name eq 'call' || $name eq 'callstatic' {
             return self.encode_call($op, %e);
         }
