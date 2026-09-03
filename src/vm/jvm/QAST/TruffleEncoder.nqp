@@ -38,17 +38,17 @@ class QAST::TruffleEncoder {
     # The ops the survey counts as covered are DERIVED from the encoder's
     # own emit table plus the names encode_op special-cases, never listed
     # by hand: a hand-written list drifts both ways, and did. Before
-    # 2026-09-02 it still claimed `for`/`repeat_while`/`repeat_until`,
-    # which this encoder has never encoded, while missing every op added
+    # 2026-09-02 it still claimed `for` and, for a year, the repeat
+    # loops the encoder had never encoded, while missing every op added
     # since Phase 1 -- so the report under-counted exactly the coverage
     # Phase 5's deletion gate is waiting on. Being in the table means the
     # op has an encoding, not that every use of it encodes (arity and
     # shape still bail), so the survey stays an upper bound and the honest
     # yield of a tag group still wants an NQP_CODE_ALSO run.
     my $extra_ops := 'bind call callmethod callstatic chain chainstatic
-        control defor dispatch getlexouter handle handlepayload if ifnull
-        locallifetime null p6assign p6decontrv p6decontrv_6c stmt stmts
-        unless until while';
+        control defor dispatch getlexouter handle handlepayload hash if
+        ifnull locallifetime null p6assign p6decontrv p6decontrv_6c
+        repeat_until repeat_while stmt stmts unless until while';
 
     # Node kinds the encoder handles outside the op table.
     my $covered_nodes := 'QAST::ParamTypeCheck';
@@ -587,15 +587,41 @@ class QAST::TruffleEncoder {
 
     method encode_block($node, $block, $comp, :$comp_mode) {
         run_init();
-        return '' unless $code_run;
-        return '' if $comp_mode && !$code_precomp;
-        my str $name := $node.name;
-        return '' if $code_skip_anon && $name eq '';
-        return '' if nqp::existskey(%code_skip, $name);
-        if $code_only_set {
-            return '' unless nqp::existskey(%code_only, $name);
+        # NQP_CODE_WHY traces the encode/refuse decision per block, with the
+        # inputs that decide it. A block that encodes once and refuses the
+        # next time commits its lexicals and then lets the bytecode path
+        # declare them again; this is how that is caught.
+        my int $why := nqp::existskey(nqp::getenvhash(), 'NQP_CODE_WHY') ?? 1 !! 0;
+        my str $who := $node.name eq '' ?? '<anon ' ~ $node.cuid ~ '>' !! $node.name;
+        sub trace(str $verdict) {
+            nqp::say('code why ' ~ $who ~ ' cuid ' ~ $node.cuid
+                ~ ' blocktype ' ~ $node.blocktype
+                ~ ' comp_mode ' ~ ($comp_mode ?? 1 !! 0)
+                ~ ' exith ' ~ ($node.has_exit_handler ?? 1 !! 0)
+                ~ ' -> ' ~ $verdict) if $why;
         }
-        return '' if $node.has_exit_handler || $node.blocktype eq 'raw';
+        if !$code_run { trace('no: code_run off'); return '' }
+        if $comp_mode && !$code_precomp { trace('no: comp_mode'); return '' }
+        my str $name := $node.name;
+        if $code_skip_anon && $name eq '' { trace('no: skip_anon'); return '' }
+        if nqp::existskey(%code_skip, $name) { trace('no: skip'); return '' }
+        if $code_only_set && !nqp::existskey(%code_only, $name) {
+            trace('no: not in only'); return ''
+        }
+        if $node.has_exit_handler { trace('no: exit handler'); return '' }
+        if $node.blocktype eq 'raw' { trace('no: raw blocktype'); return '' }
+        # An immediate block is compiled AND called by its enclosing block,
+        # which is why encode_node already refuses one as a child
+        # ('block immediate'). Encoding one as a target is the same
+        # entanglement seen from the other end: the block commits its
+        # lexicals here, then the enclosing road declares them again and
+        # the compiler dies ("Lexical '&parent' already declared", found
+        # 2026-09-02 when list/hash coverage first made a generated BEGIN
+        # block encodable). BEGIN bodies run once at compile time, so this
+        # costs nothing worth having.
+        if $node.blocktype eq 'immediate' || $node.blocktype eq 'immediate_static' {
+            trace('no: immediate blocktype'); return ''
+        }
 
         my %e := nqp::hash(
             'code', nqp::list(), 'pool', nqp::list(), 'pooli', nqp::hash(),
@@ -621,6 +647,7 @@ class QAST::TruffleEncoder {
             # compile.
             my str $msg := nqp::getmessage($err);
             nqp::rethrow($err) if nqp::index($msg, 'code-bail') < 0;
+            trace('no: bail ' ~ $msg);
             if $code_bail_p {
                 nqp::say('code bail: '
                     ~ ($name eq '' ?? '<anon ' ~ $node.cuid ~ '>' !! $name)
@@ -636,9 +663,12 @@ class QAST::TruffleEncoder {
         my @ltypes := %e<ltypes>;
         nqp::bindpos(@code, 2, nqp::elems(@ltypes));
         nqp::splice(@code, @ltypes, 3, 0);
+        trace('YES: committing ' ~ nqp::elems(%e<decls>) ~ ' decls');
         for %e<decls> -> $d {
             my str $kind := $d[0];
             my $var := $d[1];
+            nqp::say('code decl ' ~ $node.cuid ~ ' ' ~ $kind ~ ' ' ~ $var.name)
+                if $why;
             if $kind eq 'lex' { $block.add_lexical($var) }
             elsif $kind eq 'lexref' { $block.add_lexicalref($var) }
             elsif $kind eq 'static' { $block.add_lexical($var, :is_static) }
@@ -953,7 +983,13 @@ class QAST::TruffleEncoder {
         if $name eq 'if' || $name eq 'unless' {
             return self.encode_if($op, %e, $want, $name eq 'unless' ?? 1 !! 0);
         }
-        if $name eq 'while' || $name eq 'until' {
+        if $name eq 'while' || $name eq 'until'
+            || $name eq 'repeat_while' || $name eq 'repeat_until' {
+            # repeat_* is the same loop with the body run once ahead
+            # of the first test; the wire form has carried that flag
+            # since Phase 3 and nothing set it until now.
+            my int $repeat := nqp::eqat($name, 'repeat_', 0) ?? 1 !! 0;
+            my int $is_until := ($name eq 'until' || $name eq 'repeat_until') ?? 1 !! 0;
             my int $nohandler := 0;
             my @operands;
             for @($op) {
@@ -964,8 +1000,8 @@ class QAST::TruffleEncoder {
             cbail('loop shape') unless nqp::elems(@operands) == 2;
             if $nohandler {
                 epush(%e, $W_LOOP);
-                epush(%e, $name eq 'until' ?? 1 !! 0);
-                epush(%e, 0);
+                epush(%e, $is_until);
+                epush(%e, $repeat);
                 my int $ct_at := nqp::elems(%e<code>);
                 epush(%e, 0);
                 my int $condt := self.encode_node(@operands[0], %e, $T_ANY);
@@ -983,8 +1019,13 @@ class QAST::TruffleEncoder {
             my int $outer := %e<hidx>;
             my int $lid := &*REGISTER_UNWIND_HANDLER($outer, $EX_CAT_LAST, :ex_obj(1));
             my int $nrid := &*REGISTER_UNWIND_HANDLER($lid, $EX_CAT_NEXT +| $EX_CAT_REDO, :ex_obj(1));
+            # W_LOOPH has no repeat field: a post-test loop that also
+            # carries last/next/redo regions would have to run its body
+            # once inside those regions, and getting a first-iteration
+            # redo wrong is worse than not encoding it.
+            cbail('repeat loop with handlers') if $repeat;
             epush(%e, $W_LOOPH);
-            epush(%e, $name eq 'until' ?? 1 !! 0);
+            epush(%e, $is_until);
             my int $ct_at := nqp::elems(%e<code>);
             epush(%e, 0);
             epush(%e, $lid);
@@ -1015,6 +1056,19 @@ class QAST::TruffleEncoder {
                 :value($name eq 'p6decontrv_6c' ?? 1 !! 0)), %e, $T_INT);
             return $T_OBJ;
         }
+        # list/hash/list_i/list_n/list_s DELIBERATELY absent. A desugar for
+        # them (create the type, push into a scratch local, exactly as
+        # Compiler.nqp does) was written and reverted on 2026-09-02: it is
+        # correct in isolation -- construction, nesting and the typed
+        # variants all match bytecode -- but with it in BOOTSTRAP the
+        # signature binder mis-handles a flattened named argument
+        # ("Unexpected named argument '1' passed", from
+        # `OperatorProperties.new(|%value, ...)` while compiling CORE.c;
+        # rebuilding BOOTSTRAP engine-free makes it go away). The ops it
+        # needs (hlllist/hllhash/boot*array/push_i/push_n/push_s, ids
+        # 139-147) are still in NqpOps.java, so re-landing it means
+        # restoring this branch plus its table rows -- but not before that
+        # binder interaction is understood.
         if $name eq 'call' || $name eq 'callstatic' {
             return self.encode_call($op, %e);
         }
