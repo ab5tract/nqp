@@ -3799,7 +3799,13 @@ class QAST::CompilerJAST {
             my $name := $var.name;
             my $type := rttype_from_typeobj($var.returns);
             if nqp::existskey(%!lexical_types, $name) || nqp::existskey(%!lexicalref_types, $name) {
-                nqp::die("Lexical '$name' already declared");
+                # Name the block: "already declared" with no scope named is
+                # unchaseable when the first declaration came from another
+                # compilation road (the code engine commits a block's
+                # lexicals itself when it encodes the block).
+                nqp::die("Lexical '$name' already declared in block '"
+                    ~ ($!qast.name eq '' ?? '<anon>' !! $!qast.name)
+                    ~ "' (cuid " ~ $!qast.cuid ~ ")");
             }
             %!lexical_returns{$name} := $var.returns;
             %!lexical_types{$name} := $type;
@@ -3812,7 +3818,13 @@ class QAST::CompilerJAST {
             my $name := $var.name;
             my $type := rttype_from_typeobj($var.returns);
             if nqp::existskey(%!lexical_types, $name) || nqp::existskey(%!lexicalref_types, $name) {
-                nqp::die("Lexical '$name' already declared");
+                # Name the block: "already declared" with no scope named is
+                # unchaseable when the first declaration came from another
+                # compilation road (the code engine commits a block's
+                # lexicals itself when it encodes the block).
+                nqp::die("Lexical '$name' already declared in block '"
+                    ~ ($!qast.name eq '' ?? '<anon>' !! $!qast.name)
+                    ~ "' (cuid " ~ $!qast.cuid ~ ")");
             }
             %!lexicalref_types{$name} := $type;
             %!lexical_idxs{$name}     := nqp::elems(@!lexical_names[$RT_OBJ]);
