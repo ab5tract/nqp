@@ -68,9 +68,12 @@ final class NqpOps {
         OP_ATPOS_I = 124, OP_ATPOS_N = 125, OP_ATPOS_S = 126, OP_BINDPOS_I = 127,
         OP_BINDPOS_N = 128, OP_BINDPOS_S = 129, OP_ATKEY_I = 130, OP_ATKEY_N = 131,
         OP_ATKEY_S = 132, OP_BINDKEY_I = 133, OP_BINDKEY_N = 134, OP_BINDKEY_S = 135,
-        OP_ISCONT_I = 136, OP_ISCONT_N = 137, OP_ISCONT_S = 138;
+        OP_ISCONT_I = 136, OP_ISCONT_N = 137, OP_ISCONT_S = 138,
+        OP_HLLLIST = 139, OP_HLLHASH = 140,
+        OP_BOOTARRAY = 141, OP_BOOTINTARRAY = 142, OP_BOOTNUMARRAY = 143,
+        OP_BOOTSTRARRAY = 144, OP_PUSH_I = 145, OP_PUSH_N = 146, OP_PUSH_S = 147;
 
-    static final int OP_COUNT = 139;
+    static final int OP_COUNT = 148;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -222,6 +225,15 @@ final class NqpOps {
             case OP_BINDKEY_I: return Ops.bindkey_i(smo(a[0]), str(a[1]), lng(a[2]), tc);
             case OP_BINDKEY_N: return Ops.bindkey_n(smo(a[0]), str(a[1]), dbl(a[2]), tc);
             case OP_BINDKEY_S: return Ops.bindkey_s(smo(a[0]), str(a[1]), str(a[2]), tc);
+            case OP_HLLLIST: return cu.hllConfig.listType;
+            case OP_BOOTARRAY: return Ops.bootarray(tc);
+            case OP_BOOTINTARRAY: return Ops.bootintarray(tc);
+            case OP_BOOTNUMARRAY: return Ops.bootnumarray(tc);
+            case OP_BOOTSTRARRAY: return Ops.bootstrarray(tc);
+            case OP_PUSH_I: return Ops.push_i(smo(a[0]), lng(a[1]), tc);
+            case OP_PUSH_N: return Ops.push_n(smo(a[0]), dbl(a[1]), tc);
+            case OP_PUSH_S: return Ops.push_s(smo(a[0]), str(a[1]), tc);
+            case OP_HLLHASH: return cu.hllConfig.hashType;
             case OP_ISCONT_I: return Ops.iscont_i(smo(a[0]));
             case OP_ISCONT_N: return Ops.iscont_n(smo(a[0]));
             case OP_ISCONT_S: return Ops.iscont_s(smo(a[0]));
