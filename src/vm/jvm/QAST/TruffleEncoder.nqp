@@ -68,6 +68,13 @@ class QAST::TruffleEncoder {
         for nqp::split(' ', subst_ws($extra_ops)) { %covered{'op:' ~ $_} := 1 }
         for nqp::split(' ', subst_ws($scopes))    { %covered{'var:' ~ $_} := 1 }
         for nqp::split(' ', subst_ws($covered_nodes)) { %covered{'node:' ~ $_} := 1 }
+        # Ops we reach through their registered desugar count as covered:
+        # the survey walks the ORIGINAL tree, so without this it reports a
+        # bail for an op the encoder now encodes (verified: with the knob
+        # set, op:p6callmethodhow disappears from NQP_CODE_BAIL output).
+        if nqp::existskey(%env, 'NQP_CODE_DESUGAR') {
+            for nqp::split(',', %env<NQP_CODE_DESUGAR>) { %covered{'op:' ~ $_} := 1 }
+        }
         if nqp::existskey(%env, 'NQP_CODE_ALSO') {
             for nqp::split(',', %env<NQP_CODE_ALSO>) { %covered{$_} := 1 }
         }
@@ -355,6 +362,7 @@ class QAST::TruffleEncoder {
     my int $code_bail_p := 0;
     my int $code_leaf := 0;
     my int $code_precomp := 0;
+    my %code_desugar;
     my int $code_skip_anon := 0;
     my int $code_only_set := 0;
     my %code_skip;
@@ -370,6 +378,9 @@ class QAST::TruffleEncoder {
         $code_bail_p   := nqp::existskey(%env, 'NQP_CODE_BAIL') ?? 1 !! 0;
         $code_leaf     := nqp::existskey(%env, 'NQP_CODE_LEAF') ?? 1 !! 0;
         $code_precomp  := nqp::existskey(%env, 'NQP_CODE_PRECOMP') ?? 1 !! 0;
+        if nqp::existskey(%env, 'NQP_CODE_DESUGAR') {
+            for nqp::split(',', %env<NQP_CODE_DESUGAR>) { %code_desugar{$_} := 1 }
+        }
         $code_skip_anon := nqp::existskey(%env, 'NQP_CODE_SKIP_ANON') ?? 1 !! 0;
         if nqp::existskey(%env, 'NQP_CODE_SKIP') {
             for nqp::split(',', %env<NQP_CODE_SKIP>) { %code_skip{$_} := 1 }
@@ -1345,6 +1356,24 @@ class QAST::TruffleEncoder {
         my int $nargs := nqp::elems(@($op));
         my $entry := nqp::atkey(%emit_ops, $name ~ '/' ~ $nargs);
         $entry := nqp::atkey(%emit_ops, $name) if nqp::isnull($entry);
+        if nqp::isnull($entry) && nqp::existskey(%code_desugar, $name) {
+            # No encoding for this op, but the HLL registered a desugar for
+            # it (src/vm/jvm/Raku/Ops.nqp publishes them). Apply it and
+            # encode what it produces -- the desugar is an opaque value
+            # here, so nothing about it is reproduced or read.
+            #
+            # Opt-in per op name (NQP_CODE_DESUGAR=a,b) precisely because a
+            # desugar may REWRITE the node it is handed instead of
+            # returning a fresh tree -- nqp's own assign_i does -- and a
+            # later bail would then leave the bytecode path a mutated tree.
+            my $reg := nqp::gethllsym('nqp', 'CODE_OP_DESUGARS');
+            unless nqp::isnull($reg) {
+                my $desugar := nqp::atkey($reg, $name);
+                unless nqp::isnull($desugar) {
+                    return self.encode_node($desugar($op), %e, $want);
+                }
+            }
+        }
         cbail('op ' ~ $name) if nqp::isnull($entry);
         my str $args := $entry[2];
         cbail('op ' ~ $name ~ ' arity ' ~ $nargs) unless $nargs == nqp::chars($args);
