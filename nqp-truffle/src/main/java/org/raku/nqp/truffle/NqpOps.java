@@ -73,9 +73,10 @@ final class NqpOps {
         OP_BOOTARRAY = 141, OP_BOOTINTARRAY = 142, OP_BOOTNUMARRAY = 143,
         OP_BOOTSTRARRAY = 144, OP_PUSH_I = 145, OP_PUSH_N = 146, OP_PUSH_S = 147,
         OP_HLLBOOL = 148, OP_ISTYPE_ND = 149, OP_WHO = 150, OP_GETPAYLOAD = 151,
-        OP_ITERATOR = 152, OP_ITERVAL = 153, OP_ASSIGN = 154, OP_P6BINDASSERT = 155;
+        OP_ITERATOR = 152, OP_ITERVAL = 153, OP_ASSIGN = 154, OP_P6BINDASSERT = 155,
+        OP_ITERKEY_S = 156, OP_SPLICE = 157, OP_HOW = 158;
 
-    static final int OP_COUNT = 156;
+    static final int OP_COUNT = 159;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -228,6 +229,9 @@ final class NqpOps {
             case OP_BINDKEY_N: return Ops.bindkey_n(smo(a[0]), str(a[1]), dbl(a[2]), tc);
             case OP_BINDKEY_S: return Ops.bindkey_s(smo(a[0]), str(a[1]), str(a[2]), tc);
             case OP_HLLBOOL: return Ops.hllbool(lng(a[0]), tc);
+            case OP_ITERKEY_S: return Ops.iterkey_s(smo(a[0]), tc);
+            case OP_SPLICE: return Ops.splice(smo(a[0]), smo(a[1]), lng(a[2]), lng(a[3]), tc);
+            case OP_HOW: return Ops.how(smo(a[0]), tc);
             case OP_ISTYPE_ND: return Ops.istype_nd(smo(a[0]), smo(a[1]), tc);
             case OP_WHO: return Ops.who(smo(a[0]), tc);
             case OP_GETPAYLOAD: return Ops.getpayload(smo(a[0]), tc);
