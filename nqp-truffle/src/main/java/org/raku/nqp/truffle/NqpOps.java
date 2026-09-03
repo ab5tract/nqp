@@ -71,9 +71,11 @@ final class NqpOps {
         OP_ISCONT_I = 136, OP_ISCONT_N = 137, OP_ISCONT_S = 138,
         OP_HLLLIST = 139, OP_HLLHASH = 140,
         OP_BOOTARRAY = 141, OP_BOOTINTARRAY = 142, OP_BOOTNUMARRAY = 143,
-        OP_BOOTSTRARRAY = 144, OP_PUSH_I = 145, OP_PUSH_N = 146, OP_PUSH_S = 147;
+        OP_BOOTSTRARRAY = 144, OP_PUSH_I = 145, OP_PUSH_N = 146, OP_PUSH_S = 147,
+        OP_HLLBOOL = 148, OP_ISTYPE_ND = 149, OP_WHO = 150, OP_GETPAYLOAD = 151,
+        OP_ITERATOR = 152, OP_ITERVAL = 153, OP_ASSIGN = 154, OP_P6BINDASSERT = 155;
 
-    static final int OP_COUNT = 148;
+    static final int OP_COUNT = 156;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -225,6 +227,18 @@ final class NqpOps {
             case OP_BINDKEY_I: return Ops.bindkey_i(smo(a[0]), str(a[1]), lng(a[2]), tc);
             case OP_BINDKEY_N: return Ops.bindkey_n(smo(a[0]), str(a[1]), dbl(a[2]), tc);
             case OP_BINDKEY_S: return Ops.bindkey_s(smo(a[0]), str(a[1]), str(a[2]), tc);
+            case OP_HLLBOOL: return Ops.hllbool(lng(a[0]), tc);
+            case OP_ISTYPE_ND: return Ops.istype_nd(smo(a[0]), smo(a[1]), tc);
+            case OP_WHO: return Ops.who(smo(a[0]), tc);
+            case OP_GETPAYLOAD: return Ops.getpayload(smo(a[0]), tc);
+            case OP_ITERATOR: return Ops.iter(smo(a[0]), tc);
+            case OP_ITERVAL: return Ops.iterval(smo(a[0]), tc);
+            case OP_ASSIGN: return Ops.assign(smo(a[0]), smo(a[1]), tc);
+            case OP_P6BINDASSERT: {
+                try {
+                    return Rak.P6BINDASSERT.invoke(smo(a[0]), smo(a[1]), tc);
+                } catch (Throwable t) { throw sneaky(t); }
+            }
             case OP_HLLLIST: return cu.hllConfig.listType;
             case OP_BOOTARRAY: return Ops.bootarray(tc);
             case OP_BOOTINTARRAY: return Ops.bootintarray(tc);
@@ -605,6 +619,7 @@ final class NqpOps {
         static final java.lang.invoke.MethodHandle P6BOX_S;
         static final java.lang.invoke.MethodHandle P6DEFINITE;
         static final java.lang.invoke.MethodHandle P6BINDATTRINVRES;
+        static final java.lang.invoke.MethodHandle P6BINDASSERT;
         static final java.lang.invoke.MethodHandle P6TYPECHECKRV;
         static final java.lang.invoke.MethodHandle P6DECONTRV_RT;
         static {
@@ -628,6 +643,8 @@ final class NqpOps {
                     java.lang.invoke.MethodType.methodType(SMO, String.class, TC));
                 P6BINDATTRINVRES = l.findStatic(c, "p6bindattrinvres",
                     java.lang.invoke.MethodType.methodType(SMO, SMO, SMO, String.class, SMO, TC));
+                P6BINDASSERT = l.findStatic(c, "p6bindassert",
+                    java.lang.invoke.MethodType.methodType(SMO, SMO, SMO, TC));
                 P6TYPECHECKRV = l.findStatic(c, "p6typecheckrv",
                     java.lang.invoke.MethodType.methodType(SMO, SMO, SMO, SMO, TC));
                 P6DECONTRV_RT = l.findStatic(c, "p6decontrv_rt",
