@@ -243,7 +243,12 @@ final class NqpOps {
                     return Rak.P6BINDASSERT.invoke(smo(a[0]), smo(a[1]), tc);
                 } catch (Throwable t) { throw sneaky(t); }
             }
-            case OP_HLLLIST: return cu.hllConfig.listType;
+            // Resolve as Ops.hlllist/hllhash do: off the RUNNING frame's
+            // compilation unit, not whichever unit handed the engine this
+            // program. Taking it from `cu` can build a container of the
+            // wrong HLL's type. (Found while bisecting the hash/list binder
+            // bug; not that bug's cause, but wrong on its own terms.)
+            case OP_HLLLIST: return Ops.hlllist(tc);
             case OP_BOOTARRAY: return Ops.bootarray(tc);
             case OP_BOOTINTARRAY: return Ops.bootintarray(tc);
             case OP_BOOTNUMARRAY: return Ops.bootnumarray(tc);
@@ -251,7 +256,7 @@ final class NqpOps {
             case OP_PUSH_I: return Ops.push_i(smo(a[0]), lng(a[1]), tc);
             case OP_PUSH_N: return Ops.push_n(smo(a[0]), dbl(a[1]), tc);
             case OP_PUSH_S: return Ops.push_s(smo(a[0]), str(a[1]), tc);
-            case OP_HLLHASH: return cu.hllConfig.hashType;
+            case OP_HLLHASH: return Ops.hllhash(tc);
             case OP_ISCONT_I: return Ops.iscont_i(smo(a[0]));
             case OP_ISCONT_N: return Ops.iscont_n(smo(a[0]));
             case OP_ISCONT_S: return Ops.iscont_s(smo(a[0]));
