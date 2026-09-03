@@ -567,6 +567,15 @@ class QAST::TruffleEncoder {
         op3('iterval', 153, $T_OBJ, 'o');
         op3('assign', 154, $T_OBJ, 'oo');
         op3('p6bindassert', 155, $T_OBJ, 'oo');
+        # Second sole-blocker batch off the same CORE.c report. push_i/_n/_s
+        # are the bare ops only: the list_i/list_n/list_s CONSTRUCTORS that
+        # would also use them stay reverted (see the note in encode_op).
+        op3('push_i', 145, $T_INT, 'oi');
+        op3('push_n', 146, $T_NUM, 'on');
+        op3('push_s', 147, $T_STR, 'os');
+        op3('iterkey_s', 156, $T_STR, 'o');
+        op3('splice', 157, $T_OBJ, 'ooii');
+        op3('how', 158, $T_OBJ, 'o');
         1
     }
 
