@@ -63,6 +63,14 @@ object CodeEngines {
     /** Traces each engine-run block entry as `code> <name>`. */
     private val trace: Boolean = System.getenv("NQP_CODE_TRACE") != null
 
+    /** NQP_CODE_TRACE_STACK=name: a Java stack, once, at the first entry
+     *  of the block so named -- who is calling it. */
+    private val traceStack: String? = System.getenv("NQP_CODE_TRACE_STACK")
+    /** NQP_CODE_TRACE_STACK_AT=N: at every Nth entry rather than the first,
+     *  so a block hot in a loop is sampled from the loop, not from setup. */
+    private val traceStackAt: Long = System.getenv("NQP_CODE_TRACE_STACK_AT")?.toLongOrNull() ?: 1L
+    private val traceStackSeen = java.util.concurrent.atomic.AtomicLong()
+
     @JvmStatic
     fun get(): CodeEngine? = engine
 
@@ -96,6 +104,15 @@ object CodeEngines {
             " the truffle module is missing from the class path.")
         val program = programs.computeIfAbsent(encoded) { engine.compile(it) }
         if (trace) System.err.println("code> " + (cf.codeRef?.name ?: "<anon>"))
+        if (traceStack != null && cf.codeRef?.name == traceStack
+                && traceStackSeen.incrementAndGet() % traceStackAt == 0L) {
+            Throwable("code> $traceStack entered from").printStackTrace()
+        }
+        /* Let a dispatch that resolves to this block skip the stub next
+         * time (see StaticCodeInfo.engineTarget). One program per encoded
+         * string, so a later run can only write the same value. */
+        val sci = cf.codeRef?.staticInfo
+        if (sci != null && sci.engineTarget == null) sci.engineTarget = program
         engine.run(program, cu, tc, cf, csd, args ?: emptyArray())
     }
 

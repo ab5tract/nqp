@@ -49,6 +49,16 @@ class StaticCodeInfo(
     @JvmField var mhResume: MethodHandle? = null
 
     /**
+     * The code engine's compiled program for this block, once it has run
+     * once through [CodeEngines.codeRun]; null for a bytecode body or a
+     * block not yet entered. Typed loosely because nqp-runtime cannot see
+     * the engine's classes; it is a Truffle CallTarget. An engine-side
+     * dispatch that resolves to this code enters the target directly,
+     * building the frame the emitted stub would have built.
+     */
+    @JvmField @Volatile var engineTarget: Any? = null
+
+    /**
      * Method name for correlation with stack traces.
      */
     @JvmField var methodName: String? = null
