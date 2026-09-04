@@ -54,7 +54,7 @@ class QAST::TruffleEncoder {
     # Node kinds the encoder handles outside the op table.
     my $covered_nodes := 'QAST::ParamTypeCheck';
 
-    my $scopes := 'local lexical contextual attribute positional associative';
+    my $scopes := 'local lexical contextual attribute attributeref positional associative';
 
     sub init() {
         return 0 if $init_done;
@@ -1592,6 +1592,19 @@ class QAST::TruffleEncoder {
         my str $scope := $var.scope;
         my str $decl := $var.decl;
 
+        # A reference scope asked for in a NATIVE type devolves to the plain
+        # scope, because the only thing the caller can do with the reference
+        # is dereference it immediately. Compiler.nqp does exactly this
+        # ("we'd only de-ref right away anyway"); mirroring it here is what
+        # makes the common `my int $i; $i = ...` shapes encodable at all.
+        # A reference wanted as an OBJECT is a real reference object and
+        # still refuses -- that needs getattrref_*/getlexref_*.
+        if $decl eq '' && nqp::isnull($bindval)
+            && ($want == $T_INT || $want == $T_NUM || $want == $T_STR) {
+            $scope := 'lexical'   if $scope eq 'lexicalref';
+            $scope := 'attribute' if $scope eq 'attributeref';
+        }
+
         if $decl eq 'contvar' && $scope eq 'local' {
             # The declaration IS the expression: clone the prototype
             # container into the local unless something (a lowered
@@ -1692,6 +1705,25 @@ class QAST::TruffleEncoder {
             self.encode_child($var[1], %e, $T_OBJ);
             epush(%e, $W_SVAL); epush(%e, epool(%e, $name));
             self.encode_child($bindval, %e, $T_OBJ) unless nqp::isnull($bindval);
+            return $T_OBJ;
+        }
+        if $scope eq 'attributeref' {
+            # A reference to a NATIVE attribute, exactly as Compiler.nqp
+            # emits it: getattrref_<char>(object, class handle, name).
+            # Binding through a reference is not a thing the bytecode path
+            # allows either, and an object-typed attribute has no reference
+            # form.
+            cbail('attributeref bind') unless nqp::isnull($bindval);
+            cbail('attributeref shape') unless nqp::elems(@($var)) == 2;
+            my int $t := rt_of($var.returns);
+            cbail('attributeref to a non-native') if $t == $T_OBJ;
+            my int $id := $t == $T_INT ?? 159 !! $t == $T_NUM ?? 160
+                !! $t == $T_STR ?? 161 !! -1;
+            cbail('attributeref type') if $id < 0;
+            epush(%e, $W_OPCALL); epush(%e, $id); epush(%e, 3);
+            self.encode_child($var[0], %e, $T_OBJ);
+            self.encode_child($var[1], %e, $T_OBJ);
+            epush(%e, $W_SVAL); epush(%e, epool(%e, $name));
             return $T_OBJ;
         }
         if $scope eq 'positional' {
