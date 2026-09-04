@@ -61,6 +61,48 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         super(language, frameDescriptor);
     }
 
+    /** The wire program's length in words, set at parse; names the root in
+     *  compilation traces and decides whether it may compile at all. */
+    int programSize;
+
+    /** The block's name, learned at its first run (the wire carries none). */
+    volatile String blockName;
+
+    @Override
+    public String getName() {
+        String n = blockName;
+        return (n == null || n.isEmpty() ? "<anon>" : n) + "[" + programSize + "]";
+    }
+
+    /** What TraceCompilation prints for the call target. */
+    @Override
+    public String toString() {
+        return getName();
+    }
+
+    /**
+     * NQP_CODE_MAX_COMPILE: programs longer than this many wire words are
+     * never handed to the compiler. A TraceCompilation of the CORE.c
+     * compile found 114 roots (of 1650 compilations) failing with "code
+     * installation failed: code is too large" after a mean 6.4s of
+     * compiler time each -- 733s of the 1880s the run compiled at all --
+     * and such a root runs interpreted afterwards regardless, so refusing
+     * up front costs it nothing and frees the compiler for the hot roots
+     * queued behind it. The encoder-side counterpart (leave such blocks to
+     * bytecode) is the durable fix; this is the runtime's guard.
+     */
+    static final int MAX_COMPILE_SIZE;
+    static {
+        String v = System.getenv("NQP_CODE_MAX_COMPILE");
+        MAX_COMPILE_SIZE = v == null ? Integer.MAX_VALUE : Integer.parseInt(v);
+    }
+
+    @Override
+    protected boolean prepareForCompilation(boolean rootCompilation, int compilationTier,
+                                            boolean lastTier) {
+        return programSize <= MAX_COMPILE_SIZE;
+    }
+
     private static ThreadContext tc(VirtualFrame f) {
         return (ThreadContext) f.getArguments()[ARG_TC];
     }
@@ -261,7 +303,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class NullC {
         @Specialization
         static Object doNull(VirtualFrame f) {
-            return org.raku.nqp.runtime.Ops.createNull(tc(f));
+            return NqpOps.nullConstant(tc(f));
         }
     }
 
