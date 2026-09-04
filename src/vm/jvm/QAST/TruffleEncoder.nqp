@@ -671,6 +671,19 @@ class QAST::TruffleEncoder {
         op3('stat', 233, $T_INT, 'si');
         op3('readfh', 234, $T_OBJ, 'ooi');
         op3('time', 235, $T_INT, '');
+        op3('atomicadd_i', 236, $T_INT, 'oi');
+        op3('atposnd_i', 237, $T_INT, 'oo');
+        op3('ordfirst', 238, $T_INT, 's');
+        op3('cmp_n', 239, $T_INT, 'nn');
+        op3('cmp_s', 240, $T_INT, 'ss');
+        op3('cmp_I', 241, $T_INT, 'oo');
+        op3('div_I', 242, $T_OBJ, 'ooo');
+        op3('replace', 243, $T_STR, 'siis');
+        op3('setwho', 244, $T_OBJ, 'oo');
+        op3('findmethod', 245, $T_OBJ, 'os');
+        op3('inf', 246, $T_NUM, '');
+        op3('neginf', 247, $T_NUM, '');
+        op3('nan', 248, $T_NUM, '');
         op3('hlllist', 139, $T_OBJ, '');
         op3('bootintarray', 142, $T_OBJ, '');
         op3('bootnumarray', 143, $T_OBJ, '');
@@ -1211,15 +1224,23 @@ class QAST::TruffleEncoder {
                 else { nqp::push(@operands, $_) }
             }
             cbail('loop shape') unless nqp::elems(@operands) == 2;
+            # A body that takes the condition (`while $x -> $y {}`): the
+            # bytecode path binds the condition into an __IM_ local and
+            # calls the body with it. Here the condition child becomes
+            # [bind scratch local; read it] and the body a call of the
+            # block with that local, through the same road if/with use.
+            my int $im := needs_cond_passed(@operands[1]);
+            my int $im_tmp := $im ?? new_elocal(%e, $T_OBJ) !! 0;
             if $nohandler {
                 epush(%e, $W_LOOP);
                 epush(%e, $is_until);
                 epush(%e, $repeat);
                 my int $ct_at := nqp::elems(%e<code>);
                 epush(%e, 0);
-                my int $condt := self.encode_node(@operands[0], %e, $T_ANY);
+                my int $condt := self.encode_loop_cond(@operands[0], %e, $im, $im_tmp);
                 nqp::bindpos(%e<code>, $ct_at, $condt);
-                self.encode_node(@operands[1], %e, $T_VOID);
+                if $im { self.encode_immediate_call(@operands[1], %e, 1, $T_OBJ, $im_tmp) }
+                else { self.encode_node(@operands[1], %e, $T_VOID) }
                 return $T_OBJ;
             }
             # A handled loop: register the same LAST and NEXT|REDO rows the
@@ -1245,10 +1266,11 @@ class QAST::TruffleEncoder {
             epush(%e, $nrid);
             epush(%e, $outer);
             %e<hidx> := $lid;
-            my int $condt := self.encode_node(@operands[0], %e, $T_ANY);
+            my int $condt := self.encode_loop_cond(@operands[0], %e, $im, $im_tmp);
             nqp::bindpos(%e<code>, $ct_at, $condt);
             %e<hidx> := $nrid;
-            self.encode_node(@operands[1], %e, $T_VOID);
+            if $im { self.encode_immediate_call(@operands[1], %e, 1, $T_OBJ, $im_tmp) }
+            else { self.encode_node(@operands[1], %e, $T_VOID) }
             %e<hidx> := $outer;
             return $T_OBJ;
         }
@@ -2162,6 +2184,18 @@ class QAST::TruffleEncoder {
             }
             epush(%e, $W_LOCGET); epush(%e, $cond_tmp_type); epush(%e, $cond_tmp);
         }
+        $T_OBJ
+    }
+
+    # A loop condition, plain or bound into the scratch local a
+    # cond-taking body is called with (then re-read as the test, so the
+    # loop tests the same value the body receives).
+    method encode_loop_cond($cond, %e, int $im, int $im_tmp) {
+        return self.encode_node($cond, %e, $T_ANY) unless $im;
+        epush(%e, $W_STMTS); epush(%e, 2);
+        epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $im_tmp);
+        self.encode_child($cond, %e, $T_OBJ);
+        epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $im_tmp);
         $T_OBJ
     }
 
