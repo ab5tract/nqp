@@ -479,23 +479,8 @@ final class NqpDispatch {
          * null when the slot is not a reference field.
          */
         private static MethodHandle getterFor(STable st, Class<?> storage, int slot) {
-            /* Auto-vivification (every `$` attribute of a Raku class has a
-             * container prototype) only matters when the field is null:
-             * the accessor clones the prototype in and stores it. The fast
-             * path reads the field and sends a null to the accessor, so a
-             * vivified attribute -- the steady state -- is a plain load. */
-            try {
-                java.lang.reflect.Field f = storage.getField("field_" + slot);
-                if (f.getType() != SixModelObject.class) {
-                    if (STATS) System.err.println("dispatch no getter: field type " + f.getType() + " slot " + slot);
-                    return null;
-                }
-                return MethodHandles.lookup().unreflectGetter(f)
-                    .asType(MethodType.methodType(SixModelObject.class, SixModelObject.class));
-            } catch (ReflectiveOperationException | RuntimeException e) {
-                if (STATS) System.err.println("dispatch no getter: " + e + " slot " + slot + " of " + storage.getName());
-                return null;
-            }
+            MethodHandle[] hs = fieldHandles(storage, slot);
+            return hs == null ? null : hs[0];
         }
 
         /** The exact storage class of a source a type guard has fixed. */
@@ -572,6 +557,32 @@ final class NqpDispatch {
 
         private boolean cacheable(DispatchProgram p) {
             return !p.isResuming() && Captures.INSTANCE.sameShape(p.getDescriptor(), csd);
+        }
+    }
+
+    /**
+     * The slot's field of a P6Opaque storage class as a getter
+     * (SixModelObject)SixModelObject and a setter
+     * (SixModelObject,SixModelObject)void, or null when the slot is not a
+     * reference field. Auto-vivification (every `$` attribute of a Raku
+     * class has a container prototype) only matters when the field is
+     * null -- the accessor clones the prototype in and stores it -- so a
+     * caller reads the field and sends a null to the accessor, and a
+     * vivified attribute, the steady state, is a plain load.
+     */
+    static MethodHandle[] fieldHandles(Class<?> storage, int slot) {
+        try {
+            java.lang.reflect.Field f = storage.getField("field_" + slot);
+            if (f.getType() != SixModelObject.class) return null;
+            MethodHandles.Lookup lookup = MethodHandles.lookup();
+            return new MethodHandle[] {
+                lookup.unreflectGetter(f)
+                    .asType(MethodType.methodType(SixModelObject.class, SixModelObject.class)),
+                lookup.unreflectSetter(f)
+                    .asType(MethodType.methodType(void.class, SixModelObject.class, SixModelObject.class)),
+            };
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return null;
         }
     }
 
