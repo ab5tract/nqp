@@ -93,6 +93,11 @@ public final class NqpCodeEngine implements CodeEngine {
             + (cf.codeRef == null ? "<anon>" : cf.codeRef.name) + ")", sse);
     }
 
+    /** For NqpDispatch's direct entry: the same join of the resume chain. */
+    static RuntimeException suspendFrame(ContinuationResult cr, CallFrame cf) {
+        return suspend(cr, cf);
+    }
+
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static RuntimeException suspend(ContinuationResult cr, CallFrame cf) {
         NqpCont.Suspend token = (NqpCont.Suspend) cr.getResult();
