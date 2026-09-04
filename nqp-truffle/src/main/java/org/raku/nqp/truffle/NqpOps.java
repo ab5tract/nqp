@@ -78,9 +78,15 @@ final class NqpOps {
         OP_ITERATOR = 152, OP_ITERVAL = 153, OP_ASSIGN = 154, OP_P6BINDASSERT = 155,
         OP_ITERKEY_S = 156, OP_SPLICE = 157, OP_HOW = 158,
         OP_GETATTRREF_I = 159, OP_GETATTRREF_N = 160, OP_GETATTRREF_S = 161,
-        OP_ASSIGN_I = 162, OP_ASSIGN_U = 163, OP_ASSIGN_N = 164, OP_ASSIGN_S = 165;
+        OP_ASSIGN_I = 162, OP_ASSIGN_U = 163, OP_ASSIGN_N = 164, OP_ASSIGN_S = 165,
+        OP_EXCEPTION = 166, OP_GETEXTYPE = 167, OP_SETEXTYPE = 168, OP_SETPAYLOAD = 169,
+        OP_GETMESSAGE = 170, OP_SETMESSAGE = 171, OP_NEWEXCEPTION = 172,
+        OP_BACKTRACE = 173, OP_BACKTRACESTRINGS = 174, OP_ISFALSE = 175,
+        OP_ISBIG_I = 176, OP_ATPOSREF_I = 177, OP_ATPOSREF_U = 178, OP_ISRWCONT = 179,
+        OP_DIE_S = 180, OP_THROW = 181, OP_RETHROW = 182, OP_THROWEXTYPE = 183,
+        OP_ISCONCRETE_ND = 184, OP_GETHLLSYM = 185;
 
-    static final int OP_COUNT = 166;
+    static final int OP_COUNT = 186;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -243,6 +249,41 @@ final class NqpOps {
             case OP_ASSIGN_U: return Ops.assign_u(smo(a[0]), lng(a[1]), tc);
             case OP_ASSIGN_N: return Ops.assign_n(smo(a[0]), dbl(a[1]), tc);
             case OP_ASSIGN_S: return Ops.assign_s(smo(a[0]), str(a[1]), tc);
+            case OP_EXCEPTION: return Ops.exception(tc);
+            case OP_ISCONCRETE_ND: return Ops.isconcrete_nd(smo(a[0]), tc);
+            case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
+            case OP_GETEXTYPE: return Ops.getextype(smo(a[0]), tc);
+            case OP_SETEXTYPE: return Ops.setextype(smo(a[0]), lng(a[1]), tc);
+            case OP_SETPAYLOAD: return Ops.setpayload(smo(a[0]), smo(a[1]), tc);
+            case OP_GETMESSAGE: return Ops.getmessage(smo(a[0]), tc);
+            case OP_SETMESSAGE: return Ops.setmessage(smo(a[0]), str(a[1]), tc);
+            case OP_NEWEXCEPTION: return Ops.newexception(tc);
+            case OP_BACKTRACE: return Ops.backtrace(smo(a[0]), tc);
+            case OP_BACKTRACESTRINGS: return Ops.backtracestrings(smo(a[0]), tc);
+            case OP_ISFALSE: return Ops.isfalse(smo(a[0]), tc);
+            case OP_ISBIG_I: return Ops.isbig_I(smo(a[0]), tc);
+            case OP_ATPOSREF_I: return Ops.atposref_i(smo(a[0]), lng(a[1]), tc);
+            case OP_ATPOSREF_U: return Ops.atposref_u(smo(a[0]), lng(a[1]), tc);
+            case OP_ISRWCONT: return Ops.isrwcont(smo(a[0]), tc);
+            // The bytecode path's :cont ops: throw, and if a handler
+            // resumed, the result waits in the frame's return register --
+            // the same shape OP_THROWPAYLOADLEX takes.
+            case OP_DIE_S: {
+                Ops.die_s_c(str(a[0]), tc);
+                return Ops.result_s(cf);
+            }
+            case OP_THROW: {
+                Ops._throw_c(smo(a[0]), tc);
+                return Ops.result_o(cf);
+            }
+            case OP_RETHROW: {
+                Ops.rethrow_c(smo(a[0]), tc);
+                return Ops.result_o(cf);
+            }
+            case OP_THROWEXTYPE: {
+                Ops.throwcatdyn_c(lng(a[0]), tc);
+                return Ops.result_o(cf);
+            }
             case OP_ISTYPE_ND: return Ops.istype_nd(smo(a[0]), smo(a[1]), tc);
             case OP_WHO: return Ops.who(smo(a[0]), tc);
             case OP_GETPAYLOAD: return Ops.getpayload(smo(a[0]), tc);
@@ -1013,6 +1054,7 @@ final class NqpOps {
         static final java.lang.invoke.MethodHandle P6BINDASSERT;
         static final java.lang.invoke.MethodHandle P6TYPECHECKRV;
         static final java.lang.invoke.MethodHandle P6DECONTRV_RT;
+        static final java.lang.invoke.MethodHandle P6ARGVMARRAY;
         static {
             try {
                 Class<?> c = Class.forName("org.raku.rakudo.RakOps");
@@ -1040,10 +1082,26 @@ final class NqpOps {
                     java.lang.invoke.MethodType.methodType(SMO, SMO, SMO, SMO, TC));
                 P6DECONTRV_RT = l.findStatic(c, "p6decontrv_rt",
                     java.lang.invoke.MethodType.methodType(SMO, SMO, SMO, long.class, TC));
+                P6ARGVMARRAY = l.findStatic(c, "p6argvmarray",
+                    java.lang.invoke.MethodType.methodType(SMO, TC, CallSiteDescriptor.class,
+                        Object[].class));
             } catch (ReflectiveOperationException e) {
                 throw new ExceptionInInitializerError(e);
             }
         }
+    }
+
+    /** nqp::curlexpad over the program's own frame, never tc.curFrame. */
+    @TruffleBoundary
+    static Object curlexpad(ThreadContext tc, CallFrame cf) {
+        return Ops.ctx_of(cf, tc);
+    }
+
+    /** rakudo's p6argvmarray: the frame's raw arguments as a BOOTArray. */
+    @TruffleBoundary
+    static Object p6argvmarray(ThreadContext tc, CallFrame cf) {
+        try { return Rak.P6ARGVMARRAY.invoke(tc, cf.csd, cf.args); }
+        catch (Throwable t) { throw sneaky(t); }
     }
 
     private static Object rak(java.lang.invoke.MethodHandle h, Object a, ThreadContext tc) {

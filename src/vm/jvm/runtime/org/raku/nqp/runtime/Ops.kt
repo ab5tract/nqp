@@ -1764,6 +1764,15 @@ object Ops {
         (wrap as ContextRefInstance).context = tc.frame
         return wrap
     }
+    /* A context reference over a given frame, for the code engine: its
+     * curlexpad anchors at the program's own frame, never tc.curFrame. */
+    @JvmStatic
+    fun ctx_of(cf: CallFrame, tc: ThreadContext): SixModelObject {
+        val ContextRef = tc.gc.ContextRef!!
+        val wrap = ContextRef.st.REPR.allocate(tc, ContextRef.st)
+        (wrap as ContextRefInstance).context = cf
+        return wrap
+    }
     @JvmStatic
     fun ctxouter(ctx: SixModelObject?, tc: ThreadContext): SixModelObject? {
         if (ctx is ContextRefInstance) {

@@ -46,9 +46,9 @@ class QAST::TruffleEncoder {
     # shape still bail), so the survey stays an upper bound and the honest
     # yield of a tag group still wants an NQP_CODE_ALSO run.
     my $extra_ops := 'assign_i assign_n assign_s assign_u bind call
-        callmethod callstatic chain chainstatic
+        callmethod callstatic chain chainstatic const curlexpad
         control defor dispatch getlexouter handle handlepayload hash if
-        ifnull list list_i list_n list_s locallifetime null p6assign
+        ifnull list list_i list_n list_s locallifetime null p6argvmarray p6assign
         p6decontrv p6decontrv_6c
         repeat_until repeat_while stmt stmts unless until while';
 
@@ -312,6 +312,8 @@ class QAST::TruffleEncoder {
     my int $W_HANDLE := 22;
     my int $W_HANDLEPAYLOAD := 23;
     my int $W_LEXREF := 24;
+    my int $W_CURLEXPAD := 25;
+    my int $W_P6ARGVMARRAY := 26;
 
     # Handler categories, matching ExceptionHandling on the runtime side
     # (and the Compiler's own copies).
@@ -596,6 +598,29 @@ class QAST::TruffleEncoder {
         op3('iterkey_s', 156, $T_STR, 'o');
         op3('splice', 157, $T_OBJ, 'ooii');
         op3('how', 158, $T_OBJ, 'o');
+        op3('exception', 166, $T_OBJ, '');
+        op3('getextype', 167, $T_INT, 'o');
+        op3('setextype', 168, $T_INT, 'oi');
+        op3('setpayload', 169, $T_OBJ, 'oo');
+        op3('getmessage', 170, $T_STR, 'o');
+        op3('setmessage', 171, $T_STR, 'os');
+        op3('newexception', 172, $T_OBJ, '');
+        op3('backtrace', 173, $T_OBJ, 'o');
+        op3('backtracestrings', 174, $T_OBJ, 'o');
+        op3('isfalse', 175, $T_INT, 'o');
+        op3('isbig_I', 176, $T_INT, 'o');
+        op3('atposref_i', 177, $T_OBJ, 'oi');
+        op3('atposref_u', 178, $T_OBJ, 'oi');
+        op3('isrwcont', 179, $T_INT, 'o');
+        # The :cont family: the engine reads a resumed result off the
+        # frame's return register, as the bytecode path does.
+        op3('die', 180, $T_STR, 's');
+        op3('die_s', 180, $T_STR, 's');
+        op3('throw', 181, $T_OBJ, 'o');
+        op3('rethrow', 182, $T_OBJ, 'o');
+        op3('throwextype', 183, $T_OBJ, 'i');
+        op3('isconcrete_nd', 184, $T_INT, 'o');
+        op3('gethllsym', 185, $T_OBJ, 'ss');
         op3('hlllist', 139, $T_OBJ, '');
         op3('bootintarray', 142, $T_OBJ, '');
         op3('bootnumarray', 143, $T_OBJ, '');
@@ -875,7 +900,27 @@ class QAST::TruffleEncoder {
             return self.encode_op($n, %e, $want);
         }
         if nqp::istype($n, QAST::VarWithFallback) {
-            cbail('var-with-fallback');
+            # A read whose null answer is replaced by the fallback; a
+            # native read has no null and is the plain read, as the
+            # bytecode path has it. The ifnull shape: read once into a
+            # scratch local, test, fall back.
+            my int $vt := self.var_read_type($n, %e);
+            return self.encode_var($n, %e, nqp::null(), $want) if $vt != $T_OBJ;
+            return self.encode_var($n, %e, nqp::null(), $want) if $want == $T_VOID;
+            my int $tmp := new_elocal(%e, $T_OBJ);
+            epush(%e, $W_STMTS); epush(%e, 2);
+            epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $tmp);
+            cbail('var-with-fallback read type')
+                unless self.encode_var($n, %e, nqp::null(), $T_OBJ) == $T_OBJ;
+            epush(%e, $W_IFV);
+            epush(%e, $T_INT);
+            epush(%e, 0);
+            epush(%e, 1);
+            epush(%e, $W_OPCALL); epush(%e, 52); epush(%e, 1);   # isnull
+            epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+            self.encode_child($n.fallback, %e, $T_OBJ);
+            epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+            return $T_OBJ;
         }
         if nqp::istype($n, QAST::Var) {
             return self.encode_var($n, %e, nqp::null(), $want);
@@ -1244,6 +1289,25 @@ class QAST::TruffleEncoder {
             epush(%e, $W_NULLC);
             return $T_OBJ;
         }
+        if $name eq 'const' {
+            # Compiler.nqp's %const_map, published as an HLL symbol: the
+            # same integer the bytecode path folds this to.
+            my $map := nqp::gethllsym('nqp', 'CODE_CONST_MAP');
+            cbail('const map unpublished') if nqp::isnull($map);
+            cbail('const ' ~ $op.name) unless nqp::existskey($map, $op.name);
+            epush(%e, $W_IVAL); epush(%e, epool(%e, ~$map{$op.name}));
+            return $T_INT;
+        }
+        if $name eq 'curlexpad' {
+            cbail('curlexpad arity') if nqp::elems(@($op));
+            epush(%e, $W_CURLEXPAD);
+            return $T_OBJ;
+        }
+        if $name eq 'p6argvmarray' {
+            cbail('p6argvmarray arity') if nqp::elems(@($op));
+            epush(%e, $W_P6ARGVMARRAY);
+            return $T_OBJ;
+        }
         if $name eq 'handle' {
             my @children := nqp::clone($op.list);
             cbail('handle no children') unless nqp::elems(@children) >= 1;
@@ -1462,7 +1526,38 @@ class QAST::TruffleEncoder {
         my int $n := nqp::elems(@($op));
         cbail('if arity') unless $n == 2 || $n == 3;
         my int $void := $want == $T_VOID;
-        cbail('two-child if in value context') if $n == 2 && !$void;
+        if $n == 2 && !$void {
+            # No else, but a value is wanted: the condition IS the value
+            # when it does not hold, exactly as the bytecode path keeps it
+            # (dup'd into a temp, the result type the common one). The
+            # condition evaluates once into a scratch local of its own
+            # type -- allocated after encoding it, since the type is only
+            # known then -- and the else arm re-reads it, coerced to the
+            # result type, which is the wanted type, or object when the
+            # context takes anything.
+            my int $rt := $want == $T_ANY ?? $T_OBJ !! $want;
+            epush(%e, $W_STMTS); epush(%e, 2);
+            my int $bind_at := nqp::elems(%e<code>);
+            epush(%e, $W_LOCBIND); epush(%e, 0); epush(%e, 0);
+            my int $condt := self.encode_node($op[0], %e, $T_ANY);
+            cbail('if condition type') if $condt < 0 || $condt > 3;
+            my int $tmp := new_elocal(%e, $condt);
+            nqp::bindpos(%e<code>, $bind_at + 1, $condt);
+            nqp::bindpos(%e<code>, $bind_at + 2, $tmp);
+            epush(%e, $W_IFV);
+            epush(%e, $condt);
+            epush(%e, $negate);
+            epush(%e, 1);
+            epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
+            self.encode_child($op[1], %e, $rt);
+            if $condt != $rt {
+                my int $kind := coerce_kind($condt, $rt);
+                cbail('if result coercion') if $kind < 0;
+                epush(%e, $W_COERCE); epush(%e, $kind);
+            }
+            epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
+            return $rt;
+        }
         epush(%e, $void ?? $W_IFS !! $W_IFV);
         my int $ct_at := nqp::elems(%e<code>);
         epush(%e, 0);
@@ -1757,15 +1852,22 @@ class QAST::TruffleEncoder {
         }
         if $scope eq 'attribute' {
             cbail('attribute shape') unless nqp::elems(@($var)) == 2;
-            cbail('typed attribute') unless rt_of($var.returns) == $T_OBJ;
+            # The typed accessors by the declared type, as the bytecode
+            # path picks getattr_<t>/bindattr_<t>: 81/82 object, 117-119
+            # and 121-123 for int/num/str.
+            my int $t := rt_of($var.returns);
+            cbail('attribute type') if $t < 0 || $t > 3;
+            my int $id := nqp::isnull($bindval)
+                ?? ($t == $T_OBJ ?? 81 !! 116 + $t)
+                !! ($t == $T_OBJ ?? 82 !! 120 + $t);
             epush(%e, $W_OPCALL);
-            epush(%e, nqp::isnull($bindval) ?? 81 !! 82);   # getattr/bindattr
+            epush(%e, $id);
             epush(%e, nqp::isnull($bindval) ?? 3 !! 4);
             self.encode_child($var[0], %e, $T_OBJ);
             self.encode_child($var[1], %e, $T_OBJ);
             epush(%e, $W_SVAL); epush(%e, epool(%e, $name));
-            self.encode_child($bindval, %e, $T_OBJ) unless nqp::isnull($bindval);
-            return $T_OBJ;
+            self.encode_child($bindval, %e, $t) unless nqp::isnull($bindval);
+            return $t;
         }
         if $scope eq 'lexicalref' {
             # A reference to a native lexical wanted as an object, the
@@ -1836,6 +1938,34 @@ class QAST::TruffleEncoder {
             return $T_OBJ;
         }
         cbail('var scope ' ~ $scope);
+    }
+
+    # The type a plain read of this variable answers, before encoding it:
+    # what VarWithFallback needs to know to decide whether a null test
+    # applies at all.
+    method var_read_type($var, %e) {
+        my str $scope := $var.scope;
+        my str $name := $var.name;
+        cbail('var-with-fallback decl') if $var.decl ne '';
+        if $scope eq 'local' {
+            cbail('unknown local ' ~ $name) unless nqp::existskey(%e<locals>, $name);
+            return %e<locals>{$name}[1];
+        }
+        if $scope eq 'lexical' || $scope eq 'typevar' {
+            return self.lexical_type_of($name, %e, $scope);
+        }
+        if $scope eq 'contextual' {
+            return self.lexical_in_scope($name, %e)
+                ?? self.lexical_type_of($name, %e, $scope) !! $T_OBJ;
+        }
+        if $scope eq 'attribute' {
+            my int $t := rt_of($var.returns);
+            cbail('attribute type') if $t < 0 || $t > 3;
+            return $t;
+        }
+        return $T_OBJ if $scope eq 'positional' || $scope eq 'associative'
+            || $scope eq 'lexicalref' || $scope eq 'attributeref';
+        cbail('var-with-fallback scope ' ~ $scope);
     }
 
     method encode_lexget(str $name, %e) {

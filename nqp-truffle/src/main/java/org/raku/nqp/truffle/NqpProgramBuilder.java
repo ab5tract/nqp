@@ -108,6 +108,12 @@ final class NqpProgramBuilder {
             case NqpWire.JNULL:
                 if (emit) b.emitLoadNull();
                 return at + 1;
+            case NqpWire.CURLEXPAD:
+                if (emit) b.emitCurLexpad();
+                return at + 1;
+            case NqpWire.P6ARGVMARRAY:
+                if (emit) b.emitP6ArgVmArray();
+                return at + 1;
             case NqpWire.IVAL:
                 if (emit) b.emitLoadConstant(Long.parseLong(pool[code[at + 1]]));
                 return at + 2;

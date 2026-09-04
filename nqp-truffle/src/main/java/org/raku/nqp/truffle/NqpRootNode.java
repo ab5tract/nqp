@@ -261,6 +261,30 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     }
 
     @Operation
+    public static final class CurLexpad {
+        @Specialization
+        static Object doCtx(VirtualFrame f) {
+            try {
+                return NqpOps.curlexpad(tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    public static final class P6ArgVmArray {
+        @Specialization
+        static Object doArgs(VirtualFrame f) {
+            try {
+                return NqpOps.p6argvmarray(tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
     @ConstantOperand(type = String.class, name = "name")
     public static final class LexOuterGet {
         @Specialization
