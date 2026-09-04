@@ -16,6 +16,9 @@ import java.util.Map;
 import java.util.Objects;
 
 import com.oracle.truffle.api.CallTarget;
+import com.oracle.truffle.api.bytecode.ContinuationResult;
+import com.oracle.truffle.api.nodes.DirectCallNode;
+import com.oracle.truffle.api.nodes.Node;
 
 import org.raku.nqp.dispatch.ArgKind;
 import org.raku.nqp.dispatch.BindFailureException;
@@ -313,6 +316,20 @@ final class NqpDispatch {
         final Src callee;
         final SixModelObject calleeLiteral;
         @CompilationFinal(dimensions = 1) final int[] map;
+
+        /**
+         * The call node for a literal engine-bodied callee, adopted under
+         * the dispatch instruction's node the first time the program
+         * replays there, so Truffle's inliner sees the call. Replaced when
+         * the instruction's node changes (the uncached-to-cached tier
+         * transition), since a call node under a dead parent inlines
+         * nowhere. Null for any other callee, and until the callee's
+         * program has run once and registered its target.
+         */
+        @CompilationFinal DirectCallNode callNode;
+        /** How many times the call node was re-adopted under a changed
+         *  instruction node; past a few, the node in hand is used as is. */
+        @CompilationFinal int readopts;
 
         /**
          * Folds the program. The guards are walked in recorded order, and
@@ -631,14 +648,14 @@ final class NqpDispatch {
      * assumption, so the loop explodes into the programs' tests.
      */
     @ExplodeLoop
-    static boolean replay(Cache cache, ThreadContext tc, Object[] args) {
+    static boolean replay(Cache cache, ThreadContext tc, Object[] args, Node node) {
         if (!cache.stable.isValid()) CompilerDirectives.transferToInterpreterAndInvalidate();
         Program[] programs = cache.programs;
         for (int i = 0; i < programs.length; i++) {
             Program p = programs[i];
             if (matches(p, tc, args)) {
                 if (STATS) { count(hits); count(hitsByKind[p.kind]); }
-                realize(p, cache.site, tc, args);
+                realize(p, cache.site, tc, args, node);
                 return true;
             }
         }
@@ -679,7 +696,56 @@ final class NqpDispatch {
     /* ----- outcomes ----- */
 
     private static void realize(Program p, DispatchCallSite site, ThreadContext tc,
-                                Object[] args) {
+                                Object[] args, Node node) {
+        /* A literal callee with an engine body: through the adopted call
+         * node, so the callee inlines into this root. */
+        if (p.calleeLiteral instanceof CodeRef cr && (p.kind == K_INVOKE_MAPPED
+                || (p.kind == K_INVOKE_RESUMABLE && p.callee instanceof LitSrc))
+                && cr.staticInfo.argsExpectation == ArgsExpectation.USE_BINDER) {
+            DirectCallNode cn = p.callNode;
+            /* Adopt only once a target exists (a bytecode-bodied callee
+             * never has one; one not yet run has none yet): the check is
+             * a volatile load, the adoption a deoptimization -- doing the
+             * latter on every replay of a target-less callee was a deopt
+             * cycle. Re-adopt when the instruction's node changed, a few
+             * times at most. */
+            if (cn == null) {
+                if (cr.staticInfo.engineTarget != null) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
+                    cn = adoptCallNode(p, cr, node);
+                }
+            }
+            else if (cn.getParent() != node && p.readopts < 4) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                p.readopts++;
+                cn = adoptCallNode(p, cr, node);
+            }
+            if (cn != null) {
+                Object[] out = p.kind == K_INVOKE_MAPPED ? mapArgs(p.map, args) : evalPlan(p.plan, tc, args);
+                if (p.kind == K_INVOKE_MAPPED) {
+                    enterDirect(tc, cr, cn, p.descriptor, out);
+                } else {
+                    DispatchRecord record = pushRecord(tc, p.program, args, site);
+                    try {
+                        tc.pendingDispatch = record;
+                        try {
+                            enterDirect(tc, cr, cn, p.descriptor, out);
+                        }
+                        catch (BindFailureException failure) {
+                            if (failure.getRecord() != record) throw failure;
+                            resumeAfterBindFailure(tc, record, failure.getFlag());
+                        }
+                        finally {
+                            tc.pendingDispatch = null;
+                        }
+                    }
+                    finally {
+                        popRecord(tc);
+                    }
+                }
+                return;
+            }
+        }
         switch (p.kind) {
             case K_VALUE: {
                 CallFrame frame = tc.curFrame;
@@ -894,6 +960,53 @@ final class NqpDispatch {
              * what it returns is not thrown. */
             dieInternal(tc, e);
         }
+    }
+
+    /** Adopts a call node for the callee's engine target, or null if the
+     *  callee has no registered target yet (it has not run once). */
+    @TruffleBoundary
+    private static DirectCallNode adoptCallNode(Program p, CodeRef cr, Node node) {
+        Object target = cr.staticInfo.engineTarget;
+        if (!(target instanceof CallTarget ct)
+                || cr.staticInfo.argsExpectation != ArgsExpectation.USE_BINDER)
+            return null;
+        DirectCallNode cn = node.insert(DirectCallNode.create(ct));
+        p.callNode = cn;
+        return cn;
+    }
+
+    /**
+     * The direct entry through an adopted call node: the frame the stub's
+     * prelude builds (behind a boundary), the call itself in compiled code
+     * so the callee can inline, and the engine's own postlude for the
+     * result -- a suspend token joins the resume chain, an unwind leaves
+     * the frame and flies on as the Truffle carrier it already is.
+     */
+    private static void enterDirect(ThreadContext tc, CodeRef cr, DirectCallNode cn,
+                                    CallSiteDescriptor csd, Object[] args) {
+        CallFrame cf = newFrame(tc, cr);
+        Object r;
+        try {
+            r = cn.call(cr.staticInfo.compUnit, tc, cf, csd, args);
+        }
+        catch (NqpUnwind u) {
+            leave(cf);
+            throw u;
+        }
+        catch (NqpHostError h) {
+            throw dieInternal(tc, h.original);
+        }
+        catch (org.raku.nqp.runtime.ControlException ce) {
+            leave(cf);
+            throw ce;
+        }
+        catch (Throwable t) {
+            throw dieInternal(tc, t);
+        }
+        if (r instanceof ContinuationResult) {
+            throw NqpCodeEngine.suspendFrame((ContinuationResult) r, cf);
+        }
+        leave(cf);
     }
 
     @TruffleBoundary

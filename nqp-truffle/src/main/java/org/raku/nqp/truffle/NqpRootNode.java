@@ -373,9 +373,10 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class DispatchOp {
         @Specialization
         static Object doDispatch(VirtualFrame f, int rtype, String name, Object site,
-                                 @Variadic Object[] args) {
+                                 @Variadic Object[] args,
+                                 @com.oracle.truffle.api.dsl.Bind com.oracle.truffle.api.nodes.Node node) {
             try {
-                return NqpOps.dispatch(rtype, name, (NqpOps.EngineSite) site, args, tc(f), cf(f));
+                return NqpOps.dispatch(rtype, name, (NqpOps.EngineSite) site, args, tc(f), cf(f), node);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
