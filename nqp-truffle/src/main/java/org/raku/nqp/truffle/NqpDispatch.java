@@ -511,6 +511,8 @@ final class NqpDispatch {
         final CallSiteDescriptor csd;
         @CompilationFinal(dimensions = 1) Program[] programs = NONE;
         @CompilationFinal Assumption stable = Truffle.getRuntime().createAssumption("dispatch site");
+        /** Misses since the last refold; see REFOLD_AFTER. */
+        int missesSinceFold;
 
         Cache(DispatchCallSite site, CallSiteDescriptor csd) {
             this.site = site;
@@ -531,7 +533,7 @@ final class NqpDispatch {
                 boolean same = true;
                 for (int i = 0; i < n; i++)
                     if (current[i].program != all[i]) { same = false; break; }
-                if (same) return;
+                if (same) { missesSinceFold = 0; return; }
             }
             Program[] fresh = new Program[n];
             for (int i = 0; i < n; i++)
@@ -549,6 +551,7 @@ final class NqpDispatch {
          * thread still in the old code between the two steps replays the
          * old programs, which remain valid programs. */
         private void publish(Program[] fresh) {
+            missesSinceFold = 0;
             Assumption old = stable;
             programs = fresh;
             stable = Truffle.getRuntime().createAssumption("dispatch site");
@@ -642,12 +645,27 @@ final class NqpDispatch {
         return false;
     }
 
+    /**
+     * How many misses a folded site tolerates before it refolds. A refold
+     * republishes the array under a fresh Assumption, which invalidates
+     * every compiled root that folded the site; on the CORE.c compile that
+     * was ~290 invalidations against 38 on the old road, as sites grew
+     * their program lists one recording at a time under compiled code.
+     * A miss is correct regardless -- Dispatch.fallback tries every
+     * program the site holds -- so a stale prefix costs only the
+     * interpreted replay of the programs it lacks, and a site refolds
+     * once it has shown it needs to. The first fold is immediate: a
+     * monomorphic site must not run its whole life through the fallback.
+     */
+    static final int REFOLD_AFTER = 16;
+
     /** The chain's tail: uncached programs, then a recording; then refold. */
     @TruffleBoundary
     static void miss(Cache cache, String name, ThreadContext tc, Object[] args) {
         if (STATS) count(misses);
         Dispatch.fallback(cache.site, name, cache.csd, cache.programs.length, tc, args);
-        cache.refresh(tc);
+        if (cache.programs.length == 0 || ++cache.missesSinceFold >= REFOLD_AFTER)
+            cache.refresh(tc);
     }
 
     @ExplodeLoop
