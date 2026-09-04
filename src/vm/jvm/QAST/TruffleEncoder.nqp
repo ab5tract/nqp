@@ -45,7 +45,8 @@ class QAST::TruffleEncoder {
     # op has an encoding, not that every use of it encodes (arity and
     # shape still bail), so the survey stays an upper bound and the honest
     # yield of a tag group still wants an NQP_CODE_ALSO run.
-    my $extra_ops := 'bind call callmethod callstatic chain chainstatic
+    my $extra_ops := 'assign_i assign_n assign_s assign_u bind call
+        callmethod callstatic chain chainstatic
         control defor dispatch getlexouter handle handlepayload hash if
         ifnull list list_i list_n list_s locallifetime null p6assign
         p6decontrv p6decontrv_6c
@@ -567,11 +568,17 @@ class QAST::TruffleEncoder {
         op3('iscont_s', 138, $T_INT, 'o');
         # Chosen by sole-blocker count over a CORE.c NQP_CODE_REPORT run
         # (2026-09-03): these seven alone gate ~500 of the setting's
-        # blocks. assign_i/assign_s are NOT here on purpose -- their
-        # bytecode desugar REWRITES the QAST node in place (op('bind'),
-        # scope(...)), and mutating a shared tree during an encode that
-        # may still bail would corrupt it for the bytecode path.
+        # blocks. assign_i/assign_s are NOT table rows -- their bytecode
+        # desugar REWRITES the QAST node in place (op('bind'), scope(...)),
+        # and mutating a shared tree during an encode that may still bail
+        # would corrupt it for the bytecode path; encode_op does the same
+        # rewrite on a copy of the target instead (see 'assign_i' there),
+        # and the container road is these four rows.
         op3('hllbool', 148, $T_OBJ, 'i');
+        op3('jvm_container_assign_i', 162, $T_OBJ, 'oi');
+        op3('jvm_container_assign_u', 163, $T_OBJ, 'oi');
+        op3('jvm_container_assign_n', 164, $T_OBJ, 'on');
+        op3('jvm_container_assign_s', 165, $T_OBJ, 'os');
         op3('istype_nd', 149, $T_INT, 'oo');
         op3('who', 150, $T_OBJ, 'o');
         op3('getpayload', 151, $T_OBJ, 'o');
@@ -1018,6 +1025,24 @@ class QAST::TruffleEncoder {
         if $name eq 'bind' {
             cbail('bind arity') unless nqp::elems(@($op)) == 2;
             return self.encode_var($op[0], %e, $op[1], $want);
+        }
+        if $name eq 'assign_i' || $name eq 'assign_u' || $name eq 'assign_n'
+                || $name eq 'assign_s' {
+            # Compiler.nqp's typed assign: a native lexical/attribute
+            # reference target is a plain bind to the variable, anything
+            # else a container store. The bytecode desugar rewrites the
+            # node in place; here the rewrite lands on a COPY of the
+            # target, so a later bail hands the bytecode path its tree
+            # untouched. This was the top sole-blocker of CORE.c (223).
+            cbail('assign arity') unless nqp::elems(@($op)) == 2;
+            my str $bind_scope := self.native_assign_bind_scope($op[0], %e);
+            if $bind_scope ne '' {
+                my $target := $op[0].shallow_clone;
+                $target.scope($bind_scope);
+                return self.encode_var($target, %e, $op[1], $want);
+            }
+            return self.encode_op(QAST::Op.new( :op('jvm_container_' ~ $name),
+                $op[0], $op[1] ), %e, $want);
         }
         if $name eq 'if' || $name eq 'unless' {
             return self.encode_if($op, %e, $want, $name eq 'unless' ?? 1 !! 0);
@@ -1587,6 +1612,33 @@ class QAST::TruffleEncoder {
     }
 
     # A variable access; $bindval is a QAST node when this is a bind.
+    # Compiler.nqp's native_assign_bind_scope, over the encoder's own
+    # view of the block chain: an attributeref target binds as an
+    # attribute; a lexicalref target binds as a lexical when the nearest
+    # declaration is a plain lexical, and stays a reference (container
+    # road) when it is a reference declaration.
+    method native_assign_bind_scope($target, %e) {
+        return '' unless nqp::istype($target, QAST::Var);
+        my str $scope := $target.scope;
+        return 'attribute' if $scope eq 'attributeref';
+        if $scope eq 'lexicalref' {
+            my str $name := $target.name;
+            return 'lexical' if nqp::existskey(%e<own>, $name);
+            my $cur := %e<block>.outer;
+            while $cur {
+                if $cur.qast.ann('DYN_COMP_WRAPPER') {
+                    $cur := 0;
+                }
+                else {
+                    return 'lexical' if nqp::defined($cur.lexical_type($name));
+                    return '' if nqp::defined($cur.lexicalref_type($name));
+                    $cur := $cur.outer;
+                }
+            }
+        }
+        ''
+    }
+
     method encode_var($var, %e, $bindval, int $want) {
         my str $name := $var.name;
         my str $scope := $var.scope;

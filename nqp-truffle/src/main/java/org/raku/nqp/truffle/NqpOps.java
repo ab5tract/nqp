@@ -75,9 +75,10 @@ final class NqpOps {
         OP_HLLBOOL = 148, OP_ISTYPE_ND = 149, OP_WHO = 150, OP_GETPAYLOAD = 151,
         OP_ITERATOR = 152, OP_ITERVAL = 153, OP_ASSIGN = 154, OP_P6BINDASSERT = 155,
         OP_ITERKEY_S = 156, OP_SPLICE = 157, OP_HOW = 158,
-        OP_GETATTRREF_I = 159, OP_GETATTRREF_N = 160, OP_GETATTRREF_S = 161;
+        OP_GETATTRREF_I = 159, OP_GETATTRREF_N = 160, OP_GETATTRREF_S = 161,
+        OP_ASSIGN_I = 162, OP_ASSIGN_U = 163, OP_ASSIGN_N = 164, OP_ASSIGN_S = 165;
 
-    static final int OP_COUNT = 162;
+    static final int OP_COUNT = 166;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -236,6 +237,10 @@ final class NqpOps {
             case OP_GETATTRREF_I: return Ops.getattrref_i(smo(a[0]), smo(a[1]), str(a[2]), tc);
             case OP_GETATTRREF_N: return Ops.getattrref_n(smo(a[0]), smo(a[1]), str(a[2]), tc);
             case OP_GETATTRREF_S: return Ops.getattrref_s(smo(a[0]), smo(a[1]), str(a[2]), tc);
+            case OP_ASSIGN_I: return Ops.assign_i(smo(a[0]), lng(a[1]), tc);
+            case OP_ASSIGN_U: return Ops.assign_u(smo(a[0]), lng(a[1]), tc);
+            case OP_ASSIGN_N: return Ops.assign_n(smo(a[0]), dbl(a[1]), tc);
+            case OP_ASSIGN_S: return Ops.assign_s(smo(a[0]), str(a[1]), tc);
             case OP_ISTYPE_ND: return Ops.istype_nd(smo(a[0]), smo(a[1]), tc);
             case OP_WHO: return Ops.who(smo(a[0]), tc);
             case OP_GETPAYLOAD: return Ops.getpayload(smo(a[0]), tc);
