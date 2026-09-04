@@ -2627,6 +2627,9 @@ nqp::bindkey(%const_map, 'BIND_VAL_NUM',   2);
 nqp::bindkey(%const_map, 'BIND_VAL_STR',   3);
 nqp::bindkey(%const_map, 'BIND_VAL_UINT', 10);
 
+# Published for the code engine's encoder, which lives in its own file
+# and resolves nqp::const names to the same values (QAST::TruffleEncoder).
+nqp::bindhllsym('nqp', 'CODE_CONST_MAP', %const_map);
 QAST::OperationsJAST.add_core_op('const', -> $qastcomp, $op {
     if nqp::existskey(%const_map, $op.name) {
         $qastcomp.as_jast(QAST::IVal.new( :value(%const_map{$op.name}) ))
