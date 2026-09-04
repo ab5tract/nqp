@@ -245,6 +245,22 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     }
 
     @Operation
+    @ConstantOperand(type = int.class, name = "type")
+    @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = int.class, name = "spec")
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class LexRef {
+        @Specialization
+        static Object doRef(VirtualFrame f, int type, String name, int spec, Object site) {
+            try {
+                return NqpOps.getlexref(type, name, spec, (NqpOps.LexSite) site, tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
     @ConstantOperand(type = String.class, name = "name")
     public static final class LexOuterGet {
         @Specialization

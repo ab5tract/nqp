@@ -55,7 +55,7 @@ class QAST::TruffleEncoder {
     # Node kinds the encoder handles outside the op table.
     my $covered_nodes := 'QAST::ParamTypeCheck';
 
-    my $scopes := 'local lexical contextual attribute attributeref positional associative';
+    my $scopes := 'local lexical lexicalref contextual attribute attributeref positional associative';
 
     sub init() {
         return 0 if $init_done;
@@ -311,6 +311,7 @@ class QAST::TruffleEncoder {
     my int $W_JNULL := 21;
     my int $W_HANDLE := 22;
     my int $W_HANDLEPAYLOAD := 23;
+    my int $W_LEXREF := 24;
 
     # Handler categories, matching ExceptionHandling on the runtime side
     # (and the Compiler's own copies).
@@ -671,7 +672,8 @@ class QAST::TruffleEncoder {
 
         my %e := nqp::hash(
             'code', nqp::list(), 'pool', nqp::list(), 'pooli', nqp::hash(),
-            'own', nqp::hash(), 'locals', nqp::hash(), 'ltypes', nqp::list(),
+            'own', nqp::hash(), 'ownref', nqp::hash(), 'ownret', nqp::hash(),
+            'locals', nqp::hash(), 'ltypes', nqp::list(),
             'params', nqp::list(), 'decls', nqp::list(),
             'nested', nqp::list(),
             'block', $block, 'qast', $node, 'comp', $comp, 'dispatches', 0,
@@ -1623,7 +1625,9 @@ class QAST::TruffleEncoder {
         return 'attribute' if $scope eq 'attributeref';
         if $scope eq 'lexicalref' {
             my str $name := $target.name;
-            return 'lexical' if nqp::existskey(%e<own>, $name);
+            if nqp::existskey(%e<own>, $name) {
+                return nqp::existskey(%e<ownref>, $name) ?? '' !! 'lexical';
+            }
             my $cur := %e<block>.outer;
             while $cur {
                 if $cur.qast.ann('DYN_COMP_WRAPPER') {
@@ -1742,6 +1746,10 @@ class QAST::TruffleEncoder {
                 epush(%e, $W_LEXGET); epush(%e, $type); epush(%e, epool(%e, $name));
             }
             else {
+                # "Cannot bind to QAST::Var resolving to a lexicalref" on
+                # the bytecode path; a bail keeps that error its own.
+                cbail('bind to a lexicalref through lexical scope')
+                    if self.resolve_lexref($name, %e)[0] == 2;
                 epush(%e, $W_LEXBIND); epush(%e, $type); epush(%e, epool(%e, $name));
                 self.encode_child($bindval, %e, $type);
             }
@@ -1757,6 +1765,35 @@ class QAST::TruffleEncoder {
             self.encode_child($var[1], %e, $T_OBJ);
             epush(%e, $W_SVAL); epush(%e, epool(%e, $name));
             self.encode_child($bindval, %e, $T_OBJ) unless nqp::isnull($bindval);
+            return $T_OBJ;
+        }
+        if $scope eq 'lexicalref' {
+            # A reference to a native lexical wanted as an object, the
+            # Compiler.nqp shape: the nearest declaration decides. A
+            # reference declaration is an object lexical holding the
+            # reference, so it reads (and binds) as one; a plain native
+            # declaration gets a reference taken over its slot, told the
+            # declared width when the type is sized; nothing found
+            # statically means the dynamic by-name road with the type
+            # from .returns. The engine's LEXREF resolves the declaring
+            # frame the way LEXGET does and allocates the reference there.
+            my @r := self.resolve_lexref($name, %e);
+            my int $kind := @r[0];
+            if !nqp::isnull($bindval) {
+                cbail('bind to a non-reference lexicalref ' ~ $name) unless $kind == 2;
+                epush(%e, $W_LEXBIND); epush(%e, $T_OBJ); epush(%e, epool(%e, $name));
+                self.encode_child($bindval, %e, $T_OBJ);
+                return $T_OBJ;
+            }
+            if $kind == 2 {
+                epush(%e, $W_LEXGET); epush(%e, $T_OBJ); epush(%e, epool(%e, $name));
+                return $T_OBJ;
+            }
+            my int $t := $kind == 1 ?? @r[1] !! rt_of($var.returns);
+            cbail('lexicalref to a non-native ' ~ $name) if $t == $T_OBJ;
+            cbail('lexicalref type') if $t < 0 || $t > 3;
+            my int $spec := $kind == 1 ?? sized_native_ref_spec(@r[2]) !! 0;
+            epush(%e, $W_LEXREF); epush(%e, $t); epush(%e, epool(%e, $name)); epush(%e, $spec);
             return $T_OBJ;
         }
         if $scope eq 'attributeref' {
@@ -1827,11 +1864,42 @@ class QAST::TruffleEncoder {
                     cbail('typed outer lexical wider than obj') if $t > 3 || $t < 0;
                     return $t;
                 }
-                cbail('lexicalref ' ~ $name) if nqp::defined($cur.lexicalref_type($name));
+                # A reference declaration is an object lexical holding
+                # the reference; a plain read answers that object, as
+                # the bytecode path does.
+                return $T_OBJ if nqp::defined($cur.lexicalref_type($name));
                 $cur := $cur.outer;
             }
         }
         $T_OBJ
+    }
+
+    # The nearest declaration of a name up the block chain, for the
+    # lexicalref scope: [kind, type, returns], kind 0 not found, 1 a
+    # plain lexical (type and declared .returns follow), 2 a reference
+    # declaration. This block's shadow tables first, then the enclosing
+    # BlockInfos, stopping at a DYN_COMP_WRAPPER like every other walk.
+    method resolve_lexref(str $name, %e) {
+        if nqp::existskey(%e<own>, $name) {
+            return [2, $T_OBJ, nqp::null()] if nqp::existskey(%e<ownref>, $name);
+            return [1, %e<own>{$name},
+                nqp::existskey(%e<ownret>, $name) ?? %e<ownret>{$name} !! nqp::null()];
+        }
+        my $cur := %e<block>.outer;
+        while $cur {
+            if $cur.qast.ann('DYN_COMP_WRAPPER') {
+                $cur := 0;
+            }
+            else {
+                my $t := $cur.lexical_type($name);
+                if nqp::defined($t) {
+                    return [1, $t, nqp::ifnull($cur.lexical_returns($name), nqp::null())];
+                }
+                return [2, $T_OBJ, nqp::null()] if nqp::defined($cur.lexicalref_type($name));
+                $cur := $cur.outer;
+            }
+        }
+        [0, $T_OBJ, nqp::null()]
     }
 
     # Whether a lexical resolves statically anywhere up the BlockInfo
@@ -1865,6 +1933,7 @@ class QAST::TruffleEncoder {
             else {
                 cbail('redeclared lexical ' ~ $name) if nqp::existskey(%e<own>, $name);
                 %e<own>{$name} := $type;
+                %e<ownret>{$name} := $var.returns;
                 nqp::push(%e<decls>, ['lex', $var]);
             }
             nqp::push(%e<params>, $var);
@@ -1876,7 +1945,18 @@ class QAST::TruffleEncoder {
             elsif $scope eq 'lexical' {
                 cbail('redeclared lexical ' ~ $name) if nqp::existskey(%e<own>, $name);
                 %e<own>{$name} := $type;
+                %e<ownret>{$name} := $var.returns;
                 nqp::push(%e<decls>, ['lex', $var]);
+            }
+            elsif $scope eq 'lexicalref' {
+                # An object lexical that will hold a reference; the
+                # BlockInfo registers it in the object table at commit
+                # (add_lexicalref), exactly as the bytecode declaration.
+                cbail('redeclared lexical ' ~ $name) if nqp::existskey(%e<own>, $name);
+                cbail('lexicalref declaration of a non-native') if $type == $T_OBJ;
+                %e<own>{$name} := $T_OBJ;
+                %e<ownref>{$name} := 1;
+                nqp::push(%e<decls>, ['lexref', $var]);
             }
             else {
                 cbail('decl var scope ' ~ $scope);
@@ -1913,5 +1993,23 @@ class QAST::TruffleEncoder {
         my int $spec := nqp::objprimspec($typeobj);
         $spec == 1 ?? $T_INT !! $spec == 2 ?? $T_NUM !! $spec == 3 ?? $T_STR
             !! $spec == 0 ?? $T_OBJ !! -9
+    }
+
+    # Compiler.nqp's sized_native_ref_spec: the width a reference to a
+    # sized native lexical must be told, since the long/double slots
+    # carry none. Low byte the bit width, +256 unsigned, 32 alone num32;
+    # 0 for full width or an unsized type.
+    sub sized_native_ref_spec($returns) {
+        my int $spec := nqp::isnull($returns) ?? 0 !! nqp::objprimspec($returns);
+        if $spec == 1 || $spec == 10 {
+            my int $bits := nqp::objprimbits($returns);
+            if $bits > 0 && $bits < 64 {
+                return $spec == 10 ?? 256 + $bits !! $bits;
+            }
+        }
+        elsif $spec == 2 {
+            return 32 if nqp::objprimbits($returns) == 32;
+        }
+        0
     }
 }
