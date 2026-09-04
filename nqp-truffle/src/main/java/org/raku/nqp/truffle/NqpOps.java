@@ -97,9 +97,12 @@ final class NqpOps {
         OP_SHIFT_S = 222, OP_OBJPRIMSPEC = 223, OP_X = 224, OP_CMP_I = 225,
         OP_NUMDIMENSIONS = 226, OP_RAND_N = 227, OP_ORDAT = 228, OP_ISCCLASS = 229,
         OP_FINDCCLASS = 230, OP_FINDNOTCCLASS = 231, OP_CTXLEXPAD = 232, OP_STAT = 233,
-        OP_READFH = 234, OP_TIME = 235;
+        OP_READFH = 234, OP_TIME = 235,
+        OP_ATOMICADD_I = 236, OP_ATPOSND_I = 237, OP_ORDFIRST = 238, OP_CMP_N = 239,
+        OP_CMP_S = 240, OP_CMP_I_BIG = 241, OP_DIV_I_BIG = 242, OP_REPLACE = 243,
+        OP_SETWHO = 244, OP_FINDMETHOD = 245, OP_INF = 246, OP_NEGINF = 247, OP_NAN = 248;
 
-    static final int OP_COUNT = 236;
+    static final int OP_COUNT = 249;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -317,6 +320,19 @@ final class NqpOps {
             case OP_STAT: return Ops.stat(str(a[0]), lng(a[1]));
             case OP_READFH: return Ops.readfh(smo(a[0]), smo(a[1]), lng(a[2]), tc);
             case OP_TIME: return Ops.time();
+            case OP_ATOMICADD_I: return Ops.atomicadd_i(smo(a[0]), lng(a[1]), tc);
+            case OP_ATPOSND_I: return Ops.atposnd_i(smo(a[0]), smo(a[1]), tc);
+            case OP_ORDFIRST: return Ops.ordfirst(str(a[0]));
+            case OP_CMP_N: return Ops.cmp_n(dbl(a[0]), dbl(a[1]));
+            case OP_CMP_S: return Ops.cmp_s(str(a[0]), str(a[1]));
+            case OP_CMP_I_BIG: return Ops.cmp_I(smo(a[0]), smo(a[1]), tc);
+            case OP_DIV_I_BIG: return Ops.div_I(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+            case OP_REPLACE: return Ops.replace(str(a[0]), lng(a[1]), lng(a[2]), str(a[3]));
+            case OP_SETWHO: return Ops.setwho(smo(a[0]), smo(a[1]), tc);
+            case OP_FINDMETHOD: return Ops.findmethod(smo(a[0]), str(a[1]), tc);
+            case OP_INF: return Ops.inf();
+            case OP_NEGINF: return Ops.neginf();
+            case OP_NAN: return Ops.nan();
             case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
             case OP_GETEXTYPE: return Ops.getextype(smo(a[0]), tc);
             case OP_SETEXTYPE: return Ops.setextype(smo(a[0]), lng(a[1]), tc);
