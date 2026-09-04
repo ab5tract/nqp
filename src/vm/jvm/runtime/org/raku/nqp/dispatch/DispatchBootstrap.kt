@@ -47,6 +47,12 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
     @JvmField var heat: Int = 0
 
     /**
+     * Run after [reset] has emptied the site: a cache layered over this one
+     * (the code engine's folded replay prefix) must forget with it.
+     */
+    @JvmField var onReset: Runnable? = null
+
+    /**
      * The target this site was linked with, kept so the site can be made cold
      * again. See [DispatchBootstrap.resetAll].
      */
@@ -65,6 +71,7 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
         linkedName = null
         staticDescriptor = null
         coldTarget?.let { if (fromIndy) setTarget(it) }
+        onReset?.run()
     }
 
     /**
