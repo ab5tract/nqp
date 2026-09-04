@@ -7,6 +7,9 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +42,7 @@ import org.raku.nqp.runtime.ThreadContext;
 import org.raku.nqp.sixmodel.STable;
 import org.raku.nqp.sixmodel.SixModelObject;
 import org.raku.nqp.sixmodel.TypeObject;
+import org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance;
 import org.raku.nqp.sixmodel.reprs.P6OpaqueDelegateInstance;
 import org.raku.nqp.sixmodel.reprs.P6OpaqueREPRData;
 
@@ -120,49 +124,47 @@ final class NqpDispatch {
 
     /**
      * An attribute read whose object's storage class is known from the
-     * guards: the exact cast lets PE devirtualize the generated accessor,
-     * and the constant hint folds its switch to the field.
+     * guards. The generated accessor is NOT called: its delegation branch
+     * calls the same accessor on the delegate, which PE follows as
+     * recursion until Graal bails out of the whole compilation ("too deep
+     * inlining", seen). Instead the slot's field is read through a
+     * constant MethodHandle getter, which PE folds to the field load. The
+     * class check is a speculation, not a proof: an object whose type a
+     * mixin changed keeps its original storage class and delegates, so
+     * its class is not its new type's; a delegating instance of the right
+     * class, a deserialized wrapper's delegate, and a null all take the
+     * generic accessor.
      */
     static final class AttrSrc extends Src {
         final Src from;
         final Class<?> storage;
-        final long hint;
+        final MethodHandle getter;
         final SixModelObject classHandle;
         final String name;
         final ArgKind kind;
-        AttrSrc(Src from, Class<?> storage, long hint, SixModelObject classHandle,
+        AttrSrc(Src from, Class<?> storage, MethodHandle getter, SixModelObject classHandle,
                 String name, ArgKind kind) {
             this.from = from;
             this.storage = storage;
-            this.hint = hint;
+            this.getter = getter;
             this.classHandle = classHandle;
             this.name = name;
             this.kind = kind;
         }
-        /* The class check is a speculation, not a proof: an object whose
-         * type a mixin changed keeps its original storage class and
-         * delegates (P6OpaqueDelegateInstance), so its class is not its
-         * new type's. Those, and a null, take the generic accessor. */
         @Override Object eval(ThreadContext tc, Object[] args) {
             Object o = from.eval(tc, args);
-            /* A deserialized object is a delegate wrapper around its real
-             * storage (so is one a mixin retyped); look through one. */
             Object target = o instanceof P6OpaqueDelegateInstance d ? d.delegate : o;
-            if (target != null && target.getClass() == storage) {
-                SixModelObject smo = (SixModelObject) CompilerDirectives.castExact(target, storage);
-                switch (kind) {
-                    case OBJ:
-                        return smo.get_attribute_boxed(tc, classHandle, name, hint);
-                    case INT: case UINT:
-                        smo.get_attribute_native(tc, classHandle, name, hint);
-                        return tc.nativeI;
-                    case NUM:
-                        smo.get_attribute_native(tc, classHandle, name, hint);
-                        return tc.nativeN;
-                    default:
-                        smo.get_attribute_native(tc, classHandle, name, hint);
-                        return tc.nativeS;
+            if (target != null && target.getClass() == storage
+                    && ((P6OpaqueBaseInstance) target).delegate == null) {
+                SixModelObject v;
+                try {
+                    v = (SixModelObject) getter.invokeExact((SixModelObject) target);
+                } catch (Throwable t) {
+                    throw CompilerDirectives.shouldNotReachHere(t);
                 }
+                /* Null: not yet vivified (or genuinely null); the accessor
+                 * decides which and vivifies. */
+                if (v != null) return v;
             }
             return slow(tc, o);
         }
@@ -170,8 +172,13 @@ final class NqpDispatch {
         private Object slow(ThreadContext tc, Object o) {
             if (STATS) {
                 count(slowEvals);
-                String key = (o == null ? "null" : o.getClass().getName()) + " vs " + storage.getName() + " " + name;
-                if (seenSlow.add(key)) System.err.println("dispatch slow attr: " + key);
+                Object target = o instanceof P6OpaqueDelegateInstance d ? d.delegate : o;
+                String key = "slow attr " + name + " of "
+                    + (o == null ? "null" : o.getClass().getName()) + "/"
+                    + (target == null ? "null" : target.getClass().getName())
+                    + " vs " + storage.getName()
+                    + (target instanceof P6OpaqueBaseInstance b && b.delegate != null ? " (delegating)" : "");
+                if (seenSlow.add(key)) System.err.println("dispatch " + key);
             }
             if (o == null)
                 throw org.raku.nqp.runtime.ExceptionHandling.dieInternal(tc,
@@ -205,7 +212,12 @@ final class NqpDispatch {
         }
         @TruffleBoundary
         private Object slow(ThreadContext tc, Object o) {
-            if (STATS) count(slowEvals);
+            if (STATS) {
+                count(slowEvals);
+                String key = "slow unbox " + kind + " of " + (o == null ? "null" : o.getClass().getName())
+                    + " vs " + storage.getName();
+                if (seenSlow.add(key)) System.err.println("dispatch " + key);
+            }
             return ValueSource.Companion.unbox(tc, (SixModelObject) o, kind);
         }
     }
@@ -216,7 +228,11 @@ final class NqpDispatch {
         SlowSrc(ValueSource source) { this.source = source; }
         @Override @TruffleBoundary
         Object eval(ThreadContext tc, Object[] args) {
-            if (STATS) count(slowEvals);
+            if (STATS) {
+                count(slowEvals);
+                String key = "slow source " + source;
+                if (seenSlow.add(key)) System.err.println("dispatch " + key);
+            }
             return DispatchCompiler.evalRaw(source, tc, args);
         }
     }
@@ -433,13 +449,14 @@ final class NqpDispatch {
             if (s instanceof ValueSource.Arg a) return new ArgSrc(a.getIndex());
             if (s instanceof ValueSource.Literal l) return new LitSrc(l.getValue());
             if (s instanceof ValueSource.How h) return new HowSrc(fold(h.getFrom()));
-            if (s instanceof ValueSource.Attribute at) {
+            if (s instanceof ValueSource.Attribute at && at.getKind() == ArgKind.OBJ) {
                 Class<?> storage = storageOf(at.getFrom());
                 if (storage != null) {
                     STable st = known.get(at.getFrom());
                     long hint = st.REPR.hint_for(tc, st, at.getClassHandle(), at.getName());
-                    if (hint != STable.NO_HINT)
-                        return new AttrSrc(fold(at.getFrom()), storage, hint,
+                    MethodHandle getter = hint == STable.NO_HINT ? null : getterFor(st, storage, (int) hint);
+                    if (getter != null)
+                        return new AttrSrc(fold(at.getFrom()), storage, getter,
                             at.getClassHandle(), at.getName(), at.getKind());
                 }
             }
@@ -455,6 +472,30 @@ final class NqpDispatch {
         @TruffleBoundary
         private static void dumpSlow(ValueSource s, Map<ValueSource, STable> known) {
             System.err.println("dispatch slow source: " + s + " known=" + known.keySet());
+        }
+
+        /**
+         * A (SixModelObject)SixModelObject getter for the slot's field, or
+         * null when the slot is not a reference field.
+         */
+        private static MethodHandle getterFor(STable st, Class<?> storage, int slot) {
+            /* Auto-vivification (every `$` attribute of a Raku class has a
+             * container prototype) only matters when the field is null:
+             * the accessor clones the prototype in and stores it. The fast
+             * path reads the field and sends a null to the accessor, so a
+             * vivified attribute -- the steady state -- is a plain load. */
+            try {
+                java.lang.reflect.Field f = storage.getField("field_" + slot);
+                if (f.getType() != SixModelObject.class) {
+                    if (STATS) System.err.println("dispatch no getter: field type " + f.getType() + " slot " + slot);
+                    return null;
+                }
+                return MethodHandles.lookup().unreflectGetter(f)
+                    .asType(MethodType.methodType(SixModelObject.class, SixModelObject.class));
+            } catch (ReflectiveOperationException | RuntimeException e) {
+                if (STATS) System.err.println("dispatch no getter: " + e + " slot " + slot + " of " + storage.getName());
+                return null;
+            }
         }
 
         /** The exact storage class of a source a type guard has fixed. */
@@ -687,15 +728,20 @@ final class NqpDispatch {
                 enterEngine(tc, cr, (CallTarget) target, descriptor, out);
                 return;
             }
-            if (STATS) {
-                count(target == null ? noTarget : badExpectation);
-                String key = (cr.name == null || cr.name.isEmpty() ? "<anon>" : cr.name)
-                    + " " + cr.staticInfo.compUnit.getClass().getSimpleName();
-                noTargetBy.computeIfAbsent(key, k -> new java.util.concurrent.atomic.AtomicLong()).incrementAndGet();
-            }
+            if (STATS) countRefused(cr, target == null);
         }
         else if (STATS) count(notCodeRef);
         invokeBoundary(tc, callee, descriptor, out);
+    }
+
+    /* Diagnostics stay behind boundaries too: getSimpleName's reflection
+     * road inlined under PE was itself a "too deep inlining" bailout. */
+    @TruffleBoundary
+    private static void countRefused(CodeRef cr, boolean noTargetCase) {
+        count(noTargetCase ? noTarget : badExpectation);
+        String key = (cr.name == null || cr.name.isEmpty() ? "<anon>" : cr.name)
+            + " " + cr.staticInfo.compUnit.getClass().getSimpleName();
+        noTargetBy.computeIfAbsent(key, k -> new java.util.concurrent.atomic.AtomicLong()).incrementAndGet();
     }
 
     @TruffleBoundary
@@ -714,9 +760,12 @@ final class NqpDispatch {
                                         Object[] args) {
         SixModelObject callee = (SixModelObject) p.callee.eval(tc, args);
         Object[] out = evalPlan(p.plan, tc, args);
-        DispatchRecord record = newRecord(tc, p.program, args, site);
-        List<DispatchRecord> records = tc.dispatchRecords;
-        records.add(record);
+        /* The record list is an ArrayList: its add/remove stay behind
+         * boundaries, because PE inlines the JDK's bounds-check slow paths
+         * (Preconditions -> Formatter -> Locale) until Graal bails out of
+         * the whole compilation with "too deep inlining" -- seen, and the
+         * root then runs interpreted for good. */
+        DispatchRecord record = pushRecord(tc, p.program, args, site);
         try {
             tc.pendingDispatch = record;
             try {
@@ -731,18 +780,25 @@ final class NqpDispatch {
             }
         }
         finally {
-            records.remove(records.size() - 1);
+            popRecord(tc);
         }
     }
 
     @TruffleBoundary
-    private static DispatchRecord newRecord(ThreadContext tc, DispatchProgram program,
-                                            Object[] args, DispatchCallSite site) {
+    private static DispatchRecord pushRecord(ThreadContext tc, DispatchProgram program,
+                                             Object[] args, DispatchCallSite site) {
         DispatchRecord record = new DispatchRecord(tc, null, program.getDescriptor(), args,
             tc.curFrame, site);
         record.setProgram(program);
         record.endRecording();
+        tc.dispatchRecords.add(record);
         return record;
+    }
+
+    @TruffleBoundary
+    private static void popRecord(ThreadContext tc) {
+        List<DispatchRecord> records = tc.dispatchRecords;
+        records.remove(records.size() - 1);
     }
 
     @TruffleBoundary
@@ -764,18 +820,22 @@ final class NqpDispatch {
                                     CallSiteDescriptor csd, Object[] args) {
         CallFrame callerFrame = tc.curFrame;
         try {
-            CallFrame cf = new CallFrame(tc, cr);
+            /* Frame construction walks the caller chain for an outer and
+             * may auto-close; leave() may run an exit handler through
+             * invokeDirect. Neither is PE-sized: both stay boundaries, and
+             * only the program call itself is in the compiled code. */
+            CallFrame cf = newFrame(tc, cr);
             try {
                 NqpCodeEngine.runProgram(target, cr.staticInfo.compUnit, tc, cf, csd, args);
             }
             catch (ControlException ce) {
-                cf.leave();
+                leave(cf);
                 throw ce;
             }
             catch (Throwable t) {
                 throw dieInternal(tc, t);
             }
-            cf.leave();
+            leave(cf);
         }
         catch (BindReturnException r) {
             CallFrame caller = callerFrame != null ? callerFrame : tc.dummyCaller;
@@ -790,6 +850,16 @@ final class NqpDispatch {
              * what it returns is not thrown. */
             dieInternal(tc, e);
         }
+    }
+
+    @TruffleBoundary
+    private static CallFrame newFrame(ThreadContext tc, CodeRef cr) {
+        return new CallFrame(tc, cr);
+    }
+
+    @TruffleBoundary
+    private static void leave(CallFrame cf) {
+        cf.leave();
     }
 
     @TruffleBoundary

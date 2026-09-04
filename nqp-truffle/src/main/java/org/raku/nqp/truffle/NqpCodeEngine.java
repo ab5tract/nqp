@@ -68,19 +68,32 @@ public final class NqpCodeEngine implements CodeEngine {
              * token instead of letting the capture cross raw; a raw one
              * here means a site outside that protocol, and joining the
              * chain without this frame would silently drop its work. */
-            throw new IllegalStateException(
-                "continuation captured at a non-suspendable site in an engine-run block ("
-                + (cf.codeRef == null ? "<anon>" : cf.codeRef.name) + ")", sse);
+            throw nonSuspendable(cf, sse);
         }
         if (r instanceof ContinuationResult cr) {
             /* The program yielded a suspend token: a continuation is being
              * captured through this frame. Join the ResumeStatus chain the
              * way a bytecode save-site does; the resume handle re-enters
              * the program through ContinuationResult.continueWith. */
-            NqpCont.Suspend token = (NqpCont.Suspend) cr.getResult();
-            throw token.sse.pushFrame(0, RESUME,
-                new Object[] { cr, token.rtype }, cf);
+            throw suspend(cr, cf);
         }
+    }
+
+    /* This method is reached from PE-visible code (NqpDispatch's direct
+     * entry), so its exceptional tails -- a string concatenation, the
+     * save-stack machinery -- stay behind boundaries. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    private static RuntimeException nonSuspendable(CallFrame cf,
+                                                   org.raku.nqp.runtime.SaveStackException sse) {
+        return new IllegalStateException(
+            "continuation captured at a non-suspendable site in an engine-run block ("
+            + (cf.codeRef == null ? "<anon>" : cf.codeRef.name) + ")", sse);
+    }
+
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    private static RuntimeException suspend(ContinuationResult cr, CallFrame cf) {
+        NqpCont.Suspend token = (NqpCont.Suspend) cr.getResult();
+        return token.sse.pushFrame(0, RESUME, new Object[] { cr, token.rtype }, cf);
     }
 
     private static RuntimeException hostForm(Throwable t) {
