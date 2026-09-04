@@ -2230,6 +2230,10 @@ class QAST::TruffleEncoder {
             else {
                 my $t := $cur.lexical_type($name);
                 if nqp::defined($t) {
+                    # A plain uint outer lexical (stored type 10) reads from
+                    # the int slot table it was remapped into.
+                    $t := $T_INT if $t == 10 && !nqp::objprimbits($cur.lexical_returns($name))
+                        || $t == 10 && nqp::objprimbits($cur.lexical_returns($name)) == 64;
                     cbail('typed outer lexical wider than obj') if $t > 3 || $t < 0;
                     return $t;
                 }
@@ -2291,7 +2295,14 @@ class QAST::TruffleEncoder {
 
     method encode_decl($var, %e, str $decl, str $scope) {
         my str $name := $var.name;
-        my int $type := rt_of($var.returns);
+        # A plain (unsized) uint lexical shares the int slot table, exactly
+        # as BlockInfo.register_lexical remaps it ("$type := 1 if $type ==
+        # 10"): its storage is a long, and the unsigned-ness lives in the
+        # ops that read it, not the slot. A SIZED uint (uint8/16/32) still
+        # bails -- a direct store into its slot would skip the truncation
+        # the bytecode path does, and it reaches this road rarely (native
+        # lvalues are lexicalref-scoped and truncate through the reference).
+        my int $type := lex_rt($var.returns);
         cbail('uint or wide lexical') if $type > 3 || $type < 0;
         if $decl eq 'param' {
             cbail('param scope ' ~ $scope) unless $scope eq 'lexical' || $scope eq 'local';
@@ -2363,6 +2374,19 @@ class QAST::TruffleEncoder {
         cbail('redeclared local ' ~ $name) if nqp::existskey(%e<locals>, $name);
         my int $idx := new_elocal(%e, $type);
         %e<locals>{$name} := [$idx, $type];
+    }
+
+    # The slot-storage type of a lexical: a plain (unsized) uint shares
+    # the int slots, as BlockInfo.register_lexical remaps it. A sized uint
+    # keeps its own -9 so encode_decl bails on it.
+    sub lex_rt($typeobj) {
+        my int $spec := nqp::isnull($typeobj) ?? 0 !! nqp::objprimspec($typeobj);
+        if $spec == 10 {
+            my int $bits := nqp::objprimbits($typeobj);
+            return $T_INT if $bits == 0 || $bits == 64;
+            return -9;
+        }
+        rt_of($typeobj)
     }
 
     sub rt_of($typeobj) {
