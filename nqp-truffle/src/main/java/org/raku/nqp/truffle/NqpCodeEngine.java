@@ -51,6 +51,9 @@ public final class NqpCodeEngine implements CodeEngine {
     static void runProgram(CallTarget program, CompilationUnit cu, ThreadContext tc, CallFrame cf,
                            CallSiteDescriptor csd, Object[] args) {
         Object r;
+        if (program instanceof com.oracle.truffle.api.RootCallTarget rct
+                && rct.getRootNode() instanceof NqpRootNode root && root.blockName == null)
+            root.blockName = cf.codeRef == null ? "" : cf.codeRef.name;
         try {
             // The program stores its own return value, typed; see StoreRet.
             r = program.call(cu, tc, cf, csd, args);
@@ -188,6 +191,12 @@ public final class NqpCodeEngine implements CodeEngine {
             .build();
 
         static {
+            /* NQP_CODE_CLOSE_AT_EXIT=1: close the context at JVM exit so
+             * engine-close reports (engine.CompilationStatistics) print. */
+            if (System.getenv("NQP_CODE_CLOSE_AT_EXIT") != null)
+                Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                    try { CONTEXT.close(true); } catch (Throwable t) { t.printStackTrace(); }
+                }));
             String runtime = Truffle.getRuntime().getName();
             if (!runtime.contains("GraalVM")) {
                 System.err.println(
