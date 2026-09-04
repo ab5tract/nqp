@@ -621,6 +621,17 @@ class QAST::TruffleEncoder {
         op3('throwextype', 183, $T_OBJ, 'i');
         op3('isconcrete_nd', 184, $T_INT, 'o');
         op3('gethllsym', 185, $T_OBJ, 'ss');
+        op3('box_i/2', 186, $T_OBJ, 'io');
+        op3('box_n/2', 187, $T_OBJ, 'no');
+        op3('box_s/2', 188, $T_OBJ, 'so');
+        op3('isnanorinf', 189, $T_INT, 'n');
+        op3('where', 190, $T_INT, 'o');
+        op3('getlexcaller', 191, $T_OBJ, 's');
+        op3('getcomp', 192, $T_OBJ, 's');
+        op3('atposref_n', 193, $T_OBJ, 'oi');
+        op3('atposref_s', 194, $T_OBJ, 'oi');
+        op3('atpos_u', 195, $T_INT, 'oi');
+        op3('bindpos_u', 196, $T_INT, 'oii');
         op3('hlllist', 139, $T_OBJ, '');
         op3('bootintarray', 142, $T_OBJ, '');
         op3('bootnumarray', 143, $T_OBJ, '');
@@ -736,6 +747,20 @@ class QAST::TruffleEncoder {
         my @ltypes := %e<ltypes>;
         nqp::bindpos(@code, 2, nqp::elems(@ltypes));
         nqp::splice(@code, @ltypes, 3, 0);
+        # The size gate, BEFORE the commit: the program travels as one
+        # string constant, which the class file caps at 65535 UTF-8
+        # bytes (the rx descriptor's cliff). A refusal after the commit
+        # would hand the bytecode path a block whose lexicals are already
+        # registered ("Lexical '&parent' already declared", found
+        # 2026-09-04 when the BOOTSTRAP BEGIN body, 4 decls and thousands
+        # of statements, first reached here as an immediate block). The
+        # estimate is an upper bound: every code word as decimal plus its
+        # separator, every pool entry with its length prefix, and room
+        # for the nested qbids patched in below.
+        my int $est := 32 + 6 * nqp::elems(%e<nested>);
+        for @code { $est := $est + nqp::chars(~$_) + 1 }
+        for %e<pool> { $est := $est + nqp::chars($_) + 8 }
+        if $est > 60000 { trace('no: program too large (' ~ $est ~ ')'); return '' }
         trace('YES: committing ' ~ nqp::elems(%e<decls>) ~ ' decls');
         for %e<decls> -> $d {
             my str $kind := $d[0];
@@ -755,7 +780,18 @@ class QAST::TruffleEncoder {
         for %e<nested> -> $nb {
             my $blk := $nb[1];
             unless $*CODEREFS.know_cuid($blk.cuid) {
+                # An immediate block is compiled as a declaration, the way
+                # the bytecode path's own if/for roads flip it: compiled
+                # as immediate, as_jast would also emit its direct call
+                # into the enclosing method -- registering a reentry
+                # label there that the discarded emission never defines
+                # ("reenter_N used but not defined").
+                my str $bt := $blk.blocktype;
+                my int $imm := $bt eq 'immediate' || $bt eq 'immediate_static';
+                $blk.blocktype($bt eq 'immediate' ?? 'declaration' !! 'declaration_static')
+                    if $imm;
                 my $r := $comp.as_jast($blk);
+                $blk.blocktype($bt) if $imm;
                 $*STACK.obtain(NQPMu, $r);
             }
             # Positions were recorded before the local types were spliced
@@ -769,10 +805,10 @@ class QAST::TruffleEncoder {
         nqp::push(@out, ' ' ~ nqp::elems(%e<pool>));
         for %e<pool> { nqp::push(@out, ' ' ~ nqp::chars($_) ~ ':' ~ $_) }
         $out := nqp::join('', @out);
-        # The program travels as one string constant; the class file caps
-        # those at 65535 UTF-8 bytes, the same cliff the rx descriptor
-        # refuses at.
-        return '' if nqp::chars($out) > 60000;
+        # The gate above bounded this; refusing here would be the bug it
+        # exists to prevent, so a miss is an invariant failure, not a bail.
+        nqp::die('code engine: program of ' ~ $node.cuid ~ ' grew past the size gate after commit ('
+            ~ nqp::chars($out) ~ ' chars)') if nqp::chars($out) > 65000;
         if $code_encoded {
             nqp::say('code engine: ' ~ ($name eq '' ?? '<anon ' ~ $node.cuid ~ '>' !! $name));
         }
@@ -827,6 +863,17 @@ class QAST::TruffleEncoder {
         my @save := %e<code>;
         my @p := nqp::list();
         %e<code> := @p;
+        # The nested-block list is hidden while the prologue is built in
+        # its own array: encode_child's coercion splice shifts every entry
+        # at or past its mark, and a mark in this scratch array is a small
+        # number that every main-program position exceeds -- each
+        # coercion inside the prologue (a default or a task coerced to a
+        # native parameter's type) would bump every recorded qbid slot by
+        # two, and the deferred patch would land on a tag ("unknown tag
+        # 17041 at 92", 2026-09-04, once typed parameters encoded). A
+        # nested block inside the prologue bails anyway.
+        my @nested_save := %e<nested>;
+        %e<nested> := nqp::list();
         nqp::bindkey(%e, 'inparams', 1);
         epush(%e, $pos_required);
         epush(%e, $pos_slurpy ?? -1 !! $pos_required + $pos_optional);
@@ -836,7 +883,9 @@ class QAST::TruffleEncoder {
                 ?? ($p.named ?? 3 !! 1)
                 !! ($p.named ?? 2 !! 0);
             epush(%e, $kind);
-            epush(%e, $T_OBJ);
+            my int $ptype := $p.slurpy ?? $T_OBJ !! rt_of($p.returns);
+            cbail('param type') if $ptype < 0 || $ptype > 3;
+            epush(%e, $ptype);
             if $p.scope eq 'local' {
                 epush(%e, 1);
                 epush(%e, %e<locals>{$p.name}[0]);
@@ -850,7 +899,7 @@ class QAST::TruffleEncoder {
             }
             if $p.default {
                 epush(%e, 1);
-                self.encode_child($p.default, %e, $T_OBJ);
+                self.encode_child($p.default, %e, $ptype);
             }
             else {
                 epush(%e, 0);
@@ -867,6 +916,7 @@ class QAST::TruffleEncoder {
             }
         }
         %e<code> := @save;
+        %e<nested> := @nested_save;
         nqp::bindkey(%e, 'inparams', 0);
         nqp::splice(%e<code>, @p, $params_at + 1, 0);
         # Everything the walk recorded by position sits after the
@@ -995,6 +1045,19 @@ class QAST::TruffleEncoder {
                 epush(%e, $W_CODEREF);
                 nqp::push(%e<nested>, [nqp::elems(%e<code>), $n]);
                 epush(%e, 0);   # qbid, patched after the deferred compile
+                return $T_OBJ;
+            }
+            if $bt eq 'immediate' || $bt eq 'immediate_static' {
+                # Compiled as a code object and called at once with no
+                # arguments, which is what the bytecode path's direct call
+                # of the block's code ref comes to. A block that wants the
+                # condition passed (an arity, or a count annotation) is the
+                # if/with road's business, encoded there; here it bails.
+                cbail('nested block in a parameter default')
+                    if nqp::existskey(%e, 'inparams') && %e<inparams>;
+                cbail('immediate block wanting arguments')
+                    if $n.arity > 0 || $n.ann('count');
+                self.encode_immediate_call($n, %e, 0, 0);
                 return $T_OBJ;
             }
             cbail('block ' ~ $bt);
@@ -1545,6 +1608,59 @@ class QAST::TruffleEncoder {
         my int $n := nqp::elems(@($op));
         cbail('if arity') unless $n == 2 || $n == 3;
         my int $void := $want == $T_VOID;
+        if needs_cond_passed($op[1]) || ($n == 3 && needs_cond_passed($op[2])) {
+            # An immediate block wanting the condition (`if $x -> $y {}`):
+            # the condition evaluates once into a scratch local, and the
+            # branch is a call of the block with that local, the bytecode
+            # path's __IM_ local. Value context keeps the two-child rule
+            # below (the condition is the value when it fails).
+            cbail('cond-passing if in a parameter default')
+                if nqp::existskey(%e, 'inparams') && %e<inparams>;
+            my int $rt := $void ?? $T_VOID !! ($want == $T_ANY ?? $T_OBJ !! $want);
+            epush(%e, $W_STMTS); epush(%e, 2);
+            my int $bind_at := nqp::elems(%e<code>);
+            epush(%e, $W_LOCBIND); epush(%e, 0); epush(%e, 0);
+            my int $condt := self.encode_node($op[0], %e, $T_ANY);
+            cbail('if condition type') if $condt < 0 || $condt > 3;
+            my int $tmp := new_elocal(%e, $condt);
+            nqp::bindpos(%e<code>, $bind_at + 1, $condt);
+            nqp::bindpos(%e<code>, $bind_at + 2, $tmp);
+            my int $has_else := $n == 3 || !$void;
+            epush(%e, $void ?? $W_IFS !! $W_IFV);
+            epush(%e, $condt);
+            epush(%e, $negate);
+            epush(%e, $has_else ?? 1 !! 0);
+            epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
+            # then
+            if needs_cond_passed($op[1]) {
+                self.encode_immediate_call($op[1], %e, 1, $condt, $tmp);
+                if !$void && $rt != $T_OBJ {
+                    cbail('cond-passing if wanted native');
+                }
+            }
+            else {
+                self.encode_child($op[1], %e, $rt);
+            }
+            # else
+            if $n == 3 {
+                if needs_cond_passed($op[2]) {
+                    self.encode_immediate_call($op[2], %e, 1, $condt, $tmp);
+                    cbail('cond-passing if wanted native') if !$void && $rt != $T_OBJ;
+                }
+                else {
+                    self.encode_child($op[2], %e, $rt);
+                }
+            }
+            elsif !$void {
+                if $condt != $rt {
+                    my int $kind := coerce_kind($condt, $rt);
+                    cbail('if result coercion') if $kind < 0;
+                    epush(%e, $W_COERCE); epush(%e, $kind);
+                }
+                epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
+            }
+            return $void ?? $T_OBJ !! $rt;
+        }
         if $n == 2 && !$void {
             # No else, but a value is wanted: the condition IS the value
             # when it does not hold, exactly as the bytecode path keeps it
@@ -1987,6 +2103,37 @@ class QAST::TruffleEncoder {
         cbail('var-with-fallback scope ' ~ $scope);
     }
 
+    # The call of an immediate block: a lang-call on the block's code ref
+    # (the CODEREF road, compiled at commit like any nested block), with
+    # the condition local passed boxed when the block takes one.
+    method encode_immediate_call($blk, %e, int $with_cond, int $cond_tmp_type, int $cond_tmp = 0) {
+        epush(%e, $W_DISPATCH);
+        %e<dispatches> := %e<dispatches> + 1;
+        epush(%e, $T_OBJ);
+        epush(%e, epool(%e, 'lang-call'));
+        epush(%e, $with_cond ?? 2 !! 1);
+        epush(%e, $T_OBJ);
+        epush(%e, $T_OBJ) if $with_cond;
+        epush(%e, $W_CODEREF);
+        nqp::push(%e<nested>, [nqp::elems(%e<code>), $blk]);
+        epush(%e, 0);   # qbid, patched after the deferred compile
+        if $with_cond {
+            if $cond_tmp_type != $T_OBJ {
+                epush(%e, $W_COERCE); epush(%e, coerce_kind($cond_tmp_type, $T_OBJ));
+            }
+            epush(%e, $W_LOCGET); epush(%e, $cond_tmp_type); epush(%e, $cond_tmp);
+        }
+        $T_OBJ
+    }
+
+    # Compiler.nqp's needs_cond_passed: an immediate block child of an
+    # if/with that takes the condition as its argument.
+    sub needs_cond_passed($n) {
+        nqp::istype($n, QAST::Block)
+        && ($n.arity > 0 || $n.ann('count'))
+        && ($n.blocktype eq 'immediate' || $n.blocktype eq 'immediate_static')
+    }
+
     method encode_lexget(str $name, %e) {
         my int $type := self.lexical_type_of($name, %e, 'lexical');
         epush(%e, $W_LEXGET); epush(%e, $type); epush(%e, epool(%e, $name));
@@ -2075,7 +2222,14 @@ class QAST::TruffleEncoder {
         cbail('uint or wide lexical') if $type > 3 || $type < 0;
         if $decl eq 'param' {
             cbail('param scope ' ~ $scope) unless $scope eq 'lexical' || $scope eq 'local';
-            cbail('typed param') unless $type == $T_OBJ;
+            # A native parameter fetches through posparam_<t>/namedparam_<t>
+            # and binds into a typed slot. A slurpy is always an object; a
+            # sized native (int8, num32) would need the bytecode path's
+            # explicit truncation after the fetch, so it stays out for now.
+            if $type != $T_OBJ {
+                cbail('typed slurpy param') if $var.slurpy;
+                cbail('sized typed param') if sized_native_ref_spec($var.returns);
+            }
             if $scope eq 'local' {
                 self.declare_elocal($var, %e, $type);
             }

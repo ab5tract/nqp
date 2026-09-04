@@ -497,8 +497,16 @@ final class NqpProgramBuilder {
             case NqpWire.CODEREF:
                 if (emit) b.emitCodeRefGet(code[at + 1]);
                 return at + 2;
-            default:
-                throw new IllegalStateException("nqpp: unknown tag " + tag + " at " + at);
+            default: {
+                // Name the neighbourhood: a bad tag is an encoder layout
+                // bug, and the words around it are what locates it.
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < code.length; i++)
+                    sb.append(i == at ? " [" : " ").append(code[i]).append(i == at ? "]" : "");
+                throw new IllegalStateException("nqpp: unknown tag " + tag + " at " + at
+                    + " of " + code.length + " words; program:" + sb
+                    + "; pool=" + java.util.Arrays.toString(pool));
+            }
         }
     }
 
@@ -547,10 +555,10 @@ final class NqpProgramBuilder {
             if (kind == 2) namedAllowed.add(named);
             if (kind == 3) namedSlurpy = true;
             int hasDefault = code[at++];
-            if (type != NqpWire.T_OBJ)
-                throw new IllegalStateException("nqpp: typed parameters not yet encoded");
+            if (type != NqpWire.T_OBJ && kind != 0 && kind != 2)
+                throw new IllegalStateException("nqpp: a slurpy parameter is always an object");
 
-            if (emit) beginBindTarget(scope, target);
+            if (emit) beginBindTarget(scope, target, type);
             if (hasDefault != 0) {
                 // v = fetched-if-existed else default; the existed flag is
                 // read before anything can clobber it.
@@ -558,7 +566,7 @@ final class NqpProgramBuilder {
                     b.beginBlock();
                     b.beginStoreLocal(tmp);
                 }
-                emitFetch(kind, named, posIdx, 1, csdL, argsL, emit);
+                emitFetch(kind, named, posIdx, 1, csdL, argsL, emit, type);
                 if (emit) {
                     b.endStoreLocal();
                     b.beginConditional();
@@ -571,7 +579,7 @@ final class NqpProgramBuilder {
                     b.endBlock();
                 }
             } else {
-                emitFetch(kind, named, posIdx, 0, csdL, argsL, emit);
+                emitFetch(kind, named, posIdx, 0, csdL, argsL, emit, type);
             }
             if (emit) endBindTarget(scope);
             if (kind == 0) posIdx++;
@@ -601,12 +609,12 @@ final class NqpProgramBuilder {
     }
 
     private void emitFetch(int kind, String named, int posIdx, int opt,
-                           BytecodeLocal csdL, BytecodeLocal argsL, boolean emit) {
+                           BytecodeLocal csdL, BytecodeLocal argsL, boolean emit, int type) {
         if (!emit) return;
         switch (kind) {
-            case 0 -> b.beginPosParam(posIdx, opt);
+            case 0 -> b.beginPosParam(posIdx, opt, type);
             case 1 -> b.beginPosSlurpy(posIdx);
-            case 2 -> b.beginNamedParam(named, opt);
+            case 2 -> b.beginNamedParam(named, opt, type);
             case 3 -> b.beginNamedSlurpy();
             default -> throw new IllegalStateException("nqpp: bad param kind " + kind);
         }
@@ -620,10 +628,10 @@ final class NqpProgramBuilder {
         }
     }
 
-    private void beginBindTarget(int scope, int target) {
+    private void beginBindTarget(int scope, int target, int type) {
         if (scope == 0) {
             beginSink();
-            b.beginLexBind(NqpWire.T_OBJ, pool[target], new NqpOps.LexSite());
+            b.beginLexBind(type, pool[target], new NqpOps.LexSite());
         } else {
             b.beginStoreLocal(locals[target]);
         }
