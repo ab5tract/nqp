@@ -163,20 +163,22 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     @Operation
     @ConstantOperand(type = int.class, name = "type")
     @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = Object.class, name = "site")
     public static final class LexGet {
         @Specialization
-        static Object doGet(VirtualFrame f, int type, String name) {
-            return NqpOps.getlex(type, name, tc(f), cf(f));
+        static Object doGet(VirtualFrame f, int type, String name, Object site) {
+            return NqpOps.getlex(type, name, (NqpOps.LexSite) site, tc(f), cf(f));
         }
     }
 
     @Operation
     @ConstantOperand(type = int.class, name = "type")
     @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = Object.class, name = "site")
     public static final class LexBind {
         @Specialization
-        static Object doBind(VirtualFrame f, int type, String name, Object v) {
-            return NqpOps.bindlex(type, name, v, tc(f), cf(f));
+        static Object doBind(VirtualFrame f, int type, String name, Object site, Object v) {
+            return NqpOps.bindlex(type, name, v, (NqpOps.LexSite) site, tc(f), cf(f));
         }
     }
 
@@ -217,10 +219,32 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     @Operation
     @ConstantOperand(type = String.class, name = "handle")
     @ConstantOperand(type = int.class, name = "idx")
+    @ConstantOperand(type = Object.class, name = "site")
     public static final class WvalGet {
         @Specialization
-        static Object doGet(VirtualFrame f, String handle, int idx) {
-            return NqpOps.wval(handle, idx, tc(f));
+        static Object doGet(VirtualFrame f, String handle, int idx, Object site) {
+            return NqpOps.wval(handle, idx, (NqpOps.WvalSite) site, tc(f));
+        }
+    }
+
+    /** nqp::getattr with a per-instruction slot cache; see NqpOps.AttrSite. */
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class GetAttrOp {
+        @Specialization
+        static Object doGet(VirtualFrame f, Object site, Object obj, Object ch, Object name) {
+            return NqpOps.getattr((NqpOps.AttrSite) site, obj, ch, (String) name, tc(f));
+        }
+    }
+
+    /** nqp::bindattr, likewise. */
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class BindAttrOp {
+        @Specialization
+        static Object doBind(VirtualFrame f, Object site, Object obj, Object ch, Object name,
+                             Object value) {
+            return NqpOps.bindattr((NqpOps.AttrSite) site, obj, ch, (String) name, value, tc(f));
         }
     }
 

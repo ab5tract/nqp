@@ -113,15 +113,15 @@ final class NqpProgramBuilder {
                 if (emit) b.emitLoadConstant(pool[code[at + 1]]);
                 return at + 2;
             case NqpWire.WVAL:
-                if (emit) b.emitWvalGet(pool[code[at + 1]], code[at + 2]);
+                if (emit) b.emitWvalGet(pool[code[at + 1]], code[at + 2], new NqpOps.WvalSite());
                 return at + 3;
             case NqpWire.LEXGET:
-                if (emit) b.emitLexGet(code[at + 1], pool[code[at + 2]]);
+                if (emit) b.emitLexGet(code[at + 1], pool[code[at + 2]], new NqpOps.LexSite());
                 return at + 3;
             case NqpWire.LEXBIND: {
                 int type = code[at + 1];
                 String name = pool[code[at + 2]];
-                if (emit) b.beginLexBind(type, name);
+                if (emit) b.beginLexBind(type, name, new NqpOps.LexSite());
                 at = walk(at + 3, emit);
                 if (emit) b.endLexBind();
                 return at;
@@ -443,10 +443,22 @@ final class NqpProgramBuilder {
                     b.beginBlock();
                     b.beginStoreLocal(ores);
                 }
-                if (emit) b.beginRunOp(id);
+                // getattr/bindattr get a per-instruction slot cache; see
+                // NqpOps.AttrSite. Same suspension wrapper as any table op.
+                boolean attrGet = id == NqpOps.OP_GETATTR && nargs == 3;
+                boolean attrBind = id == NqpOps.OP_BINDATTR && nargs == 4;
+                if (emit) {
+                    if (attrGet) b.beginGetAttrOp(new NqpOps.AttrSite());
+                    else if (attrBind) b.beginBindAttrOp(new NqpOps.AttrSite());
+                    else b.beginRunOp(id);
+                }
                 at += 3;
                 for (int i = 0; i < nargs; i++) at = walk(at, emit);
-                if (emit) b.endRunOp();
+                if (emit) {
+                    if (attrGet) b.endGetAttrOp();
+                    else if (attrBind) b.endBindAttrOp();
+                    else b.endRunOp();
+                }
                 if (emit && suspendable) {
                     b.endStoreLocal();
                     emitSuspendCheck(ores);
@@ -596,7 +608,7 @@ final class NqpProgramBuilder {
     private void beginBindTarget(int scope, int target) {
         if (scope == 0) {
             beginSink();
-            b.beginLexBind(NqpWire.T_OBJ, pool[target]);
+            b.beginLexBind(NqpWire.T_OBJ, pool[target], new NqpOps.LexSite());
         } else {
             b.beginStoreLocal(locals[target]);
         }
