@@ -486,6 +486,30 @@ final class NqpOps {
         return n;
     }
 
+    /**
+     * The exception an operation lets reach the interpreter loop. The
+     * Bytecode DSL treats any exception that is not a Truffle exception as
+     * an internal error: resolveThrowable in the generated interpreter
+     * calls transferToInterpreterAndInvalidate BEFORE the root's
+     * interceptInternalException gets to wrap it -- so every host
+     * exception used as ordinary control flow (an UnwindException for a
+     * return, next, last or a handled die) threw the compiled root away.
+     * Compiler methods that return from inside loops did that hundreds of
+     * times: "Deopt taken too many times", the root abandoned, the parse
+     * driver among them. Every operation therefore converts here, at the
+     * boundary, into the same carriers the interception produces; the
+     * interception stays as the fallback for anything missed. The
+     * runtime's own control exceptions (a continuation capture, a resume)
+     * must keep flying raw, as before.
+     */
+    static RuntimeException carry(Throwable t) {
+        if (t instanceof com.oracle.truffle.api.exception.AbstractTruffleException ate) return ate;
+        if (t instanceof UnwindException u) return new NqpUnwind(u);
+        if (t instanceof org.raku.nqp.runtime.ControlException) throw sneaky(t);
+        if (t instanceof ThreadDeath) throw sneaky(t);
+        return new NqpHostError(t);
+    }
+
     /** The typed read of a call's result off the frame's return registers. */
     static Object readResult(int rtype, CallFrame cf) {
         /* The common case -- an object result read as an object -- is a
