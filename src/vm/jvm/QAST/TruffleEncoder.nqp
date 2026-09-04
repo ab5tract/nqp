@@ -47,13 +47,14 @@ class QAST::TruffleEncoder {
     # yield of a tag group still wants an NQP_CODE_ALSO run.
     my $extra_ops := 'bind call callmethod callstatic chain chainstatic
         control defor dispatch getlexouter handle handlepayload hash if
-        ifnull locallifetime null p6assign p6decontrv p6decontrv_6c
+        ifnull list list_i list_n list_s locallifetime null p6assign
+        p6decontrv p6decontrv_6c
         repeat_until repeat_while stmt stmts unless until while';
 
     # Node kinds the encoder handles outside the op table.
     my $covered_nodes := 'QAST::ParamTypeCheck';
 
-    my $scopes := 'local lexical contextual attribute positional associative';
+    my $scopes := 'local lexical contextual attribute attributeref positional associative';
 
     sub init() {
         return 0 if $init_done;
@@ -68,6 +69,13 @@ class QAST::TruffleEncoder {
         for nqp::split(' ', subst_ws($extra_ops)) { %covered{'op:' ~ $_} := 1 }
         for nqp::split(' ', subst_ws($scopes))    { %covered{'var:' ~ $_} := 1 }
         for nqp::split(' ', subst_ws($covered_nodes)) { %covered{'node:' ~ $_} := 1 }
+        # Ops we reach through their registered desugar count as covered:
+        # the survey walks the ORIGINAL tree, so without this it reports a
+        # bail for an op the encoder now encodes (verified: with the knob
+        # set, op:p6callmethodhow disappears from NQP_CODE_BAIL output).
+        if nqp::existskey(%env, 'NQP_CODE_DESUGAR') {
+            for nqp::split(',', %env<NQP_CODE_DESUGAR>) { %covered{'op:' ~ $_} := 1 }
+        }
         if nqp::existskey(%env, 'NQP_CODE_ALSO') {
             for nqp::split(',', %env<NQP_CODE_ALSO>) { %covered{$_} := 1 }
         }
@@ -355,6 +363,7 @@ class QAST::TruffleEncoder {
     my int $code_bail_p := 0;
     my int $code_leaf := 0;
     my int $code_precomp := 0;
+    my %code_desugar;
     my int $code_skip_anon := 0;
     my int $code_only_set := 0;
     my %code_skip;
@@ -370,6 +379,9 @@ class QAST::TruffleEncoder {
         $code_bail_p   := nqp::existskey(%env, 'NQP_CODE_BAIL') ?? 1 !! 0;
         $code_leaf     := nqp::existskey(%env, 'NQP_CODE_LEAF') ?? 1 !! 0;
         $code_precomp  := nqp::existskey(%env, 'NQP_CODE_PRECOMP') ?? 1 !! 0;
+        if nqp::existskey(%env, 'NQP_CODE_DESUGAR') {
+            for nqp::split(',', %env<NQP_CODE_DESUGAR>) { %code_desugar{$_} := 1 }
+        }
         $code_skip_anon := nqp::existskey(%env, 'NQP_CODE_SKIP_ANON') ?? 1 !! 0;
         if nqp::existskey(%env, 'NQP_CODE_SKIP') {
             for nqp::split(',', %env<NQP_CODE_SKIP>) { %code_skip{$_} := 1 }
@@ -553,6 +565,33 @@ class QAST::TruffleEncoder {
         op3('iscont_i', 136, $T_INT, 'o');
         op3('iscont_n', 137, $T_INT, 'o');
         op3('iscont_s', 138, $T_INT, 'o');
+        # Chosen by sole-blocker count over a CORE.c NQP_CODE_REPORT run
+        # (2026-09-03): these seven alone gate ~500 of the setting's
+        # blocks. assign_i/assign_s are NOT here on purpose -- their
+        # bytecode desugar REWRITES the QAST node in place (op('bind'),
+        # scope(...)), and mutating a shared tree during an encode that
+        # may still bail would corrupt it for the bytecode path.
+        op3('hllbool', 148, $T_OBJ, 'i');
+        op3('istype_nd', 149, $T_INT, 'oo');
+        op3('who', 150, $T_OBJ, 'o');
+        op3('getpayload', 151, $T_OBJ, 'o');
+        op3('iterator', 152, $T_OBJ, 'o');
+        op3('iterval', 153, $T_OBJ, 'o');
+        op3('assign', 154, $T_OBJ, 'oo');
+        op3('p6bindassert', 155, $T_OBJ, 'oo');
+        # Second sole-blocker batch off the same CORE.c report. push_i/_n/_s
+        # are the bare ops only: the list_i/list_n/list_s CONSTRUCTORS that
+        # would also use them stay reverted (see the note in encode_op).
+        op3('push_i', 145, $T_INT, 'oi');
+        op3('push_n', 146, $T_NUM, 'on');
+        op3('push_s', 147, $T_STR, 'os');
+        op3('iterkey_s', 156, $T_STR, 'o');
+        op3('splice', 157, $T_OBJ, 'ooii');
+        op3('how', 158, $T_OBJ, 'o');
+        op3('hlllist', 139, $T_OBJ, '');
+        op3('bootintarray', 142, $T_OBJ, '');
+        op3('bootnumarray', 143, $T_OBJ, '');
+        op3('bootstrarray', 144, $T_OBJ, '');
         1
     }
 
@@ -1069,6 +1108,41 @@ class QAST::TruffleEncoder {
         # 139-147) are still in NqpOps.java, so re-landing it means
         # restoring this branch plus its table rows -- but not before that
         # binder interaction is understood.
+        if $name eq 'list' || $name eq 'list_i'
+            || $name eq 'list_n' || $name eq 'list_s' {
+            # The list constructors, the same desugar Compiler.nqp uses:
+            # create the array type into a scratch local, then push each
+            # child into it. `hash` is DELIBERATELY not here -- it alone
+            # reproduces the BOOTSTRAP binder bug (bisected 2026-09-03 to
+            # OperatorProperties.new); the list family was tested apart
+            # from it and was never implicated.
+            my @children := $op.list;
+            my int $items := nqp::elems(@children);
+            my int $type_op := $name eq 'list_i' ?? 142
+                !! $name eq 'list_n' ?? 143
+                !! $name eq 'list_s' ?? 144 !! 139;
+            my int $push_op := $name eq 'list_i' ?? 145
+                !! $name eq 'list_n' ?? 146
+                !! $name eq 'list_s' ?? 147 !! 61;
+            my int $elem_want := $name eq 'list_i' ?? $T_INT
+                !! $name eq 'list_n' ?? $T_NUM
+                !! $name eq 'list_s' ?? $T_STR !! $T_OBJ;
+            my int $tmp := new_elocal(%e, $T_OBJ);
+            epush(%e, $W_STMTS);
+            epush(%e, $items + 2);
+            epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $tmp);
+            epush(%e, $W_OPCALL); epush(%e, 58); epush(%e, 1);
+            epush(%e, $W_OPCALL); epush(%e, $type_op); epush(%e, 0);
+            my int $i := 0;
+            while $i < $items {
+                epush(%e, $W_OPCALL); epush(%e, $push_op); epush(%e, 2);
+                epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+                self.encode_child(@children[$i], %e, $elem_want);
+                $i++;
+            }
+            epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+            return $T_OBJ;
+        }
         if $name eq 'call' || $name eq 'callstatic' {
             return self.encode_call($op, %e);
         }
@@ -1322,6 +1396,24 @@ class QAST::TruffleEncoder {
         my int $nargs := nqp::elems(@($op));
         my $entry := nqp::atkey(%emit_ops, $name ~ '/' ~ $nargs);
         $entry := nqp::atkey(%emit_ops, $name) if nqp::isnull($entry);
+        if nqp::isnull($entry) && nqp::existskey(%code_desugar, $name) {
+            # No encoding for this op, but the HLL registered a desugar for
+            # it (src/vm/jvm/Raku/Ops.nqp publishes them). Apply it and
+            # encode what it produces -- the desugar is an opaque value
+            # here, so nothing about it is reproduced or read.
+            #
+            # Opt-in per op name (NQP_CODE_DESUGAR=a,b) precisely because a
+            # desugar may REWRITE the node it is handed instead of
+            # returning a fresh tree -- nqp's own assign_i does -- and a
+            # later bail would then leave the bytecode path a mutated tree.
+            my $reg := nqp::gethllsym('nqp', 'CODE_OP_DESUGARS');
+            unless nqp::isnull($reg) {
+                my $desugar := nqp::atkey($reg, $name);
+                unless nqp::isnull($desugar) {
+                    return self.encode_node($desugar($op), %e, $want);
+                }
+            }
+        }
         cbail('op ' ~ $name) if nqp::isnull($entry);
         my str $args := $entry[2];
         cbail('op ' ~ $name ~ ' arity ' ~ $nargs) unless $nargs == nqp::chars($args);
@@ -1500,6 +1592,19 @@ class QAST::TruffleEncoder {
         my str $scope := $var.scope;
         my str $decl := $var.decl;
 
+        # A reference scope asked for in a NATIVE type devolves to the plain
+        # scope, because the only thing the caller can do with the reference
+        # is dereference it immediately. Compiler.nqp does exactly this
+        # ("we'd only de-ref right away anyway"); mirroring it here is what
+        # makes the common `my int $i; $i = ...` shapes encodable at all.
+        # A reference wanted as an OBJECT is a real reference object and
+        # still refuses -- that needs getattrref_*/getlexref_*.
+        if $decl eq '' && nqp::isnull($bindval)
+            && ($want == $T_INT || $want == $T_NUM || $want == $T_STR) {
+            $scope := 'lexical'   if $scope eq 'lexicalref';
+            $scope := 'attribute' if $scope eq 'attributeref';
+        }
+
         if $decl eq 'contvar' && $scope eq 'local' {
             # The declaration IS the expression: clone the prototype
             # container into the local unless something (a lowered
@@ -1600,6 +1705,25 @@ class QAST::TruffleEncoder {
             self.encode_child($var[1], %e, $T_OBJ);
             epush(%e, $W_SVAL); epush(%e, epool(%e, $name));
             self.encode_child($bindval, %e, $T_OBJ) unless nqp::isnull($bindval);
+            return $T_OBJ;
+        }
+        if $scope eq 'attributeref' {
+            # A reference to a NATIVE attribute, exactly as Compiler.nqp
+            # emits it: getattrref_<char>(object, class handle, name).
+            # Binding through a reference is not a thing the bytecode path
+            # allows either, and an object-typed attribute has no reference
+            # form.
+            cbail('attributeref bind') unless nqp::isnull($bindval);
+            cbail('attributeref shape') unless nqp::elems(@($var)) == 2;
+            my int $t := rt_of($var.returns);
+            cbail('attributeref to a non-native') if $t == $T_OBJ;
+            my int $id := $t == $T_INT ?? 159 !! $t == $T_NUM ?? 160
+                !! $t == $T_STR ?? 161 !! -1;
+            cbail('attributeref type') if $id < 0;
+            epush(%e, $W_OPCALL); epush(%e, $id); epush(%e, 3);
+            self.encode_child($var[0], %e, $T_OBJ);
+            self.encode_child($var[1], %e, $T_OBJ);
+            epush(%e, $W_SVAL); epush(%e, epool(%e, $name));
             return $T_OBJ;
         }
         if $scope eq 'positional' {
