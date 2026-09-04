@@ -175,7 +175,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class RunOp {
         @Specialization
         static Object doOp(VirtualFrame f, int id, @Variadic Object[] a) {
-            return NqpOps.run(id, a, cu(f), tc(f), cf(f));
+            try {
+                return NqpOps.run(id, a, cu(f), tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -185,7 +189,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class Coerce {
         @Specialization
         static Object doCoerce(VirtualFrame f, int kind, Object v) {
-            return NqpOps.coerce(kind, v, cu(f), tc(f));
+            try {
+                return NqpOps.coerce(kind, v, cu(f), tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -196,7 +204,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class Truthy {
         @Specialization
         static boolean doTruthy(VirtualFrame f, int type, int negate, Object v) {
-            return NqpOps.truthy(type, v, tc(f)) == (negate == 0);
+            try {
+                return NqpOps.truthy(type, v, tc(f)) == (negate == 0);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -209,7 +221,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class LexGet {
         @Specialization
         static Object doGet(VirtualFrame f, int type, String name, Object site) {
-            return NqpOps.getlex(type, name, (NqpOps.LexSite) site, tc(f), cf(f));
+            try {
+                return NqpOps.getlex(type, name, (NqpOps.LexSite) site, tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -220,7 +236,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class LexBind {
         @Specialization
         static Object doBind(VirtualFrame f, int type, String name, Object site, Object v) {
-            return NqpOps.bindlex(type, name, v, (NqpOps.LexSite) site, tc(f), cf(f));
+            try {
+                return NqpOps.bindlex(type, name, v, (NqpOps.LexSite) site, tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -229,7 +249,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class LexOuterGet {
         @Specialization
         static Object doGet(VirtualFrame f, String name) {
-            return NqpOps.getlexouter(name, tc(f), cf(f));
+            try {
+                return NqpOps.getlexouter(name, tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -265,7 +289,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class WvalGet {
         @Specialization
         static Object doGet(VirtualFrame f, String handle, int idx, Object site) {
-            return NqpOps.wval(handle, idx, (NqpOps.WvalSite) site, tc(f));
+            try {
+                return NqpOps.wval(handle, idx, (NqpOps.WvalSite) site, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -275,7 +303,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class GetAttrOp {
         @Specialization
         static Object doGet(VirtualFrame f, Object site, Object obj, Object ch, Object name) {
-            return NqpOps.getattr((NqpOps.AttrSite) site, obj, ch, (String) name, tc(f));
+            try {
+                return NqpOps.getattr((NqpOps.AttrSite) site, obj, ch, (String) name, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -286,7 +318,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doBind(VirtualFrame f, Object site, Object obj, Object ch, Object name,
                              Object value) {
-            return NqpOps.bindattr((NqpOps.AttrSite) site, obj, ch, (String) name, value, tc(f));
+            try {
+                return NqpOps.bindattr((NqpOps.AttrSite) site, obj, ch, (String) name, value, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -303,7 +339,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class NullC {
         @Specialization
         static Object doNull(VirtualFrame f) {
-            return NqpOps.nullConstant(tc(f));
+            try {
+                return NqpOps.nullConstant(tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -334,7 +374,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doDispatch(VirtualFrame f, int rtype, String name, Object site,
                                  @Variadic Object[] args) {
-            return NqpOps.dispatch(rtype, name, (NqpOps.EngineSite) site, args, tc(f), cf(f));
+            try {
+                return NqpOps.dispatch(rtype, name, (NqpOps.EngineSite) site, args, tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -348,8 +392,12 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doCheck(VirtualFrame f, int required, int accepted) {
             Object[] fa = f.getArguments();
-            return NqpOps.checkarity((CallFrame) fa[ARG_CF], (CallSiteDescriptor) fa[ARG_CSD],
+            try {
+                return NqpOps.checkarity((CallFrame) fa[ARG_CF], (CallSiteDescriptor) fa[ARG_CSD],
                 (Object[]) fa[ARG_ARGS], required, accepted);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -358,7 +406,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class FlatArgs {
         @Specialization
         static Object doGet(VirtualFrame f) {
-            return NqpOps.flatArgs(tc(f));
+            try {
+                return NqpOps.flatArgs(tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -368,7 +420,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class PosParam {
         @Specialization
         static Object doParam(VirtualFrame f, int idx, int opt, Object csd, Object args) {
-            return NqpOps.posparam(cf(f), csd, (Object[]) args, idx, opt != 0);
+            try {
+                return NqpOps.posparam(cf(f), csd, (Object[]) args, idx, opt != 0);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -378,7 +434,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class NamedParam {
         @Specialization
         static Object doParam(VirtualFrame f, String name, int opt, Object csd, Object args) {
-            return NqpOps.namedparam(cf(f), csd, (Object[]) args, name, opt != 0);
+            try {
+                return NqpOps.namedparam(cf(f), csd, (Object[]) args, name, opt != 0);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -387,7 +447,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class PosSlurpy {
         @Specialization
         static Object doParam(VirtualFrame f, int from, Object csd, Object args) {
-            return NqpOps.posslurpy(tc(f), cf(f), csd, (Object[]) args, from);
+            try {
+                return NqpOps.posslurpy(tc(f), cf(f), csd, (Object[]) args, from);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -395,7 +459,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class NamedSlurpy {
         @Specialization
         static Object doParam(VirtualFrame f, Object csd, Object args) {
-            return NqpOps.namedslurpy(tc(f), cf(f), csd, (Object[]) args);
+            try {
+                return NqpOps.namedslurpy(tc(f), cf(f), csd, (Object[]) args);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -404,7 +472,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class ParamExisted {
         @Specialization
         static boolean doGet(VirtualFrame f) {
-            return NqpOps.lastParamExisted(tc(f));
+            try {
+                return NqpOps.lastParamExisted(tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -451,7 +523,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class LoopBodyUnwind {
         @Specialization
         static long doRoute(VirtualFrame f, int target, int outer, Object ex) {
-            return NqpOps.loopBodyUnwind(ex, target, outer, cu(f), tc(f));
+            try {
+                return NqpOps.loopBodyUnwind(ex, target, outer, cu(f), tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -462,7 +538,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class LoopLastUnwind {
         @Specialization
         static void doRoute(VirtualFrame f, int target, int outer, Object ex) {
-            NqpOps.loopLastUnwind(ex, target, outer, cu(f), tc(f));
+            try {
+                NqpOps.loopLastUnwind(ex, target, outer, cu(f), tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -478,7 +558,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class HandleUnwind {
         @Specialization
         static Object doRoute(VirtualFrame f, int target, int outer, int cares, Object ex) {
-            return NqpOps.handleUnwind(ex, target, outer, cares != 0, cu(f), tc(f));
+            try {
+                return NqpOps.handleUnwind(ex, target, outer, cares != 0, cu(f), tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -492,7 +576,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class HostErrToUnwind {
         @Specialization
         static void doConvert(VirtualFrame f, Object ex) {
-            NqpOps.hostErrToUnwind(ex, tc(f));
+            try {
+                NqpOps.hostErrToUnwind(ex, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
         }
     }
 
@@ -515,7 +603,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     public static final class CheckNamedAllowed {
         @Specialization
         static Object doCheck(VirtualFrame f, Object allowed, Object csd) {
-            NqpOps.checkNoExtraNamed(cf(f), csd, (String[]) allowed);
+            try {
+                NqpOps.checkNoExtraNamed(cf(f), csd, (String[]) allowed);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
             return null;
         }
     }
