@@ -728,7 +728,16 @@ final class NqpDispatch {
     /**
      * The call itself. A program with no resumptions and no bind control
      * needs no dispatch record at all (see DispatchCompiler.invokeMapped).
+     *
+     * A boundary, deliberately: a method-expansion trace of a compiler
+     * root found ~3000 IR nodes per dispatch site, almost all of it this
+     * road (enterEngine and runProgram, with their exception tails)
+     * inlined once per folded program -- for a call that ends in an
+     * indirect CallTarget.call PE cannot see through anyway. Only the
+     * guard tests earn their place in the caller's compiled code; the
+     * inlinable direct call is a DirectCallNode's job, later.
      */
+    @TruffleBoundary
     private static void invoke(ThreadContext tc, SixModelObject callee,
                                CallSiteDescriptor descriptor, Object[] out) {
         if (STATS) count(invokes);
@@ -771,6 +780,12 @@ final class NqpDispatch {
                                         Object[] args) {
         SixModelObject callee = (SixModelObject) p.callee.eval(tc, args);
         Object[] out = evalPlan(p.plan, tc, args);
+        invokeResumableBoundary(p, site, tc, args, callee, out);
+    }
+
+    @TruffleBoundary
+    private static void invokeResumableBoundary(Program p, DispatchCallSite site, ThreadContext tc,
+                                                Object[] args, SixModelObject callee, Object[] out) {
         /* The record list is an ArrayList: its add/remove stay behind
          * boundaries, because PE inlines the JDK's bounds-check slow paths
          * (Preconditions -> Formatter -> Locale) until Graal bails out of

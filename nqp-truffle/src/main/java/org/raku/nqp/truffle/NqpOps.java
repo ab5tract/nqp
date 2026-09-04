@@ -468,8 +468,49 @@ final class NqpOps {
         return readResult(rtype, cf);
     }
 
+    /**
+     * The VMNull singleton, process-wide and immutable once made, cached
+     * here as a compilation constant: Ops.createNull reaches it through a
+     * synchronized getter and two `!!` checks, ~700 IR nodes per
+     * nqp::null() -- 69% of an identity method's compiled code.
+     */
+    @CompilationFinal private static SixModelObject VMNULL;
+
+    static SixModelObject nullConstant(ThreadContext tc) {
+        SixModelObject n = VMNULL;
+        if (n == null) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            n = Ops.createNull(tc);
+            VMNULL = n;
+        }
+        return n;
+    }
+
     /** The typed read of a call's result off the frame's return registers. */
     static Object readResult(int rtype, CallFrame cf) {
+        /* The common case -- an object result read as an object -- is a
+         * field read; the converting cases (a native boxed on the way out,
+         * an object unboxed) go through Ops behind a boundary, whose
+         * Kotlin checks would otherwise expand into every call site. */
+        byte rt = cf.retType;
+        switch (rtype) {
+            case NqpWire.T_INT:
+                if (rt == CallFrame.RET_INT) return cf.iRet;
+                return resultSlow(rtype, cf);
+            case NqpWire.T_NUM:
+                if (rt == CallFrame.RET_NUM) return cf.nRet;
+                return resultSlow(rtype, cf);
+            case NqpWire.T_STR:
+                if (rt == CallFrame.RET_STR) return cf.sRet;
+                return resultSlow(rtype, cf);
+            default:
+                if (rt == CallFrame.RET_OBJ) return cf.oRet;
+                return resultSlow(rtype, cf);
+        }
+    }
+
+    @TruffleBoundary
+    private static Object resultSlow(int rtype, CallFrame cf) {
         switch (rtype) {
             case NqpWire.T_INT: return Ops.result_i(cf);
             case NqpWire.T_NUM: return Ops.result_n(cf);
@@ -523,13 +564,39 @@ final class NqpOps {
         if (f != null && f.codeRef.staticInfo == sci) {
             int i = site.idx;
             switch (type) {
-                case NqpWire.T_INT: return Ops.getlex_i(f, i);
-                case NqpWire.T_NUM: return Ops.getlex_n(f, i);
-                case NqpWire.T_STR: return Ops.getlex_s(f, i);
-                default: return Ops.getlex_o(f, i);
+                case NqpWire.T_INT: return f.iLex[i];
+                case NqpWire.T_NUM: return f.nLex[i];
+                case NqpWire.T_STR: return f.sLex[i];
+                default: return lexO(f, i);
             }
         }
         return getlexWalk(type, name, tc, cf);
+    }
+
+    /*
+     * The lexical slot reads and writes are field accesses written here in
+     * Java rather than calls into Ops.kt: a method-expansion trace of a
+     * 48-word accessor found 70% of its compiled IR under one
+     * CallFrame.oLexOrVivify -- Kotlin's lateinit and `!!` checks, whose
+     * failure paths (throwUninitializedPropertyAccessException,
+     * checkNotNull, then sanitizeStackTrace and StackTraceElement
+     * formatting) partial evaluation inlines in full, ~330 nodes per check.
+     * Java reads the backing fields, which carry no such check.
+     */
+
+    /** CallFrame.oLexOrVivify, PE-sized: the array read here, the clone
+     *  of a lazily vivified static behind a boundary. */
+    static SixModelObject lexO(CallFrame f, int i) {
+        SixModelObject[] oLex = f.oLex;
+        if (oLex == null) return null;
+        SixModelObject v = oLex[i];
+        if (v != CallFrame.UNVIVIFIED) return v;
+        return vivify(f, i);
+    }
+
+    @TruffleBoundary
+    private static SixModelObject vivify(CallFrame f, int i) {
+        return f.oLexOrVivify(i);
     }
 
     static Object bindlex(int type, String name, Object value, LexSite site, ThreadContext tc,
@@ -545,10 +612,10 @@ final class NqpOps {
             if (f != null && f.codeRef.staticInfo == sci) {
                 int i = site.idx;
                 switch (type) {
-                    case NqpWire.T_INT: return Ops.bindlex_i(lng(value), f, i);
-                    case NqpWire.T_NUM: return Ops.bindlex_n(dbl(value), f, i);
-                    case NqpWire.T_STR: return Ops.bindlex_s(str(value), f, i);
-                    default: return Ops.bindlex_o(smo(value), f, i);
+                    case NqpWire.T_INT: { long v = lng(value); f.iLex[i] = v; return v; }
+                    case NqpWire.T_NUM: { double v = dbl(value); f.nLex[i] = v; return v; }
+                    case NqpWire.T_STR: { String v = str(value); f.sLex[i] = v; return v; }
+                    default: { SixModelObject v = smo(value); f.oLex[i] = v; return v; }
                 }
             }
         }
@@ -820,6 +887,20 @@ final class NqpOps {
 
     @TruffleBoundary
     static void storeReturnTyped(int type, Object v, CallFrame cf) {
+        /* Ops.return_* write the caller's registers (cf.caller); done here
+         * as field writes for the reason lexO gives. */
+        CallFrame caller = cf.caller;
+        if (caller == null) { returnSlow(type, v, cf); return; }
+        switch (type) {
+            case NqpWire.T_INT -> { caller.iRet = lng(v); caller.retType = (byte) CallFrame.RET_INT; }
+            case NqpWire.T_NUM -> { caller.nRet = dbl(v); caller.retType = (byte) CallFrame.RET_NUM; }
+            case NqpWire.T_STR -> { caller.sRet = (String) v; caller.retType = (byte) CallFrame.RET_STR; }
+            default -> { caller.oRet = (SixModelObject) v; caller.retType = (byte) CallFrame.RET_OBJ; }
+        }
+    }
+
+    @TruffleBoundary
+    private static void returnSlow(int type, Object v, CallFrame cf) {
         switch (type) {
             case NqpWire.T_INT -> Ops.return_i(lng(v), cf);
             case NqpWire.T_NUM -> Ops.return_n(dbl(v), cf);

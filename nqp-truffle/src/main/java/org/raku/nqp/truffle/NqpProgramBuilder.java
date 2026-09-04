@@ -32,6 +32,11 @@ final class NqpProgramBuilder {
 
     private final NqpWire.Program program;
 
+    /** NQP_CODE_NO_SUSPEND=1: measurement only -- emit no suspension tail
+     *  after table ops and dispatches (continuations through engine frames
+     *  then break), to size what the tail costs in compiled code. */
+    static final boolean NO_SUSPEND = System.getenv("NQP_CODE_NO_SUSPEND") != null;
+
     private NqpProgramBuilder(NqpRootNodeGen.Builder b, NqpWire.Program p) {
         this.b = b;
         this.code = p.code();
@@ -422,7 +427,7 @@ final class NqpProgramBuilder {
                 if (emit) {
                     b.endDispatchOp();
                     b.endStoreLocal();
-                    emitSuspendCheck(dres);
+                    if (!NO_SUSPEND) emitSuspendCheck(dres);
                     b.emitLoadLocal(dres);
                     b.endBlock();
                 }
@@ -437,7 +442,7 @@ final class NqpProgramBuilder {
                 // a Proxy FETCH, a handler); all sites carry the suspension
                 // tail, and the token check speculates to false in compiled
                 // code.
-                boolean suspendable = true;
+                boolean suspendable = !NO_SUSPEND;
                 BytecodeLocal ores = emit && suspendable ? b.createLocal() : null;
                 if (emit && suspendable) {
                     b.beginBlock();
