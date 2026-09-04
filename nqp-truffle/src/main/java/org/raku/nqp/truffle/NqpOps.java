@@ -597,6 +597,51 @@ final class NqpOps {
         return getlexWalk(type, name, tc, cf);
     }
 
+    /**
+     * A native lexical reference (the lexicalref scope wanted as an
+     * object): the declaring frame resolves through the same cached site
+     * getlex uses, then the reference is allocated over that frame's slot
+     * behind a boundary. The by-name walk is the same one the bytecode
+     * path's getlexref_&lt;t&gt;(name) takes when nothing resolved statically,
+     * anchored at the program's own frame rather than tc.curFrame.
+     */
+    static Object getlexref(int type, String name, int spec, LexSite site, ThreadContext tc,
+                            CallFrame cf) {
+        org.raku.nqp.runtime.StaticCodeInfo sci = site.sci;
+        if (sci == null) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            resolveLex(type, name, site, cf);
+            return getlexrefWalk(type, name, spec, tc, cf);
+        }
+        CallFrame f = outerAt(cf, site.depth);
+        if (f != null && f.codeRef.staticInfo == sci) {
+            return lexrefAt(f, type, site.idx, spec, cf, tc);
+        }
+        return getlexrefWalk(type, name, spec, tc, cf);
+    }
+
+    @TruffleBoundary
+    private static SixModelObject lexrefAt(CallFrame target, int type, int idx, int spec,
+                                           CallFrame cur, ThreadContext tc) {
+        return Ops.lexref_at(target, type, idx, spec, cur, tc);
+    }
+
+    @TruffleBoundary
+    private static Object getlexrefWalk(int type, String name, int spec, ThreadContext tc,
+                                        CallFrame cf) {
+        for (CallFrame f = cf; f != null; f = f.outer) {
+            org.raku.nqp.runtime.StaticCodeInfo sci = f.codeRef.staticInfo;
+            int i = switch (type) {
+                case NqpWire.T_INT -> sci.iTryGetLexicalIdx(name);
+                case NqpWire.T_NUM -> sci.nTryGetLexicalIdx(name);
+                case NqpWire.T_STR -> sci.sTryGetLexicalIdx(name);
+                default -> -1;
+            };
+            if (i != -1) return Ops.lexref_at(f, type, i, spec, cf, tc);
+        }
+        throw ExceptionHandling.dieInternal(tc, "Lexical '" + name + "' not found");
+    }
+
     /*
      * The lexical slot reads and writes are field accesses written here in
      * Java rather than calls into Ops.kt: a method-expansion trace of a

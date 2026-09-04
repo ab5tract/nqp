@@ -1536,6 +1536,54 @@ object Ops {
         return ref
     }
 
+    /* A native lexical reference over a slot of a given frame, for the
+     * code engine: its lexical sites resolve the declaring frame and slot
+     * themselves, so this only allocates. Type is the wire type (1 int,
+     * 2 num, 3 str); spec is sizedref's width encoding, 0 for full width.
+     * The reference type comes from the running frame's HLL, exactly as
+     * getlexref_* takes it from tc.frame. */
+    @JvmStatic
+    fun lexref_at(target: CallFrame, type: Int, idx: Int, spec: Int,
+                  cur: CallFrame, tc: ThreadContext): SixModelObject {
+        val hll = cur.codeRef.staticInfo.compUnit.hllConfig
+        when (type) {
+            1 -> {
+                val refType = hll.intLexRef
+                if (refType == null || isnull(refType) == 1L)
+                    throw ExceptionHandling.dieInternal(tc,
+                        "No int lexical reference type registered for current HLL")
+                val ref = refType.st.REPR.allocate(tc, refType.st) as NativeRefInstanceIntLex
+                ref.lexicals = target.iLex
+                ref.idx = idx
+                ref.sizeSpec = spec
+                return ref
+            }
+            2 -> {
+                val refType = hll.numLexRef
+                if (refType == null || isnull(refType) == 1L)
+                    throw ExceptionHandling.dieInternal(tc,
+                        "No num lexical reference type registered for current HLL")
+                val ref = refType.st.REPR.allocate(tc, refType.st) as NativeRefInstanceNumLex
+                ref.lexicals = target.nLex
+                ref.idx = idx
+                ref.sizeSpec = spec
+                return ref
+            }
+            3 -> {
+                val refType = hll.strLexRef
+                if (refType == null || isnull(refType) == 1L)
+                    throw ExceptionHandling.dieInternal(tc,
+                        "No str lexical reference type registered for current HLL")
+                val ref = refType.st.REPR.allocate(tc, refType.st) as NativeRefInstanceStrLex
+                ref.lexicals = target.sLex
+                ref.idx = idx
+                return ref
+            }
+            else -> throw ExceptionHandling.dieInternal(tc,
+                "Cannot take a reference to a non-native lexical")
+        }
+    }
+
     @JvmStatic
     fun getlexref_i(name: String, tc: ThreadContext): SixModelObject {
         var cf = tc.curFrame

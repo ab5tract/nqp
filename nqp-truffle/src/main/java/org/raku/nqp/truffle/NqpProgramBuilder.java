@@ -131,6 +131,10 @@ final class NqpProgramBuilder {
                 if (emit) b.endLexBind();
                 return at;
             }
+            case NqpWire.LEXREF:
+                if (emit) b.emitLexRef(code[at + 1], pool[code[at + 2]], code[at + 3],
+                    new NqpOps.LexSite());
+                return at + 4;
             case NqpWire.LOCGET:
                 if (emit) b.emitLoadLocal(locals[code[at + 2]]);
                 return at + 3;
