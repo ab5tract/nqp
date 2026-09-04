@@ -84,9 +84,12 @@ final class NqpOps {
         OP_BACKTRACE = 173, OP_BACKTRACESTRINGS = 174, OP_ISFALSE = 175,
         OP_ISBIG_I = 176, OP_ATPOSREF_I = 177, OP_ATPOSREF_U = 178, OP_ISRWCONT = 179,
         OP_DIE_S = 180, OP_THROW = 181, OP_RETHROW = 182, OP_THROWEXTYPE = 183,
-        OP_ISCONCRETE_ND = 184, OP_GETHLLSYM = 185;
+        OP_ISCONCRETE_ND = 184, OP_GETHLLSYM = 185,
+        OP_BOX_I2 = 186, OP_BOX_N2 = 187, OP_BOX_S2 = 188, OP_ISNANORINF = 189,
+        OP_WHERE = 190, OP_GETLEXCALLER = 191, OP_GETCOMP = 192,
+        OP_ATPOSREF_N = 193, OP_ATPOSREF_S = 194, OP_ATPOS_U = 195, OP_BINDPOS_U = 196;
 
-    static final int OP_COUNT = 186;
+    static final int OP_COUNT = 197;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -251,6 +254,17 @@ final class NqpOps {
             case OP_ASSIGN_S: return Ops.assign_s(smo(a[0]), str(a[1]), tc);
             case OP_EXCEPTION: return Ops.exception(tc);
             case OP_ISCONCRETE_ND: return Ops.isconcrete_nd(smo(a[0]), tc);
+            case OP_BOX_I2: return Ops.box_i(lng(a[0]), smo(a[1]), tc);
+            case OP_BOX_N2: return Ops.box_n(dbl(a[0]), smo(a[1]), tc);
+            case OP_BOX_S2: return Ops.box_s(str(a[0]), smo(a[1]), tc);
+            case OP_ISNANORINF: return Ops.isnanorinf(dbl(a[0]));
+            case OP_WHERE: return Ops.where(smo(a[0]), tc);
+            case OP_GETLEXCALLER: return Ops.getlexcaller(str(a[0]), tc);
+            case OP_GETCOMP: return Ops.getcomp(str(a[0]), tc);
+            case OP_ATPOSREF_N: return Ops.atposref_n(smo(a[0]), lng(a[1]), tc);
+            case OP_ATPOSREF_S: return Ops.atposref_s(smo(a[0]), lng(a[1]), tc);
+            case OP_ATPOS_U: return Ops.atpos_u(smo(a[0]), lng(a[1]), tc);
+            case OP_BINDPOS_U: return Ops.bindpos_u(smo(a[0]), lng(a[1]), lng(a[2]), tc);
             case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
             case OP_GETEXTYPE: return Ops.getextype(smo(a[0]), tc);
             case OP_SETEXTYPE: return Ops.setextype(smo(a[0]), lng(a[1]), tc);
@@ -967,16 +981,37 @@ final class NqpOps {
         return tc.flatArgs;
     }
 
+    /* Parameter fetches by the declared type, the bytecode path's
+     * posparam_<t>/namedparam_<t> (and their opt_ forms): a native
+     * parameter unboxes on the way in and binds into the typed slot. */
     @TruffleBoundary
-    static Object posparam(CallFrame cf, Object csd, Object[] args, int idx, boolean opt) {
+    static Object posparam(CallFrame cf, Object csd, Object[] args, int idx, boolean opt, int type) {
         CallSiteDescriptor cs = (CallSiteDescriptor) csd;
-        return opt ? Ops.posparam_opt_o(cf, cs, args, idx) : Ops.posparam_o(cf, cs, args, idx);
+        switch (type) {
+            case NqpWire.T_INT:
+                return opt ? Ops.posparam_opt_i(cf, cs, args, idx) : Ops.posparam_i(cf, cs, args, idx);
+            case NqpWire.T_NUM:
+                return opt ? Ops.posparam_opt_n(cf, cs, args, idx) : Ops.posparam_n(cf, cs, args, idx);
+            case NqpWire.T_STR:
+                return opt ? Ops.posparam_opt_s(cf, cs, args, idx) : Ops.posparam_s(cf, cs, args, idx);
+            default:
+                return opt ? Ops.posparam_opt_o(cf, cs, args, idx) : Ops.posparam_o(cf, cs, args, idx);
+        }
     }
 
     @TruffleBoundary
-    static Object namedparam(CallFrame cf, Object csd, Object[] args, String name, boolean opt) {
+    static Object namedparam(CallFrame cf, Object csd, Object[] args, String name, boolean opt, int type) {
         CallSiteDescriptor cs = (CallSiteDescriptor) csd;
-        return opt ? Ops.namedparam_opt_o(cf, cs, args, name) : Ops.namedparam_o(cf, cs, args, name);
+        switch (type) {
+            case NqpWire.T_INT:
+                return opt ? Ops.namedparam_opt_i(cf, cs, args, name) : Ops.namedparam_i(cf, cs, args, name);
+            case NqpWire.T_NUM:
+                return opt ? Ops.namedparam_opt_n(cf, cs, args, name) : Ops.namedparam_n(cf, cs, args, name);
+            case NqpWire.T_STR:
+                return opt ? Ops.namedparam_opt_s(cf, cs, args, name) : Ops.namedparam_s(cf, cs, args, name);
+            default:
+                return opt ? Ops.namedparam_opt_o(cf, cs, args, name) : Ops.namedparam_o(cf, cs, args, name);
+        }
     }
 
     @TruffleBoundary
