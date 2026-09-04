@@ -40,10 +40,20 @@ public final class NqpCodeEngine implements CodeEngine {
     @Override
     public void run(Object program, CompilationUnit cu, ThreadContext tc, CallFrame cf,
                     CallSiteDescriptor csd, Object[] args) {
+        runProgram((CallTarget) program, cu, tc, cf, csd, args);
+    }
+
+    /**
+     * Runs one program inside the frame the caller built -- what the
+     * emitted stub's body does. Static so that an engine-side dispatch
+     * entering a callee directly (NqpDispatch) takes exactly this road.
+     */
+    static void runProgram(CallTarget program, CompilationUnit cu, ThreadContext tc, CallFrame cf,
+                           CallSiteDescriptor csd, Object[] args) {
         Object r;
         try {
             // The program stores its own return value, typed; see StoreRet.
-            r = ((CallTarget) program).call(cu, tc, cf, csd, args);
+            r = program.call(cu, tc, cf, csd, args);
         } catch (NqpUnwind wrapped) {
             /* An unwind no handler region in the program claimed: hand the
              * naked host exception back to the bytecode frames above, which

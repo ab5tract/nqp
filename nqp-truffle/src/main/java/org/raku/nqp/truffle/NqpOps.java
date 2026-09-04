@@ -421,22 +421,37 @@ final class NqpOps {
     static final class EngineSite {
         final CallSiteDescriptor csd;
         final org.raku.nqp.dispatch.DispatchCallSite site;
+        /* The folded replay prefix of the site's programs; see NqpDispatch. */
+        final NqpDispatch.Cache cache;
         EngineSite(CallSiteDescriptor csd) {
             this.csd = csd;
             this.site = new org.raku.nqp.dispatch.DispatchCallSite(
                 java.lang.invoke.MethodType.methodType(void.class));
             org.raku.nqp.dispatch.DispatchBootstrap.registerSite(this.site);
+            this.cache = new NqpDispatch.Cache(this.site, csd);
         }
     }
 
-    @TruffleBoundary
+    /** NQP_CODE_UNCACHED: every engine dispatch records afresh (debugging). */
+    private static final boolean DISPATCH_UNCACHED = System.getenv("NQP_CODE_UNCACHED") != null;
+    /** NQP_CODE_DISPATCH_OLD: the bytecode-side inline cache (MethodHandle
+     *  chain behind a boundary) instead of the folded replay -- the A/B. */
+    private static final boolean DISPATCH_OLD = System.getenv("NQP_CODE_DISPATCH_OLD") != null;
+
+    /**
+     * One dispatch instruction. The replay of the site's folded programs
+     * is PE-visible; only a miss, a flattening shape, and the outcome's
+     * invocation cross into the bytecode world.
+     */
     static Object dispatch(int rtype, String name, EngineSite es, Object[] args,
                            ThreadContext tc, CallFrame cf) {
         try {
-            if (System.getenv("NQP_CODE_UNCACHED") != null)
-                org.raku.nqp.dispatch.Dispatch.dispatchUncached(tc, name, es.csd, args);
-            else
-                org.raku.nqp.dispatch.Dispatch.dispatchWithDescriptor(es.site, name, es.csd, tc, args);
+            if (DISPATCH_UNCACHED)
+                NqpDispatch.dispatchUncached(name, es.csd, tc, args);
+            else if (DISPATCH_OLD || es.csd.hasFlattening)
+                NqpDispatch.dispatchFlattening(es.site, name, es.csd, tc, args);
+            else if (!NqpDispatch.replay(es.cache, tc, args))
+                NqpDispatch.miss(es.cache, name, tc, args);
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
             /* A continuation is being captured through this frame: hand a
              * suspend token to the program, which yields it; codeRun makes
