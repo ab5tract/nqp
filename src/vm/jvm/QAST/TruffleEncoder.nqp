@@ -1454,6 +1454,25 @@ class QAST::TruffleEncoder {
             epush(%e, epool(%e, $op[0].value));
             return $T_OBJ;
         }
+        if $name eq 'defor' && nqp::ifnull(nqp::getlexdyn('$*HLL'), '') eq 'Raku' {
+            # Raku overrides defor (src/vm/jvm/Raku/Ops.nqp): definedness
+            # is the .defined method, not nqp's isconcrete -- a Failure is
+            # concrete and undefined, and `$*MISSING // fallback` must
+            # take the fallback. Encode the very tree the override builds;
+            # it is a fresh tree over the same children, so a later bail
+            # hands the bytecode path the untouched op.
+            cbail('defor arity') unless nqp::elems(@($op)) == 2;
+            my $tmp := $op.unique('defined');
+            return self.encode_node(QAST::Stmts.new(
+                QAST::Op.new( :op('bind'),
+                    QAST::Var.new( :name($tmp), :scope('local'), :decl('var') ),
+                    $op[0] ),
+                QAST::Op.new( :op('if'),
+                    QAST::Op.new( :op('callmethod'), :name('defined'),
+                        QAST::Var.new( :name($tmp), :scope('local') ) ),
+                    QAST::Var.new( :name($tmp), :scope('local') ),
+                    $op[1] )), %e, $want);
+        }
         if $name eq 'ifnull' || $name eq 'defor' {
             # Evaluate once into a scratch local, test, fall back.
             #   ifnull(a, b): isnull(tmp) ?? b !! tmp
