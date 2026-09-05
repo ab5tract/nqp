@@ -13,6 +13,14 @@ java {
 
 kotlin {
     compilerOptions {
+        // No null assertions on parameters, calls and receivers of Java
+        // interop: each one is an Intrinsics.check* whose failure path the
+        // Truffle partial evaluator inlines in full (stack-trace sanitizing
+        // and all, ~330 IR nodes per check) into every engine root that
+        // reaches the function; a JFR profile also showed the checks
+        // themselves on the compile's hot path. The JVM's own null checks
+        // remain, as NullPointerExceptions where the assertions were.
+        freeCompilerArgs.addAll("-Xno-param-assertions", "-Xno-call-assertions", "-Xno-receiver-assertions")
         // Matches javac --release 25 (class file major version 69).
         jvmTarget = JvmTarget.JVM_25
     }
