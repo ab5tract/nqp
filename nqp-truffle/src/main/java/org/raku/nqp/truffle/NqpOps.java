@@ -135,14 +135,17 @@ final class NqpOps {
         OP_CAS_I = 358, OP_ATOMICINC_I = 359, OP_ATOMICDEC_I = 360, OP_BINDPOSND_I = 361,
         OP_BINDPOSND_N = 362, OP_BINDPOSND_S = 363, OP_BINDPOS2D_I = 364, OP_BINDPOS2D_N = 365,
         OP_BINDPOS2D_S = 366, OP_BINDPOS3D_I = 367, OP_BINDPOS3D_N = 368, OP_BINDPOS3D_S = 369,
-        OP_ABS_N = 370;
+        OP_ABS_N = 370,
+        OP_FILEREADABLE = 371, OP_FILEWRITABLE = 372, OP_FILEEXECUTABLE = 373, OP_FILEISLINK = 374,
+        OP_LSTAT = 375, OP_CHOWN = 376, OP_CHMOD = 377, OP_GETENVHASH = 378;
 
-    static final int OP_COUNT = 371;
+    static final int OP_COUNT = 379;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
         C_O2I = 3, C_O2N = 4, C_O2S = 5,
-        C_I2N = 6, C_N2I = 7, C_I2S = 8;
+        C_I2N = 6, C_N2I = 7, C_I2S = 8,
+        C_U2O = 9, C_U2N = 10, C_U2S = 11, C_O2U = 12;
 
     @TruffleBoundary
     static Object run(int id, Object[] a, CompilationUnit cu, ThreadContext tc, CallFrame cf) {
@@ -492,6 +495,14 @@ final class NqpOps {
             case OP_BINDPOS3D_N: return Ops.bindpos3d_n(smo(a[0]), lng(a[1]), lng(a[2]), lng(a[3]), dbl(a[4]), tc);
             case OP_BINDPOS3D_S: return Ops.bindpos3d_s(smo(a[0]), lng(a[1]), lng(a[2]), lng(a[3]), str(a[4]), tc);
             case OP_ABS_N: return Math.abs(dbl(a[0]));
+            case OP_FILEREADABLE: return Ops.filereadable(str(a[0]), tc);
+            case OP_FILEWRITABLE: return Ops.filewritable(str(a[0]), tc);
+            case OP_FILEEXECUTABLE: return Ops.fileexecutable(str(a[0]), tc);
+            case OP_FILEISLINK: return Ops.fileislink(str(a[0]), tc);
+            case OP_LSTAT: return Ops.lstat(str(a[0]), lng(a[1]));
+            case OP_CHOWN: return Ops.chown(str(a[0]), lng(a[1]), lng(a[2]), tc);
+            case OP_CHMOD: return Ops.chmod(str(a[0]), lng(a[1]), tc);
+            case OP_GETENVHASH: return Ops.getenvhash(tc);
             case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
             case OP_GETEXTYPE: return Ops.getextype(smo(a[0]), tc);
             case OP_SETEXTYPE: return Ops.setextype(smo(a[0]), lng(a[1]), tc);
@@ -687,6 +698,11 @@ final class NqpOps {
             case C_I2N: return (double) lng(v);
             case C_N2I: return (long) dbl(v);
             case C_I2S: return Long.toString(lng(v));
+            // unsigned: a uint slot boxes/widens as 0..2^64-1, never as a negative
+            case C_U2O: return Ops.box_u(lng(v), cu.hllConfig.uintBoxType, tc);
+            case C_U2N: { long u = lng(v); return (double) (u >>> 1) * 2.0 + (double) (u & 1L); }
+            case C_U2S: return Long.toUnsignedString(lng(v));
+            case C_O2U: return Ops.unbox_u(smo(v), tc);
             default:
                 throw new IllegalStateException("nqpp: unknown coercion " + kind);
         }
