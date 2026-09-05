@@ -114,6 +114,8 @@ public final class NqpWire {
     public static final int P6ARGVMARRAY = 26;
     /** A classlib op from the registry: rtype, class, method, descriptor, tc, nargs, arg types, then the args. */
     public static final int CLASSLIB = 27;
+    /** usecapture: the frame's own args, captured for a re-dispatch. */
+    public static final int USECAPTURE = 28;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;

@@ -114,6 +114,9 @@ final class NqpProgramBuilder {
             case NqpWire.P6ARGVMARRAY:
                 if (emit) b.emitP6ArgVmArray();
                 return at + 1;
+            case NqpWire.USECAPTURE:
+                if (emit) b.emitUseCapture();
+                return at + 1;
             case NqpWire.IVAL:
                 if (emit) b.emitLoadConstant(Long.parseLong(pool[code[at + 1]]));
                 return at + 2;

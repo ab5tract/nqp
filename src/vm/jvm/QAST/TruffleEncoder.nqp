@@ -48,7 +48,7 @@ class QAST::TruffleEncoder {
     my $extra_ops := 'assign_i assign_n assign_s assign_u bind call
         callmethod callstatic chain chainstatic const curlexpad
         control defor dispatch getlexouter handle handlepayload hash if
-        ifnull list list_i list_n list_s locallifetime null p6argvmarray p6assign
+        ifnull list list_i list_n list_s locallifetime null p6argvmarray p6assign usecapture
         p6decontrv p6decontrv_6c
         repeat_until repeat_while stmt stmts unless until while';
 
@@ -315,6 +315,7 @@ class QAST::TruffleEncoder {
     my int $W_CURLEXPAD := 25;
     my int $W_P6ARGVMARRAY := 26;
     my int $W_CLASSLIB := 27;
+    my int $W_USECAPTURE := 28;
 
     # Handler categories, matching ExceptionHandling on the runtime side
     # (and the Compiler's own copies).
@@ -1489,6 +1490,14 @@ class QAST::TruffleEncoder {
         if $name eq 'p6argvmarray' {
             cbail('p6argvmarray arity') if nqp::elems(@($op));
             epush(%e, $W_P6ARGVMARRAY);
+            return $T_OBJ;
+        }
+        if $name eq 'usecapture' {
+            # The current frame's arguments captured for a re-dispatch,
+            # exactly Compiler.nqp's usecapture(tc, csd, args). A 0-operand
+            # op that reads cf.csd/cf.args, mirroring p6argvmarray.
+            cbail('usecapture arity') if nqp::elems(@($op));
+            epush(%e, $W_USECAPTURE);
             return $T_OBJ;
         }
         if $name eq 'syscall' {
