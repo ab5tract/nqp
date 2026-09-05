@@ -1449,6 +1449,13 @@ final class NqpOps {
         return Ops.ctx_of(cf, tc);
     }
 
+    /** usecapture: the frame's own csd+args captured for a re-dispatch;
+     *  the plain nqp op, so no reflective bridge is needed. */
+    @TruffleBoundary
+    static Object usecapture(ThreadContext tc, CallFrame cf) {
+        return Ops.usecapture(tc, cf.csd, cf.args);
+    }
+
     /** rakudo's p6argvmarray: the frame's raw arguments as a BOOTArray. */
     @TruffleBoundary
     static Object p6argvmarray(ThreadContext tc, CallFrame cf) {
