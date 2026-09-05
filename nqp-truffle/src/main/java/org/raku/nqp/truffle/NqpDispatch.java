@@ -16,6 +16,9 @@ import java.util.Map;
 import java.util.Objects;
 
 import com.oracle.truffle.api.CallTarget;
+import com.oracle.truffle.api.bytecode.ContinuationResult;
+import com.oracle.truffle.api.nodes.DirectCallNode;
+import com.oracle.truffle.api.nodes.Node;
 
 import org.raku.nqp.dispatch.ArgKind;
 import org.raku.nqp.dispatch.BindFailureException;
@@ -315,6 +318,20 @@ final class NqpDispatch {
         @CompilationFinal(dimensions = 1) final int[] map;
 
         /**
+         * The call node for a literal engine-bodied callee, adopted under
+         * the dispatch instruction's node the first time the program
+         * replays there, so Truffle's inliner sees the call. Replaced when
+         * the instruction's node changes (the uncached-to-cached tier
+         * transition), since a call node under a dead parent inlines
+         * nowhere. Null for any other callee, and until the callee's
+         * program has run once and registered its target.
+         */
+        @CompilationFinal DirectCallNode callNode;
+        /** How many times the call node was re-adopted under a changed
+         *  instruction node; past a few, the node in hand is used as is. */
+        @CompilationFinal int readopts;
+
+        /**
          * Folds the program. The guards are walked in recorded order, and
          * each type guard fixes the storage class of what it guards for the
          * sources built after it -- which is what lets an attribute read of
@@ -479,23 +496,8 @@ final class NqpDispatch {
          * null when the slot is not a reference field.
          */
         private static MethodHandle getterFor(STable st, Class<?> storage, int slot) {
-            /* Auto-vivification (every `$` attribute of a Raku class has a
-             * container prototype) only matters when the field is null:
-             * the accessor clones the prototype in and stores it. The fast
-             * path reads the field and sends a null to the accessor, so a
-             * vivified attribute -- the steady state -- is a plain load. */
-            try {
-                java.lang.reflect.Field f = storage.getField("field_" + slot);
-                if (f.getType() != SixModelObject.class) {
-                    if (STATS) System.err.println("dispatch no getter: field type " + f.getType() + " slot " + slot);
-                    return null;
-                }
-                return MethodHandles.lookup().unreflectGetter(f)
-                    .asType(MethodType.methodType(SixModelObject.class, SixModelObject.class));
-            } catch (ReflectiveOperationException | RuntimeException e) {
-                if (STATS) System.err.println("dispatch no getter: " + e + " slot " + slot + " of " + storage.getName());
-                return null;
-            }
+            MethodHandle[] hs = fieldHandles(storage, slot);
+            return hs == null ? null : hs[0];
         }
 
         /** The exact storage class of a source a type guard has fixed. */
@@ -526,6 +528,8 @@ final class NqpDispatch {
         final CallSiteDescriptor csd;
         @CompilationFinal(dimensions = 1) Program[] programs = NONE;
         @CompilationFinal Assumption stable = Truffle.getRuntime().createAssumption("dispatch site");
+        /** Misses since the last refold; see REFOLD_AFTER. */
+        int missesSinceFold;
 
         Cache(DispatchCallSite site, CallSiteDescriptor csd) {
             this.site = site;
@@ -546,7 +550,7 @@ final class NqpDispatch {
                 boolean same = true;
                 for (int i = 0; i < n; i++)
                     if (current[i].program != all[i]) { same = false; break; }
-                if (same) return;
+                if (same) { missesSinceFold = 0; return; }
             }
             Program[] fresh = new Program[n];
             for (int i = 0; i < n; i++)
@@ -564,6 +568,7 @@ final class NqpDispatch {
          * thread still in the old code between the two steps replays the
          * old programs, which remain valid programs. */
         private void publish(Program[] fresh) {
+            missesSinceFold = 0;
             Assumption old = stable;
             programs = fresh;
             stable = Truffle.getRuntime().createAssumption("dispatch site");
@@ -572,6 +577,32 @@ final class NqpDispatch {
 
         private boolean cacheable(DispatchProgram p) {
             return !p.isResuming() && Captures.INSTANCE.sameShape(p.getDescriptor(), csd);
+        }
+    }
+
+    /**
+     * The slot's field of a P6Opaque storage class as a getter
+     * (SixModelObject)SixModelObject and a setter
+     * (SixModelObject,SixModelObject)void, or null when the slot is not a
+     * reference field. Auto-vivification (every `$` attribute of a Raku
+     * class has a container prototype) only matters when the field is
+     * null -- the accessor clones the prototype in and stores it -- so a
+     * caller reads the field and sends a null to the accessor, and a
+     * vivified attribute, the steady state, is a plain load.
+     */
+    static MethodHandle[] fieldHandles(Class<?> storage, int slot) {
+        try {
+            java.lang.reflect.Field f = storage.getField("field_" + slot);
+            if (f.getType() != SixModelObject.class) return null;
+            MethodHandles.Lookup lookup = MethodHandles.lookup();
+            return new MethodHandle[] {
+                lookup.unreflectGetter(f)
+                    .asType(MethodType.methodType(SixModelObject.class, SixModelObject.class)),
+                lookup.unreflectSetter(f)
+                    .asType(MethodType.methodType(void.class, SixModelObject.class, SixModelObject.class)),
+            };
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return null;
         }
     }
 
@@ -617,26 +648,41 @@ final class NqpDispatch {
      * assumption, so the loop explodes into the programs' tests.
      */
     @ExplodeLoop
-    static boolean replay(Cache cache, ThreadContext tc, Object[] args) {
+    static boolean replay(Cache cache, ThreadContext tc, Object[] args, Node node) {
         if (!cache.stable.isValid()) CompilerDirectives.transferToInterpreterAndInvalidate();
         Program[] programs = cache.programs;
         for (int i = 0; i < programs.length; i++) {
             Program p = programs[i];
             if (matches(p, tc, args)) {
                 if (STATS) { count(hits); count(hitsByKind[p.kind]); }
-                realize(p, cache.site, tc, args);
+                realize(p, cache.site, tc, args, node);
                 return true;
             }
         }
         return false;
     }
 
+    /**
+     * How many misses a folded site tolerates before it refolds. A refold
+     * republishes the array under a fresh Assumption, which invalidates
+     * every compiled root that folded the site; on the CORE.c compile that
+     * was ~290 invalidations against 38 on the old road, as sites grew
+     * their program lists one recording at a time under compiled code.
+     * A miss is correct regardless -- Dispatch.fallback tries every
+     * program the site holds -- so a stale prefix costs only the
+     * interpreted replay of the programs it lacks, and a site refolds
+     * once it has shown it needs to. The first fold is immediate: a
+     * monomorphic site must not run its whole life through the fallback.
+     */
+    static final int REFOLD_AFTER = 16;
+
     /** The chain's tail: uncached programs, then a recording; then refold. */
     @TruffleBoundary
     static void miss(Cache cache, String name, ThreadContext tc, Object[] args) {
         if (STATS) count(misses);
         Dispatch.fallback(cache.site, name, cache.csd, cache.programs.length, tc, args);
-        cache.refresh(tc);
+        if (cache.programs.length == 0 || ++cache.missesSinceFold >= REFOLD_AFTER)
+            cache.refresh(tc);
     }
 
     @ExplodeLoop
@@ -650,7 +696,56 @@ final class NqpDispatch {
     /* ----- outcomes ----- */
 
     private static void realize(Program p, DispatchCallSite site, ThreadContext tc,
-                                Object[] args) {
+                                Object[] args, Node node) {
+        /* A literal callee with an engine body: through the adopted call
+         * node, so the callee inlines into this root. */
+        if (p.calleeLiteral instanceof CodeRef cr && (p.kind == K_INVOKE_MAPPED
+                || (p.kind == K_INVOKE_RESUMABLE && p.callee instanceof LitSrc))
+                && cr.staticInfo.argsExpectation == ArgsExpectation.USE_BINDER) {
+            DirectCallNode cn = p.callNode;
+            /* Adopt only once a target exists (a bytecode-bodied callee
+             * never has one; one not yet run has none yet): the check is
+             * a volatile load, the adoption a deoptimization -- doing the
+             * latter on every replay of a target-less callee was a deopt
+             * cycle. Re-adopt when the instruction's node changed, a few
+             * times at most. */
+            if (cn == null) {
+                if (cr.staticInfo.engineTarget != null) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
+                    cn = adoptCallNode(p, cr, node);
+                }
+            }
+            else if (cn.getParent() != node && p.readopts < 4) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                p.readopts++;
+                cn = adoptCallNode(p, cr, node);
+            }
+            if (cn != null) {
+                Object[] out = p.kind == K_INVOKE_MAPPED ? mapArgs(p.map, args) : evalPlan(p.plan, tc, args);
+                if (p.kind == K_INVOKE_MAPPED) {
+                    enterDirect(tc, cr, cn, p.descriptor, out);
+                } else {
+                    DispatchRecord record = pushRecord(tc, p.program, args, site);
+                    try {
+                        tc.pendingDispatch = record;
+                        try {
+                            enterDirect(tc, cr, cn, p.descriptor, out);
+                        }
+                        catch (BindFailureException failure) {
+                            if (failure.getRecord() != record) throw failure;
+                            resumeAfterBindFailure(tc, record, failure.getFlag());
+                        }
+                        finally {
+                            tc.pendingDispatch = null;
+                        }
+                    }
+                    finally {
+                        popRecord(tc);
+                    }
+                }
+                return;
+            }
+        }
         switch (p.kind) {
             case K_VALUE: {
                 CallFrame frame = tc.curFrame;
@@ -717,7 +812,16 @@ final class NqpDispatch {
     /**
      * The call itself. A program with no resumptions and no bind control
      * needs no dispatch record at all (see DispatchCompiler.invokeMapped).
+     *
+     * A boundary, deliberately: a method-expansion trace of a compiler
+     * root found ~3000 IR nodes per dispatch site, almost all of it this
+     * road (enterEngine and runProgram, with their exception tails)
+     * inlined once per folded program -- for a call that ends in an
+     * indirect CallTarget.call PE cannot see through anyway. Only the
+     * guard tests earn their place in the caller's compiled code; the
+     * inlinable direct call is a DirectCallNode's job, later.
      */
+    @TruffleBoundary
     private static void invoke(ThreadContext tc, SixModelObject callee,
                                CallSiteDescriptor descriptor, Object[] out) {
         if (STATS) count(invokes);
@@ -760,6 +864,12 @@ final class NqpDispatch {
                                         Object[] args) {
         SixModelObject callee = (SixModelObject) p.callee.eval(tc, args);
         Object[] out = evalPlan(p.plan, tc, args);
+        invokeResumableBoundary(p, site, tc, args, callee, out);
+    }
+
+    @TruffleBoundary
+    private static void invokeResumableBoundary(Program p, DispatchCallSite site, ThreadContext tc,
+                                                Object[] args, SixModelObject callee, Object[] out) {
         /* The record list is an ArrayList: its add/remove stay behind
          * boundaries, because PE inlines the JDK's bounds-check slow paths
          * (Preconditions -> Formatter -> Locale) until Graal bails out of
@@ -850,6 +960,53 @@ final class NqpDispatch {
              * what it returns is not thrown. */
             dieInternal(tc, e);
         }
+    }
+
+    /** Adopts a call node for the callee's engine target, or null if the
+     *  callee has no registered target yet (it has not run once). */
+    @TruffleBoundary
+    private static DirectCallNode adoptCallNode(Program p, CodeRef cr, Node node) {
+        Object target = cr.staticInfo.engineTarget;
+        if (!(target instanceof CallTarget ct)
+                || cr.staticInfo.argsExpectation != ArgsExpectation.USE_BINDER)
+            return null;
+        DirectCallNode cn = node.insert(DirectCallNode.create(ct));
+        p.callNode = cn;
+        return cn;
+    }
+
+    /**
+     * The direct entry through an adopted call node: the frame the stub's
+     * prelude builds (behind a boundary), the call itself in compiled code
+     * so the callee can inline, and the engine's own postlude for the
+     * result -- a suspend token joins the resume chain, an unwind leaves
+     * the frame and flies on as the Truffle carrier it already is.
+     */
+    private static void enterDirect(ThreadContext tc, CodeRef cr, DirectCallNode cn,
+                                    CallSiteDescriptor csd, Object[] args) {
+        CallFrame cf = newFrame(tc, cr);
+        Object r;
+        try {
+            r = cn.call(cr.staticInfo.compUnit, tc, cf, csd, args);
+        }
+        catch (NqpUnwind u) {
+            leave(cf);
+            throw u;
+        }
+        catch (NqpHostError h) {
+            throw dieInternal(tc, h.original);
+        }
+        catch (org.raku.nqp.runtime.ControlException ce) {
+            leave(cf);
+            throw ce;
+        }
+        catch (Throwable t) {
+            throw dieInternal(tc, t);
+        }
+        if (r instanceof ContinuationResult) {
+            throw NqpCodeEngine.suspendFrame((ContinuationResult) r, cf);
+        }
+        leave(cf);
     }
 
     @TruffleBoundary

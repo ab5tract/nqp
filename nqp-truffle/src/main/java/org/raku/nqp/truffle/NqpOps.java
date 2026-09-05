@@ -1,5 +1,7 @@
 package org.raku.nqp.truffle;
 
+import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import org.raku.nqp.runtime.CallFrame;
@@ -449,13 +451,13 @@ final class NqpOps {
      * invocation cross into the bytecode world.
      */
     static Object dispatch(int rtype, String name, EngineSite es, Object[] args,
-                           ThreadContext tc, CallFrame cf) {
+                           ThreadContext tc, CallFrame cf, com.oracle.truffle.api.nodes.Node node) {
         try {
             if (DISPATCH_UNCACHED)
                 NqpDispatch.dispatchUncached(name, es.csd, tc, args);
             else if (DISPATCH_OLD || es.csd.hasFlattening)
                 NqpDispatch.dispatchFlattening(es.site, name, es.csd, tc, args);
-            else if (!NqpDispatch.replay(es.cache, tc, args))
+            else if (!NqpDispatch.replay(es.cache, tc, args, node))
                 NqpDispatch.miss(es.cache, name, tc, args);
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
             /* A continuation is being captured through this frame: hand a
@@ -466,8 +468,73 @@ final class NqpOps {
         return readResult(rtype, cf);
     }
 
+    /**
+     * The VMNull singleton, process-wide and immutable once made, cached
+     * here as a compilation constant: Ops.createNull reaches it through a
+     * synchronized getter and two `!!` checks, ~700 IR nodes per
+     * nqp::null() -- 69% of an identity method's compiled code.
+     */
+    @CompilationFinal private static SixModelObject VMNULL;
+
+    static SixModelObject nullConstant(ThreadContext tc) {
+        SixModelObject n = VMNULL;
+        if (n == null) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            n = Ops.createNull(tc);
+            VMNULL = n;
+        }
+        return n;
+    }
+
+    /**
+     * The exception an operation lets reach the interpreter loop. The
+     * Bytecode DSL treats any exception that is not a Truffle exception as
+     * an internal error: resolveThrowable in the generated interpreter
+     * calls transferToInterpreterAndInvalidate BEFORE the root's
+     * interceptInternalException gets to wrap it -- so every host
+     * exception used as ordinary control flow (an UnwindException for a
+     * return, next, last or a handled die) threw the compiled root away.
+     * Compiler methods that return from inside loops did that hundreds of
+     * times: "Deopt taken too many times", the root abandoned, the parse
+     * driver among them. Every operation therefore converts here, at the
+     * boundary, into the same carriers the interception produces; the
+     * interception stays as the fallback for anything missed. The
+     * runtime's own control exceptions (a continuation capture, a resume)
+     * must keep flying raw, as before.
+     */
+    static RuntimeException carry(Throwable t) {
+        if (t instanceof com.oracle.truffle.api.exception.AbstractTruffleException ate) return ate;
+        if (t instanceof UnwindException u) return new NqpUnwind(u);
+        if (t instanceof org.raku.nqp.runtime.ControlException) throw sneaky(t);
+        if (t instanceof ThreadDeath) throw sneaky(t);
+        return new NqpHostError(t);
+    }
+
     /** The typed read of a call's result off the frame's return registers. */
     static Object readResult(int rtype, CallFrame cf) {
+        /* The common case -- an object result read as an object -- is a
+         * field read; the converting cases (a native boxed on the way out,
+         * an object unboxed) go through Ops behind a boundary, whose
+         * Kotlin checks would otherwise expand into every call site. */
+        byte rt = cf.retType;
+        switch (rtype) {
+            case NqpWire.T_INT:
+                if (rt == CallFrame.RET_INT) return cf.iRet;
+                return resultSlow(rtype, cf);
+            case NqpWire.T_NUM:
+                if (rt == CallFrame.RET_NUM) return cf.nRet;
+                return resultSlow(rtype, cf);
+            case NqpWire.T_STR:
+                if (rt == CallFrame.RET_STR) return cf.sRet;
+                return resultSlow(rtype, cf);
+            default:
+                if (rt == CallFrame.RET_OBJ) return cf.oRet;
+                return resultSlow(rtype, cf);
+        }
+    }
+
+    @TruffleBoundary
+    private static Object resultSlow(int rtype, CallFrame cf) {
         switch (rtype) {
             case NqpWire.T_INT: return Ops.result_i(cf);
             case NqpWire.T_NUM: return Ops.result_n(cf);
@@ -495,8 +562,128 @@ final class NqpOps {
      * The bytecode world never notices; an engine anchored at curFrame
      * did, the moment a handler region resumed after such an unwind.
      */
+    /**
+     * One lexical-by-name instruction's cache: where the walk found the
+     * name -- how many outers up, in which static frame, at which slot.
+     * A block's static outer chain is fixed, so the answer is a constant
+     * of the instruction once seen; the frame at that depth is checked
+     * against the static code info, and a mismatch (the same program text
+     * reached under another chain) takes the by-name walk. Filled once,
+     * under transferToInterpreterAndInvalidate, so compiled code folds
+     * depth and slot and the outer walk explodes.
+     */
+    static final class LexSite {
+        @CompilationFinal org.raku.nqp.runtime.StaticCodeInfo sci;
+        @CompilationFinal int depth;
+        @CompilationFinal int idx;
+    }
+
+    static Object getlex(int type, String name, LexSite site, ThreadContext tc, CallFrame cf) {
+        org.raku.nqp.runtime.StaticCodeInfo sci = site.sci;
+        if (sci == null) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            return getlexResolve(type, name, site, tc, cf);
+        }
+        CallFrame f = outerAt(cf, site.depth);
+        if (f != null && f.codeRef.staticInfo == sci) {
+            int i = site.idx;
+            switch (type) {
+                case NqpWire.T_INT: return f.iLex[i];
+                case NqpWire.T_NUM: return f.nLex[i];
+                case NqpWire.T_STR: return f.sLex[i];
+                default: return lexO(f, i);
+            }
+        }
+        return getlexWalk(type, name, tc, cf);
+    }
+
+    /*
+     * The lexical slot reads and writes are field accesses written here in
+     * Java rather than calls into Ops.kt: a method-expansion trace of a
+     * 48-word accessor found 70% of its compiled IR under one
+     * CallFrame.oLexOrVivify -- Kotlin's lateinit and `!!` checks, whose
+     * failure paths (throwUninitializedPropertyAccessException,
+     * checkNotNull, then sanitizeStackTrace and StackTraceElement
+     * formatting) partial evaluation inlines in full, ~330 nodes per check.
+     * Java reads the backing fields, which carry no such check.
+     */
+
+    /** CallFrame.oLexOrVivify, PE-sized: the array read here, the clone
+     *  of a lazily vivified static behind a boundary. */
+    static SixModelObject lexO(CallFrame f, int i) {
+        SixModelObject[] oLex = f.oLex;
+        if (oLex == null) return null;
+        SixModelObject v = oLex[i];
+        if (v != CallFrame.UNVIVIFIED) return v;
+        return vivify(f, i);
+    }
+
     @TruffleBoundary
-    static Object getlex(int type, String name, ThreadContext tc, CallFrame cf) {
+    private static SixModelObject vivify(CallFrame f, int i) {
+        return f.oLexOrVivify(i);
+    }
+
+    static Object bindlex(int type, String name, Object value, LexSite site, ThreadContext tc,
+                          CallFrame cf) {
+        org.raku.nqp.runtime.StaticCodeInfo sci = site.sci;
+        if (sci == null) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            resolveLex(type, name, site, cf);
+            sci = site.sci;
+        }
+        if (sci != null) {
+            CallFrame f = outerAt(cf, site.depth);
+            if (f != null && f.codeRef.staticInfo == sci) {
+                int i = site.idx;
+                switch (type) {
+                    case NqpWire.T_INT: { long v = lng(value); f.iLex[i] = v; return v; }
+                    case NqpWire.T_NUM: { double v = dbl(value); f.nLex[i] = v; return v; }
+                    case NqpWire.T_STR: { String v = str(value); f.sLex[i] = v; return v; }
+                    default: { SixModelObject v = smo(value); f.oLex[i] = v; return v; }
+                }
+            }
+        }
+        return bindlexWalk(type, name, value, tc, cf);
+    }
+
+    @com.oracle.truffle.api.nodes.ExplodeLoop
+    private static CallFrame outerAt(CallFrame cf, int depth) {
+        CallFrame f = cf;
+        for (int d = 0; d < depth && f != null; d++) f = f.outer;
+        return f;
+    }
+
+    /** Fills the site from the by-name walk; false when the name is unbound. */
+    @TruffleBoundary
+    private static boolean resolveLex(int type, String name, LexSite site, CallFrame cf) {
+        int depth = 0;
+        for (CallFrame f = cf; f != null; f = f.outer, depth++) {
+            org.raku.nqp.runtime.StaticCodeInfo sci = f.codeRef.staticInfo;
+            int i = switch (type) {
+                case NqpWire.T_INT -> sci.iTryGetLexicalIdx(name);
+                case NqpWire.T_NUM -> sci.nTryGetLexicalIdx(name);
+                case NqpWire.T_STR -> sci.sTryGetLexicalIdx(name);
+                default -> sci.oTryGetLexicalIdx(name);
+            };
+            if (i != -1) {
+                site.idx = i;
+                site.depth = depth;
+                site.sci = sci;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @TruffleBoundary
+    private static Object getlexResolve(int type, String name, LexSite site, ThreadContext tc,
+                                        CallFrame cf) {
+        resolveLex(type, name, site, cf);
+        return getlexWalk(type, name, tc, cf);
+    }
+
+    @TruffleBoundary
+    static Object getlexWalk(int type, String name, ThreadContext tc, CallFrame cf) {
         for (CallFrame f = cf; f != null; f = f.outer) {
             org.raku.nqp.runtime.StaticCodeInfo sci = f.codeRef.staticInfo;
             switch (type) {
@@ -526,7 +713,7 @@ final class NqpOps {
     }
 
     @TruffleBoundary
-    static Object bindlex(int type, String name, Object value, ThreadContext tc, CallFrame cf) {
+    static Object bindlexWalk(int type, String name, Object value, ThreadContext tc, CallFrame cf) {
         for (CallFrame f = cf; f != null; f = f.outer) {
             org.raku.nqp.runtime.StaticCodeInfo sci = f.codeRef.staticInfo;
             switch (type) {
@@ -564,9 +751,121 @@ final class NqpOps {
         throw ExceptionHandling.dieInternal(tc, "Lexical '" + name + "' not found");
     }
 
+    /**
+     * One WVal instruction's cache: the resolved object, per GlobalContext
+     * (an eval-server run has its own; a stale run's object must never
+     * answer). Plain fields: a load and a compare replace the SC-handle
+     * hash lookup Ops.wval does per execution. Written value-then-context
+     * so a racing reader that sees the context sees the value.
+     */
+    static final class WvalSite {
+        org.raku.nqp.runtime.GlobalContext gc;
+        SixModelObject value;
+    }
+
+    static Object wval(String handle, int idx, WvalSite site, ThreadContext tc) {
+        if (site.gc == tc.gc) return site.value;
+        return wvalResolve(handle, idx, site, tc);
+    }
+
     @TruffleBoundary
-    static Object wval(String handle, int idx, ThreadContext tc) {
-        return Ops.wval(handle, idx, tc);
+    private static Object wvalResolve(String handle, int idx, WvalSite site, ThreadContext tc) {
+        SixModelObject v = Ops.wval(handle, idx, tc);
+        site.value = v;
+        site.gc = tc.gc;
+        return v;
+    }
+
+    /**
+     * One getattr/bindattr instruction's cache: the storage class and the
+     * slot's field handles for the first object type seen, so the read or
+     * write is a field access after PE (the generated accessor is not
+     * called: its delegation branch is PE-recursive, see NqpDispatch). A
+     * type with no plain-field road (a non-P6Opaque, a natively stored
+     * slot, an unknown attribute) marks the site unusable and the runtime
+     * op is taken; so does any other object type at the site.
+     */
+    static final class AttrSite {
+        @CompilationFinal Class<?> storage;
+        @CompilationFinal java.lang.invoke.MethodHandle getter;
+        @CompilationFinal java.lang.invoke.MethodHandle setter;
+        @CompilationFinal boolean resolved;
+    }
+
+    static Object getattr(AttrSite site, Object o, Object ch, String name, ThreadContext tc) {
+        if (!site.resolved) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            resolveAttr(site, o, ch, name, tc);
+        }
+        java.lang.invoke.MethodHandle getter = site.getter;
+        if (getter != null && o != null && o.getClass() == site.storage
+                && ((org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance) o).delegate == null) {
+            SixModelObject v;
+            try {
+                v = (SixModelObject) getter.invokeExact((SixModelObject) o);
+            } catch (Throwable t) {
+                throw CompilerDirectives.shouldNotReachHere(t);
+            }
+            /* A null slot may still auto-vivify; the op decides. */
+            if (v != null) return v;
+        }
+        return getattrSlow(o, ch, name, tc);
+    }
+
+    static Object bindattr(AttrSite site, Object o, Object ch, String name, Object value,
+                           ThreadContext tc) {
+        if (!site.resolved) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            resolveAttr(site, o, ch, name, tc);
+        }
+        java.lang.invoke.MethodHandle setter = site.setter;
+        if (setter != null && o != null && o.getClass() == site.storage
+                && ((org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance) o).delegate == null) {
+            SixModelObject obj = (SixModelObject) o;
+            SixModelObject v = smo(value);
+            try {
+                setter.invokeExact(obj, v);
+            } catch (Throwable t) {
+                throw CompilerDirectives.shouldNotReachHere(t);
+            }
+            if (obj.sc != null) scwb(tc, obj);
+            return v;
+        }
+        return bindattrSlow(o, ch, name, value, tc);
+    }
+
+    @TruffleBoundary
+    private static void resolveAttr(AttrSite site, Object o, Object ch, String name, ThreadContext tc) {
+        if (o instanceof SixModelObject obj && obj.st != null
+                && obj.st.REPRData instanceof org.raku.nqp.sixmodel.reprs.P6OpaqueREPRData rd
+                && rd.jvmClass != null) {
+            SixModelObject chd = Ops.decont(smo(ch), tc);
+            long hint = obj.st.REPR.hint_for(tc, obj.st, chd, name);
+            if (hint != org.raku.nqp.sixmodel.STable.NO_HINT) {
+                java.lang.invoke.MethodHandle[] hs = NqpDispatch.fieldHandles(rd.jvmClass, (int) hint);
+                if (hs != null) {
+                    site.storage = rd.jvmClass;
+                    site.getter = hs[0];
+                    site.setter = hs[1];
+                }
+            }
+        }
+        site.resolved = true;
+    }
+
+    @TruffleBoundary
+    private static Object getattrSlow(Object o, Object ch, String name, ThreadContext tc) {
+        return Ops.getattr(smo(o), smo(ch), name, tc);
+    }
+
+    @TruffleBoundary
+    private static Object bindattrSlow(Object o, Object ch, String name, Object value, ThreadContext tc) {
+        return Ops.bindattr(smo(o), smo(ch), name, smo(value), tc);
+    }
+
+    @TruffleBoundary
+    private static void scwb(ThreadContext tc, SixModelObject obj) {
+        Ops.scwbObject(tc, obj);
     }
 
     /* ----- parameter binding, mirroring the emitted prologue ----- */
@@ -612,6 +911,20 @@ final class NqpOps {
 
     @TruffleBoundary
     static void storeReturnTyped(int type, Object v, CallFrame cf) {
+        /* Ops.return_* write the caller's registers (cf.caller); done here
+         * as field writes for the reason lexO gives. */
+        CallFrame caller = cf.caller;
+        if (caller == null) { returnSlow(type, v, cf); return; }
+        switch (type) {
+            case NqpWire.T_INT -> { caller.iRet = lng(v); caller.retType = (byte) CallFrame.RET_INT; }
+            case NqpWire.T_NUM -> { caller.nRet = dbl(v); caller.retType = (byte) CallFrame.RET_NUM; }
+            case NqpWire.T_STR -> { caller.sRet = (String) v; caller.retType = (byte) CallFrame.RET_STR; }
+            default -> { caller.oRet = (SixModelObject) v; caller.retType = (byte) CallFrame.RET_OBJ; }
+        }
+    }
+
+    @TruffleBoundary
+    private static void returnSlow(int type, Object v, CallFrame cf) {
         switch (type) {
             case NqpWire.T_INT -> Ops.return_i(lng(v), cf);
             case NqpWire.T_NUM -> Ops.return_n(dbl(v), cf);
