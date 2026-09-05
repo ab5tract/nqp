@@ -112,6 +112,8 @@ public final class NqpWire {
     public static final int LEXREF = 24;
     public static final int CURLEXPAD = 25;
     public static final int P6ARGVMARRAY = 26;
+    /** A classlib op from the registry: rtype, class, method, descriptor, tc, nargs, arg types, then the args. */
+    public static final int CLASSLIB = 27;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;
