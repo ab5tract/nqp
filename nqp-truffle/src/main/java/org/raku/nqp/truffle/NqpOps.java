@@ -137,9 +137,15 @@ final class NqpOps {
         OP_BINDPOS2D_S = 366, OP_BINDPOS3D_I = 367, OP_BINDPOS3D_N = 368, OP_BINDPOS3D_S = 369,
         OP_ABS_N = 370,
         OP_FILEREADABLE = 371, OP_FILEWRITABLE = 372, OP_FILEEXECUTABLE = 373, OP_FILEISLINK = 374,
-        OP_LSTAT = 375, OP_CHOWN = 376, OP_CHMOD = 377, OP_GETENVHASH = 378;
+        OP_LSTAT = 375, OP_CHOWN = 376, OP_CHMOD = 377, OP_GETENVHASH = 378,
+        // Delimited continuations (gather/take, lazy lists). Like the throw
+        // :cont ops, each may suspend: continuationcontrol throws a
+        // SaveStackException that the save-stack machinery captures across
+        // engine frames, and the resumed value waits in the return register.
+        OP_CONTINUATIONRESET = 379, OP_CONTINUATIONCONTROL = 380,
+        OP_CONTINUATIONINVOKE = 381;
 
-    static final int OP_COUNT = 379;
+    static final int OP_COUNT = 382;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -535,6 +541,29 @@ final class NqpOps {
             }
             case OP_THROWEXTYPE: {
                 Ops.throwcatdyn_c(lng(a[0]), tc);
+                return Ops.result_o(cf);
+            }
+            // Delimited continuations. continuationcontrol throws a
+            // SaveStackException captured by the enclosing continuationreset;
+            // each records its frame and, on resume, the value is in the
+            // return register -- the same shape as the throw :cont ops.
+            case OP_CONTINUATIONRESET: {
+                // reset/invoke are @Throws(Throwable) in Ops.kt; a capture's
+                // SaveStackException travels through sneaky() unchanged and is
+                // caught by run()'s handler above (turned into a suspend token).
+                try {
+                    Ops.continuationreset(smo(a[0]), smo(a[1]), tc);
+                } catch (Throwable t) { throw sneaky(t); }
+                return Ops.result_o(cf);
+            }
+            case OP_CONTINUATIONCONTROL: {
+                Ops.continuationcontrol(lng(a[0]), smo(a[1]), smo(a[2]), tc);
+                return Ops.result_o(cf);
+            }
+            case OP_CONTINUATIONINVOKE: {
+                try {
+                    Ops.continuationinvoke(smo(a[0]), smo(a[1]), tc);
+                } catch (Throwable t) { throw sneaky(t); }
                 return Ops.result_o(cf);
             }
             case OP_ISTYPE_ND: return Ops.istype_nd(smo(a[0]), smo(a[1]), tc);

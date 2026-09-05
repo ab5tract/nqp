@@ -529,6 +529,12 @@ class QAST::TruffleEncoder {
         op3('throw', 181, $T_OBJ, 'o');
         op3('rethrow', 182, $T_OBJ, 'o');
         op3('throwextype', 183, $T_OBJ, 'i');
+        # Delimited continuations. A hand row wins over the classlib registry's
+        # :cont bail; each suspends through the same save-stack machinery the
+        # throw ops use, and the resumed result is read from the frame.
+        op3('continuationreset', 379, $T_OBJ, 'oo');
+        op3('continuationcontrol', 380, $T_OBJ, 'ioo');
+        op3('continuationinvoke', 381, $T_OBJ, 'oo');
         op3('box_i/2', 186, $T_OBJ, 'io');
         op3('box_n/2', 187, $T_OBJ, 'no');
         op3('box_s/2', 188, $T_OBJ, 'so');
