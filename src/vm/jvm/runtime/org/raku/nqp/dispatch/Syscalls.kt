@@ -89,6 +89,42 @@ object Syscalls {
     private fun int(value: Long) = DispatchValue(ArgKind.INT, value)
     private fun bool(value: Boolean) = int(if (value) 1L else 0L)
 
+    /* The file-stat handle and its lazy queries (see the syscalls below). */
+    private class StatHandle(@JvmField val path: String, @JvmField val follow: Boolean)
+    private fun statHandle(a: SyscallArgs, i: Int): StatHandle =
+        (a.obj(i) as org.raku.nqp.sixmodel.reprs.JavaObjectWrapper).theObject as StatHandle
+    private fun linkOpts(h: StatHandle): Array<java.nio.file.LinkOption> =
+        if (h.follow) arrayOf() else arrayOf(java.nio.file.LinkOption.NOFOLLOW_LINKS)
+    /* uid/gid/mode/inode/dev/islnk through the unix attribute view; 0 when
+     * the file is missing or the view is unsupported, as a failed stat. */
+    private fun unixStatAttr(h: StatHandle, flag: Long): Long {
+        val p = java.nio.file.Paths.get(h.path); val o = linkOpts(h)
+        return try {
+            when (flag.toInt()) {
+                Ops.STAT_ISLNK -> if (java.nio.file.Files.isSymbolicLink(p)) 1L else 0L
+                Ops.STAT_UID -> (java.nio.file.Files.getAttribute(p, "unix:uid", *o) as Number).toLong()
+                Ops.STAT_GID -> (java.nio.file.Files.getAttribute(p, "unix:gid", *o) as Number).toLong()
+                Ops.STAT_PLATFORM_MODE -> (java.nio.file.Files.getAttribute(p, "unix:mode", *o) as Number).toLong()
+                Ops.STAT_PLATFORM_INODE -> (java.nio.file.Files.getAttribute(p, "unix:ino", *o) as Number).toLong()
+                Ops.STAT_PLATFORM_DEV -> (java.nio.file.Files.getAttribute(p, "unix:dev", *o) as Number).toLong()
+                else -> 0L
+            }
+        } catch (e: Exception) { 0L }
+    }
+    private fun statTimeNanos(h: StatHandle, flag: Long): Long {
+        val p = java.nio.file.Paths.get(h.path); val o = linkOpts(h)
+        return try {
+            val ft = when (flag.toInt()) {
+                Ops.STAT_MODIFYTIME -> java.nio.file.Files.getLastModifiedTime(p, *o)
+                Ops.STAT_ACCESSTIME -> java.nio.file.Files.getAttribute(p, "lastAccessTime", *o) as java.nio.file.attribute.FileTime
+                Ops.STAT_CREATETIME -> java.nio.file.Files.getAttribute(p, "creationTime", *o) as java.nio.file.attribute.FileTime
+                Ops.STAT_CHANGETIME -> java.nio.file.Files.getAttribute(p, "unix:ctime", *o) as java.nio.file.attribute.FileTime
+                else -> return 0L
+            }
+            val i = ft.toInstant(); i.epochSecond * 1_000_000_000L + i.nano
+        } catch (e: Exception) { 0L }
+    }
+
     private val OBJ = ArgKind.OBJ
     private val INT = ArgKind.INT
     private val NUM = ArgKind.NUM
@@ -400,6 +436,32 @@ object Syscalls {
             }
             void
         }
+
+        /* ----- file stat: MoarVM's file-stat / stat-flags family -----
+         * An opaque stat handle carries the path and follow-symlinks flag
+         * and is queried lazily through the existing stat ops, so a missing
+         * file yields EXISTS=0 rather than throwing (IO::Path relies on
+         * that). Backing the moar-side IO::Path code with these lets its
+         * `#?if moar` branches run here unchanged. */
+        define("file-stat", STR, INT) { args ->
+            obj(org.raku.nqp.runtime.BootJavaInterop.RuntimeSupport.boxJava(
+                StatHandle(args.str(0)!!, args.int(1) != 0L), args.tc.gc.BOOTJava!!.st))
+        }
+        define("stat-flags", OBJ, INT) { args ->
+            val h = statHandle(args, 0); val flag = args.int(1)
+            int(when (flag.toInt()) {
+                Ops.STAT_EXISTS, Ops.STAT_FILESIZE, Ops.STAT_ISDIR,
+                Ops.STAT_ISREG, Ops.STAT_ISDEV -> Ops.stat(h.path, flag)
+                else -> unixStatAttr(h, flag)
+            })
+        }
+        define("stat-time-nanos", OBJ, INT) { args ->
+            val h = statHandle(args, 0); val flag = args.int(1)
+            int(statTimeNanos(h, flag))
+        }
+        define("stat-is-readable", OBJ) { int(Ops.filereadable(statHandle(it, 0).path, it.tc)) }
+        define("stat-is-writable", OBJ) { int(Ops.filewritable(statHandle(it, 0).path, it.tc)) }
+        define("stat-is-executable", OBJ) { int(Ops.fileexecutable(statHandle(it, 0).path, it.tc)) }
 
         /* ----- JVM nested compilation units ----- */
 

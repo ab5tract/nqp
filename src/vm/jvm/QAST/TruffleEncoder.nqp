@@ -1632,6 +1632,18 @@ class QAST::TruffleEncoder {
             epush(%e, $W_P6ARGVMARRAY);
             return $T_OBJ;
         }
+        if $name eq 'syscall' {
+            # nqp::syscall(name, args...) is sugar for a boot-syscall
+            # dispatch -- exactly Compiler.nqp's add_dispatcher_op with the
+            # 'boot-syscall' prefix: the dispatcher name is unshifted as a
+            # constant string and the rest rides in the callsite. Encoded
+            # as the dispatch op it desugars to (a fresh tree over the same
+            # children, so a later bail hands the fallback the untouched op).
+            my $d := QAST::Op.new( :op('dispatch'), QAST::SVal.new( :value('boot-syscall') ) );
+            for @($op) { $d.push($_) }
+            $d.returns($op.returns) if nqp::can($op, 'returns');
+            return self.encode_node($d, %e, $want);
+        }
         if $name eq 'p6return' {
             # p6return appears only as the SUCCEED handler of a `handle`
             # that wraps a block's whole body (src/Raku/ast/scoping.rakumod):
