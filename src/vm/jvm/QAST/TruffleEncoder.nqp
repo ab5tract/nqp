@@ -731,6 +731,25 @@ class QAST::TruffleEncoder {
         op3('unbox_u', 290, $T_INT, 'o');
         op3('getattr_u', 291, $T_INT, 'oos');
         op3('bindhllsym', 292, $T_OBJ, 'sso');
+        op3('iseq_u', 293, $T_INT, 'ii');
+        op3('isne_u', 294, $T_INT, 'ii');
+        op3('islt_u', 295, $T_INT, 'ii');
+        op3('isle_u', 296, $T_INT, 'ii');
+        op3('isgt_u', 297, $T_INT, 'ii');
+        op3('isge_u', 298, $T_INT, 'ii');
+        op3('cmp_u', 299, $T_INT, 'ii');
+        op3('mod_n', 300, $T_NUM, 'nn');
+        op3('radix_I', 301, $T_OBJ, 'isiio');
+        op3('atomicstore_i', 302, $T_INT, 'oi');
+        op3('cas', 303, $T_OBJ, 'ooo');
+        op3('closefh', 304, $T_OBJ, 'o');
+        op3('filenofh', 305, $T_INT, 'o');
+        op3('decode', 306, $T_STR, 'os');
+        op3('lock', 307, $T_OBJ, 'o');
+        op3('unlock', 308, $T_OBJ, 'o');
+        op3('opendir', 309, $T_OBJ, 's');
+        op3('nextfiledir', 310, $T_STR, 'o');
+        op3('getlexreldyn', 311, $T_OBJ, 'os');
         op3('hlllist', 139, $T_OBJ, '');
         op3('bootintarray', 142, $T_OBJ, '');
         op3('bootnumarray', 143, $T_OBJ, '');
@@ -983,8 +1002,23 @@ class QAST::TruffleEncoder {
                 !! ($p.named ?? 2 !! 0);
             epush(%e, $kind);
             my int $ptype := $p.slurpy ?? $T_OBJ !! rt_of($p.returns);
+            my int $uint := 0;
+            if $ptype == -9 && !$p.slurpy {
+                # A uint parameter (objprimspec 10): fetch unsigned so a
+                # full-width value unboxes, and bind/default as int -- the
+                # wire type 4 (T_UINT) tells the builder to use posparam_u.
+                # A sized uint (under 64 bits) still needs post-fetch
+                # masking; leave those to the fallback.
+                my int $uspec := nqp::objprimspec($p.returns);
+                if $uspec == 10 {
+                    my int $ubits := nqp::objprimbits($p.returns);
+                    cbail('sized uint param') if $ubits > 0 && $ubits < 64;
+                    $uint := 1;
+                    $ptype := $T_INT;
+                }
+            }
             cbail('param type') if $ptype < 0 || $ptype > 3;
-            epush(%e, $ptype);
+            epush(%e, $uint ?? 4 !! $ptype);
             if $p.scope eq 'local' {
                 epush(%e, 1);
                 epush(%e, %e<locals>{$p.name}[0]);
