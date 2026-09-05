@@ -1245,13 +1245,18 @@ class QAST::TruffleEncoder {
             if $bt eq 'immediate' || $bt eq 'immediate_static' {
                 # Compiled as a code object and called at once with no
                 # arguments, which is what the bytecode path's direct call
-                # of the block's code ref comes to. A block that wants the
-                # condition passed (an arity, or a count annotation) is the
-                # if/with road's business, encoded there; here it bails.
+                # of the block's code ref comes to (Compiler.nqp: an
+                # emptyCallSite, whatever the block's arity or count). A
+                # `count` annotation alone marks an implicit OPTIONAL topic
+                # (a bare block's `$_`, arity 0): zero arguments is exactly
+                # what the bytecode passes, and the parameter's default
+                # resolves in the callee's own binder either way -- so it
+                # encodes. Only a REQUIRED parameter (arity > 0) still
+                # bails; the if/with road passes the condition to those.
                 cbail('nested block in a parameter default')
                     if nqp::existskey(%e, 'inparams') && %e<inparams>;
                 cbail('immediate block wanting arguments')
-                    if $n.arity > 0 || $n.ann('count');
+                    if $n.arity > 0;
                 self.encode_immediate_call($n, %e, 0, 0);
                 return $T_OBJ;
             }
