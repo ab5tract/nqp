@@ -800,6 +800,59 @@ final class NqpOps {
      * runtime's own control exceptions (a continuation capture, a resume)
      * must keep flying raw, as before.
      */
+    /** A registry-derived classlib op: the static method the bytecode path
+     *  would invokestatic, resolved once into a spread MethodHandle. */
+    static final class ClassLibSite {
+        final String cls, meth, desc; final boolean tcArg; final int nargs;
+        @CompilationFinal java.lang.invoke.MethodHandle mh;
+        ClassLibSite(String cls, String meth, String desc, boolean tcArg, int nargs) {
+            this.cls = cls; this.meth = meth; this.desc = desc; this.tcArg = tcArg; this.nargs = nargs;
+        }
+        java.lang.invoke.MethodHandle resolve() {
+            java.lang.invoke.MethodHandle h = mh;
+            if (h == null) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                try {
+                    ClassLoader ld = NqpOps.class.getClassLoader();
+                    // The registry stores the class as a JVM type descriptor
+                    // (Lorg/raku/nqp/runtime/Ops;); Class.forName wants the
+                    // binary name org.raku.nqp.runtime.Ops.
+                    String bin = cls;
+                    if (bin.startsWith("L") && bin.endsWith(";")) bin = bin.substring(1, bin.length() - 1);
+                    bin = bin.replace('/', '.');
+                    Class<?> c = Class.forName(bin, true, ld);
+                    java.lang.invoke.MethodType mt = java.lang.invoke.MethodType.fromMethodDescriptorString(desc, ld);
+                    h = java.lang.invoke.MethodHandles.lookup().findStatic(c, meth, mt);
+                    int n = nargs + (tcArg ? 1 : 0);
+                    h = h.asSpreader(Object[].class, n)
+                         .asType(java.lang.invoke.MethodType.methodType(Object.class, Object[].class));
+                } catch (ReflectiveOperationException e) {
+                    throw new IllegalStateException("nqpp: classlib op " + cls + "." + meth + desc + ": " + e, e);
+                }
+                mh = h;
+            }
+            return h;
+        }
+    }
+
+    static Object classlib(int rtype, ClassLibSite site, Object[] a, ThreadContext tc, CallFrame cf) {
+        Object[] full = a;
+        if (site.tcArg) {
+            full = new Object[a.length + 1];
+            System.arraycopy(a, 0, full, 0, a.length);
+            full[a.length] = tc;
+        }
+        try {
+            return site.resolve().invokeExact(full);
+        } catch (org.raku.nqp.runtime.SaveStackException sse) {
+            return new NqpCont.Suspend(sse, NqpWire.T_OBJ);
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable t) {
+            throw sneaky(t);
+        }
+    }
+
     static RuntimeException carry(Throwable t) {
         if (t instanceof com.oracle.truffle.api.exception.AbstractTruffleException ate) return ate;
         if (t instanceof UnwindException u) return new NqpUnwind(u);

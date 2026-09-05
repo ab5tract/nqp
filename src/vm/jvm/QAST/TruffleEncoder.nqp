@@ -314,6 +314,7 @@ class QAST::TruffleEncoder {
     my int $W_LEXREF := 24;
     my int $W_CURLEXPAD := 25;
     my int $W_P6ARGVMARRAY := 26;
+    my int $W_CLASSLIB := 27;
 
     # Handler categories, matching ExceptionHandling on the runtime side
     # (and the Compiler's own copies).
@@ -840,6 +841,14 @@ class QAST::TruffleEncoder {
     }
 
     sub cbail(str $why) { nqp::die('code-bail ' ~ $why) }
+
+    # A classlib registry RT type (Compiler.nqp: obj 0, int 1, num 2, str 3,
+    # uint 10) as an encoder type; a uint RESULT is T_UINT so it boxes
+    # unsigned, a uint ARGUMENT is the int slot it travels in.
+    sub classlib_t(int $rt, int $result) {
+        $rt == 0 ?? $T_OBJ !! $rt == 1 ?? $T_INT !! $rt == 2 ?? $T_NUM !! $rt == 3 ?? $T_STR
+            !! $rt == 10 ?? ($result ?? $T_UINT !! $T_INT) !! -1
+    }
 
     sub epush(%e, int $v) { nqp::push(%e<code>, $v) }
 
@@ -1891,6 +1900,47 @@ class QAST::TruffleEncoder {
                 unless nqp::isnull($desugar) {
                     return self.encode_node($desugar($op), %e, $want);
                 }
+            }
+        }
+        if nqp::isnull($entry) {
+            # No hand-written encoding: derive one from the classlib
+            # registry the bytecode path compiles to an invokestatic
+            # (Compiler.nqp map_classlib_*_op). The HLL's own ops first,
+            # then the core ones. A continuation-style op (result via the
+            # frame) or a void one stays out of this road.
+            my $rec := nqp::null();
+            my $hreg := nqp::gethllsym('nqp', 'CODE_CLASSLIB_HLL_OPS');
+            my str $hll := nqp::ifnull(nqp::getlexdyn('$*HLL'), '');
+            if !nqp::isnull($hreg) && nqp::existskey($hreg, $hll) {
+                $rec := nqp::atkey(nqp::atkey($hreg, $hll), $name);
+            }
+            if nqp::isnull($rec) {
+                my $creg := nqp::gethllsym('nqp', 'CODE_CLASSLIB_OPS');
+                $rec := nqp::atkey($creg, $name) unless nqp::isnull($creg);
+            }
+            unless nqp::isnull($rec) {
+                cbail('classlib cont op ' ~ $name) if $rec[6];
+                my @rin := $rec[3];
+                cbail('classlib arity ' ~ $name) unless nqp::elems(@rin) == $nargs;
+                my int $rt := classlib_t($rec[4], 1);
+                cbail('classlib result type ' ~ $name) if $rt < 0;
+                epush(%e, $W_CLASSLIB);
+                epush(%e, $rt);
+                epush(%e, epool(%e, $rec[0]));
+                epush(%e, epool(%e, $rec[1]));
+                epush(%e, epool(%e, $rec[2]));
+                epush(%e, $rec[5]);
+                epush(%e, $nargs);
+                my @at;
+                for @rin {
+                    my int $t := classlib_t($_, 0);
+                    cbail('classlib arg type ' ~ $name) if $t < 0;
+                    nqp::push(@at, $t);
+                    epush(%e, $t);
+                }
+                my int $i := 0;
+                for @($op) { self.encode_child($_, %e, @at[$i]); $i++ }
+                return $rt;
             }
         }
         cbail('op ' ~ $name) if nqp::isnull($entry);
