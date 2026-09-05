@@ -832,8 +832,8 @@ class QAST::TruffleEncoder {
     # Coercion kinds, matching NqpOps.
     sub coerce_kind(int $from, int $to) {
         if $from == $T_INT { return $to == $T_OBJ ?? 0 !! $to == $T_NUM ?? 6 !! $to == $T_STR ?? 8 !! -1 }
-        if $from == $T_NUM { return $to == $T_OBJ ?? 1 !! $to == $T_INT ?? 7 !! -1 }
-        if $from == $T_STR { return $to == $T_OBJ ?? 2 !! -1 }
+        if $from == $T_NUM { return $to == $T_OBJ ?? 1 !! $to == $T_INT ?? 7 !! $to == $T_STR ?? 14 !! -1 }
+        if $from == $T_STR { return $to == $T_OBJ ?? 2 !! $to == $T_INT ?? 13 !! $to == $T_NUM ?? 15 !! -1 }
         if $from == $T_OBJ { return $to == $T_INT ?? 3 !! $to == $T_NUM ?? 4 !! $to == $T_STR ?? 5 !! $to == $T_UINT ?? 12 !! -1 }
         # A uint boxes/widens UNSIGNED: 2^64-1 is a large Int, not -1.
         if $from == $T_UINT { return $to == $T_OBJ ?? 9 !! $to == $T_NUM ?? 10 !! $to == $T_STR ?? 11 !! -1 }
