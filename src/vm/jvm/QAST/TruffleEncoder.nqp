@@ -707,6 +707,30 @@ class QAST::TruffleEncoder {
         op3('multidimref_u', 267, $T_OBJ, 'oo');
         op3('multidimref_n', 268, $T_OBJ, 'oo');
         op3('multidimref_s', 269, $T_OBJ, 'oo');
+        op3('indexfrom', 40, $T_INT, 'ssi');
+        op3('atpos2d', 270, $T_OBJ, 'oii');
+        op3('atpos2d_i', 271, $T_INT, 'oii');
+        op3('atpos2d_n', 272, $T_NUM, 'oii');
+        op3('atpos2d_s', 273, $T_STR, 'oii');
+        op3('atpos3d', 274, $T_OBJ, 'oiii');
+        op3('atpos3d_i', 275, $T_INT, 'oiii');
+        op3('atpos3d_n', 276, $T_NUM, 'oiii');
+        op3('atpos3d_s', 277, $T_STR, 'oiii');
+        op3('bindposnd', 278, $T_OBJ, 'ooo');
+        op3('bindpos2d', 279, $T_OBJ, 'oiio');
+        op3('bindpos3d', 280, $T_OBJ, 'oiiio');
+        op3('ctx', 281, $T_OBJ, '');
+        op3('ctxcaller', 282, $T_OBJ, 'o');
+        op3('ctxouterskipthunks', 283, $T_OBJ, 'o');
+        op3('reprname', 284, $T_STR, 'o');
+        op3('bitand_I', 285, $T_OBJ, 'ooo');
+        op3('neg_I', 286, $T_OBJ, 'oo');
+        op3('gcd_I', 287, $T_OBJ, 'ooo');
+        op3('fromnum_I', 288, $T_OBJ, 'no');
+        op3('rand_I', 289, $T_OBJ, 'oo');
+        op3('unbox_u', 290, $T_INT, 'o');
+        op3('getattr_u', 291, $T_INT, 'oos');
+        op3('bindhllsym', 292, $T_OBJ, 'sso');
         op3('hlllist', 139, $T_OBJ, '');
         op3('bootintarray', 142, $T_OBJ, '');
         op3('bootnumarray', 143, $T_OBJ, '');
@@ -1232,6 +1256,9 @@ class QAST::TruffleEncoder {
         if $name eq 'if' || $name eq 'unless' {
             return self.encode_if($op, %e, $want, $name eq 'unless' ?? 1 !! 0);
         }
+        if $name eq 'with' || $name eq 'without' {
+            return self.encode_if($op, %e, $want, $name eq 'without' ?? 1 !! 0, 1);
+        }
         if $name eq 'while' || $name eq 'until'
             || $name eq 'repeat_while' || $name eq 'repeat_until' {
             # repeat_* is the same loop with the body run once ahead
@@ -1742,7 +1769,28 @@ class QAST::TruffleEncoder {
         $entry[1]
     }
 
-    method encode_if($op, %e, int $want, int $negate) {
+    # The `with`/`without` branch test: definedness is the `.defined`
+    # method (overridable), not nqp isconcrete -- exactly the bytecode
+    # path's findmethod('defined') + lang-call. The condition VALUE stays
+    # in $tmp (block topic and fail-value); only the test consults
+    # .defined. Mirrors encode_callmethod's lang-meth-call wire with the
+    # invocant read from $tmp and no further arguments.
+    method emit_defined_test(%e, int $tmp) {
+        my int $mtmp := new_elocal(%e, $T_OBJ);
+        epush(%e, $W_DISPATCH);
+        %e<dispatches> := %e<dispatches> + 1;
+        epush(%e, $T_OBJ);
+        epush(%e, epool(%e, 'lang-meth-call'));
+        epush(%e, 3);
+        epush(%e, $T_OBJ); epush(%e, $T_STR); epush(%e, $T_OBJ);
+        epush(%e, $W_OPCALL); epush(%e, 51); epush(%e, 1);   # decont
+        epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $mtmp);
+        epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+        epush(%e, $W_SVAL); epush(%e, epool(%e, 'defined'));
+        epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $mtmp);
+    }
+
+    method encode_if($op, %e, int $want, int $negate, int $withy = 0) {
         my int $n := nqp::elems(@($op));
         cbail('if arity') unless $n == 2 || $n == 3;
         my int $void := $want == $T_VOID;
@@ -1765,10 +1813,16 @@ class QAST::TruffleEncoder {
             nqp::bindpos(%e<code>, $bind_at + 2, $tmp);
             my int $has_else := $n == 3 || !$void;
             epush(%e, $void ?? $W_IFS !! $W_IFV);
-            epush(%e, $condt);
+            epush(%e, $withy ?? $T_OBJ !! $condt);
             epush(%e, $negate);
             epush(%e, $has_else ?? 1 !! 0);
-            epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
+            if $withy {
+                cbail('withy cond not obj') if $condt != $T_OBJ;
+                self.emit_defined_test(%e, $tmp);
+            }
+            else {
+                epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
+            }
             # then
             if needs_cond_passed($op[1]) {
                 self.encode_immediate_call($op[1], %e, 1, $condt, $tmp);
@@ -1818,10 +1872,16 @@ class QAST::TruffleEncoder {
             nqp::bindpos(%e<code>, $bind_at + 1, $condt);
             nqp::bindpos(%e<code>, $bind_at + 2, $tmp);
             epush(%e, $W_IFV);
-            epush(%e, $condt);
+            epush(%e, $withy ?? $T_OBJ !! $condt);
             epush(%e, $negate);
             epush(%e, 1);
-            epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
+            if $withy {
+                cbail('withy cond not obj') if $condt != $T_OBJ;
+                self.emit_defined_test(%e, $tmp);
+            }
+            else {
+                epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
+            }
             self.encode_child($op[1], %e, $rt);
             if $condt != $rt {
                 my int $kind := coerce_kind($condt, $rt);
@@ -1831,6 +1891,7 @@ class QAST::TruffleEncoder {
             epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
             return $rt;
         }
+        cbail('withy general') if $withy;
         epush(%e, $void ?? $W_IFS !! $W_IFV);
         my int $ct_at := nqp::elems(%e<code>);
         epush(%e, 0);

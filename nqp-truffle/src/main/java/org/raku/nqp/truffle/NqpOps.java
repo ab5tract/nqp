@@ -107,9 +107,15 @@ final class NqpOps {
         OP_ORDBASEAT = 257, OP_FLOOR_N = 258, OP_CEIL_N = 259,
         OP_RINDEXFROMEND = 260, OP_INDEXIC = 261, OP_INDEXIM = 262, OP_INDEXICIM = 263,
         OP_POW_I_BIG = 264, OP_CTXCALLERSKIPTHUNKS = 265, OP_MULTIDIMREF_I = 266,
-        OP_MULTIDIMREF_U = 267, OP_MULTIDIMREF_N = 268, OP_MULTIDIMREF_S = 269;
+        OP_MULTIDIMREF_U = 267, OP_MULTIDIMREF_N = 268, OP_MULTIDIMREF_S = 269,
+        OP_ATPOS2D_O = 270, OP_ATPOS2D_I = 271, OP_ATPOS2D_N = 272, OP_ATPOS2D_S = 273,
+        OP_ATPOS3D_O = 274, OP_ATPOS3D_I = 275, OP_ATPOS3D_N = 276, OP_ATPOS3D_S = 277,
+        OP_BINDPOSND_O = 278, OP_BINDPOS2D_O = 279, OP_BINDPOS3D_O = 280,
+        OP_CTX = 281, OP_CTXCALLER = 282, OP_CTXOUTERSKIPTHUNKS = 283, OP_REPRNAME = 284,
+        OP_BITAND_I_BIG = 285, OP_NEG_I_BIG = 286, OP_GCD_I_BIG = 287, OP_FROMNUM_I_BIG = 288,
+        OP_RAND_I_BIG = 289, OP_UNBOX_U = 290, OP_GETATTR_U = 291, OP_BINDHLLSYM = 292;
 
-    static final int OP_COUNT = 270;
+    static final int OP_COUNT = 293;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -363,6 +369,29 @@ final class NqpOps {
             case OP_MULTIDIMREF_U: return Ops.multidimref_u(smo(a[0]), smo(a[1]), tc);
             case OP_MULTIDIMREF_N: return Ops.multidimref_n(smo(a[0]), smo(a[1]), tc);
             case OP_MULTIDIMREF_S: return Ops.multidimref_s(smo(a[0]), smo(a[1]), tc);
+            case OP_ATPOS2D_O: return Ops.atpos2d_o(smo(a[0]), lng(a[1]), lng(a[2]), tc);
+            case OP_ATPOS2D_I: return Ops.atpos2d_i(smo(a[0]), lng(a[1]), lng(a[2]), tc);
+            case OP_ATPOS2D_N: return Ops.atpos2d_n(smo(a[0]), lng(a[1]), lng(a[2]), tc);
+            case OP_ATPOS2D_S: return Ops.atpos2d_s(smo(a[0]), lng(a[1]), lng(a[2]), tc);
+            case OP_ATPOS3D_O: return Ops.atpos3d_o(smo(a[0]), lng(a[1]), lng(a[2]), lng(a[3]), tc);
+            case OP_ATPOS3D_I: return Ops.atpos3d_i(smo(a[0]), lng(a[1]), lng(a[2]), lng(a[3]), tc);
+            case OP_ATPOS3D_N: return Ops.atpos3d_n(smo(a[0]), lng(a[1]), lng(a[2]), lng(a[3]), tc);
+            case OP_ATPOS3D_S: return Ops.atpos3d_s(smo(a[0]), lng(a[1]), lng(a[2]), lng(a[3]), tc);
+            case OP_BINDPOSND_O: return Ops.bindposnd_o(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+            case OP_BINDPOS2D_O: return Ops.bindpos2d_o(smo(a[0]), lng(a[1]), lng(a[2]), smo(a[3]), tc);
+            case OP_BINDPOS3D_O: return Ops.bindpos3d_o(smo(a[0]), lng(a[1]), lng(a[2]), lng(a[3]), smo(a[4]), tc);
+            case OP_CTX: return Ops.ctx_of(cf, tc);
+            case OP_CTXCALLER: return Ops.ctxcaller(smo(a[0]), tc);
+            case OP_CTXOUTERSKIPTHUNKS: return Ops.ctxouterskipthunks(smo(a[0]), tc);
+            case OP_REPRNAME: return Ops.reprname(smo(a[0]), tc);
+            case OP_BITAND_I_BIG: return Ops.bitand_I(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+            case OP_NEG_I_BIG: return Ops.neg_I(smo(a[0]), smo(a[1]), tc);
+            case OP_GCD_I_BIG: return Ops.gcd_I(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+            case OP_FROMNUM_I_BIG: return Ops.fromnum_I(dbl(a[0]), smo(a[1]), tc);
+            case OP_RAND_I_BIG: return Ops.rand_I(smo(a[0]), smo(a[1]), tc);
+            case OP_UNBOX_U: return Ops.unbox_u(smo(a[0]), tc);
+            case OP_GETATTR_U: return Ops.getattr_u(smo(a[0]), smo(a[1]), str(a[2]), tc);
+            case OP_BINDHLLSYM: return Ops.bindhllsym(str(a[0]), str(a[1]), smo(a[2]), tc);
             case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
             case OP_GETEXTYPE: return Ops.getextype(smo(a[0]), tc);
             case OP_SETEXTYPE: return Ops.setextype(smo(a[0]), lng(a[1]), tc);
