@@ -1549,6 +1549,26 @@ class QAST::TruffleEncoder {
         if $name eq 'callmethod' {
             return self.encode_callmethod($op, %e);
         }
+        if $name eq 'numify' {
+            # numify(x): x in num context, exactly Compiler.nqp's as_jast(x, :want(NUM)).
+            cbail('numify arity') unless nqp::elems(@($op)) == 1;
+            return self.encode_node($op[0], %e, $T_NUM);
+        }
+        if $name eq 'settypefinalize' {
+            # A no-op stub on the JVM (Compiler.nqp: as_jast($op[0])); the
+            # finalize wiring is not hooked up, so just yield the child.
+            cbail('settypefinalize arity') unless nqp::elems(@($op)) >= 1;
+            return self.encode_node($op[0], %e, $want);
+        }
+        if $name eq 'p6invokeflat' {
+            # p6invokeflat(callee, args): a call with the argument list
+            # flattened, exactly the registered desugar (src/vm/jvm/Raku/
+            # Ops.nqp): $op[1].flat(1); call($op[0], $op[1]).
+            cbail('p6invokeflat arity') unless nqp::elems(@($op)) == 2;
+            $op[1].flat(1);
+            return self.encode_node(
+                QAST::Op.new( :op('call'), $op[0], $op[1] ), %e, $want);
+        }
         if $name eq 'chain' || $name eq 'chainstatic' {
             # A nested chain (`$a < $b < $c`) short-circuits and shares the
             # middle operand, exactly as Compiler.nqp's chain_codegen: each
@@ -1607,16 +1627,27 @@ class QAST::TruffleEncoder {
                     $linkq(0) );
                 return self.encode_node($tree, %e, $want);
             }
-            cbail('chain arity') unless nqp::elems(@($op)) == 2;
+            # A simple (non-nested) link: named (callee is $op.name, two
+            # operands) or unnamed (callee is $op[0], two operands after).
+            my int $named := $op.name ne '';
+            cbail('chain arity') unless nqp::elems(@($op)) == ($named ?? 2 !! 3);
+            my $lop := $named ?? $op[0] !! $op[1];
+            my $rop := $named ?? $op[1] !! $op[2];
             epush(%e, $W_DISPATCH);
             %e<dispatches> := %e<dispatches> + 1;
             epush(%e, rt_of($op.returns));
             epush(%e, epool(%e, 'lang-call'));
             epush(%e, 3);
             epush(%e, $T_OBJ); epush(%e, $T_OBJ); epush(%e, $T_OBJ);
-            self.encode_op_named_lexical_decont($op.name, %e);
-            self.encode_child($op[0], %e, $T_OBJ);
-            self.encode_child($op[1], %e, $T_OBJ);
+            if $named {
+                self.encode_op_named_lexical_decont($op.name, %e);
+            }
+            else {
+                epush(%e, $W_OPCALL); epush(%e, 51); epush(%e, 1);   # decont
+                self.encode_child($op[0], %e, $T_OBJ);
+            }
+            self.encode_child($lop, %e, $T_OBJ);
+            self.encode_child($rop, %e, $T_OBJ);
             return rt_of($op.returns);
         }
         if $name eq 'dispatch' {
