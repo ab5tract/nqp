@@ -245,6 +245,46 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     }
 
     @Operation
+    @ConstantOperand(type = int.class, name = "type")
+    @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = int.class, name = "spec")
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class LexRef {
+        @Specialization
+        static Object doRef(VirtualFrame f, int type, String name, int spec, Object site) {
+            try {
+                return NqpOps.getlexref(type, name, spec, (NqpOps.LexSite) site, tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    public static final class CurLexpad {
+        @Specialization
+        static Object doCtx(VirtualFrame f) {
+            try {
+                return NqpOps.curlexpad(tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    public static final class P6ArgVmArray {
+        @Specialization
+        static Object doArgs(VirtualFrame f) {
+            try {
+                return NqpOps.p6argvmarray(tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
     @ConstantOperand(type = String.class, name = "name")
     public static final class LexOuterGet {
         @Specialization
@@ -418,11 +458,12 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     @Operation
     @ConstantOperand(type = int.class, name = "idx")
     @ConstantOperand(type = int.class, name = "opt")
+    @ConstantOperand(type = int.class, name = "type")
     public static final class PosParam {
         @Specialization
-        static Object doParam(VirtualFrame f, int idx, int opt, Object csd, Object args) {
+        static Object doParam(VirtualFrame f, int idx, int opt, int type, Object csd, Object args) {
             try {
-                return NqpOps.posparam(cf(f), csd, (Object[]) args, idx, opt != 0);
+                return NqpOps.posparam(cf(f), csd, (Object[]) args, idx, opt != 0, type);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -432,11 +473,12 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     @Operation
     @ConstantOperand(type = String.class, name = "name")
     @ConstantOperand(type = int.class, name = "opt")
+    @ConstantOperand(type = int.class, name = "type")
     public static final class NamedParam {
         @Specialization
-        static Object doParam(VirtualFrame f, String name, int opt, Object csd, Object args) {
+        static Object doParam(VirtualFrame f, String name, int opt, int type, Object csd, Object args) {
             try {
-                return NqpOps.namedparam(cf(f), csd, (Object[]) args, name, opt != 0);
+                return NqpOps.namedparam(cf(f), csd, (Object[]) args, name, opt != 0, type);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }

@@ -69,6 +69,14 @@ package org.raku.nqp.truffle;
  *    the throwpayloadlex catcher: an EX_UNWIND_OBJECT row; the catch
  *    arm runs unwind_check then evaluates handlerExpr in this frame
  *    (it reads nqp::lastexpayload, published by invokeHandler).
+ * 24 LEXREF type pName spec     a native lexical reference (the
+ *    lexicalref scope wanted as an object): the declaring frame is found
+ *    the way LEXGET finds it, the reference is allocated over its slot.
+ *    spec is the declared width of a sized int/num lexical (Ops.sizedref's
+ *    encoding), 0 for full width.
+ * 25 CURLEXPAD                  nqp::curlexpad over the program's own frame
+ * 26 P6ARGVMARRAY               rakudo's p6argvmarray: the frame's raw
+ *    arguments (cf.csd, cf.args) as a BOOTArray
  * </pre>
  */
 public final class NqpWire {
@@ -101,6 +109,9 @@ public final class NqpWire {
     public static final int JNULL = 21;
     public static final int HANDLE = 22;
     public static final int HANDLEPAYLOAD = 23;
+    public static final int LEXREF = 24;
+    public static final int CURLEXPAD = 25;
+    public static final int P6ARGVMARRAY = 26;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;
