@@ -119,9 +119,15 @@ final class NqpOps {
         OP_RADIX_I = 301,
         OP_ATOMICSTORE_I = 302, OP_CAS = 303, OP_CLOSEFH = 304, OP_FILENOFH = 305,
         OP_DECODE = 306, OP_LOCK = 307, OP_UNLOCK = 308, OP_OPENDIR = 309,
-        OP_NEXTFILEDIR = 310, OP_GETLEXRELDYN = 311;
+        OP_NEXTFILEDIR = 310, OP_GETLEXRELDYN = 311,
+        OP_BINDATTR_U = 312, OP_GETATTRREF_U = 313,
+        OP_SQRT_N = 314, OP_LOG_N = 315, OP_EXP_N = 316, OP_SIN_N = 317, OP_ASIN_N = 318,
+        OP_COS_N = 319, OP_ACOS_N = 320, OP_TAN_N = 321, OP_ATAN_N = 322, OP_SINH_N = 323,
+        OP_COSH_N = 324, OP_TANH_N = 325, OP_ATAN2_N = 326, OP_CLOSEDIR = 327,
+        OP_ATOMICLOAD_I = 328, OP_GETLEXREL = 329, OP_CAPTUREPOSARG = 330,
+        OP_UNIPROPCODE = 331, OP_STRTOCODES = 332, OP_STAT_TIME = 333;
 
-    static final int OP_COUNT = 312;
+    static final int OP_COUNT = 334;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -417,6 +423,28 @@ final class NqpOps {
             case OP_OPENDIR: return Ops.opendir(str(a[0]), tc);
             case OP_NEXTFILEDIR: return Ops.nextfiledir(smo(a[0]), tc);
             case OP_GETLEXRELDYN: return Ops.getlexreldyn(smo(a[0]), str(a[1]), tc);
+            case OP_BINDATTR_U: return Ops.bindattr_u(smo(a[0]), smo(a[1]), str(a[2]), lng(a[3]), tc);
+            case OP_GETATTRREF_U: return Ops.getattrref_u(smo(a[0]), smo(a[1]), str(a[2]), tc);
+            case OP_SQRT_N: return Math.sqrt(dbl(a[0]));
+            case OP_LOG_N: return Math.log(dbl(a[0]));
+            case OP_EXP_N: return Math.exp(dbl(a[0]));
+            case OP_SIN_N: return Math.sin(dbl(a[0]));
+            case OP_ASIN_N: return Math.asin(dbl(a[0]));
+            case OP_COS_N: return Math.cos(dbl(a[0]));
+            case OP_ACOS_N: return Math.acos(dbl(a[0]));
+            case OP_TAN_N: return Math.tan(dbl(a[0]));
+            case OP_ATAN_N: return Math.atan(dbl(a[0]));
+            case OP_SINH_N: return Math.sinh(dbl(a[0]));
+            case OP_COSH_N: return Math.cosh(dbl(a[0]));
+            case OP_TANH_N: return Math.tanh(dbl(a[0]));
+            case OP_ATAN2_N: return Math.atan2(dbl(a[0]), dbl(a[1]));
+            case OP_CLOSEDIR: return Ops.closedir(smo(a[0]), tc);
+            case OP_ATOMICLOAD_I: return Ops.atomicload_i(smo(a[0]), tc);
+            case OP_GETLEXREL: return Ops.getlexrel(smo(a[0]), str(a[1]), tc);
+            case OP_CAPTUREPOSARG: return Ops.captureposarg(smo(a[0]), lng(a[1]), tc);
+            case OP_UNIPROPCODE: return Ops.unipropcode(str(a[0]), tc);
+            case OP_STRTOCODES: return Ops.strtocodes(str(a[0]), lng(a[1]), smo(a[2]), tc);
+            case OP_STAT_TIME: return Ops.stat_time(str(a[0]), lng(a[1]));
             case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
             case OP_GETEXTYPE: return Ops.getextype(smo(a[0]), tc);
             case OP_SETEXTYPE: return Ops.setextype(smo(a[0]), lng(a[1]), tc);
