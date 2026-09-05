@@ -113,9 +113,15 @@ final class NqpOps {
         OP_BINDPOSND_O = 278, OP_BINDPOS2D_O = 279, OP_BINDPOS3D_O = 280,
         OP_CTX = 281, OP_CTXCALLER = 282, OP_CTXOUTERSKIPTHUNKS = 283, OP_REPRNAME = 284,
         OP_BITAND_I_BIG = 285, OP_NEG_I_BIG = 286, OP_GCD_I_BIG = 287, OP_FROMNUM_I_BIG = 288,
-        OP_RAND_I_BIG = 289, OP_UNBOX_U = 290, OP_GETATTR_U = 291, OP_BINDHLLSYM = 292;
+        OP_RAND_I_BIG = 289, OP_UNBOX_U = 290, OP_GETATTR_U = 291, OP_BINDHLLSYM = 292,
+        OP_ISEQ_U = 293, OP_ISNE_U = 294, OP_ISLT_U = 295, OP_ISLE_U = 296,
+        OP_ISGT_U = 297, OP_ISGE_U = 298, OP_CMP_U = 299, OP_MOD_N = 300,
+        OP_RADIX_I = 301,
+        OP_ATOMICSTORE_I = 302, OP_CAS = 303, OP_CLOSEFH = 304, OP_FILENOFH = 305,
+        OP_DECODE = 306, OP_LOCK = 307, OP_UNLOCK = 308, OP_OPENDIR = 309,
+        OP_NEXTFILEDIR = 310, OP_GETLEXRELDYN = 311;
 
-    static final int OP_COUNT = 293;
+    static final int OP_COUNT = 312;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -392,6 +398,25 @@ final class NqpOps {
             case OP_UNBOX_U: return Ops.unbox_u(smo(a[0]), tc);
             case OP_GETATTR_U: return Ops.getattr_u(smo(a[0]), smo(a[1]), str(a[2]), tc);
             case OP_BINDHLLSYM: return Ops.bindhllsym(str(a[0]), str(a[1]), smo(a[2]), tc);
+            case OP_ISEQ_U: return Ops.iseq_u(lng(a[0]), lng(a[1]));
+            case OP_ISNE_U: return Ops.isne_u(lng(a[0]), lng(a[1]));
+            case OP_ISLT_U: return Ops.islt_u(lng(a[0]), lng(a[1]));
+            case OP_ISLE_U: return Ops.isle_u(lng(a[0]), lng(a[1]));
+            case OP_ISGT_U: return Ops.isgt_u(lng(a[0]), lng(a[1]));
+            case OP_ISGE_U: return Ops.isge_u(lng(a[0]), lng(a[1]));
+            case OP_CMP_U: return Ops.cmp_u(lng(a[0]), lng(a[1]));
+            case OP_MOD_N: return Ops.mod_n(dbl(a[0]), dbl(a[1]));
+            case OP_RADIX_I: return Ops.radix_I(lng(a[0]), str(a[1]), lng(a[2]), lng(a[3]), smo(a[4]), tc);
+            case OP_ATOMICSTORE_I: return Ops.atomicstore_i(smo(a[0]), lng(a[1]), tc);
+            case OP_CAS: return Ops.cas(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+            case OP_CLOSEFH: return Ops.closefh(smo(a[0]), tc);
+            case OP_FILENOFH: return Ops.filenofh(smo(a[0]), tc);
+            case OP_DECODE: return Ops.decode(smo(a[0]), str(a[1]), tc);
+            case OP_LOCK: return Ops.lock(smo(a[0]), tc);
+            case OP_UNLOCK: return Ops.unlock(smo(a[0]), tc);
+            case OP_OPENDIR: return Ops.opendir(str(a[0]), tc);
+            case OP_NEXTFILEDIR: return Ops.nextfiledir(smo(a[0]), tc);
+            case OP_GETLEXRELDYN: return Ops.getlexreldyn(smo(a[0]), str(a[1]), tc);
             case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
             case OP_GETEXTYPE: return Ops.getextype(smo(a[0]), tc);
             case OP_SETEXTYPE: return Ops.setextype(smo(a[0]), lng(a[1]), tc);
@@ -1134,6 +1159,8 @@ final class NqpOps {
                 return opt ? Ops.posparam_opt_n(cf, cs, args, idx) : Ops.posparam_n(cf, cs, args, idx);
             case NqpWire.T_STR:
                 return opt ? Ops.posparam_opt_s(cf, cs, args, idx) : Ops.posparam_s(cf, cs, args, idx);
+            case NqpWire.T_UINT:
+                return opt ? Ops.posparam_opt_u(cf, cs, args, idx) : Ops.posparam_u(cf, cs, args, idx);
             default:
                 return opt ? Ops.posparam_opt_o(cf, cs, args, idx) : Ops.posparam_o(cf, cs, args, idx);
         }
@@ -1149,6 +1176,8 @@ final class NqpOps {
                 return opt ? Ops.namedparam_opt_n(cf, cs, args, name) : Ops.namedparam_n(cf, cs, args, name);
             case NqpWire.T_STR:
                 return opt ? Ops.namedparam_opt_s(cf, cs, args, name) : Ops.namedparam_s(cf, cs, args, name);
+            case NqpWire.T_UINT:
+                return opt ? Ops.namedparam_opt_u(cf, cs, args, name) : Ops.namedparam_u(cf, cs, args, name);
             default:
                 return opt ? Ops.namedparam_opt_o(cf, cs, args, name) : Ops.namedparam_o(cf, cs, args, name);
         }
