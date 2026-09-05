@@ -136,8 +136,14 @@ open class P6OpaqueBaseInstance : SixModelObject() {
         }
     }
 
+    /* The atomic accessors delegate exactly as the plain ones above do: a
+     * repossessed, mixed-in or deserialized object is a shell whose storage
+     * lives in the delegate, and its own class has no field_N to reflect on
+     * (NoSuchFieldException: field_0 from Stash.BIND-KEY building CORE.d). */
     override fun cas_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
                                      name: String?, expected: SixModelObject?, value: SixModelObject?): SixModelObject? {
+        if (Ops.isnull(this.delegate) == 0L)
+            return this.delegate!!.cas_attribute_boxed(tc, classHandle, name, expected, value)
         val vh = attributeVarHandle(classHandle, name)
         return if (vh.compareAndSet(this, expected, value))
             expected
@@ -147,6 +153,8 @@ open class P6OpaqueBaseInstance : SixModelObject() {
 
     override fun atomic_bind_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
                                              name: String?, value: SixModelObject?) {
+        if (Ops.isnull(this.delegate) == 0L)
+            return this.delegate!!.atomic_bind_attribute_boxed(tc, classHandle, name, value)
         attributeVarHandle(classHandle, name).setVolatile(this, value)
     }
 
