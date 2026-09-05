@@ -1326,6 +1326,9 @@ class QAST::TruffleEncoder {
             for @($op) { $call.push($_) }
             return self.encode_node($call, %e, $want);
         }
+        if $name eq 'xor' {
+            return self.encode_xor($op, %e, $want);
+        }
         if $name eq 'numify' {
             # numify(x): x in num context, exactly Compiler.nqp's as_jast(x, :want(NUM)).
             cbail('numify arity') unless nqp::elems(@($op)) == 1;
@@ -1850,6 +1853,71 @@ class QAST::TruffleEncoder {
         epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
         epush(%e, $W_SVAL); epush(%e, epool(%e, 'defined'));
         epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $mtmp);
+    }
+
+    # xor: variadic "exactly one true". Desugared to scratch locals and
+    # nested ifs that reproduce Compiler.nqp's label-based flow: evaluate
+    # children left to right; the moment a SECOND true appears, short-circuit
+    # (skipping the rest) to the :false child, or null; otherwise yield the
+    # single true value, or -- when none is true -- the last child. $t = "a
+    # true has been seen and frozen into $r", $x = "two trues seen". Kept out
+    # of encode_op: that method is already near the codegen size limit.
+    method encode_xor($op, %e, int $want) {
+        my @childlist;
+        my $f_ast;
+        for @($op) {
+            if $_.named eq 'false' { $f_ast := $_ }
+            else { nqp::push(@childlist, $_) }
+        }
+        cbail('xor arity') unless nqp::elems(@childlist) >= 2;
+        my str $r := $op.unique('xor_r');
+        my str $t := $op.unique('xor_t');
+        my str $x := $op.unique('xor_x');
+        my str $b := $op.unique('xor_b');
+        my str $u := $op.unique('xor_u');
+        my $lget := -> str $n { QAST::Var.new( :name($n), :scope('local') ) };
+        my $tree := QAST::Stmts.new(
+            QAST::Op.new( :op('bind'),
+                QAST::Var.new( :name($r), :scope('local'), :decl('var') ),
+                @childlist[0] ),
+            QAST::Op.new( :op('bind'),
+                QAST::Var.new( :name($t), :scope('local'), :decl('var'), :returns(int) ),
+                QAST::Op.new( :op('istrue'), $lget($r) ) ),
+            QAST::Op.new( :op('bind'),
+                QAST::Var.new( :name($x), :scope('local'), :decl('var'), :returns(int) ),
+                QAST::IVal.new( :value(0) ) ),
+            QAST::Op.new( :op('bind'),
+                QAST::Var.new( :name($b), :scope('local'), :decl('var') ),
+                QAST::Op.new( :op('null') ) ),
+            QAST::Op.new( :op('bind'),
+                QAST::Var.new( :name($u), :scope('local'), :decl('var'), :returns(int) ),
+                QAST::IVal.new( :value(0) ) ) );
+        my int $ci := 1;
+        my int $nc := nqp::elems(@childlist);
+        while $ci < $nc {
+            # unless $x { $b := ck; $u := istrue($b);
+            #   if $u { if $t {$x:=1} else {$r:=$b;$t:=1} }
+            #   else  { unless $t {$r:=$b} } }
+            my $per := QAST::Stmts.new(
+                QAST::Op.new( :op('bind'), $lget($b), @childlist[$ci] ),
+                QAST::Op.new( :op('bind'), $lget($u),
+                    QAST::Op.new( :op('istrue'), $lget($b) ) ),
+                QAST::Op.new( :op('if'), $lget($u),
+                    QAST::Op.new( :op('if'), $lget($t),
+                        QAST::Op.new( :op('bind'), $lget($x), QAST::IVal.new( :value(1) ) ),
+                        QAST::Stmts.new(
+                            QAST::Op.new( :op('bind'), $lget($r), $lget($b) ),
+                            QAST::Op.new( :op('bind'), $lget($t), QAST::IVal.new( :value(1) ) ) ) ),
+                    QAST::Op.new( :op('unless'), $lget($t),
+                        QAST::Op.new( :op('bind'), $lget($r), $lget($b) ) ) ) );
+            $tree.push( QAST::Op.new( :op('unless'), $lget($x), $per ) );
+            $ci++;
+        }
+        $tree.push( QAST::Op.new( :op('if'), $lget($x),
+            QAST::Op.new( :op('bind'), $lget($r),
+                nqp::defined($f_ast) ?? $f_ast !! QAST::Op.new( :op('null') ) ) ) );
+        $tree.push( $lget($r) );
+        return self.encode_node($tree, %e, $want);
     }
 
     method encode_if($op, %e, int $want, int $negate, int $withy = 0) {
