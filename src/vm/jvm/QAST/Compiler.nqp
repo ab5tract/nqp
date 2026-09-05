@@ -116,6 +116,24 @@ my $RT_NUM  := 2;
 my $RT_STR  := 3;
 my $RT_UINT := 10;
 my $RT_VOID := -1;
+
+# The classlib op registry, published for the Truffle encoder: every op a
+# map_classlib_*_op call maps to a static method is recorded here as
+# [class, method, JVM descriptor, arg RT types, result RT type, tc], so
+# the encoder derives its table from the same declarations the bytecode
+# path compiles to an invokestatic -- no hand-written twin per op.
+my %CODE_CLASSLIB_OPS;
+my %CODE_CLASSLIB_HLL_OPS;
+nqp::bindhllsym('nqp', 'CODE_CLASSLIB_OPS', %CODE_CLASSLIB_OPS);
+nqp::bindhllsym('nqp', 'CODE_CLASSLIB_HLL_OPS', %CODE_CLASSLIB_HLL_OPS);
+sub jdesc($jt) { $jt eq 'Long' ?? 'J' !! $jt eq 'Double' ?? 'D' !! $jt eq 'Void' ?? 'V' !! $jt }
+sub classlib_record($class, $method, @stack_in, $stack_out, $tc, $cont) {
+    my str $desc := '(';
+    for @stack_in { $desc := $desc ~ jdesc(jtype($_)) }
+    $desc := $desc ~ jdesc($TYPE_TC) if $tc;
+    $desc := $desc ~ ')' ~ ($cont ?? 'V' !! jdesc(jtype($stack_out)));
+    [$class, $method, $desc, nqp::clone(@stack_in), $stack_out, $tc ?? 1 !! 0, $cont ?? 1 !! 0]
+}
 my class Result {
     has $!jast;         # The JAST
     has int $!type;     # Result type (obj/int/num/str)
@@ -341,6 +359,7 @@ class QAST::OperationsJAST {
         self.add_core_op($op, op_mapper($op, $ins, @stack_in, $stack_out, :$tc, :$cont));
         self.set_core_op_inlinability($op, $inlinable);
         self.set_core_op_result_type($op, $stack_out);
+        %CODE_CLASSLIB_OPS{$op} := classlib_record($class, $method, @stack_in, $stack_out, $tc, $cont);
     }
 
     # Adds a HLL nqp:: op provided by a static method in the
@@ -356,6 +375,8 @@ class QAST::OperationsJAST {
         self.add_hll_op($hll, $op, op_mapper($op, $ins, @stack_in, $stack_out, :$tc, :$cont));
         self.set_core_op_inlinability($op, $inlinable);
         self.set_hll_op_result_type($hll, $op, $stack_out);
+        %CODE_CLASSLIB_HLL_OPS{$hll} := nqp::hash() unless nqp::existskey(%CODE_CLASSLIB_HLL_OPS, $hll);
+        %CODE_CLASSLIB_HLL_OPS{$hll}{$op} := classlib_record($class, $method, @stack_in, $stack_out, $tc, $cont);
     }
 
     # Generates an operation mapper. Covers a range of operations,
