@@ -1307,6 +1307,36 @@ class QAST::TruffleEncoder {
         # 139-147) are still in NqpOps.java, so re-landing it means
         # restoring this branch plus its table rows -- but not before that
         # binder interaction is understood.
+        if $name eq 'hash' {
+            # The hash constructor, parallel to the list ones: create the
+            # hash type into a scratch local, then bindkey each key/value
+            # pair. Held out until now because an engine-built hash meeting
+            # an engine-bound named-parameter prologue reproduced the
+            # BOOTSTRAP binder bug (OperatorProperties.new) -- the native
+            # parameter binder that landed since changed that prologue, so
+            # this is being re-tested against it. Keys are strings, values
+            # objects; an odd child count is a malformed hash the bytecode
+            # path would reject too.
+            my @children := $op.list;
+            my int $items := nqp::elems(@children);
+            cbail('hash odd child count') if $items % 2;
+            my int $tmp := new_elocal(%e, $T_OBJ);
+            epush(%e, $W_STMTS);
+            epush(%e, ($items / 2) + 2);
+            epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $tmp);
+            epush(%e, $W_OPCALL); epush(%e, 58); epush(%e, 1);    # create
+            epush(%e, $W_OPCALL); epush(%e, 140); epush(%e, 0);   # hllhash
+            my int $i := 0;
+            while $i < $items {
+                epush(%e, $W_OPCALL); epush(%e, 68); epush(%e, 3);   # bindkey
+                epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+                self.encode_child(@children[$i], %e, $T_STR);
+                self.encode_child(@children[$i + 1], %e, $T_OBJ);
+                $i := $i + 2;
+            }
+            epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+            return $T_OBJ;
+        }
         if $name eq 'list' || $name eq 'list_i'
             || $name eq 'list_n' || $name eq 'list_s' {
             # The list constructors, the same desugar Compiler.nqp uses:
@@ -1879,9 +1909,17 @@ class QAST::TruffleEncoder {
         my @flagpos;
         for @args -> $a {
             my $named := nqp::can($a, 'named') ?? $a.named !! '';
+            my $flat  := nqp::can($a, 'flat') ?? $a.flat !! 0;
             nqp::push(@flagpos, nqp::elems(%e<code>));
             epush(%e, 0);
-            epush(%e, epool(%e, ~$named)) if $named;
+            # A flat argument carries NO name string: a flat NAMED arg
+            # (`|%h`) has its names supplied by the hash keys at flatten
+            # time, and its `.named` is a truth flag, not a name -- pushing
+            # `~$named` there wrote the literal "1" as the argument's name,
+            # which the binder then rejected ("Unexpected named argument
+            # '1'"). The bytecode path likewise names only NON-flat named
+            # args (flat args take flags 16/24 and push nothing).
+            epush(%e, epool(%e, ~$named)) if $named && !$flat;
         }
         @flagpos
     }

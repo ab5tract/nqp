@@ -415,7 +415,11 @@ final class NqpProgramBuilder {
                     };
                     if ((flag & 4) != 0) {
                         csFlag |= CallSiteDescriptor.ARG_NAMED;
-                        names.add(pool[code[at++]]);
+                        // A flat named arg (`|%h`) sets the named bit but
+                        // carries no name string -- explodeFlattening reads
+                        // the hash keys. Only a non-flat named arg names a
+                        // slot, matching the encoder and the bytecode path.
+                        if ((flag & 8) == 0) names.add(pool[code[at++]]);
                     }
                     if ((flag & 8) != 0) csFlag |= CallSiteDescriptor.ARG_FLAT;
                     flags[i] = csFlag;
