@@ -17,6 +17,11 @@ class P6bigintInstance : SixModelObject() {
         this.value = BigInteger.valueOf(value)
     }
 
+    override fun set_uint(tc: ThreadContext, value: Long) {
+        this.value = if (value >= 0L) BigInteger.valueOf(value)
+            else BigInteger.valueOf(value).add(BigInteger.ONE.shiftLeft(64))
+    }
+
     override fun get_uint(tc: ThreadContext): Long {
         val value = this.value!!
         if (value.bitLength() > 64)
