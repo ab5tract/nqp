@@ -1632,6 +1632,20 @@ class QAST::TruffleEncoder {
             epush(%e, $W_P6ARGVMARRAY);
             return $T_OBJ;
         }
+        if $name eq 'p6return' {
+            # p6return appears only as the SUCCEED handler of a `handle`
+            # that wraps a block's whole body (src/Raku/ast/scoping.rakumod):
+            # so the handle's value is the block's value is the routine's
+            # return. The bytecode path forces the routine to return via
+            # return_o + cf.outer.exitAfterUnwind + leave; here the handler
+            # dispatcher's completion value already becomes the handle's
+            # result (NqpProgramBuilder HANDLE -> resL), which flows out as
+            # the block value -- so yielding the argument produces the same
+            # routine return without an unwind. (Only ever a SUCCEED
+            # handler, so no other shape reaches this.)
+            cbail('p6return arity') unless nqp::elems(@($op)) == 1;
+            return self.encode_child($op[0], %e, $want == $T_VOID ?? $T_VOID !! $T_OBJ);
+        }
         if $name eq 'handle' {
             my @children := nqp::clone($op.list);
             cbail('handle no children') unless nqp::elems(@children) >= 1;
