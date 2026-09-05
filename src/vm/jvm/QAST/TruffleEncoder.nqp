@@ -684,6 +684,9 @@ class QAST::TruffleEncoder {
         op3('inf', 246, $T_NUM, '');
         op3('neginf', 247, $T_NUM, '');
         op3('nan', 248, $T_NUM, '');
+        # The grammar engine's rxmatch: descriptor, cursor, cursor class,
+        # target, from, invocant-from, restart, invocant, callback.
+        op3('rxmatch', 249, $T_OBJ, 'soosiiioo');
         op3('hlllist', 139, $T_OBJ, '');
         op3('bootintarray', 142, $T_OBJ, '');
         op3('bootnumarray', 143, $T_OBJ, '');
@@ -1123,7 +1126,7 @@ class QAST::TruffleEncoder {
             return $T_OBJ;
         }
         if nqp::istype($n, QAST::Regex) {
-            cbail('regex');
+            return self.encode_regex($n, %e);
         }
         if nqp::istype($n, QAST::ParamTypeCheck) {
             # Compiles exactly as emit_param_tasks does: the check value
@@ -2205,6 +2208,58 @@ class QAST::TruffleEncoder {
         nqp::istype($n, QAST::Block)
         && ($n.arity > 0 || $n.ann('count'))
         && ($n.blocktype eq 'immediate' || $n.blocktype eq 'immediate_static')
+    }
+
+    # A rule the grammar engine covers, handed to it whole -- exactly what
+    # Compiler.nqp's engine_jast does, built here as a QAST tree the general
+    # encoder consumes. The bytecode path is untouched; a rule the engine
+    # does NOT cover (rx_descriptor is null) bails, so its full matcher
+    # stays bytecode. The prologue is engine_jast's: !cursor_start_all
+    # answers the cursor, target and start position (the cursor's own $!pos
+    # is -3 until the rule finishes), the invocant's $!from decides
+    # scanning, and rxmatch runs the rule. The callback block -- the pieces
+    # the engine cannot express -- rides the CODEREF road (compiled to
+    # bytecode as any nested block), so nothing about the rule body needs
+    # to encode; only this prologue does.
+    method encode_regex($node, %e) {
+        my $comp := %e<comp>;
+        my $desc := $comp.rx_descriptor($node);
+        cbail('regex the engine does not cover') if nqp::isnull($desc);
+
+        my $p := QAST::Node.unique('rxe') ~ '_';
+        my sub loc($n, *%o) { QAST::Var.new( :name($p ~ $n), :scope('local'), |%o ) }
+        my sub decl($n, $ret?) {
+            my %o := nqp::defined($ret) ?? nqp::hash('returns', $ret) !! nqp::hash();
+            QAST::Var.new( :name($p ~ $n), :scope('local'), :decl('var'), |%o )
+        }
+        my sub b($t, $v) { QAST::Op.new( :op('bind'), $t, $v ) }
+        my sub startpos($i) {
+            QAST::Op.new( :op('atpos'), loc('start'), QAST::IVal.new( :value($i) ) )
+        }
+        my $self := QAST::Var.new( :name('self'), :scope('local') );
+        my $callback := nqp::elems($desc.callbacks)
+            ?? $comp.rx_callback_block($desc)
+            !! QAST::Op.new( :op('null') );
+
+        my $tree := QAST::Stmts.new(
+            b(decl('start'),
+                QAST::Op.new( :op('callmethod'), :name('!cursor_start_all'), $self )),
+            b(QAST::Var.new( :name("\$¢"), :scope('lexical') ),
+                b(decl('cur'), startpos(0))),
+            b(decl('tgt', str), QAST::Op.new( :op('unbox_s'), startpos(1) )),
+            b(decl('pos', int), QAST::Op.new( :op('unbox_i'), startpos(2) )),
+            b(decl('curclass'), startpos(3)),
+            b(decl('selffrom', int),
+                QAST::Op.new( :op('getattr_i'), $self, loc('curclass'),
+                    QAST::SVal.new( :value('$!from') ) )),
+            b(decl('restart', int), QAST::Op.new( :op('unbox_i'), startpos(5) )),
+            b(decl('callback'), $callback),
+            QAST::Op.new( :op('rxmatch'),
+                QAST::SVal.new( :value($desc.encoded) ),
+                loc('cur'), loc('curclass'), loc('tgt'), loc('pos'),
+                loc('selffrom'), loc('restart'), $self, loc('callback') )
+        );
+        self.encode_node($tree, %e, $T_OBJ)
     }
 
     method encode_lexget(str $name, %e) {

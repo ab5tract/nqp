@@ -100,9 +100,10 @@ final class NqpOps {
         OP_READFH = 234, OP_TIME = 235,
         OP_ATOMICADD_I = 236, OP_ATPOSND_I = 237, OP_ORDFIRST = 238, OP_CMP_N = 239,
         OP_CMP_S = 240, OP_CMP_I_BIG = 241, OP_DIV_I_BIG = 242, OP_REPLACE = 243,
-        OP_SETWHO = 244, OP_FINDMETHOD = 245, OP_INF = 246, OP_NEGINF = 247, OP_NAN = 248;
+        OP_SETWHO = 244, OP_FINDMETHOD = 245, OP_INF = 246, OP_NEGINF = 247, OP_NAN = 248,
+        OP_RXMATCH = 249;
 
-    static final int OP_COUNT = 249;
+    static final int OP_COUNT = 250;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -333,6 +334,9 @@ final class NqpOps {
             case OP_INF: return Ops.inf();
             case OP_NEGINF: return Ops.neginf();
             case OP_NAN: return Ops.nan();
+            case OP_RXMATCH: return org.raku.nqp.runtime.GrammarEngines.INSTANCE.rxmatch(
+                str(a[0]), smo(a[1]), smo(a[2]), str(a[3]), lng(a[4]), lng(a[5]),
+                lng(a[6]), smo(a[7]), smo(a[8]), tc);
             case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
             case OP_GETEXTYPE: return Ops.getextype(smo(a[0]), tc);
             case OP_SETEXTYPE: return Ops.setextype(smo(a[0]), lng(a[1]), tc);
