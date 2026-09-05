@@ -87,9 +87,29 @@ final class NqpOps {
         OP_ISCONCRETE_ND = 184, OP_GETHLLSYM = 185,
         OP_BOX_I2 = 186, OP_BOX_N2 = 187, OP_BOX_S2 = 188, OP_ISNANORINF = 189,
         OP_WHERE = 190, OP_GETLEXCALLER = 191, OP_GETCOMP = 192,
-        OP_ATPOSREF_N = 193, OP_ATPOSREF_S = 194, OP_ATPOS_U = 195, OP_BINDPOS_U = 196;
+        OP_ATPOSREF_N = 193, OP_ATPOSREF_S = 194, OP_ATPOS_U = 195, OP_BINDPOS_U = 196,
+        OP_SLICE = 197, OP_DIMENSIONS = 198, OP_SHA1 = 199, OP_ISNULL_S = 200,
+        OP_ISEQ_I_BIG = 201, OP_ISNE_I_BIG = 202, OP_ISLT_I_BIG = 203, OP_ISLE_I_BIG = 204,
+        OP_ISGT_I_BIG = 205, OP_ISGE_I_BIG = 206, OP_DECONT_I = 207, OP_DECONT_N = 208,
+        OP_DECONT_S = 209, OP_UNSHIFT_I = 210, OP_UNSHIFT_N = 211, OP_UNSHIFT_S = 212,
+        OP_TOSTR_I_BIG = 213, OP_ADD_I_BIG = 214, OP_SUB_I_BIG = 215, OP_MUL_I_BIG = 216,
+        OP_POP_I = 217, OP_POP_N = 218, OP_POP_S = 219, OP_SHIFT_I = 220, OP_SHIFT_N = 221,
+        OP_SHIFT_S = 222, OP_OBJPRIMSPEC = 223, OP_X = 224, OP_CMP_I = 225,
+        OP_NUMDIMENSIONS = 226, OP_RAND_N = 227, OP_ORDAT = 228, OP_ISCCLASS = 229,
+        OP_FINDCCLASS = 230, OP_FINDNOTCCLASS = 231, OP_CTXLEXPAD = 232, OP_STAT = 233,
+        OP_READFH = 234, OP_TIME = 235,
+        OP_ATOMICADD_I = 236, OP_ATPOSND_I = 237, OP_ORDFIRST = 238, OP_CMP_N = 239,
+        OP_CMP_S = 240, OP_CMP_I_BIG = 241, OP_DIV_I_BIG = 242, OP_REPLACE = 243,
+        OP_SETWHO = 244, OP_FINDMETHOD = 245, OP_INF = 246, OP_NEGINF = 247, OP_NAN = 248,
+        OP_RXMATCH = 249,
+        OP_ATPOSND_O = 250, OP_ATPOSND_N = 251, OP_ATPOSND_S = 252, OP_OBJECTID = 253,
+        OP_TRYFINDMETHOD = 254, OP_GETLEXRELCALLER = 255, OP_RINDEXFROM = 256,
+        OP_ORDBASEAT = 257, OP_FLOOR_N = 258, OP_CEIL_N = 259,
+        OP_RINDEXFROMEND = 260, OP_INDEXIC = 261, OP_INDEXIM = 262, OP_INDEXICIM = 263,
+        OP_POW_I_BIG = 264, OP_CTXCALLERSKIPTHUNKS = 265, OP_MULTIDIMREF_I = 266,
+        OP_MULTIDIMREF_U = 267, OP_MULTIDIMREF_N = 268, OP_MULTIDIMREF_S = 269;
 
-    static final int OP_COUNT = 197;
+    static final int OP_COUNT = 270;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -265,6 +285,84 @@ final class NqpOps {
             case OP_ATPOSREF_S: return Ops.atposref_s(smo(a[0]), lng(a[1]), tc);
             case OP_ATPOS_U: return Ops.atpos_u(smo(a[0]), lng(a[1]), tc);
             case OP_BINDPOS_U: return Ops.bindpos_u(smo(a[0]), lng(a[1]), lng(a[2]), tc);
+            case OP_SLICE: return Ops.slice(smo(a[0]), lng(a[1]), lng(a[2]), tc);
+            case OP_DIMENSIONS: return Ops.dimensions(smo(a[0]), tc);
+            case OP_SHA1: {
+                try { return Ops.sha1(str(a[0])); }
+                catch (Exception e) { throw sneaky(e); }
+            }
+            case OP_ISNULL_S: return Ops.isnull_s(str(a[0]));
+            case OP_ISEQ_I_BIG: return Ops.iseq_I(smo(a[0]), smo(a[1]), tc);
+            case OP_ISNE_I_BIG: return Ops.isne_I(smo(a[0]), smo(a[1]), tc);
+            case OP_ISLT_I_BIG: return Ops.islt_I(smo(a[0]), smo(a[1]), tc);
+            case OP_ISLE_I_BIG: return Ops.isle_I(smo(a[0]), smo(a[1]), tc);
+            case OP_ISGT_I_BIG: return Ops.isgt_I(smo(a[0]), smo(a[1]), tc);
+            case OP_ISGE_I_BIG: return Ops.isge_I(smo(a[0]), smo(a[1]), tc);
+            case OP_DECONT_I: return Ops.decont_i(smo(a[0]), tc);
+            case OP_DECONT_N: return Ops.decont_n(smo(a[0]), tc);
+            case OP_DECONT_S: return Ops.decont_s(smo(a[0]), tc);
+            case OP_UNSHIFT_I: return Ops.unshift_i(smo(a[0]), lng(a[1]), tc);
+            case OP_UNSHIFT_N: return Ops.unshift_n(smo(a[0]), dbl(a[1]), tc);
+            case OP_UNSHIFT_S: return Ops.unshift_s(smo(a[0]), str(a[1]), tc);
+            case OP_TOSTR_I_BIG: return Ops.tostr_I(smo(a[0]), tc);
+            case OP_ADD_I_BIG: return Ops.add_I(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+            case OP_SUB_I_BIG: return Ops.sub_I(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+            case OP_MUL_I_BIG: return Ops.mul_I(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+            case OP_POP_I: return Ops.pop_i(smo(a[0]), tc);
+            case OP_POP_N: return Ops.pop_n(smo(a[0]), tc);
+            case OP_POP_S: return Ops.pop_s(smo(a[0]), tc);
+            case OP_SHIFT_I: return Ops.shift_i(smo(a[0]), tc);
+            case OP_SHIFT_N: return Ops.shift_n(smo(a[0]), tc);
+            case OP_SHIFT_S: return Ops.shift_s(smo(a[0]), tc);
+            case OP_OBJPRIMSPEC: return Ops.objprimspec(smo(a[0]), tc);
+            case OP_X: return Ops.x(str(a[0]), lng(a[1]), tc);
+            case OP_CMP_I: return Ops.cmp_i(lng(a[0]), lng(a[1]));
+            case OP_NUMDIMENSIONS: return Ops.numdimensions(smo(a[0]), tc);
+            case OP_RAND_N: return Ops.rand_n(dbl(a[0]), tc);
+            case OP_ORDAT: return Ops.ordat(str(a[0]), lng(a[1]));
+            case OP_ISCCLASS: return Ops.iscclass(lng(a[0]), str(a[1]), lng(a[2]));
+            case OP_FINDCCLASS: return Ops.findcclass(lng(a[0]), str(a[1]), lng(a[2]), lng(a[3]));
+            case OP_FINDNOTCCLASS: return Ops.findnotcclass(lng(a[0]), str(a[1]), lng(a[2]), lng(a[3]));
+            case OP_CTXLEXPAD: return Ops.ctxlexpad(smo(a[0]), tc);
+            case OP_STAT: return Ops.stat(str(a[0]), lng(a[1]));
+            case OP_READFH: return Ops.readfh(smo(a[0]), smo(a[1]), lng(a[2]), tc);
+            case OP_TIME: return Ops.time();
+            case OP_ATOMICADD_I: return Ops.atomicadd_i(smo(a[0]), lng(a[1]), tc);
+            case OP_ATPOSND_I: return Ops.atposnd_i(smo(a[0]), smo(a[1]), tc);
+            case OP_ORDFIRST: return Ops.ordfirst(str(a[0]));
+            case OP_CMP_N: return Ops.cmp_n(dbl(a[0]), dbl(a[1]));
+            case OP_CMP_S: return Ops.cmp_s(str(a[0]), str(a[1]));
+            case OP_CMP_I_BIG: return Ops.cmp_I(smo(a[0]), smo(a[1]), tc);
+            case OP_DIV_I_BIG: return Ops.div_I(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+            case OP_REPLACE: return Ops.replace(str(a[0]), lng(a[1]), lng(a[2]), str(a[3]));
+            case OP_SETWHO: return Ops.setwho(smo(a[0]), smo(a[1]), tc);
+            case OP_FINDMETHOD: return Ops.findmethod(smo(a[0]), str(a[1]), tc);
+            case OP_INF: return Ops.inf();
+            case OP_NEGINF: return Ops.neginf();
+            case OP_NAN: return Ops.nan();
+            case OP_RXMATCH: return org.raku.nqp.runtime.GrammarEngines.INSTANCE.rxmatch(
+                str(a[0]), smo(a[1]), smo(a[2]), str(a[3]), lng(a[4]), lng(a[5]),
+                lng(a[6]), smo(a[7]), smo(a[8]), tc);
+            case OP_ATPOSND_O: return Ops.atposnd_o(smo(a[0]), smo(a[1]), tc);
+            case OP_ATPOSND_N: return Ops.atposnd_n(smo(a[0]), smo(a[1]), tc);
+            case OP_ATPOSND_S: return Ops.atposnd_s(smo(a[0]), smo(a[1]), tc);
+            case OP_OBJECTID: return Ops.where(smo(a[0]), tc);
+            case OP_TRYFINDMETHOD: return Ops.findmethodNonFatal(smo(a[0]), str(a[1]), tc);
+            case OP_GETLEXRELCALLER: return Ops.getlexrelcaller(smo(a[0]), str(a[1]), tc);
+            case OP_RINDEXFROM: return Ops.rindexfrom(str(a[0]), str(a[1]), lng(a[2]));
+            case OP_ORDBASEAT: return Ops.ordbaseat(str(a[0]), lng(a[1]));
+            case OP_FLOOR_N: return Math.floor(dbl(a[0]));
+            case OP_CEIL_N: return Math.ceil(dbl(a[0]));
+            case OP_RINDEXFROMEND: return Ops.rindexfromend(str(a[0]), str(a[1]));
+            case OP_INDEXIC: return Ops.indexic(str(a[0]), str(a[1]), lng(a[2]));
+            case OP_INDEXIM: return Ops.indexim(str(a[0]), str(a[1]), lng(a[2]));
+            case OP_INDEXICIM: return Ops.indexicim(str(a[0]), str(a[1]), lng(a[2]));
+            case OP_POW_I_BIG: return Ops.pow_I(smo(a[0]), smo(a[1]), smo(a[2]), smo(a[3]), tc);
+            case OP_CTXCALLERSKIPTHUNKS: return Ops.ctxcallerskipthunks(smo(a[0]), tc);
+            case OP_MULTIDIMREF_I: return Ops.multidimref_i(smo(a[0]), smo(a[1]), tc);
+            case OP_MULTIDIMREF_U: return Ops.multidimref_u(smo(a[0]), smo(a[1]), tc);
+            case OP_MULTIDIMREF_N: return Ops.multidimref_n(smo(a[0]), smo(a[1]), tc);
+            case OP_MULTIDIMREF_S: return Ops.multidimref_s(smo(a[0]), smo(a[1]), tc);
             case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
             case OP_GETEXTYPE: return Ops.getextype(smo(a[0]), tc);
             case OP_SETEXTYPE: return Ops.setextype(smo(a[0]), lng(a[1]), tc);
@@ -562,7 +660,20 @@ final class NqpOps {
         if (t instanceof UnwindException u) return new NqpUnwind(u);
         if (t instanceof org.raku.nqp.runtime.ControlException) throw sneaky(t);
         if (t instanceof ThreadDeath) throw sneaky(t);
+        if (HOSTERR) hostErr(t);
         return new NqpHostError(t);
+    }
+
+    /* NQP_CODE_HOSTERR=1 prints the Java stack of every host exception
+     * an operation converts; the nqp-level trace names only the message
+     * ("java.lang.NullPointerException"), and the frames are what
+     * locate the operation at fault. */
+    static final boolean HOSTERR = System.getenv("NQP_CODE_HOSTERR") != null;
+
+    @TruffleBoundary
+    private static void hostErr(Throwable t) {
+        System.err.println("code engine: host exception " + t);
+        t.printStackTrace(System.err);
     }
 
     /** The typed read of a call's result off the frame's return registers. */
