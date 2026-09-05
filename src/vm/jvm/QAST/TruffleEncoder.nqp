@@ -1550,8 +1550,63 @@ class QAST::TruffleEncoder {
             return self.encode_callmethod($op, %e);
         }
         if $name eq 'chain' || $name eq 'chainstatic' {
-            cbail('chained chain') if nqp::istype($op[0], QAST::Op)
-                && ($op[0].op eq 'chain' || $op[0].op eq 'chainstatic');
+            # A nested chain (`$a < $b < $c`) short-circuits and shares the
+            # middle operand, exactly as Compiler.nqp's chain_codegen: each
+            # link is a lang-call comparing the previous operand with the
+            # next, and a false link is the result. Desugar the whole nest
+            # into binds + ifs (a fresh tree over the same children, so a
+            # later bail hands the bytecode path the untouched op) and let
+            # the simple-chain road below encode each individual link.
+            if nqp::istype($op[0], QAST::Op)
+                && ($op[0].op eq 'chain' || $op[0].op eq 'chainstatic') {
+                my @callees;
+                my @operands;
+                my $cur := $op;
+                while nqp::istype($cur, QAST::Op)
+                    && ($cur.op eq 'chain' || $cur.op eq 'chainstatic') {
+                    cbail('unnamed chain link') if $cur.name eq '';
+                    cbail('chain link arity') unless nqp::elems(@($cur)) == 2;
+                    nqp::unshift(@callees, $cur.name);
+                    nqp::unshift(@operands, $cur[1]);
+                    $cur := $cur[0];
+                }
+                nqp::unshift(@operands, $cur);
+                my int $nlinks := nqp::elems(@callees);
+                my @v;
+                my int $k := 0;
+                while $k <= $nlinks { nqp::push(@v, $op.unique('chain_o')); $k++ }
+                my @r;
+                $k := 0;
+                while $k < $nlinks { nqp::push(@r, $op.unique('chain_r')); $k++ }
+                # link($i): result of links $i..end, with @v[$i] and @v[$i+1] bound.
+                my $linkq;
+                $linkq := -> int $i {
+                    my $call := QAST::Op.new( :op('call'), :name(@callees[$i]),
+                        QAST::Var.new( :name(@v[$i]),   :scope('local') ),
+                        QAST::Var.new( :name(@v[$i + 1]), :scope('local') ) );
+                    $i == $nlinks - 1
+                        ?? $call
+                        !! QAST::Stmts.new(
+                             QAST::Op.new( :op('bind'),
+                               QAST::Var.new( :name(@r[$i]), :scope('local'), :decl('var') ),
+                               $call ),
+                             QAST::Op.new( :op('if'),
+                               QAST::Var.new( :name(@r[$i]), :scope('local') ),
+                               QAST::Stmts.new(
+                                 QAST::Op.new( :op('bind'),
+                                   QAST::Var.new( :name(@v[$i + 2]), :scope('local'), :decl('var') ),
+                                   @operands[$i + 2] ),
+                                 $linkq($i + 1) ),
+                               QAST::Var.new( :name(@r[$i]), :scope('local') ) ) );
+                };
+                my $tree := QAST::Stmts.new(
+                    QAST::Op.new( :op('bind'),
+                      QAST::Var.new( :name(@v[0]), :scope('local'), :decl('var') ), @operands[0] ),
+                    QAST::Op.new( :op('bind'),
+                      QAST::Var.new( :name(@v[1]), :scope('local'), :decl('var') ), @operands[1] ),
+                    $linkq(0) );
+                return self.encode_node($tree, %e, $want);
+            }
             cbail('chain arity') unless nqp::elems(@($op)) == 2;
             epush(%e, $W_DISPATCH);
             %e<dispatches> := %e<dispatches> + 1;
