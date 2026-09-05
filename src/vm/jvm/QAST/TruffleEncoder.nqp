@@ -1185,13 +1185,13 @@ class QAST::TruffleEncoder {
             my int $outer := %e<hidx>;
             my int $lid := &*REGISTER_UNWIND_HANDLER($outer, $EX_CAT_LAST, :ex_obj(1));
             my int $nrid := &*REGISTER_UNWIND_HANDLER($lid, $EX_CAT_NEXT +| $EX_CAT_REDO, :ex_obj(1));
-            # W_LOOPH has no repeat field: a post-test loop that also
-            # carries last/next/redo regions would have to run its body
-            # once inside those regions, and getting a first-iteration
-            # redo wrong is worse than not encoding it.
-            cbail('repeat loop with handlers') if $repeat;
+            # A repeat_ loop runs its body once ahead of the first cond test,
+            # inside these same last/next/redo regions (Compiler.nqp's
+            # `goto redo_lbl` before the test). The builder duplicates the
+            # body-with-redo emission for that pre-run when repeat is set.
             epush(%e, $W_LOOPH);
             epush(%e, $is_until);
+            epush(%e, $repeat);
             epush(%e, $has_next);
             my int $ct_at := nqp::elems(%e<code>);
             epush(%e, 0);
