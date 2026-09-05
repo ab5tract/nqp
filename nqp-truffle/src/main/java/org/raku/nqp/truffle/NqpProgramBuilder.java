@@ -486,6 +486,31 @@ final class NqpProgramBuilder {
                 }
                 return at;
             }
+            case NqpWire.CLASSLIB: {
+                int rtype = code[at + 1];
+                String cls = pool[code[at + 2]];
+                String meth = pool[code[at + 3]];
+                String desc = pool[code[at + 4]];
+                boolean tcArg = code[at + 5] != 0;
+                int nargs = code[at + 6];
+                at += 7 + nargs;   // the arg types are informational here
+                boolean suspendable = !NO_SUSPEND;
+                BytecodeLocal ores = emit && suspendable ? b.createLocal() : null;
+                if (emit && suspendable) {
+                    b.beginBlock();
+                    b.beginStoreLocal(ores);
+                }
+                if (emit) b.beginClassLibOp(rtype, new NqpOps.ClassLibSite(cls, meth, desc, tcArg, nargs));
+                for (int i = 0; i < nargs; i++) at = walk(at, emit);
+                if (emit) b.endClassLibOp();
+                if (emit && suspendable) {
+                    b.endStoreLocal();
+                    emitSuspendCheck(ores);
+                    b.emitLoadLocal(ores);
+                    b.endBlock();
+                }
+                return at;
+            }
             case NqpWire.COERCE: {
                 int kind = code[at + 1];
                 if (emit) b.beginCoerce(kind);
