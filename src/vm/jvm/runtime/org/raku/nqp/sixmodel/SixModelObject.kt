@@ -80,6 +80,13 @@ abstract class SixModelObject : Cloneable {
      * own: a bigint of 64 bits is a value an unsigned native holds, while
      * the signed reading stops at 63. Only a type that can tell the two
      * apart overrides this. */
+    /* The unsigned counterpart of set_int: a native uint's long is the
+     * bit pattern of 0..2^64-1, so 2^64-1 arrives as -1 and must box as
+     * the large value, never the negative one. */
+    open fun set_uint(tc: ThreadContext, value: Long) {
+        set_int(tc, value)
+    }
+
     open fun get_uint(tc: ThreadContext): Long {
         return get_int(tc)
     }

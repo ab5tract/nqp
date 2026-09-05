@@ -358,6 +358,7 @@ class QAST::TruffleEncoder {
     my int $T_INT := 1;
     my int $T_NUM := 2;
     my int $T_STR := 3;
+    my int $T_UINT := 4;   # int storage; unsigned only at the box (batch 22)
     my int $T_VOID := -1;
     my int $T_ANY := -2;
 
@@ -728,8 +729,8 @@ class QAST::TruffleEncoder {
         op3('gcd_I', 287, $T_OBJ, 'ooo');
         op3('fromnum_I', 288, $T_OBJ, 'no');
         op3('rand_I', 289, $T_OBJ, 'oo');
-        op3('unbox_u', 290, $T_INT, 'o');
-        op3('getattr_u', 291, $T_INT, 'oos');
+        op3('unbox_u', 290, $T_UINT, 'o');
+        op3('getattr_u', 291, $T_UINT, 'oos');
         op3('bindhllsym', 292, $T_OBJ, 'sso');
         op3('iseq_u', 293, $T_INT, 'ii');
         op3('isne_u', 294, $T_INT, 'ii');
@@ -809,6 +810,14 @@ class QAST::TruffleEncoder {
         op3('bindpos3d_n', 368, $T_NUM, 'oiiin');
         op3('bindpos3d_s', 369, $T_STR, 'oiiis');
         op3('abs_n', 370, $T_NUM, 'n');
+        op3('filereadable', 371, $T_INT, 's');
+        op3('filewritable', 372, $T_INT, 's');
+        op3('fileexecutable', 373, $T_INT, 's');
+        op3('fileislink', 374, $T_INT, 's');
+        op3('lstat', 375, $T_INT, 'si');
+        op3('chown', 376, $T_INT, 'sii');
+        op3('chmod', 377, $T_INT, 'si');
+        op3('getenvhash', 378, $T_OBJ, '');
         op3('getattrref_i', 159, $T_OBJ, 'oos');
         op3('getattrref_n', 160, $T_OBJ, 'oos');
         op3('getattrref_s', 161, $T_OBJ, 'oos');
@@ -824,7 +833,9 @@ class QAST::TruffleEncoder {
         if $from == $T_INT { return $to == $T_OBJ ?? 0 !! $to == $T_NUM ?? 6 !! $to == $T_STR ?? 8 !! -1 }
         if $from == $T_NUM { return $to == $T_OBJ ?? 1 !! $to == $T_INT ?? 7 !! -1 }
         if $from == $T_STR { return $to == $T_OBJ ?? 2 !! -1 }
-        if $from == $T_OBJ { return $to == $T_INT ?? 3 !! $to == $T_NUM ?? 4 !! $to == $T_STR ?? 5 !! -1 }
+        if $from == $T_OBJ { return $to == $T_INT ?? 3 !! $to == $T_NUM ?? 4 !! $to == $T_STR ?? 5 !! $to == $T_UINT ?? 12 !! -1 }
+        # A uint boxes/widens UNSIGNED: 2^64-1 is a large Int, not -1.
+        if $from == $T_UINT { return $to == $T_OBJ ?? 9 !! $to == $T_NUM ?? 10 !! $to == $T_STR ?? 11 !! -1 }
         -1
     }
 
@@ -1128,6 +1139,9 @@ class QAST::TruffleEncoder {
         my int $mark := nqp::elems(%e<code>);
         my int $got := self.encode_node($n, %e, $want);
         return $got if $want == $T_ANY || $want == $T_VOID || $got == $want;
+        # uint and int share the int slot; only the box differs, so a uint
+        # value satisfies an int want (and vice versa) with no coercion.
+        return $want if ($got == $T_UINT && $want == $T_INT) || ($got == $T_INT && $want == $T_UINT);
         my int $kind := coerce_kind($got, $want);
         cbail('no coercion ' ~ $got ~ '->' ~ $want) if $kind < 0;
         nqp::splice(%e<code>, [$W_COERCE, $kind], $mark, 0);
@@ -1245,13 +1259,18 @@ class QAST::TruffleEncoder {
             if $bt eq 'immediate' || $bt eq 'immediate_static' {
                 # Compiled as a code object and called at once with no
                 # arguments, which is what the bytecode path's direct call
-                # of the block's code ref comes to. A block that wants the
-                # condition passed (an arity, or a count annotation) is the
-                # if/with road's business, encoded there; here it bails.
+                # of the block's code ref comes to (Compiler.nqp: an
+                # emptyCallSite, whatever the block's arity or count). A
+                # `count` annotation alone marks an implicit OPTIONAL topic
+                # (a bare block's `$_`, arity 0): zero arguments is exactly
+                # what the bytecode passes, and the parameter's default
+                # resolves in the callee's own binder either way -- so it
+                # encodes. Only a REQUIRED parameter (arity > 0) still
+                # bails; the if/with road passes the condition to those.
                 cbail('nested block in a parameter default')
                     if nqp::existskey(%e, 'inparams') && %e<inparams>;
                 cbail('immediate block wanting arguments')
-                    if $n.arity > 0 || $n.ann('count');
+                    if $n.arity > 0;
                 self.encode_immediate_call($n, %e, 0, 0);
                 return $T_OBJ;
             }
@@ -1632,6 +1651,18 @@ class QAST::TruffleEncoder {
             epush(%e, $W_P6ARGVMARRAY);
             return $T_OBJ;
         }
+        if $name eq 'syscall' {
+            # nqp::syscall(name, args...) is sugar for a boot-syscall
+            # dispatch -- exactly Compiler.nqp's add_dispatcher_op with the
+            # 'boot-syscall' prefix: the dispatcher name is unshifted as a
+            # constant string and the rest rides in the callsite. Encoded
+            # as the dispatch op it desugars to (a fresh tree over the same
+            # children, so a later bail hands the fallback the untouched op).
+            my $d := QAST::Op.new( :op('dispatch'), QAST::SVal.new( :value('boot-syscall') ) );
+            for @($op) { $d.push($_) }
+            $d.returns($op.returns) if nqp::can($op, 'returns');
+            return self.encode_node($d, %e, $want);
+        }
         if $name eq 'p6return' {
             # p6return appears only as the SUCCEED handler of a `handle`
             # that wraps a block's whole body (src/Raku/ast/scoping.rakumod):
@@ -1917,6 +1948,7 @@ class QAST::TruffleEncoder {
             my int $bind_at := nqp::elems(%e<code>);
             epush(%e, $W_LOCBIND); epush(%e, 0); epush(%e, 0);
             my int $condt := self.encode_node($op[0], %e, $T_ANY);
+            $condt := $T_INT if $condt == $T_UINT;
             cbail('if condition type') if $condt < 0 || $condt > 3;
             my int $tmp := new_elocal(%e, $condt);
             nqp::bindpos(%e<code>, $bind_at + 1, $condt);
@@ -1977,6 +2009,7 @@ class QAST::TruffleEncoder {
             my int $bind_at := nqp::elems(%e<code>);
             epush(%e, $W_LOCBIND); epush(%e, 0); epush(%e, 0);
             my int $condt := self.encode_node($op[0], %e, $T_ANY);
+            $condt := $T_INT if $condt == $T_UINT;
             cbail('if condition type') if $condt < 0 || $condt > 3;
             my int $tmp := new_elocal(%e, $condt);
             nqp::bindpos(%e<code>, $bind_at + 1, $condt);
@@ -2011,6 +2044,7 @@ class QAST::TruffleEncoder {
         # reserved above and patched here.
         my int $mark := nqp::elems(%e<code>);
         my int $condt := self.encode_node($op[0], %e, $T_ANY);
+        $condt := $T_INT if $condt == $T_UINT;
         nqp::bindpos(%e<code>, $ct_at, $condt);
         my int $btype := $void ?? $T_VOID !! ($want == $T_ANY ?? $T_OBJ !! $want);
         self.encode_child($op[1], %e, $btype);
@@ -2311,8 +2345,8 @@ class QAST::TruffleEncoder {
             my int $auint := $aspec == 10 ?? 1 !! 0;
             cbail('sized uint attribute')
                 if $auint && nqp::objprimbits($var.returns) > 0 && nqp::objprimbits($var.returns) < 64;
-            my int $t := $auint ?? $T_INT !! rt_of($var.returns);
-            cbail('attribute type') if $t < 0 || $t > 3;
+            my int $t := $auint ?? $T_UINT !! rt_of($var.returns);
+            cbail('attribute type') if $t < 0 || $t > 4;
             # A uint attribute (objprimspec 10) uses getattr_u/bindattr_u,
             # exactly as the bytecode path's '_u' suffix; its value lives
             # in an int slot.
