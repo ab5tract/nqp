@@ -239,18 +239,30 @@ final class NqpProgramBuilder {
                 int until = code[at + 1];
                 int repeat = code[at + 2];
                 int hasNext = code[at + 3];
-                int condType = code[at + 4];
-                int lastId = code[at + 5];
-                int nrId = code[at + 6];
-                int outerIdx = code[at + 7];
-                int condAt = at + 8;
+                int hasLabel = code[at + 4];
+                int labelLocalIdx = code[at + 5];
+                int condType = code[at + 6];
+                int lastId = code[at + 7];
+                int nrId = code[at + 8];
+                int outerIdx = code[at + 9];
+                int labelAt = at + 10;
+                int condAt = hasLabel != 0 ? walk(labelAt, false) : labelAt;
                 int bodyAt = walk(condAt, false);
                 int nextAt = walk(bodyAt, false);
                 int endAt = hasNext != 0 ? walk(nextAt, false) : nextAt;
                 if (!emit) return endAt;
 
+                // A labeled loop keeps its label object in a block local, read
+                // by the unwind arms as the `where` for _is_same_label; an
+                // unlabeled loop passes null (-> _rethrow_label).
+                BytecodeLocal labelLocal = hasLabel != 0 ? locals[labelLocalIdx] : null;
                 BytecodeLocal redoL = b.createLocal();
                 b.beginBlock();
+                if (hasLabel != 0) {
+                    b.beginStoreLocal(labelLocal);
+                    walk(labelAt, true);
+                    b.endStoreLocal();
+                }
                 b.beginTryCatch();
                 {   // try: the loop itself, cond and all, under lastId.
                     b.beginBlock();
@@ -258,11 +270,11 @@ final class NqpProgramBuilder {
                     // repeat_: run the body once ahead of the first cond test,
                     // inside these same regions (Compiler.nqp's goto redo_lbl).
                     if (repeat != 0) {
-                        emitLoophBody(redoL, bodyAt, nextAt, hasNext != 0, nrId, lastId);
+                        emitLoophBody(redoL, bodyAt, nextAt, hasNext != 0, nrId, lastId, labelLocal);
                     }
                     b.beginWhile();
                     walkCond(condAt, condType, until, true);
-                    emitLoophBody(redoL, bodyAt, nextAt, hasNext != 0, nrId, lastId);
+                    emitLoophBody(redoL, bodyAt, nextAt, hasNext != 0, nrId, lastId, labelLocal);
                     b.endWhile();
                     b.emitSetCurHandler(outerIdx);
                     b.endBlock();
@@ -271,6 +283,7 @@ final class NqpProgramBuilder {
                     b.beginBlock();
                     b.emitSetCurHandler(outerIdx);
                     b.beginLoopLastUnwind(lastId, outerIdx);
+                    if (labelLocal != null) b.emitLoadLocal(labelLocal); else b.emitLoadNull();
                     b.emitLoadException();
                     b.endLoopLastUnwind();
                     b.endBlock();
@@ -689,7 +702,8 @@ final class NqpProgramBuilder {
      * shared scratch flag, reset to 1 at the start of each emission.
      */
     private void emitLoophBody(BytecodeLocal redoL, int bodyAt, int nextAt,
-                              boolean hasNext, int nrId, int lastId) {
+                              boolean hasNext, int nrId, int lastId,
+                              BytecodeLocal labelLocal) {
         b.beginBlock();
         b.beginStoreLocal(redoL);
         b.emitLoadConstant(1L);
@@ -718,6 +732,7 @@ final class NqpProgramBuilder {
                 b.emitSetCurHandler(lastId);
                 b.beginStoreLocal(redoL);
                 b.beginLoopBodyUnwind(nrId, lastId);
+                if (labelLocal != null) b.emitLoadLocal(labelLocal); else b.emitLoadNull();
                 b.emitLoadException();
                 b.endLoopBodyUnwind();
                 b.endStoreLocal();

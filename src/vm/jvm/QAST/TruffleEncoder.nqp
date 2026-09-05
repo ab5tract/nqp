@@ -1137,12 +1137,14 @@ class QAST::TruffleEncoder {
             my int $repeat := nqp::eqat($name, 'repeat_', 0) ?? 1 !! 0;
             my int $is_until := ($name eq 'until' || $name eq 'repeat_until') ?? 1 !! 0;
             my int $nohandler := 0;
+            my $label_node;
             my @operands;
             for @($op) {
                 if $_.named eq 'nohandler' { $nohandler := 1 }
-                elsif $_.named eq 'label' { cbail('labeled loop') }
+                elsif $_.named eq 'label' { $label_node := $_ }
                 else { nqp::push(@operands, $_) }
             }
+            my int $has_label := nqp::defined($label_node) ?? 1 !! 0;
             # 2 operands = cond+body; a 3rd is the loop's "next" expression
             # (a C-style `loop(init;cond;incr)` increment or a NEXT-phaser
             # body), run after the body and after a NEXT unwind, before the
@@ -1162,6 +1164,9 @@ class QAST::TruffleEncoder {
             my int $im := needs_cond_passed(@operands[1]);
             my int $im_tmp := $im ?? new_elocal(%e, $T_OBJ) !! 0;
             if $nohandler {
+                # A label is only meaningful with the last/next/redo regions
+                # that carry a labeled unwind; a nohandler loop never has one.
+                cbail('labeled nohandler loop') if $has_label;
                 epush(%e, $W_LOOP);
                 epush(%e, $is_until);
                 epush(%e, $repeat);
@@ -1185,6 +1190,11 @@ class QAST::TruffleEncoder {
             my int $outer := %e<hidx>;
             my int $lid := &*REGISTER_UNWIND_HANDLER($outer, $EX_CAT_LAST, :ex_obj(1));
             my int $nrid := &*REGISTER_UNWIND_HANDLER($lid, $EX_CAT_NEXT +| $EX_CAT_REDO, :ex_obj(1));
+            # A labeled loop keeps its label object in a scratch local; the
+            # unwind arms read it as the `where` for _is_same_label (an
+            # unlabeled loop passes null -> _rethrow_label). The value is
+            # evaluated once at loop entry, outside the regions.
+            my int $lbl_local := $has_label ?? new_elocal(%e, $T_OBJ) !! 0;
             # A repeat_ loop runs its body once ahead of the first cond test,
             # inside these same last/next/redo regions (Compiler.nqp's
             # `goto redo_lbl` before the test). The builder duplicates the
@@ -1193,11 +1203,19 @@ class QAST::TruffleEncoder {
             epush(%e, $is_until);
             epush(%e, $repeat);
             epush(%e, $has_next);
+            epush(%e, $has_label);
+            epush(%e, $lbl_local);
             my int $ct_at := nqp::elems(%e<code>);
             epush(%e, 0);
             epush(%e, $lid);
             epush(%e, $nrid);
             epush(%e, $outer);
+            if $has_label {
+                # The label value, bound into $lbl_local by the builder before
+                # the loop's try; evaluated in the outer handler context.
+                %e<hidx> := $outer;
+                self.encode_child($label_node, %e, $T_OBJ);
+            }
             %e<hidx> := $lid;
             my int $condt := self.encode_loop_cond(@operands[0], %e, $im, $im_tmp);
             nqp::bindpos(%e<code>, $ct_at, $condt);

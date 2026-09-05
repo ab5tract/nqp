@@ -621,24 +621,30 @@ final class NqpOps {
      * redirected outward the same way {@code Ops._rethrow_label} does.
      */
     private static UnwindException checkedUnwind(Object ex, int target, int outer,
-                                                 CompilationUnit cu, ThreadContext tc) {
+                                                 Object where, CompilationUnit cu, ThreadContext tc) {
         UnwindException u = unwindOf(ex);
         if (u.unwindTarget != target || u.unwindCompUnit != cu) throw u;
-        Ops._rethrow_label(u, outer, tc);
+        // An unlabeled loop redirects any LABELED unwind outward; a labeled
+        // loop instead keeps the ones whose payload is its own label. `where`
+        // is null for an unlabeled loop, the label object for a labeled one --
+        // the two arms of Compiler.nqp's unwind_check (_rethrow_label vs
+        // _is_same_label).
+        if (where == null) Ops._rethrow_label(u, outer, tc);
+        else Ops._is_same_label(u, (SixModelObject) where, outer, tc);
         return u;
     }
 
     @TruffleBoundary
-    static long loopBodyUnwind(Object ex, int target, int outer,
+    static long loopBodyUnwind(Object ex, int target, int outer, Object where,
                                CompilationUnit cu, ThreadContext tc) {
-        UnwindException u = checkedUnwind(ex, target, outer, cu, tc);
+        UnwindException u = checkedUnwind(ex, target, outer, where, cu, tc);
         return (u.category & ExceptionHandling.EX_CAT_REDO) != 0 ? 1L : 0L;
     }
 
     @TruffleBoundary
-    static void loopLastUnwind(Object ex, int target, int outer,
+    static void loopLastUnwind(Object ex, int target, int outer, Object where,
                                CompilationUnit cu, ThreadContext tc) {
-        checkedUnwind(ex, target, outer, cu, tc);
+        checkedUnwind(ex, target, outer, where, cu, tc);
     }
 
     /**
