@@ -632,6 +632,81 @@ class QAST::TruffleEncoder {
         op3('atposref_s', 194, $T_OBJ, 'oi');
         op3('atpos_u', 195, $T_INT, 'oi');
         op3('bindpos_u', 196, $T_INT, 'oii');
+        op3('slice', 197, $T_OBJ, 'oii');
+        op3('dimensions', 198, $T_OBJ, 'o');
+        op3('sha1', 199, $T_STR, 's');
+        op3('isnull_s', 200, $T_INT, 's');
+        op3('iseq_I', 201, $T_INT, 'oo');
+        op3('isne_I', 202, $T_INT, 'oo');
+        op3('islt_I', 203, $T_INT, 'oo');
+        op3('isle_I', 204, $T_INT, 'oo');
+        op3('isgt_I', 205, $T_INT, 'oo');
+        op3('isge_I', 206, $T_INT, 'oo');
+        op3('decont_i', 207, $T_INT, 'o');
+        op3('decont_n', 208, $T_NUM, 'o');
+        op3('decont_s', 209, $T_STR, 'o');
+        op3('unshift_i', 210, $T_INT, 'oi');
+        op3('unshift_n', 211, $T_NUM, 'on');
+        op3('unshift_s', 212, $T_STR, 'os');
+        op3('tostr_I', 213, $T_STR, 'o');
+        op3('add_I', 214, $T_OBJ, 'ooo');
+        op3('sub_I', 215, $T_OBJ, 'ooo');
+        op3('mul_I', 216, $T_OBJ, 'ooo');
+        op3('pop_i', 217, $T_INT, 'o');
+        op3('pop_n', 218, $T_NUM, 'o');
+        op3('pop_s', 219, $T_STR, 'o');
+        op3('shift_i', 220, $T_INT, 'o');
+        op3('shift_n', 221, $T_NUM, 'o');
+        op3('shift_s', 222, $T_STR, 'o');
+        op3('objprimspec', 223, $T_INT, 'o');
+        op3('x', 224, $T_STR, 'si');
+        op3('cmp_i', 225, $T_INT, 'ii');
+        op3('numdimensions', 226, $T_INT, 'o');
+        op3('rand_n', 227, $T_NUM, 'n');
+        op3('ordat', 228, $T_INT, 'si');
+        op3('iscclass', 229, $T_INT, 'isi');
+        op3('findcclass', 230, $T_INT, 'isii');
+        op3('findnotcclass', 231, $T_INT, 'isii');
+        op3('ctxlexpad', 232, $T_OBJ, 'o');
+        op3('stat', 233, $T_INT, 'si');
+        op3('readfh', 234, $T_OBJ, 'ooi');
+        op3('time', 235, $T_INT, '');
+        op3('atomicadd_i', 236, $T_INT, 'oi');
+        op3('atposnd_i', 237, $T_INT, 'oo');
+        op3('ordfirst', 238, $T_INT, 's');
+        op3('cmp_n', 239, $T_INT, 'nn');
+        op3('cmp_s', 240, $T_INT, 'ss');
+        op3('cmp_I', 241, $T_INT, 'oo');
+        op3('div_I', 242, $T_OBJ, 'ooo');
+        op3('replace', 243, $T_STR, 'siis');
+        op3('setwho', 244, $T_OBJ, 'oo');
+        op3('findmethod', 245, $T_OBJ, 'os');
+        op3('inf', 246, $T_NUM, '');
+        op3('neginf', 247, $T_NUM, '');
+        op3('nan', 248, $T_NUM, '');
+        # The grammar engine's rxmatch: descriptor, cursor, cursor class,
+        # target, from, invocant-from, restart, invocant, callback.
+        op3('rxmatch', 249, $T_OBJ, 'soosiiioo');
+        op3('atposnd', 250, $T_OBJ, 'oo');
+        op3('atposnd_n', 251, $T_NUM, 'oo');
+        op3('atposnd_s', 252, $T_STR, 'oo');
+        op3('objectid', 253, $T_INT, 'o');
+        op3('tryfindmethod', 254, $T_OBJ, 'os');
+        op3('getlexrelcaller', 255, $T_OBJ, 'os');
+        op3('rindexfrom', 256, $T_INT, 'ssi');
+        op3('ordbaseat', 257, $T_INT, 'si');
+        op3('floor_n', 258, $T_NUM, 'n');
+        op3('ceil_n', 259, $T_NUM, 'n');
+        op3('rindexfromend', 260, $T_INT, 'ss');
+        op3('indexic', 261, $T_INT, 'ssi');
+        op3('indexim', 262, $T_INT, 'ssi');
+        op3('indexicim', 263, $T_INT, 'ssi');
+        op3('pow_I', 264, $T_OBJ, 'oooo');
+        op3('ctxcallerskipthunks', 265, $T_OBJ, 'o');
+        op3('multidimref_i', 266, $T_OBJ, 'oo');
+        op3('multidimref_u', 267, $T_OBJ, 'oo');
+        op3('multidimref_n', 268, $T_OBJ, 'oo');
+        op3('multidimref_s', 269, $T_OBJ, 'oo');
         op3('hlllist', 139, $T_OBJ, '');
         op3('bootintarray', 142, $T_OBJ, '');
         op3('bootnumarray', 143, $T_OBJ, '');
@@ -1071,7 +1146,7 @@ class QAST::TruffleEncoder {
             return $T_OBJ;
         }
         if nqp::istype($n, QAST::Regex) {
-            cbail('regex');
+            return self.encode_regex($n, %e);
         }
         if nqp::istype($n, QAST::ParamTypeCheck) {
             # Compiles exactly as emit_param_tasks does: the check value
@@ -1172,15 +1247,23 @@ class QAST::TruffleEncoder {
                 else { nqp::push(@operands, $_) }
             }
             cbail('loop shape') unless nqp::elems(@operands) == 2;
+            # A body that takes the condition (`while $x -> $y {}`): the
+            # bytecode path binds the condition into an __IM_ local and
+            # calls the body with it. Here the condition child becomes
+            # [bind scratch local; read it] and the body a call of the
+            # block with that local, through the same road if/with use.
+            my int $im := needs_cond_passed(@operands[1]);
+            my int $im_tmp := $im ?? new_elocal(%e, $T_OBJ) !! 0;
             if $nohandler {
                 epush(%e, $W_LOOP);
                 epush(%e, $is_until);
                 epush(%e, $repeat);
                 my int $ct_at := nqp::elems(%e<code>);
                 epush(%e, 0);
-                my int $condt := self.encode_node(@operands[0], %e, $T_ANY);
+                my int $condt := self.encode_loop_cond(@operands[0], %e, $im, $im_tmp);
                 nqp::bindpos(%e<code>, $ct_at, $condt);
-                self.encode_node(@operands[1], %e, $T_VOID);
+                if $im { self.encode_immediate_call(@operands[1], %e, 1, $T_OBJ, $im_tmp) }
+                else { self.encode_node(@operands[1], %e, $T_VOID) }
                 return $T_OBJ;
             }
             # A handled loop: register the same LAST and NEXT|REDO rows the
@@ -1206,10 +1289,11 @@ class QAST::TruffleEncoder {
             epush(%e, $nrid);
             epush(%e, $outer);
             %e<hidx> := $lid;
-            my int $condt := self.encode_node(@operands[0], %e, $T_ANY);
+            my int $condt := self.encode_loop_cond(@operands[0], %e, $im, $im_tmp);
             nqp::bindpos(%e<code>, $ct_at, $condt);
             %e<hidx> := $nrid;
-            self.encode_node(@operands[1], %e, $T_VOID);
+            if $im { self.encode_immediate_call(@operands[1], %e, 1, $T_OBJ, $im_tmp) }
+            else { self.encode_node(@operands[1], %e, $T_VOID) }
             %e<hidx> := $outer;
             return $T_OBJ;
         }
@@ -1243,6 +1327,36 @@ class QAST::TruffleEncoder {
         # 139-147) are still in NqpOps.java, so re-landing it means
         # restoring this branch plus its table rows -- but not before that
         # binder interaction is understood.
+        if $name eq 'hash' {
+            # The hash constructor, parallel to the list ones: create the
+            # hash type into a scratch local, then bindkey each key/value
+            # pair. Held out until now because an engine-built hash meeting
+            # an engine-bound named-parameter prologue reproduced the
+            # BOOTSTRAP binder bug (OperatorProperties.new) -- the native
+            # parameter binder that landed since changed that prologue, so
+            # this is being re-tested against it. Keys are strings, values
+            # objects; an odd child count is a malformed hash the bytecode
+            # path would reject too.
+            my @children := $op.list;
+            my int $items := nqp::elems(@children);
+            cbail('hash odd child count') if $items % 2;
+            my int $tmp := new_elocal(%e, $T_OBJ);
+            epush(%e, $W_STMTS);
+            epush(%e, ($items / 2) + 2);
+            epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $tmp);
+            epush(%e, $W_OPCALL); epush(%e, 58); epush(%e, 1);    # create
+            epush(%e, $W_OPCALL); epush(%e, 140); epush(%e, 0);   # hllhash
+            my int $i := 0;
+            while $i < $items {
+                epush(%e, $W_OPCALL); epush(%e, 68); epush(%e, 3);   # bindkey
+                epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+                self.encode_child(@children[$i], %e, $T_STR);
+                self.encode_child(@children[$i + 1], %e, $T_OBJ);
+                $i := $i + 2;
+            }
+            epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+            return $T_OBJ;
+        }
         if $name eq 'list' || $name eq 'list_i'
             || $name eq 'list_n' || $name eq 'list_s' {
             # The list constructors, the same desugar Compiler.nqp uses:
@@ -1351,6 +1465,30 @@ class QAST::TruffleEncoder {
         if $name eq 'null' {
             epush(%e, $W_NULLC);
             return $T_OBJ;
+        }
+        # ord/rindex/index are arity-based desugars, exactly as
+        # Compiler.nqp's add_core_op builds them: a fresh tree over the same
+        # children (ordfirst/ordat, rindexfromend/rindexfrom, indexfrom --
+        # all already in the table), so a later bail leaves the op untouched.
+        if $name eq 'ord' {
+            my @k := $op.list;
+            cbail('ord arity') unless nqp::elems(@k) == 1 || nqp::elems(@k) == 2;
+            return self.encode_op(QAST::Op.new(
+                :op(nqp::elems(@k) == 1 ?? 'ordfirst' !! 'ordat'), |@k), %e, $want);
+        }
+        if $name eq 'rindex' {
+            my @k := $op.list;
+            cbail('rindex arity') unless nqp::elems(@k) == 2 || nqp::elems(@k) == 3;
+            return self.encode_op(QAST::Op.new(
+                :op(nqp::elems(@k) == 2 ?? 'rindexfromend' !! 'rindexfrom'), |@k), %e, $want);
+        }
+        if $name eq 'index' {
+            my @k := $op.list;
+            cbail('index arity') unless nqp::elems(@k) == 2 || nqp::elems(@k) == 3;
+            my @args := nqp::elems(@k) == 2
+                ?? [@k[0], @k[1], QAST::IVal.new( :value(0) )]
+                !! @k;
+            return self.encode_op(QAST::Op.new( :op('indexfrom'), |@args ), %e, $want);
         }
         if $name eq 'const' {
             # Compiler.nqp's %const_map, published as an HLL symbol: the
@@ -1815,9 +1953,17 @@ class QAST::TruffleEncoder {
         my @flagpos;
         for @args -> $a {
             my $named := nqp::can($a, 'named') ?? $a.named !! '';
+            my $flat  := nqp::can($a, 'flat') ?? $a.flat !! 0;
             nqp::push(@flagpos, nqp::elems(%e<code>));
             epush(%e, 0);
-            epush(%e, epool(%e, ~$named)) if $named;
+            # A flat argument carries NO name string: a flat NAMED arg
+            # (`|%h`) has its names supplied by the hash keys at flatten
+            # time, and its `.named` is a truth flag, not a name -- pushing
+            # `~$named` there wrote the literal "1" as the argument's name,
+            # which the binder then rejected ("Unexpected named argument
+            # '1'"). The bytecode path likewise names only NON-flat named
+            # args (flat args take flags 16/24 and push nothing).
+            epush(%e, epool(%e, ~$named)) if $named && !$flat;
         }
         @flagpos
     }
@@ -2126,12 +2272,76 @@ class QAST::TruffleEncoder {
         $T_OBJ
     }
 
+    # A loop condition, plain or bound into the scratch local a
+    # cond-taking body is called with (then re-read as the test, so the
+    # loop tests the same value the body receives).
+    method encode_loop_cond($cond, %e, int $im, int $im_tmp) {
+        return self.encode_node($cond, %e, $T_ANY) unless $im;
+        epush(%e, $W_STMTS); epush(%e, 2);
+        epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $im_tmp);
+        self.encode_child($cond, %e, $T_OBJ);
+        epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $im_tmp);
+        $T_OBJ
+    }
+
     # Compiler.nqp's needs_cond_passed: an immediate block child of an
     # if/with that takes the condition as its argument.
     sub needs_cond_passed($n) {
         nqp::istype($n, QAST::Block)
         && ($n.arity > 0 || $n.ann('count'))
         && ($n.blocktype eq 'immediate' || $n.blocktype eq 'immediate_static')
+    }
+
+    # A rule the grammar engine covers, handed to it whole -- exactly what
+    # Compiler.nqp's engine_jast does, built here as a QAST tree the general
+    # encoder consumes. The bytecode path is untouched; a rule the engine
+    # does NOT cover (rx_descriptor is null) bails, so its full matcher
+    # stays bytecode. The prologue is engine_jast's: !cursor_start_all
+    # answers the cursor, target and start position (the cursor's own $!pos
+    # is -3 until the rule finishes), the invocant's $!from decides
+    # scanning, and rxmatch runs the rule. The callback block -- the pieces
+    # the engine cannot express -- rides the CODEREF road (compiled to
+    # bytecode as any nested block), so nothing about the rule body needs
+    # to encode; only this prologue does.
+    method encode_regex($node, %e) {
+        my $comp := %e<comp>;
+        my $desc := $comp.rx_descriptor($node);
+        cbail('regex the engine does not cover') if nqp::isnull($desc);
+
+        my $p := QAST::Node.unique('rxe') ~ '_';
+        my sub loc($n, *%o) { QAST::Var.new( :name($p ~ $n), :scope('local'), |%o ) }
+        my sub decl($n, $ret?) {
+            my %o := nqp::defined($ret) ?? nqp::hash('returns', $ret) !! nqp::hash();
+            QAST::Var.new( :name($p ~ $n), :scope('local'), :decl('var'), |%o )
+        }
+        my sub b($t, $v) { QAST::Op.new( :op('bind'), $t, $v ) }
+        my sub startpos($i) {
+            QAST::Op.new( :op('atpos'), loc('start'), QAST::IVal.new( :value($i) ) )
+        }
+        my $self := QAST::Var.new( :name('self'), :scope('local') );
+        my $callback := nqp::elems($desc.callbacks)
+            ?? $comp.rx_callback_block($desc)
+            !! QAST::Op.new( :op('null') );
+
+        my $tree := QAST::Stmts.new(
+            b(decl('start'),
+                QAST::Op.new( :op('callmethod'), :name('!cursor_start_all'), $self )),
+            b(QAST::Var.new( :name("\$¢"), :scope('lexical') ),
+                b(decl('cur'), startpos(0))),
+            b(decl('tgt', str), QAST::Op.new( :op('unbox_s'), startpos(1) )),
+            b(decl('pos', int), QAST::Op.new( :op('unbox_i'), startpos(2) )),
+            b(decl('curclass'), startpos(3)),
+            b(decl('selffrom', int),
+                QAST::Op.new( :op('getattr_i'), $self, loc('curclass'),
+                    QAST::SVal.new( :value('$!from') ) )),
+            b(decl('restart', int), QAST::Op.new( :op('unbox_i'), startpos(5) )),
+            b(decl('callback'), $callback),
+            QAST::Op.new( :op('rxmatch'),
+                QAST::SVal.new( :value($desc.encoded) ),
+                loc('cur'), loc('curclass'), loc('tgt'), loc('pos'),
+                loc('selffrom'), loc('restart'), $self, loc('callback') )
+        );
+        self.encode_node($tree, %e, $T_OBJ)
     }
 
     method encode_lexget(str $name, %e) {
@@ -2157,6 +2367,10 @@ class QAST::TruffleEncoder {
             else {
                 my $t := $cur.lexical_type($name);
                 if nqp::defined($t) {
+                    # A plain uint outer lexical (stored type 10) reads from
+                    # the int slot table it was remapped into.
+                    $t := $T_INT if $t == 10 && !nqp::objprimbits($cur.lexical_returns($name))
+                        || $t == 10 && nqp::objprimbits($cur.lexical_returns($name)) == 64;
                     cbail('typed outer lexical wider than obj') if $t > 3 || $t < 0;
                     return $t;
                 }
@@ -2218,7 +2432,14 @@ class QAST::TruffleEncoder {
 
     method encode_decl($var, %e, str $decl, str $scope) {
         my str $name := $var.name;
-        my int $type := rt_of($var.returns);
+        # A plain (unsized) uint lexical shares the int slot table, exactly
+        # as BlockInfo.register_lexical remaps it ("$type := 1 if $type ==
+        # 10"): its storage is a long, and the unsigned-ness lives in the
+        # ops that read it, not the slot. A SIZED uint (uint8/16/32) still
+        # bails -- a direct store into its slot would skip the truncation
+        # the bytecode path does, and it reaches this road rarely (native
+        # lvalues are lexicalref-scoped and truncate through the reference).
+        my int $type := lex_rt($var.returns);
         cbail('uint or wide lexical') if $type > 3 || $type < 0;
         if $decl eq 'param' {
             cbail('param scope ' ~ $scope) unless $scope eq 'lexical' || $scope eq 'local';
@@ -2290,6 +2511,19 @@ class QAST::TruffleEncoder {
         cbail('redeclared local ' ~ $name) if nqp::existskey(%e<locals>, $name);
         my int $idx := new_elocal(%e, $type);
         %e<locals>{$name} := [$idx, $type];
+    }
+
+    # The slot-storage type of a lexical: a plain (unsized) uint shares
+    # the int slots, as BlockInfo.register_lexical remaps it. A sized uint
+    # keeps its own -9 so encode_decl bails on it.
+    sub lex_rt($typeobj) {
+        my int $spec := nqp::isnull($typeobj) ?? 0 !! nqp::objprimspec($typeobj);
+        if $spec == 10 {
+            my int $bits := nqp::objprimbits($typeobj);
+            return $T_INT if $bits == 0 || $bits == 64;
+            return -9;
+        }
+        rt_of($typeobj)
     }
 
     sub rt_of($typeobj) {
