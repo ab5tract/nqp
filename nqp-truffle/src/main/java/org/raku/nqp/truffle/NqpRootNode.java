@@ -183,6 +183,22 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         }
     }
 
+    /** A classlib op straight from the registry the bytecode path compiles
+     *  to an invokestatic: the site resolves the static method once. */
+    @Operation
+    @ConstantOperand(type = int.class, name = "rtype")
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class ClassLibOp {
+        @Specialization
+        static Object doCall(VirtualFrame f, int rtype, Object site, @Variadic Object[] a) {
+            try {
+                return NqpOps.classlib(rtype, (NqpOps.ClassLibSite) site, a, tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
     /** A type coercion from the {@link NqpOps} kind table. */
     @Operation
     @ConstantOperand(type = int.class, name = "kind")
