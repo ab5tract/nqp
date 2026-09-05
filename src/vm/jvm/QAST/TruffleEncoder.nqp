@@ -707,6 +707,111 @@ class QAST::TruffleEncoder {
         op3('multidimref_u', 267, $T_OBJ, 'oo');
         op3('multidimref_n', 268, $T_OBJ, 'oo');
         op3('multidimref_s', 269, $T_OBJ, 'oo');
+        op3('indexfrom', 40, $T_INT, 'ssi');
+        op3('atpos2d', 270, $T_OBJ, 'oii');
+        op3('atpos2d_i', 271, $T_INT, 'oii');
+        op3('atpos2d_n', 272, $T_NUM, 'oii');
+        op3('atpos2d_s', 273, $T_STR, 'oii');
+        op3('atpos3d', 274, $T_OBJ, 'oiii');
+        op3('atpos3d_i', 275, $T_INT, 'oiii');
+        op3('atpos3d_n', 276, $T_NUM, 'oiii');
+        op3('atpos3d_s', 277, $T_STR, 'oiii');
+        op3('bindposnd', 278, $T_OBJ, 'ooo');
+        op3('bindpos2d', 279, $T_OBJ, 'oiio');
+        op3('bindpos3d', 280, $T_OBJ, 'oiiio');
+        op3('ctx', 281, $T_OBJ, '');
+        op3('ctxcaller', 282, $T_OBJ, 'o');
+        op3('ctxouterskipthunks', 283, $T_OBJ, 'o');
+        op3('reprname', 284, $T_STR, 'o');
+        op3('bitand_I', 285, $T_OBJ, 'ooo');
+        op3('neg_I', 286, $T_OBJ, 'oo');
+        op3('gcd_I', 287, $T_OBJ, 'ooo');
+        op3('fromnum_I', 288, $T_OBJ, 'no');
+        op3('rand_I', 289, $T_OBJ, 'oo');
+        op3('unbox_u', 290, $T_INT, 'o');
+        op3('getattr_u', 291, $T_INT, 'oos');
+        op3('bindhllsym', 292, $T_OBJ, 'sso');
+        op3('iseq_u', 293, $T_INT, 'ii');
+        op3('isne_u', 294, $T_INT, 'ii');
+        op3('islt_u', 295, $T_INT, 'ii');
+        op3('isle_u', 296, $T_INT, 'ii');
+        op3('isgt_u', 297, $T_INT, 'ii');
+        op3('isge_u', 298, $T_INT, 'ii');
+        op3('cmp_u', 299, $T_INT, 'ii');
+        op3('mod_n', 300, $T_NUM, 'nn');
+        op3('radix_I', 301, $T_OBJ, 'isiio');
+        op3('atomicstore_i', 302, $T_INT, 'oi');
+        op3('cas', 303, $T_OBJ, 'ooo');
+        op3('closefh', 304, $T_OBJ, 'o');
+        op3('filenofh', 305, $T_INT, 'o');
+        op3('decode', 306, $T_STR, 'os');
+        op3('lock', 307, $T_OBJ, 'o');
+        op3('unlock', 308, $T_OBJ, 'o');
+        op3('opendir', 309, $T_OBJ, 's');
+        op3('nextfiledir', 310, $T_STR, 'o');
+        op3('getlexreldyn', 311, $T_OBJ, 'os');
+        op3('bindattr_u', 312, $T_INT, 'oosi');
+        op3('getattrref_u', 313, $T_OBJ, 'oos');
+        op3('sqrt_n', 314, $T_NUM, 'n');
+        op3('log_n', 315, $T_NUM, 'n');
+        op3('exp_n', 316, $T_NUM, 'n');
+        op3('sin_n', 317, $T_NUM, 'n');
+        op3('asin_n', 318, $T_NUM, 'n');
+        op3('cos_n', 319, $T_NUM, 'n');
+        op3('acos_n', 320, $T_NUM, 'n');
+        op3('tan_n', 321, $T_NUM, 'n');
+        op3('atan_n', 322, $T_NUM, 'n');
+        op3('sinh_n', 323, $T_NUM, 'n');
+        op3('cosh_n', 324, $T_NUM, 'n');
+        op3('tanh_n', 325, $T_NUM, 'n');
+        op3('atan2_n', 326, $T_NUM, 'nn');
+        op3('closedir', 327, $T_INT, 'o');
+        op3('atomicload_i', 328, $T_INT, 'o');
+        op3('getlexrel', 329, $T_OBJ, 'os');
+        op3('captureposarg', 330, $T_OBJ, 'oi');
+        op3('unipropcode', 331, $T_INT, 's');
+        op3('strtocodes', 332, $T_OBJ, 'sio');
+        op3('stat_time', 333, $T_NUM, 'si');
+        op3('mod_I', 334, $T_OBJ, 'ooo');
+        op3('expmod_I', 335, $T_OBJ, 'oooo');
+        op3('abs_I', 336, $T_OBJ, 'oo');
+        op3('bitshiftl_I', 337, $T_OBJ, 'oio');
+        op3('bitshiftr_I', 338, $T_OBJ, 'oio');
+        op3('bitor_I', 339, $T_OBJ, 'ooo');
+        op3('bitxor_I', 340, $T_OBJ, 'ooo');
+        op3('bitneg_I', 341, $T_OBJ, 'oo');
+        op3('lcm_I', 342, $T_OBJ, 'ooo');
+        op3('fromI_I', 343, $T_OBJ, 'oo');
+        op3('isprime_I', 344, $T_INT, 'o');
+        op3('base_I', 345, $T_STR, 'oi');
+        op3('bool_I', 346, $T_INT, 'o');
+        op3('tonum_I', 347, $T_NUM, 'o');
+        op3('div_In', 348, $T_NUM, 'oo');
+        op3('gcd_i', 349, $T_INT, 'ii');
+        op3('lcm_i', 350, $T_INT, 'ii');
+        op3('coerce_is', 351, $T_STR, 'i');
+        op3('coerce_ns', 352, $T_STR, 'n');
+        op3('coerce_us', 353, $T_STR, 'i');
+        op3('coerce_in', 354, $T_NUM, 'i');
+        op3('flip', 355, $T_STR, 's');
+        op3('tclc', 356, $T_STR, 's');
+        op3('codes', 357, $T_INT, 's');
+        op3('cas_i', 358, $T_INT, 'oii');
+        op3('atomicinc_i', 359, $T_INT, 'o');
+        op3('atomicdec_i', 360, $T_INT, 'o');
+        op3('bindposnd_i', 361, $T_INT, 'ooi');
+        op3('bindposnd_n', 362, $T_NUM, 'oon');
+        op3('bindposnd_s', 363, $T_STR, 'oos');
+        op3('bindpos2d_i', 364, $T_INT, 'oiii');
+        op3('bindpos2d_n', 365, $T_NUM, 'oiin');
+        op3('bindpos2d_s', 366, $T_STR, 'oiis');
+        op3('bindpos3d_i', 367, $T_INT, 'oiiii');
+        op3('bindpos3d_n', 368, $T_NUM, 'oiiin');
+        op3('bindpos3d_s', 369, $T_STR, 'oiiis');
+        op3('abs_n', 370, $T_NUM, 'n');
+        op3('getattrref_i', 159, $T_OBJ, 'oos');
+        op3('getattrref_n', 160, $T_OBJ, 'oos');
+        op3('getattrref_s', 161, $T_OBJ, 'oos');
         op3('hlllist', 139, $T_OBJ, '');
         op3('bootintarray', 142, $T_OBJ, '');
         op3('bootnumarray', 143, $T_OBJ, '');
@@ -959,8 +1064,23 @@ class QAST::TruffleEncoder {
                 !! ($p.named ?? 2 !! 0);
             epush(%e, $kind);
             my int $ptype := $p.slurpy ?? $T_OBJ !! rt_of($p.returns);
+            my int $uint := 0;
+            if $ptype == -9 && !$p.slurpy {
+                # A uint parameter (objprimspec 10): fetch unsigned so a
+                # full-width value unboxes, and bind/default as int -- the
+                # wire type 4 (T_UINT) tells the builder to use posparam_u.
+                # A sized uint (under 64 bits) still needs post-fetch
+                # masking; leave those to the fallback.
+                my int $uspec := nqp::objprimspec($p.returns);
+                if $uspec == 10 {
+                    my int $ubits := nqp::objprimbits($p.returns);
+                    cbail('sized uint param') if $ubits > 0 && $ubits < 64;
+                    $uint := 1;
+                    $ptype := $T_INT;
+                }
+            }
             cbail('param type') if $ptype < 0 || $ptype > 3;
-            epush(%e, $ptype);
+            epush(%e, $uint ?? 4 !! $ptype);
             if $p.scope eq 'local' {
                 epush(%e, 1);
                 epush(%e, %e<locals>{$p.name}[0]);
@@ -1231,6 +1351,9 @@ class QAST::TruffleEncoder {
         }
         if $name eq 'if' || $name eq 'unless' {
             return self.encode_if($op, %e, $want, $name eq 'unless' ?? 1 !! 0);
+        }
+        if $name eq 'with' || $name eq 'without' {
+            return self.encode_if($op, %e, $want, $name eq 'without' ?? 1 !! 0, 1);
         }
         if $name eq 'while' || $name eq 'until'
             || $name eq 'repeat_while' || $name eq 'repeat_until' {
@@ -1509,6 +1632,20 @@ class QAST::TruffleEncoder {
             epush(%e, $W_P6ARGVMARRAY);
             return $T_OBJ;
         }
+        if $name eq 'p6return' {
+            # p6return appears only as the SUCCEED handler of a `handle`
+            # that wraps a block's whole body (src/Raku/ast/scoping.rakumod):
+            # so the handle's value is the block's value is the routine's
+            # return. The bytecode path forces the routine to return via
+            # return_o + cf.outer.exitAfterUnwind + leave; here the handler
+            # dispatcher's completion value already becomes the handle's
+            # result (NqpProgramBuilder HANDLE -> resL), which flows out as
+            # the block value -- so yielding the argument produces the same
+            # routine return without an unwind. (Only ever a SUCCEED
+            # handler, so no other shape reaches this.)
+            cbail('p6return arity') unless nqp::elems(@($op)) == 1;
+            return self.encode_child($op[0], %e, $want == $T_VOID ?? $T_VOID !! $T_OBJ);
+        }
         if $name eq 'handle' {
             my @children := nqp::clone($op.list);
             cbail('handle no children') unless nqp::elems(@children) >= 1;
@@ -1742,7 +1879,28 @@ class QAST::TruffleEncoder {
         $entry[1]
     }
 
-    method encode_if($op, %e, int $want, int $negate) {
+    # The `with`/`without` branch test: definedness is the `.defined`
+    # method (overridable), not nqp isconcrete -- exactly the bytecode
+    # path's findmethod('defined') + lang-call. The condition VALUE stays
+    # in $tmp (block topic and fail-value); only the test consults
+    # .defined. Mirrors encode_callmethod's lang-meth-call wire with the
+    # invocant read from $tmp and no further arguments.
+    method emit_defined_test(%e, int $tmp) {
+        my int $mtmp := new_elocal(%e, $T_OBJ);
+        epush(%e, $W_DISPATCH);
+        %e<dispatches> := %e<dispatches> + 1;
+        epush(%e, $T_OBJ);
+        epush(%e, epool(%e, 'lang-meth-call'));
+        epush(%e, 3);
+        epush(%e, $T_OBJ); epush(%e, $T_STR); epush(%e, $T_OBJ);
+        epush(%e, $W_OPCALL); epush(%e, 51); epush(%e, 1);   # decont
+        epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $mtmp);
+        epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+        epush(%e, $W_SVAL); epush(%e, epool(%e, 'defined'));
+        epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $mtmp);
+    }
+
+    method encode_if($op, %e, int $want, int $negate, int $withy = 0) {
         my int $n := nqp::elems(@($op));
         cbail('if arity') unless $n == 2 || $n == 3;
         my int $void := $want == $T_VOID;
@@ -1765,10 +1923,16 @@ class QAST::TruffleEncoder {
             nqp::bindpos(%e<code>, $bind_at + 2, $tmp);
             my int $has_else := $n == 3 || !$void;
             epush(%e, $void ?? $W_IFS !! $W_IFV);
-            epush(%e, $condt);
+            epush(%e, $withy ?? $T_OBJ !! $condt);
             epush(%e, $negate);
             epush(%e, $has_else ?? 1 !! 0);
-            epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
+            if $withy {
+                cbail('withy cond not obj') if $condt != $T_OBJ;
+                self.emit_defined_test(%e, $tmp);
+            }
+            else {
+                epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
+            }
             # then
             if needs_cond_passed($op[1]) {
                 self.encode_immediate_call($op[1], %e, 1, $condt, $tmp);
@@ -1818,10 +1982,16 @@ class QAST::TruffleEncoder {
             nqp::bindpos(%e<code>, $bind_at + 1, $condt);
             nqp::bindpos(%e<code>, $bind_at + 2, $tmp);
             epush(%e, $W_IFV);
-            epush(%e, $condt);
+            epush(%e, $withy ?? $T_OBJ !! $condt);
             epush(%e, $negate);
             epush(%e, 1);
-            epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
+            if $withy {
+                cbail('withy cond not obj') if $condt != $T_OBJ;
+                self.emit_defined_test(%e, $tmp);
+            }
+            else {
+                epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
+            }
             self.encode_child($op[1], %e, $rt);
             if $condt != $rt {
                 my int $kind := coerce_kind($condt, $rt);
@@ -1831,6 +2001,7 @@ class QAST::TruffleEncoder {
             epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
             return $rt;
         }
+        cbail('withy general') if $withy;
         epush(%e, $void ?? $W_IFS !! $W_IFV);
         my int $ct_at := nqp::elems(%e<code>);
         epush(%e, 0);
@@ -2136,11 +2307,20 @@ class QAST::TruffleEncoder {
             # The typed accessors by the declared type, as the bytecode
             # path picks getattr_<t>/bindattr_<t>: 81/82 object, 117-119
             # and 121-123 for int/num/str.
-            my int $t := rt_of($var.returns);
+            my int $aspec := nqp::isnull($var.returns) ?? 0 !! nqp::objprimspec($var.returns);
+            my int $auint := $aspec == 10 ?? 1 !! 0;
+            cbail('sized uint attribute')
+                if $auint && nqp::objprimbits($var.returns) > 0 && nqp::objprimbits($var.returns) < 64;
+            my int $t := $auint ?? $T_INT !! rt_of($var.returns);
             cbail('attribute type') if $t < 0 || $t > 3;
-            my int $id := nqp::isnull($bindval)
-                ?? ($t == $T_OBJ ?? 81 !! 116 + $t)
-                !! ($t == $T_OBJ ?? 82 !! 120 + $t);
+            # A uint attribute (objprimspec 10) uses getattr_u/bindattr_u,
+            # exactly as the bytecode path's '_u' suffix; its value lives
+            # in an int slot.
+            my int $id := $auint
+                ?? (nqp::isnull($bindval) ?? 291 !! 312)
+                !! (nqp::isnull($bindval)
+                    ?? ($t == $T_OBJ ?? 81 !! 116 + $t)
+                    !! ($t == $T_OBJ ?? 82 !! 120 + $t));
             epush(%e, $W_OPCALL);
             epush(%e, $id);
             epush(%e, nqp::isnull($bindval) ?? 3 !! 4);
@@ -2187,10 +2367,15 @@ class QAST::TruffleEncoder {
             # form.
             cbail('attributeref bind') unless nqp::isnull($bindval);
             cbail('attributeref shape') unless nqp::elems(@($var)) == 2;
-            my int $t := rt_of($var.returns);
+            my int $arspec := nqp::isnull($var.returns) ?? 0 !! nqp::objprimspec($var.returns);
+            my int $aruint := $arspec == 10 ?? 1 !! 0;
+            cbail('sized uint attributeref')
+                if $aruint && nqp::objprimbits($var.returns) > 0 && nqp::objprimbits($var.returns) < 64;
+            my int $t := $aruint ?? $T_INT !! rt_of($var.returns);
             cbail('attributeref to a non-native') if $t == $T_OBJ;
-            my int $id := $t == $T_INT ?? 159 !! $t == $T_NUM ?? 160
-                !! $t == $T_STR ?? 161 !! -1;
+            my int $id := $aruint ?? 313
+                !! ($t == $T_INT ?? 159 !! $t == $T_NUM ?? 160
+                    !! $t == $T_STR ?? 161 !! -1);
             cbail('attributeref type') if $id < 0;
             epush(%e, $W_OPCALL); epush(%e, $id); epush(%e, 3);
             self.encode_child($var[0], %e, $T_OBJ);
