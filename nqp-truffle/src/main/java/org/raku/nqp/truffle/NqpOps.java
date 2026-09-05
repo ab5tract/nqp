@@ -700,7 +700,7 @@ final class NqpOps {
             case C_N2I: return (long) dbl(v);
             case C_I2S: return Long.toString(lng(v));
             // unsigned: a uint slot boxes/widens as 0..2^64-1, never as a negative
-            case C_U2O: return Ops.box_u(lng(v), cu.hllConfig.uintBoxType, tc);
+            case C_U2O: return Ops.box_u(lng(v), cu.hllConfig.intBoxType, tc);   // a uint boxes to Int; UInt is a subset (uintBoxType may be null during BEGIN)
             case C_U2N: { long u = lng(v); return (double) (u >>> 1) * 2.0 + (double) (u & 1L); }
             case C_U2S: return Long.toUnsignedString(lng(v));
             case C_O2U: return Ops.unbox_u(smo(v), tc);
