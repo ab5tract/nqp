@@ -1972,7 +1972,7 @@ object Ops {
         CallSiteDescriptor.ARG_STR ->
             throw ExceptionHandling.dieInternal(cf.tc, "Expected native uint argument, but got str")
         CallSiteDescriptor.ARG_OBJ ->
-            return decont(args[idx] as SixModelObject?, cf.tc)!!.get_int(cf.tc)
+            return decont(args[idx] as SixModelObject?, cf.tc)!!.get_uint(cf.tc)
         else ->
             throw ExceptionHandling.dieInternal(cf.tc, "Error in argument processing")
         }
@@ -2161,7 +2161,7 @@ object Ops {
             CallSiteDescriptor.ARG_STR ->
                 throw ExceptionHandling.dieInternal(cf.tc, "Expected native int argument, but got str")
             CallSiteDescriptor.ARG_OBJ ->
-                return decont(args[lookup shr 6] as SixModelObject?, cf.tc)!!.get_int(cf.tc)
+                return decont(args[lookup shr 6] as SixModelObject?, cf.tc)!!.get_uint(cf.tc)
             else ->
                 throw ExceptionHandling.dieInternal(cf.tc, "Error in argument processing")
             }
@@ -2290,7 +2290,7 @@ object Ops {
             CallSiteDescriptor.ARG_STR ->
                 throw ExceptionHandling.dieInternal(cf.tc, "Expected native int argument, but got str")
             CallSiteDescriptor.ARG_OBJ ->
-                return decont(args[lookup shr 6] as SixModelObject?, cf.tc)!!.get_int(cf.tc)
+                return decont(args[lookup shr 6] as SixModelObject?, cf.tc)!!.get_uint(cf.tc)
             else ->
                 throw ExceptionHandling.dieInternal(cf.tc, "Error in argument processing")
             }
@@ -3312,7 +3312,7 @@ object Ops {
     @JvmStatic
     fun box_u(value: Long, type: SixModelObject?, tc: ThreadContext): SixModelObject {
         val res = type!!.st.REPR.allocate(tc, type.st)
-        res.set_int(tc, value)
+        res.set_uint(tc, value)
         return res
     }
     @JvmStatic
