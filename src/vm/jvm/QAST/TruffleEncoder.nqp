@@ -750,6 +750,28 @@ class QAST::TruffleEncoder {
         op3('opendir', 309, $T_OBJ, 's');
         op3('nextfiledir', 310, $T_STR, 'o');
         op3('getlexreldyn', 311, $T_OBJ, 'os');
+        op3('bindattr_u', 312, $T_INT, 'oosi');
+        op3('getattrref_u', 313, $T_OBJ, 'oos');
+        op3('sqrt_n', 314, $T_NUM, 'n');
+        op3('log_n', 315, $T_NUM, 'n');
+        op3('exp_n', 316, $T_NUM, 'n');
+        op3('sin_n', 317, $T_NUM, 'n');
+        op3('asin_n', 318, $T_NUM, 'n');
+        op3('cos_n', 319, $T_NUM, 'n');
+        op3('acos_n', 320, $T_NUM, 'n');
+        op3('tan_n', 321, $T_NUM, 'n');
+        op3('atan_n', 322, $T_NUM, 'n');
+        op3('sinh_n', 323, $T_NUM, 'n');
+        op3('cosh_n', 324, $T_NUM, 'n');
+        op3('tanh_n', 325, $T_NUM, 'n');
+        op3('atan2_n', 326, $T_NUM, 'nn');
+        op3('closedir', 327, $T_INT, 'o');
+        op3('atomicload_i', 328, $T_INT, 'o');
+        op3('getlexrel', 329, $T_OBJ, 'os');
+        op3('captureposarg', 330, $T_OBJ, 'oi');
+        op3('unipropcode', 331, $T_INT, 's');
+        op3('strtocodes', 332, $T_OBJ, 'sio');
+        op3('stat_time', 333, $T_NUM, 'si');
         op3('hlllist', 139, $T_OBJ, '');
         op3('bootintarray', 142, $T_OBJ, '');
         op3('bootnumarray', 143, $T_OBJ, '');
@@ -2231,11 +2253,20 @@ class QAST::TruffleEncoder {
             # The typed accessors by the declared type, as the bytecode
             # path picks getattr_<t>/bindattr_<t>: 81/82 object, 117-119
             # and 121-123 for int/num/str.
-            my int $t := rt_of($var.returns);
+            my int $aspec := nqp::isnull($var.returns) ?? 0 !! nqp::objprimspec($var.returns);
+            my int $auint := $aspec == 10 ?? 1 !! 0;
+            cbail('sized uint attribute')
+                if $auint && nqp::objprimbits($var.returns) > 0 && nqp::objprimbits($var.returns) < 64;
+            my int $t := $auint ?? $T_INT !! rt_of($var.returns);
             cbail('attribute type') if $t < 0 || $t > 3;
-            my int $id := nqp::isnull($bindval)
-                ?? ($t == $T_OBJ ?? 81 !! 116 + $t)
-                !! ($t == $T_OBJ ?? 82 !! 120 + $t);
+            # A uint attribute (objprimspec 10) uses getattr_u/bindattr_u,
+            # exactly as the bytecode path's '_u' suffix; its value lives
+            # in an int slot.
+            my int $id := $auint
+                ?? (nqp::isnull($bindval) ?? 291 !! 312)
+                !! (nqp::isnull($bindval)
+                    ?? ($t == $T_OBJ ?? 81 !! 116 + $t)
+                    !! ($t == $T_OBJ ?? 82 !! 120 + $t));
             epush(%e, $W_OPCALL);
             epush(%e, $id);
             epush(%e, nqp::isnull($bindval) ?? 3 !! 4);
@@ -2282,10 +2313,15 @@ class QAST::TruffleEncoder {
             # form.
             cbail('attributeref bind') unless nqp::isnull($bindval);
             cbail('attributeref shape') unless nqp::elems(@($var)) == 2;
-            my int $t := rt_of($var.returns);
+            my int $arspec := nqp::isnull($var.returns) ?? 0 !! nqp::objprimspec($var.returns);
+            my int $aruint := $arspec == 10 ?? 1 !! 0;
+            cbail('sized uint attributeref')
+                if $aruint && nqp::objprimbits($var.returns) > 0 && nqp::objprimbits($var.returns) < 64;
+            my int $t := $aruint ?? $T_INT !! rt_of($var.returns);
             cbail('attributeref to a non-native') if $t == $T_OBJ;
-            my int $id := $t == $T_INT ?? 159 !! $t == $T_NUM ?? 160
-                !! $t == $T_STR ?? 161 !! -1;
+            my int $id := $aruint ?? 313
+                !! ($t == $T_INT ?? 159 !! $t == $T_NUM ?? 160
+                    !! $t == $T_STR ?? 161 !! -1);
             cbail('attributeref type') if $id < 0;
             epush(%e, $W_OPCALL); epush(%e, $id); epush(%e, 3);
             self.encode_child($var[0], %e, $T_OBJ);
