@@ -125,9 +125,19 @@ final class NqpOps {
         OP_COS_N = 319, OP_ACOS_N = 320, OP_TAN_N = 321, OP_ATAN_N = 322, OP_SINH_N = 323,
         OP_COSH_N = 324, OP_TANH_N = 325, OP_ATAN2_N = 326, OP_CLOSEDIR = 327,
         OP_ATOMICLOAD_I = 328, OP_GETLEXREL = 329, OP_CAPTUREPOSARG = 330,
-        OP_UNIPROPCODE = 331, OP_STRTOCODES = 332, OP_STAT_TIME = 333;
+        OP_UNIPROPCODE = 331, OP_STRTOCODES = 332, OP_STAT_TIME = 333,
+        OP_MOD_I_BIG = 334, OP_EXPMOD_I_BIG = 335, OP_ABS_I_BIG = 336, OP_BITSHIFTL_I_BIG = 337,
+        OP_BITSHIFTR_I_BIG = 338, OP_BITOR_I_BIG = 339, OP_BITXOR_I_BIG = 340, OP_BITNEG_I_BIG = 341,
+        OP_LCM_I_BIG = 342, OP_FROMI_I_BIG = 343, OP_ISPRIME_I_BIG = 344, OP_BASE_I_BIG = 345,
+        OP_BOOL_I_BIG = 346, OP_TONUM_I_BIG = 347, OP_DIV_IN_BIG = 348, OP_GCD_I = 349,
+        OP_LCM_I = 350, OP_COERCE_IS = 351, OP_COERCE_NS = 352, OP_COERCE_US = 353,
+        OP_COERCE_IN = 354, OP_FLIP = 355, OP_TCLC = 356, OP_CODES = 357,
+        OP_CAS_I = 358, OP_ATOMICINC_I = 359, OP_ATOMICDEC_I = 360, OP_BINDPOSND_I = 361,
+        OP_BINDPOSND_N = 362, OP_BINDPOSND_S = 363, OP_BINDPOS2D_I = 364, OP_BINDPOS2D_N = 365,
+        OP_BINDPOS2D_S = 366, OP_BINDPOS3D_I = 367, OP_BINDPOS3D_N = 368, OP_BINDPOS3D_S = 369,
+        OP_ABS_N = 370;
 
-    static final int OP_COUNT = 334;
+    static final int OP_COUNT = 371;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -445,6 +455,43 @@ final class NqpOps {
             case OP_UNIPROPCODE: return Ops.unipropcode(str(a[0]), tc);
             case OP_STRTOCODES: return Ops.strtocodes(str(a[0]), lng(a[1]), smo(a[2]), tc);
             case OP_STAT_TIME: return Ops.stat_time(str(a[0]), lng(a[1]));
+            case OP_MOD_I_BIG: return Ops.mod_I(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+            case OP_EXPMOD_I_BIG: return Ops.expmod_I(smo(a[0]), smo(a[1]), smo(a[2]), smo(a[3]), tc);
+            case OP_ABS_I_BIG: return Ops.abs_I(smo(a[0]), smo(a[1]), tc);
+            case OP_BITSHIFTL_I_BIG: return Ops.bitshiftl_I(smo(a[0]), lng(a[1]), smo(a[2]), tc);
+            case OP_BITSHIFTR_I_BIG: return Ops.bitshiftr_I(smo(a[0]), lng(a[1]), smo(a[2]), tc);
+            case OP_BITOR_I_BIG: return Ops.bitor_I(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+            case OP_BITXOR_I_BIG: return Ops.bitxor_I(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+            case OP_BITNEG_I_BIG: return Ops.bitneg_I(smo(a[0]), smo(a[1]), tc);
+            case OP_LCM_I_BIG: return Ops.lcm_I(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+            case OP_FROMI_I_BIG: return Ops.fromI_I(smo(a[0]), smo(a[1]), tc);
+            case OP_ISPRIME_I_BIG: return Ops.isprime_I(smo(a[0]), tc);
+            case OP_BASE_I_BIG: return Ops.base_I(smo(a[0]), lng(a[1]), tc);
+            case OP_BOOL_I_BIG: return Ops.bool_I(smo(a[0]), tc);
+            case OP_TONUM_I_BIG: return Ops.tonum_I(smo(a[0]), tc);
+            case OP_DIV_IN_BIG: return Ops.div_In(smo(a[0]), smo(a[1]), tc);
+            case OP_GCD_I: return Ops.gcd_i(lng(a[0]), lng(a[1]));
+            case OP_LCM_I: return Ops.lcm_i(lng(a[0]), lng(a[1]));
+            case OP_COERCE_IS: return Ops.coerce_is(lng(a[0]), tc);
+            case OP_COERCE_NS: return Ops.coerce_ns(dbl(a[0]), tc);
+            case OP_COERCE_US: return Ops.coerce_us(lng(a[0]), tc);
+            case OP_COERCE_IN: return Ops.coerce_in(lng(a[0]), tc);
+            case OP_FLIP: return Ops.flip(str(a[0]));
+            case OP_TCLC: return Ops.tclc(str(a[0]));
+            case OP_CODES: return Ops.codes(str(a[0]));
+            case OP_CAS_I: return Ops.cas_i(smo(a[0]), lng(a[1]), lng(a[2]), tc);
+            case OP_ATOMICINC_I: return Ops.atomicinc_i(smo(a[0]), tc);
+            case OP_ATOMICDEC_I: return Ops.atomicdec_i(smo(a[0]), tc);
+            case OP_BINDPOSND_I: return Ops.bindposnd_i(smo(a[0]), smo(a[1]), lng(a[2]), tc);
+            case OP_BINDPOSND_N: return Ops.bindposnd_n(smo(a[0]), smo(a[1]), dbl(a[2]), tc);
+            case OP_BINDPOSND_S: return Ops.bindposnd_s(smo(a[0]), smo(a[1]), str(a[2]), tc);
+            case OP_BINDPOS2D_I: return Ops.bindpos2d_i(smo(a[0]), lng(a[1]), lng(a[2]), lng(a[3]), tc);
+            case OP_BINDPOS2D_N: return Ops.bindpos2d_n(smo(a[0]), lng(a[1]), lng(a[2]), dbl(a[3]), tc);
+            case OP_BINDPOS2D_S: return Ops.bindpos2d_s(smo(a[0]), lng(a[1]), lng(a[2]), str(a[3]), tc);
+            case OP_BINDPOS3D_I: return Ops.bindpos3d_i(smo(a[0]), lng(a[1]), lng(a[2]), lng(a[3]), lng(a[4]), tc);
+            case OP_BINDPOS3D_N: return Ops.bindpos3d_n(smo(a[0]), lng(a[1]), lng(a[2]), lng(a[3]), dbl(a[4]), tc);
+            case OP_BINDPOS3D_S: return Ops.bindpos3d_s(smo(a[0]), lng(a[1]), lng(a[2]), lng(a[3]), str(a[4]), tc);
+            case OP_ABS_N: return Math.abs(dbl(a[0]));
             case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
             case OP_GETEXTYPE: return Ops.getextype(smo(a[0]), tc);
             case OP_SETEXTYPE: return Ops.setextype(smo(a[0]), lng(a[1]), tc);
