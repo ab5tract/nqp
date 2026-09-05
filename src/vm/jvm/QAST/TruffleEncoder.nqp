@@ -1295,6 +1295,19 @@ class QAST::TruffleEncoder {
         if $name eq 'callmethod' {
             return self.encode_callmethod($op, %e);
         }
+        if $name eq 'sprintf' || $name eq 'sprintfdirectives'
+            || $name eq 'sprintfaddargumenthandler' {
+            # All three desugar to a call of the nqp hll sub of the same
+            # name, exactly Compiler.nqp: call(gethllsym('nqp', name), args)
+            # returning str (int for sprintfdirectives).
+            my $call := QAST::Op.new( :op('call'),
+                :returns($name eq 'sprintfdirectives' ?? int !! str),
+                QAST::Op.new( :op('gethllsym'),
+                    QAST::SVal.new( :value('nqp') ),
+                    QAST::SVal.new( :value($name) ) ) );
+            for @($op) { $call.push($_) }
+            return self.encode_node($call, %e, $want);
+        }
         if $name eq 'numify' {
             # numify(x): x in num context, exactly Compiler.nqp's as_jast(x, :want(NUM)).
             cbail('numify arity') unless nqp::elems(@($op)) == 1;
