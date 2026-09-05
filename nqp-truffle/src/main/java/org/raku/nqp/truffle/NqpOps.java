@@ -144,7 +144,8 @@ final class NqpOps {
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
         C_O2I = 3, C_O2N = 4, C_O2S = 5,
-        C_I2N = 6, C_N2I = 7, C_I2S = 8;
+        C_I2N = 6, C_N2I = 7, C_I2S = 8,
+        C_U2O = 9, C_U2N = 10, C_U2S = 11, C_O2U = 12;
 
     @TruffleBoundary
     static Object run(int id, Object[] a, CompilationUnit cu, ThreadContext tc, CallFrame cf) {
@@ -697,6 +698,11 @@ final class NqpOps {
             case C_I2N: return (double) lng(v);
             case C_N2I: return (long) dbl(v);
             case C_I2S: return Long.toString(lng(v));
+            // unsigned: a uint slot boxes/widens as 0..2^64-1, never as a negative
+            case C_U2O: return Ops.box_u(lng(v), cu.hllConfig.uintBoxType, tc);
+            case C_U2N: { long u = lng(v); return (double) (u >>> 1) * 2.0 + (double) (u & 1L); }
+            case C_U2S: return Long.toUnsignedString(lng(v));
+            case C_O2U: return Ops.unbox_u(smo(v), tc);
             default:
                 throw new IllegalStateException("nqpp: unknown coercion " + kind);
         }
