@@ -697,6 +697,16 @@ class QAST::TruffleEncoder {
         op3('ordbaseat', 257, $T_INT, 'si');
         op3('floor_n', 258, $T_NUM, 'n');
         op3('ceil_n', 259, $T_NUM, 'n');
+        op3('rindexfromend', 260, $T_INT, 'ss');
+        op3('indexic', 261, $T_INT, 'ssi');
+        op3('indexim', 262, $T_INT, 'ssi');
+        op3('indexicim', 263, $T_INT, 'ssi');
+        op3('pow_I', 264, $T_OBJ, 'oooo');
+        op3('ctxcallerskipthunks', 265, $T_OBJ, 'o');
+        op3('multidimref_i', 266, $T_OBJ, 'oo');
+        op3('multidimref_u', 267, $T_OBJ, 'oo');
+        op3('multidimref_n', 268, $T_OBJ, 'oo');
+        op3('multidimref_s', 269, $T_OBJ, 'oo');
         op3('hlllist', 139, $T_OBJ, '');
         op3('bootintarray', 142, $T_OBJ, '');
         op3('bootnumarray', 143, $T_OBJ, '');
@@ -1455,6 +1465,30 @@ class QAST::TruffleEncoder {
         if $name eq 'null' {
             epush(%e, $W_NULLC);
             return $T_OBJ;
+        }
+        # ord/rindex/index are arity-based desugars, exactly as
+        # Compiler.nqp's add_core_op builds them: a fresh tree over the same
+        # children (ordfirst/ordat, rindexfromend/rindexfrom, indexfrom --
+        # all already in the table), so a later bail leaves the op untouched.
+        if $name eq 'ord' {
+            my @k := $op.list;
+            cbail('ord arity') unless nqp::elems(@k) == 1 || nqp::elems(@k) == 2;
+            return self.encode_op(QAST::Op.new(
+                :op(nqp::elems(@k) == 1 ?? 'ordfirst' !! 'ordat'), |@k), %e, $want);
+        }
+        if $name eq 'rindex' {
+            my @k := $op.list;
+            cbail('rindex arity') unless nqp::elems(@k) == 2 || nqp::elems(@k) == 3;
+            return self.encode_op(QAST::Op.new(
+                :op(nqp::elems(@k) == 2 ?? 'rindexfromend' !! 'rindexfrom'), |@k), %e, $want);
+        }
+        if $name eq 'index' {
+            my @k := $op.list;
+            cbail('index arity') unless nqp::elems(@k) == 2 || nqp::elems(@k) == 3;
+            my @args := nqp::elems(@k) == 2
+                ?? [@k[0], @k[1], QAST::IVal.new( :value(0) )]
+                !! @k;
+            return self.encode_op(QAST::Op.new( :op('indexfrom'), |@args ), %e, $want);
         }
         if $name eq 'const' {
             # Compiler.nqp's %const_map, published as an HLL symbol: the
