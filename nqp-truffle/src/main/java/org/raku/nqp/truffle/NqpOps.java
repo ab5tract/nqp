@@ -101,9 +101,12 @@ final class NqpOps {
         OP_ATOMICADD_I = 236, OP_ATPOSND_I = 237, OP_ORDFIRST = 238, OP_CMP_N = 239,
         OP_CMP_S = 240, OP_CMP_I_BIG = 241, OP_DIV_I_BIG = 242, OP_REPLACE = 243,
         OP_SETWHO = 244, OP_FINDMETHOD = 245, OP_INF = 246, OP_NEGINF = 247, OP_NAN = 248,
-        OP_RXMATCH = 249;
+        OP_RXMATCH = 249,
+        OP_ATPOSND_O = 250, OP_ATPOSND_N = 251, OP_ATPOSND_S = 252, OP_OBJECTID = 253,
+        OP_TRYFINDMETHOD = 254, OP_GETLEXRELCALLER = 255, OP_RINDEXFROM = 256,
+        OP_ORDBASEAT = 257, OP_FLOOR_N = 258, OP_CEIL_N = 259;
 
-    static final int OP_COUNT = 250;
+    static final int OP_COUNT = 260;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -337,6 +340,16 @@ final class NqpOps {
             case OP_RXMATCH: return org.raku.nqp.runtime.GrammarEngines.INSTANCE.rxmatch(
                 str(a[0]), smo(a[1]), smo(a[2]), str(a[3]), lng(a[4]), lng(a[5]),
                 lng(a[6]), smo(a[7]), smo(a[8]), tc);
+            case OP_ATPOSND_O: return Ops.atposnd_o(smo(a[0]), smo(a[1]), tc);
+            case OP_ATPOSND_N: return Ops.atposnd_n(smo(a[0]), smo(a[1]), tc);
+            case OP_ATPOSND_S: return Ops.atposnd_s(smo(a[0]), smo(a[1]), tc);
+            case OP_OBJECTID: return Ops.where(smo(a[0]), tc);
+            case OP_TRYFINDMETHOD: return Ops.findmethodNonFatal(smo(a[0]), str(a[1]), tc);
+            case OP_GETLEXRELCALLER: return Ops.getlexrelcaller(smo(a[0]), str(a[1]), tc);
+            case OP_RINDEXFROM: return Ops.rindexfrom(str(a[0]), str(a[1]), lng(a[2]));
+            case OP_ORDBASEAT: return Ops.ordbaseat(str(a[0]), lng(a[1]));
+            case OP_FLOOR_N: return Math.floor(dbl(a[0]));
+            case OP_CEIL_N: return Math.ceil(dbl(a[0]));
             case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
             case OP_GETEXTYPE: return Ops.getextype(smo(a[0]), tc);
             case OP_SETEXTYPE: return Ops.setextype(smo(a[0]), lng(a[1]), tc);

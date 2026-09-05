@@ -687,6 +687,16 @@ class QAST::TruffleEncoder {
         # The grammar engine's rxmatch: descriptor, cursor, cursor class,
         # target, from, invocant-from, restart, invocant, callback.
         op3('rxmatch', 249, $T_OBJ, 'soosiiioo');
+        op3('atposnd', 250, $T_OBJ, 'oo');
+        op3('atposnd_n', 251, $T_NUM, 'oo');
+        op3('atposnd_s', 252, $T_STR, 'oo');
+        op3('objectid', 253, $T_INT, 'o');
+        op3('tryfindmethod', 254, $T_OBJ, 'os');
+        op3('getlexrelcaller', 255, $T_OBJ, 'os');
+        op3('rindexfrom', 256, $T_INT, 'ssi');
+        op3('ordbaseat', 257, $T_INT, 'si');
+        op3('floor_n', 258, $T_NUM, 'n');
+        op3('ceil_n', 259, $T_NUM, 'n');
         op3('hlllist', 139, $T_OBJ, '');
         op3('bootintarray', 142, $T_OBJ, '');
         op3('bootnumarray', 143, $T_OBJ, '');
