@@ -78,9 +78,18 @@ final class NqpOps {
         OP_ITERATOR = 152, OP_ITERVAL = 153, OP_ASSIGN = 154, OP_P6BINDASSERT = 155,
         OP_ITERKEY_S = 156, OP_SPLICE = 157, OP_HOW = 158,
         OP_GETATTRREF_I = 159, OP_GETATTRREF_N = 160, OP_GETATTRREF_S = 161,
-        OP_ASSIGN_I = 162, OP_ASSIGN_U = 163, OP_ASSIGN_N = 164, OP_ASSIGN_S = 165;
+        OP_ASSIGN_I = 162, OP_ASSIGN_U = 163, OP_ASSIGN_N = 164, OP_ASSIGN_S = 165,
+        OP_EXCEPTION = 166, OP_GETEXTYPE = 167, OP_SETEXTYPE = 168, OP_SETPAYLOAD = 169,
+        OP_GETMESSAGE = 170, OP_SETMESSAGE = 171, OP_NEWEXCEPTION = 172,
+        OP_BACKTRACE = 173, OP_BACKTRACESTRINGS = 174, OP_ISFALSE = 175,
+        OP_ISBIG_I = 176, OP_ATPOSREF_I = 177, OP_ATPOSREF_U = 178, OP_ISRWCONT = 179,
+        OP_DIE_S = 180, OP_THROW = 181, OP_RETHROW = 182, OP_THROWEXTYPE = 183,
+        OP_ISCONCRETE_ND = 184, OP_GETHLLSYM = 185,
+        OP_BOX_I2 = 186, OP_BOX_N2 = 187, OP_BOX_S2 = 188, OP_ISNANORINF = 189,
+        OP_WHERE = 190, OP_GETLEXCALLER = 191, OP_GETCOMP = 192,
+        OP_ATPOSREF_N = 193, OP_ATPOSREF_S = 194, OP_ATPOS_U = 195, OP_BINDPOS_U = 196;
 
-    static final int OP_COUNT = 166;
+    static final int OP_COUNT = 197;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -243,6 +252,52 @@ final class NqpOps {
             case OP_ASSIGN_U: return Ops.assign_u(smo(a[0]), lng(a[1]), tc);
             case OP_ASSIGN_N: return Ops.assign_n(smo(a[0]), dbl(a[1]), tc);
             case OP_ASSIGN_S: return Ops.assign_s(smo(a[0]), str(a[1]), tc);
+            case OP_EXCEPTION: return Ops.exception(tc);
+            case OP_ISCONCRETE_ND: return Ops.isconcrete_nd(smo(a[0]), tc);
+            case OP_BOX_I2: return Ops.box_i(lng(a[0]), smo(a[1]), tc);
+            case OP_BOX_N2: return Ops.box_n(dbl(a[0]), smo(a[1]), tc);
+            case OP_BOX_S2: return Ops.box_s(str(a[0]), smo(a[1]), tc);
+            case OP_ISNANORINF: return Ops.isnanorinf(dbl(a[0]));
+            case OP_WHERE: return Ops.where(smo(a[0]), tc);
+            case OP_GETLEXCALLER: return Ops.getlexcaller(str(a[0]), tc);
+            case OP_GETCOMP: return Ops.getcomp(str(a[0]), tc);
+            case OP_ATPOSREF_N: return Ops.atposref_n(smo(a[0]), lng(a[1]), tc);
+            case OP_ATPOSREF_S: return Ops.atposref_s(smo(a[0]), lng(a[1]), tc);
+            case OP_ATPOS_U: return Ops.atpos_u(smo(a[0]), lng(a[1]), tc);
+            case OP_BINDPOS_U: return Ops.bindpos_u(smo(a[0]), lng(a[1]), lng(a[2]), tc);
+            case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
+            case OP_GETEXTYPE: return Ops.getextype(smo(a[0]), tc);
+            case OP_SETEXTYPE: return Ops.setextype(smo(a[0]), lng(a[1]), tc);
+            case OP_SETPAYLOAD: return Ops.setpayload(smo(a[0]), smo(a[1]), tc);
+            case OP_GETMESSAGE: return Ops.getmessage(smo(a[0]), tc);
+            case OP_SETMESSAGE: return Ops.setmessage(smo(a[0]), str(a[1]), tc);
+            case OP_NEWEXCEPTION: return Ops.newexception(tc);
+            case OP_BACKTRACE: return Ops.backtrace(smo(a[0]), tc);
+            case OP_BACKTRACESTRINGS: return Ops.backtracestrings(smo(a[0]), tc);
+            case OP_ISFALSE: return Ops.isfalse(smo(a[0]), tc);
+            case OP_ISBIG_I: return Ops.isbig_I(smo(a[0]), tc);
+            case OP_ATPOSREF_I: return Ops.atposref_i(smo(a[0]), lng(a[1]), tc);
+            case OP_ATPOSREF_U: return Ops.atposref_u(smo(a[0]), lng(a[1]), tc);
+            case OP_ISRWCONT: return Ops.isrwcont(smo(a[0]), tc);
+            // The bytecode path's :cont ops: throw, and if a handler
+            // resumed, the result waits in the frame's return register --
+            // the same shape OP_THROWPAYLOADLEX takes.
+            case OP_DIE_S: {
+                Ops.die_s_c(str(a[0]), tc);
+                return Ops.result_s(cf);
+            }
+            case OP_THROW: {
+                Ops._throw_c(smo(a[0]), tc);
+                return Ops.result_o(cf);
+            }
+            case OP_RETHROW: {
+                Ops.rethrow_c(smo(a[0]), tc);
+                return Ops.result_o(cf);
+            }
+            case OP_THROWEXTYPE: {
+                Ops.throwcatdyn_c(lng(a[0]), tc);
+                return Ops.result_o(cf);
+            }
             case OP_ISTYPE_ND: return Ops.istype_nd(smo(a[0]), smo(a[1]), tc);
             case OP_WHO: return Ops.who(smo(a[0]), tc);
             case OP_GETPAYLOAD: return Ops.getpayload(smo(a[0]), tc);
@@ -597,6 +652,51 @@ final class NqpOps {
         return getlexWalk(type, name, tc, cf);
     }
 
+    /**
+     * A native lexical reference (the lexicalref scope wanted as an
+     * object): the declaring frame resolves through the same cached site
+     * getlex uses, then the reference is allocated over that frame's slot
+     * behind a boundary. The by-name walk is the same one the bytecode
+     * path's getlexref_&lt;t&gt;(name) takes when nothing resolved statically,
+     * anchored at the program's own frame rather than tc.curFrame.
+     */
+    static Object getlexref(int type, String name, int spec, LexSite site, ThreadContext tc,
+                            CallFrame cf) {
+        org.raku.nqp.runtime.StaticCodeInfo sci = site.sci;
+        if (sci == null) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            resolveLex(type, name, site, cf);
+            return getlexrefWalk(type, name, spec, tc, cf);
+        }
+        CallFrame f = outerAt(cf, site.depth);
+        if (f != null && f.codeRef.staticInfo == sci) {
+            return lexrefAt(f, type, site.idx, spec, cf, tc);
+        }
+        return getlexrefWalk(type, name, spec, tc, cf);
+    }
+
+    @TruffleBoundary
+    private static SixModelObject lexrefAt(CallFrame target, int type, int idx, int spec,
+                                           CallFrame cur, ThreadContext tc) {
+        return Ops.lexref_at(target, type, idx, spec, cur, tc);
+    }
+
+    @TruffleBoundary
+    private static Object getlexrefWalk(int type, String name, int spec, ThreadContext tc,
+                                        CallFrame cf) {
+        for (CallFrame f = cf; f != null; f = f.outer) {
+            org.raku.nqp.runtime.StaticCodeInfo sci = f.codeRef.staticInfo;
+            int i = switch (type) {
+                case NqpWire.T_INT -> sci.iTryGetLexicalIdx(name);
+                case NqpWire.T_NUM -> sci.nTryGetLexicalIdx(name);
+                case NqpWire.T_STR -> sci.sTryGetLexicalIdx(name);
+                default -> -1;
+            };
+            if (i != -1) return Ops.lexref_at(f, type, i, spec, cf, tc);
+        }
+        throw ExceptionHandling.dieInternal(tc, "Lexical '" + name + "' not found");
+    }
+
     /*
      * The lexical slot reads and writes are field accesses written here in
      * Java rather than calls into Ops.kt: a method-expansion trace of a
@@ -881,16 +981,37 @@ final class NqpOps {
         return tc.flatArgs;
     }
 
+    /* Parameter fetches by the declared type, the bytecode path's
+     * posparam_<t>/namedparam_<t> (and their opt_ forms): a native
+     * parameter unboxes on the way in and binds into the typed slot. */
     @TruffleBoundary
-    static Object posparam(CallFrame cf, Object csd, Object[] args, int idx, boolean opt) {
+    static Object posparam(CallFrame cf, Object csd, Object[] args, int idx, boolean opt, int type) {
         CallSiteDescriptor cs = (CallSiteDescriptor) csd;
-        return opt ? Ops.posparam_opt_o(cf, cs, args, idx) : Ops.posparam_o(cf, cs, args, idx);
+        switch (type) {
+            case NqpWire.T_INT:
+                return opt ? Ops.posparam_opt_i(cf, cs, args, idx) : Ops.posparam_i(cf, cs, args, idx);
+            case NqpWire.T_NUM:
+                return opt ? Ops.posparam_opt_n(cf, cs, args, idx) : Ops.posparam_n(cf, cs, args, idx);
+            case NqpWire.T_STR:
+                return opt ? Ops.posparam_opt_s(cf, cs, args, idx) : Ops.posparam_s(cf, cs, args, idx);
+            default:
+                return opt ? Ops.posparam_opt_o(cf, cs, args, idx) : Ops.posparam_o(cf, cs, args, idx);
+        }
     }
 
     @TruffleBoundary
-    static Object namedparam(CallFrame cf, Object csd, Object[] args, String name, boolean opt) {
+    static Object namedparam(CallFrame cf, Object csd, Object[] args, String name, boolean opt, int type) {
         CallSiteDescriptor cs = (CallSiteDescriptor) csd;
-        return opt ? Ops.namedparam_opt_o(cf, cs, args, name) : Ops.namedparam_o(cf, cs, args, name);
+        switch (type) {
+            case NqpWire.T_INT:
+                return opt ? Ops.namedparam_opt_i(cf, cs, args, name) : Ops.namedparam_i(cf, cs, args, name);
+            case NqpWire.T_NUM:
+                return opt ? Ops.namedparam_opt_n(cf, cs, args, name) : Ops.namedparam_n(cf, cs, args, name);
+            case NqpWire.T_STR:
+                return opt ? Ops.namedparam_opt_s(cf, cs, args, name) : Ops.namedparam_s(cf, cs, args, name);
+            default:
+                return opt ? Ops.namedparam_opt_o(cf, cs, args, name) : Ops.namedparam_o(cf, cs, args, name);
+        }
     }
 
     @TruffleBoundary
@@ -968,6 +1089,7 @@ final class NqpOps {
         static final java.lang.invoke.MethodHandle P6BINDASSERT;
         static final java.lang.invoke.MethodHandle P6TYPECHECKRV;
         static final java.lang.invoke.MethodHandle P6DECONTRV_RT;
+        static final java.lang.invoke.MethodHandle P6ARGVMARRAY;
         static {
             try {
                 Class<?> c = Class.forName("org.raku.rakudo.RakOps");
@@ -995,10 +1117,26 @@ final class NqpOps {
                     java.lang.invoke.MethodType.methodType(SMO, SMO, SMO, SMO, TC));
                 P6DECONTRV_RT = l.findStatic(c, "p6decontrv_rt",
                     java.lang.invoke.MethodType.methodType(SMO, SMO, SMO, long.class, TC));
+                P6ARGVMARRAY = l.findStatic(c, "p6argvmarray",
+                    java.lang.invoke.MethodType.methodType(SMO, TC, CallSiteDescriptor.class,
+                        Object[].class));
             } catch (ReflectiveOperationException e) {
                 throw new ExceptionInInitializerError(e);
             }
         }
+    }
+
+    /** nqp::curlexpad over the program's own frame, never tc.curFrame. */
+    @TruffleBoundary
+    static Object curlexpad(ThreadContext tc, CallFrame cf) {
+        return Ops.ctx_of(cf, tc);
+    }
+
+    /** rakudo's p6argvmarray: the frame's raw arguments as a BOOTArray. */
+    @TruffleBoundary
+    static Object p6argvmarray(ThreadContext tc, CallFrame cf) {
+        try { return Rak.P6ARGVMARRAY.invoke(tc, cf.csd, cf.args); }
+        catch (Throwable t) { throw sneaky(t); }
     }
 
     private static Object rak(java.lang.invoke.MethodHandle h, Object a, ThreadContext tc) {
