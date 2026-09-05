@@ -1143,7 +1143,17 @@ class QAST::TruffleEncoder {
                 elsif $_.named eq 'label' { cbail('labeled loop') }
                 else { nqp::push(@operands, $_) }
             }
-            cbail('loop shape') unless nqp::elems(@operands) == 2;
+            # 2 operands = cond+body; a 3rd is the loop's "next" expression
+            # (a C-style `loop(init;cond;incr)` increment or a NEXT-phaser
+            # body), run after the body and after a NEXT unwind, before the
+            # cond re-test -- exactly Compiler.nqp's 2-or-3 operand shape.
+            cbail('loop shape')
+                unless nqp::elems(@operands) == 2 || nqp::elems(@operands) == 3;
+            my int $has_next := nqp::elems(@operands) == 3 ?? 1 !! 0;
+            # A repeat_ loop runs its body once ahead of the first test; the
+            # "next" would have to run in that pre-run too, and getting that
+            # ordering wrong is worse than not encoding this rare combination.
+            cbail('repeat loop with next-expr') if $repeat && $has_next;
             # A body that takes the condition (`while $x -> $y {}`): the
             # bytecode path binds the condition into an __IM_ local and
             # calls the body with it. Here the condition child becomes
@@ -1155,12 +1165,14 @@ class QAST::TruffleEncoder {
                 epush(%e, $W_LOOP);
                 epush(%e, $is_until);
                 epush(%e, $repeat);
+                epush(%e, $has_next);
                 my int $ct_at := nqp::elems(%e<code>);
                 epush(%e, 0);
                 my int $condt := self.encode_loop_cond(@operands[0], %e, $im, $im_tmp);
                 nqp::bindpos(%e<code>, $ct_at, $condt);
                 if $im { self.encode_immediate_call(@operands[1], %e, 1, $T_OBJ, $im_tmp) }
                 else { self.encode_node(@operands[1], %e, $T_VOID) }
+                if $has_next { self.encode_node(@operands[2], %e, $T_VOID) }
                 return $T_OBJ;
             }
             # A handled loop: register the same LAST and NEXT|REDO rows the
@@ -1180,6 +1192,7 @@ class QAST::TruffleEncoder {
             cbail('repeat loop with handlers') if $repeat;
             epush(%e, $W_LOOPH);
             epush(%e, $is_until);
+            epush(%e, $has_next);
             my int $ct_at := nqp::elems(%e<code>);
             epush(%e, 0);
             epush(%e, $lid);
@@ -1191,6 +1204,11 @@ class QAST::TruffleEncoder {
             %e<hidx> := $nrid;
             if $im { self.encode_immediate_call(@operands[1], %e, 1, $T_OBJ, $im_tmp) }
             else { self.encode_node(@operands[1], %e, $T_VOID) }
+            # The "next" expression runs under the LAST handler (a `last` in
+            # it still exits the loop; a `next`/`redo` there is not caught),
+            # after the body and after a NEXT unwind -- Compiler.nqp:1370.
+            %e<hidx> := $lid;
+            if $has_next { self.encode_node(@operands[2], %e, $T_VOID) }
             %e<hidx> := $outer;
             return $T_OBJ;
         }
