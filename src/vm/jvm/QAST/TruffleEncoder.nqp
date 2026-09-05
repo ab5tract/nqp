@@ -809,6 +809,14 @@ class QAST::TruffleEncoder {
         op3('bindpos3d_n', 368, $T_NUM, 'oiiin');
         op3('bindpos3d_s', 369, $T_STR, 'oiiis');
         op3('abs_n', 370, $T_NUM, 'n');
+        op3('filereadable', 371, $T_INT, 's');
+        op3('filewritable', 372, $T_INT, 's');
+        op3('fileexecutable', 373, $T_INT, 's');
+        op3('fileislink', 374, $T_INT, 's');
+        op3('lstat', 375, $T_INT, 'si');
+        op3('chown', 376, $T_INT, 'sii');
+        op3('chmod', 377, $T_INT, 'si');
+        op3('getenvhash', 378, $T_OBJ, '');
         op3('getattrref_i', 159, $T_OBJ, 'oos');
         op3('getattrref_n', 160, $T_OBJ, 'oos');
         op3('getattrref_s', 161, $T_OBJ, 'oos');
