@@ -2345,7 +2345,19 @@ class QAST::TruffleEncoder {
                 cbail('bind to a lexicalref through lexical scope')
                     if self.resolve_lexref($name, %e)[0] == 2;
                 epush(%e, $W_LEXBIND); epush(%e, $type); epush(%e, epool(%e, $name));
-                self.encode_child($bindval, %e, $type);
+                my int $ubits := self.sized_uint_bits($var, $name, %e);
+                if $ubits {
+                    # Truncate to the declared width: value & ((1<<bits)-1),
+                    # exactly Compiler.nqp's emit_sized_native_trunc for uint.
+                    self.encode_child(
+                        QAST::Op.new( :op('bitand_i'), $bindval,
+                            QAST::IVal.new(
+                                :value(nqp::sub_i(nqp::bitshiftl_i(1, $ubits), 1)) ) ),
+                        %e, $type);
+                }
+                else {
+                    self.encode_child($bindval, %e, $type);
+                }
             }
             return $type;
         }
@@ -2751,11 +2763,29 @@ class QAST::TruffleEncoder {
     sub lex_rt($typeobj) {
         my int $spec := nqp::isnull($typeobj) ?? 0 !! nqp::objprimspec($typeobj);
         if $spec == 10 {
-            my int $bits := nqp::objprimbits($typeobj);
-            return $T_INT if $bits == 0 || $bits == 64;
-            return -9;
+            # Any uint lexical shares the int slot table (BlockInfo remaps
+            # type 10 -> 1). A SIZED uint (uint8/16/32) additionally masks its
+            # value to `bits` on every bind -- emit_lex_bind_value does that --
+            # so the stored/read long is the correct zero-extended magnitude
+            # (a uint is a subset of Int, so it boxes to a positive Int).
+            return $T_INT;
         }
         rt_of($typeobj)
+    }
+
+    # The width to mask a bind to, if the target lexical is a SIZED uint
+    # (uint8/16/32); 0 otherwise. The bind node's own :returns carries it for
+    # a decl-with-init (`my uint8 $x = v`); a later reassignment reads the
+    # width from the declaration recorded in %e<ownret>.
+    method sized_uint_bits($var, str $name, %e) {
+        my $ret := $var.returns;
+        if nqp::isnull($ret) && nqp::existskey(%e<ownret>, $name) {
+            $ret := %e<ownret>{$name};
+        }
+        return 0 if nqp::isnull($ret);
+        return 0 unless nqp::objprimspec($ret) == 10;
+        my int $bits := nqp::objprimbits($ret);
+        ($bits > 0 && $bits < 64) ?? $bits !! 0
     }
 
     sub rt_of($typeobj) {
