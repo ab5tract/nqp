@@ -562,7 +562,8 @@ final class NqpProgramBuilder {
             if (type != NqpWire.T_OBJ && kind != 0 && kind != 2)
                 throw new IllegalStateException("nqpp: a slurpy parameter is always an object");
 
-            if (emit) beginBindTarget(scope, target, type);
+            if (emit) beginBindTarget(scope, target,
+                    type == NqpWire.T_UINT ? NqpWire.T_INT : type);
             if (hasDefault != 0) {
                 // v = fetched-if-existed else default; the existed flag is
                 // read before anything can clobber it.
