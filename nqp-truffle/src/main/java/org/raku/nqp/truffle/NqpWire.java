@@ -49,7 +49,9 @@ package org.raku.nqp.truffle;
  *    hasDefault. Emitted only as the first child of the root STMTS.
  * 18 GETLEXOUTER pName
  * 19 CODEREF qbid               cu.lookupCodeRef, the BVal road
- * 20 LOOPH until hasNext condType lastId nrId outerIdx cond body [next]
+ * 20 LOOPH until repeat hasNext condType lastId nrId outerIdx cond body [next]
+ *    repeat=1 runs the body once ahead of the first cond test, inside the
+ *    same last/next/redo regions (a repeat_while/repeat_until with handlers).
  *    a while/until loop WITH last/next/redo handlers: the encoder
  *    registered lastId (LAST) and nrId (NEXT|REDO) rows in the block's
  *    handler table; the builder emits the same delimited TryCatch shape

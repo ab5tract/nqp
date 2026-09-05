@@ -237,12 +237,13 @@ final class NqpProgramBuilder {
                 // curHandler delimiting, unwind_check, category routing --
                 // matches the emitted bytecode exactly.
                 int until = code[at + 1];
-                int hasNext = code[at + 2];
-                int condType = code[at + 3];
-                int lastId = code[at + 4];
-                int nrId = code[at + 5];
-                int outerIdx = code[at + 6];
-                int condAt = at + 7;
+                int repeat = code[at + 2];
+                int hasNext = code[at + 3];
+                int condType = code[at + 4];
+                int lastId = code[at + 5];
+                int nrId = code[at + 6];
+                int outerIdx = code[at + 7];
+                int condAt = at + 8;
                 int bodyAt = walk(condAt, false);
                 int nextAt = walk(bodyAt, false);
                 int endAt = hasNext != 0 ? walk(nextAt, false) : nextAt;
@@ -254,57 +255,14 @@ final class NqpProgramBuilder {
                 {   // try: the loop itself, cond and all, under lastId.
                     b.beginBlock();
                     b.emitSetCurHandler(lastId);
+                    // repeat_: run the body once ahead of the first cond test,
+                    // inside these same regions (Compiler.nqp's goto redo_lbl).
+                    if (repeat != 0) {
+                        emitLoophBody(redoL, bodyAt, nextAt, hasNext != 0, nrId, lastId);
+                    }
                     b.beginWhile();
                     walkCond(condAt, condType, until, true);
-                    {   // body: run-once-with-redo under nrId.
-                        b.beginBlock();
-                        b.beginStoreLocal(redoL);
-                        b.emitLoadConstant(1L);
-                        b.endStoreLocal();
-                        b.beginWhile();
-                        b.beginNonZero();
-                        b.emitLoadLocal(redoL);
-                        b.endNonZero();
-                        {
-                            b.beginBlock();
-                            b.beginStoreLocal(redoL);
-                            b.emitLoadConstant(0L);
-                            b.endStoreLocal();
-                            b.beginTryCatch();
-                            {
-                                b.beginBlock();
-                                b.emitSetCurHandler(nrId);
-                                beginSink();
-                                walk(bodyAt, true);
-                                endSink();
-                                b.emitSetCurHandler(lastId);
-                                b.endBlock();
-                            }
-                            {   // catch: route NEXT/REDO, rethrow the rest.
-                                b.beginBlock();
-                                b.emitSetCurHandler(lastId);
-                                b.beginStoreLocal(redoL);
-                                b.beginLoopBodyUnwind(nrId, lastId);
-                                b.emitLoadException();
-                                b.endLoopBodyUnwind();
-                                b.endStoreLocal();
-                                b.endBlock();
-                            }
-                            b.endTryCatch();
-                            b.endBlock();
-                        }
-                        b.endWhile();
-                        // The "next" expr, under lastId: it runs after the
-                        // body's redo loop drains (normal completion or a
-                        // NEXT unwind, which LoopBodyUnwind routed to redo=0),
-                        // before the outer while re-tests the condition.
-                        if (hasNext != 0) {
-                            beginSink();
-                            walk(nextAt, true);
-                            endSink();
-                        }
-                        b.endBlock();
-                    }
+                    emitLoophBody(redoL, bodyAt, nextAt, hasNext != 0, nrId, lastId);
                     b.endWhile();
                     b.emitSetCurHandler(outerIdx);
                     b.endBlock();
@@ -720,6 +678,64 @@ final class NqpProgramBuilder {
         b.endUnpackResumed();
         b.endStoreLocal();
         b.endIfThen();
+    }
+
+    /**
+     * The body of a handled loop (W_LOOPH): the run-once-with-redo block under
+     * nrId, followed by the optional "next" expr under lastId. Emitted once
+     * per iteration by the outer while, and once more ahead of the first cond
+     * test for a repeat_ loop -- so the two call sites duplicate the body, as
+     * the nohandler W_LOOP builder duplicates its body for repeat. redoL is a
+     * shared scratch flag, reset to 1 at the start of each emission.
+     */
+    private void emitLoophBody(BytecodeLocal redoL, int bodyAt, int nextAt,
+                              boolean hasNext, int nrId, int lastId) {
+        b.beginBlock();
+        b.beginStoreLocal(redoL);
+        b.emitLoadConstant(1L);
+        b.endStoreLocal();
+        b.beginWhile();
+        b.beginNonZero();
+        b.emitLoadLocal(redoL);
+        b.endNonZero();
+        {
+            b.beginBlock();
+            b.beginStoreLocal(redoL);
+            b.emitLoadConstant(0L);
+            b.endStoreLocal();
+            b.beginTryCatch();
+            {
+                b.beginBlock();
+                b.emitSetCurHandler(nrId);
+                beginSink();
+                walk(bodyAt, true);
+                endSink();
+                b.emitSetCurHandler(lastId);
+                b.endBlock();
+            }
+            {   // catch: route NEXT/REDO, rethrow the rest.
+                b.beginBlock();
+                b.emitSetCurHandler(lastId);
+                b.beginStoreLocal(redoL);
+                b.beginLoopBodyUnwind(nrId, lastId);
+                b.emitLoadException();
+                b.endLoopBodyUnwind();
+                b.endStoreLocal();
+                b.endBlock();
+            }
+            b.endTryCatch();
+            b.endBlock();
+        }
+        b.endWhile();
+        // The "next" expr, under lastId: after the body's redo loop drains
+        // (normal completion or a NEXT unwind routed to redo=0), before the
+        // outer while re-tests the condition.
+        if (hasNext) {
+            beginSink();
+            walk(nextAt, true);
+            endSink();
+        }
+        b.endBlock();
     }
 
     /** Discards the value the wrapped child leaves. */
