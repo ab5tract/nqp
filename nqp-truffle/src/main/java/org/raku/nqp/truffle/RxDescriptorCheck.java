@@ -21,6 +21,7 @@ public final class RxDescriptorCheck {
      */
     private record Ordered(String target, int[] order) implements RxCursor {
         @Override public String target() { return target; }
+        @Override public int[] atoms() { return NFGString.atomsOf(target()); }
         @Override public int eos() { return target.length(); }
         @Override public Object callSubrule(String name, int pos, RxArgs args) { return null; }
         @Override public int reached(Object subCursor) { return RxVmNode.NO_MATCH; }
@@ -43,6 +44,7 @@ public final class RxDescriptorCheck {
      */
     private record Props(String target) implements RxCursor {
         @Override public String target() { return target; }
+        @Override public int[] atoms() { return NFGString.atomsOf(target()); }
         @Override public int eos() { return target.length(); }
         @Override public Object callSubrule(String name, int pos, RxArgs args) { return null; }
         @Override public int reached(Object subCursor) { return RxVmNode.NO_MATCH; }
@@ -148,6 +150,7 @@ public final class RxDescriptorCheck {
         Code(String target, boolean answer) { this.target = target; this.answer = answer; }
 
         @Override public String target() { return target; }
+        @Override public int[] atoms() { return NFGString.atomsOf(target()); }
         @Override public int eos() { return target.length(); }
         @Override public Object callSubrule(String name, int pos, RxArgs args) { return null; }
         @Override public int reached(Object subCursor) { return RxVmNode.NO_MATCH; }
@@ -259,6 +262,7 @@ public final class RxDescriptorCheck {
         Calls(String target, int width) { this.target = target; this.width = width; }
 
         @Override public String target() { return target; }
+        @Override public int[] atoms() { return NFGString.atomsOf(target()); }
         @Override public int eos() { return target.length(); }
         @Override public Object callSubrule(String name, int pos, RxArgs args) {
             seen.append(name).append('(');

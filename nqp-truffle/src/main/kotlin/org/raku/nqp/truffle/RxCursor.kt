@@ -47,10 +47,17 @@ interface RxCursor {
      */
     fun altOrder(name: String, pos: Int, branches: Int): IntArray
 
-    /** The string being matched. */
+    /** The string being matched (for the @TruffleBoundary ignoremark/prop fallbacks). */
     fun target(): String
 
-    /** One past the last position a match may reach. */
+    /**
+     * The target as a grapheme-atom array (NFG): one int per grapheme, a
+     * codepoint (`>= 0`) or a synthetic id (`< 0`). The engine indexes by
+     * grapheme, so a position is an index into this array and `eos() == atoms().size`.
+     */
+    fun atoms(): IntArray
+
+    /** One past the last grapheme position a match may reach (grapheme count). */
     fun eos(): Int
 
     /**
@@ -156,9 +163,13 @@ interface RxCursor {
     /** A cursor over a bare string, for tests and measurement. */
     class OfString(private val target: String) : RxCursor {
 
+        private val atoms: IntArray = NFGString.atomsOf(target)
+
         override fun target(): String = target
 
-        override fun eos(): Int = target.length
+        override fun atoms(): IntArray = atoms
+
+        override fun eos(): Int = atoms.size
 
         override fun callSubrule(name: String, pos: Int, args: RxArgs?): Any =
             throw UnsupportedOperationException("no subrules without a grammar: $name")

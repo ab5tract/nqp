@@ -103,7 +103,9 @@ object RxWire {
             return value
         }
 
-        /** A `<len>:<chars>` pool entry. */
+        /** A `<len>:<chars>` pool entry. NFG: len is a grapheme count (the
+         * encoder's nqp::chars), so consume that many graphemes. Grapheme count
+         * is invariant under NFC, so segmenting the raw descriptor matches. */
         fun nextChunk(): String {
             val start = at
             while (at < src.length && isDigit(src[at])) at++
@@ -111,11 +113,28 @@ object RxWire {
             val len = src.substring(start, at).toInt()
             if (at >= src.length || src[at] != ':') throw bad("expected ':'")
             at++
-            if (at + len > src.length) throw bad("pool entry runs past the end")
-            val value = src.substring(at, at + len)
-            at += len
+            val end = graphemeEnd(src, at, len)
+            if (end > src.length) throw bad("pool entry runs past the end")
+            val value = src.substring(at, end)
+            at = end
             skipSpace()
             return value
+        }
+
+        /** The UTF-16 offset [count] graphemes past [from] in [s]. */
+        private fun graphemeEnd(s: String, from: Int, count: Int): Int {
+            if (count <= 0) return from
+            val bi = java.text.BreakIterator.getCharacterInstance()
+            bi.setText(s)
+            var pos = from
+            var n = count
+            while (n > 0) {
+                val next = bi.following(pos)
+                if (next == java.text.BreakIterator.DONE) return s.length
+                pos = next
+                n--
+            }
+            return pos
         }
 
         private fun skipSpace() {
