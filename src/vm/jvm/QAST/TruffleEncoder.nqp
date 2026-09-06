@@ -529,6 +529,12 @@ class QAST::TruffleEncoder {
         op3('throw', 181, $T_OBJ, 'o');
         op3('rethrow', 182, $T_OBJ, 'o');
         op3('throwextype', 183, $T_OBJ, 'i');
+        # Delimited continuations. A hand row wins over the classlib registry's
+        # :cont bail; each suspends through the same save-stack machinery the
+        # throw ops use, and the resumed result is read from the frame.
+        op3('continuationreset', 379, $T_OBJ, 'oo');
+        op3('continuationcontrol', 380, $T_OBJ, 'ioo');
+        op3('continuationinvoke', 381, $T_OBJ, 'oo');
         op3('box_i/2', 186, $T_OBJ, 'io');
         op3('box_n/2', 187, $T_OBJ, 'no');
         op3('box_s/2', 188, $T_OBJ, 'so');
@@ -1137,12 +1143,14 @@ class QAST::TruffleEncoder {
             my int $repeat := nqp::eqat($name, 'repeat_', 0) ?? 1 !! 0;
             my int $is_until := ($name eq 'until' || $name eq 'repeat_until') ?? 1 !! 0;
             my int $nohandler := 0;
+            my $label_node;
             my @operands;
             for @($op) {
                 if $_.named eq 'nohandler' { $nohandler := 1 }
-                elsif $_.named eq 'label' { cbail('labeled loop') }
+                elsif $_.named eq 'label' { $label_node := $_ }
                 else { nqp::push(@operands, $_) }
             }
+            my int $has_label := nqp::defined($label_node) ?? 1 !! 0;
             # 2 operands = cond+body; a 3rd is the loop's "next" expression
             # (a C-style `loop(init;cond;incr)` increment or a NEXT-phaser
             # body), run after the body and after a NEXT unwind, before the
@@ -1162,6 +1170,9 @@ class QAST::TruffleEncoder {
             my int $im := needs_cond_passed(@operands[1]);
             my int $im_tmp := $im ?? new_elocal(%e, $T_OBJ) !! 0;
             if $nohandler {
+                # A label is only meaningful with the last/next/redo regions
+                # that carry a labeled unwind; a nohandler loop never has one.
+                cbail('labeled nohandler loop') if $has_label;
                 epush(%e, $W_LOOP);
                 epush(%e, $is_until);
                 epush(%e, $repeat);
@@ -1185,19 +1196,32 @@ class QAST::TruffleEncoder {
             my int $outer := %e<hidx>;
             my int $lid := &*REGISTER_UNWIND_HANDLER($outer, $EX_CAT_LAST, :ex_obj(1));
             my int $nrid := &*REGISTER_UNWIND_HANDLER($lid, $EX_CAT_NEXT +| $EX_CAT_REDO, :ex_obj(1));
-            # W_LOOPH has no repeat field: a post-test loop that also
-            # carries last/next/redo regions would have to run its body
-            # once inside those regions, and getting a first-iteration
-            # redo wrong is worse than not encoding it.
-            cbail('repeat loop with handlers') if $repeat;
+            # A labeled loop keeps its label object in a scratch local; the
+            # unwind arms read it as the `where` for _is_same_label (an
+            # unlabeled loop passes null -> _rethrow_label). The value is
+            # evaluated once at loop entry, outside the regions.
+            my int $lbl_local := $has_label ?? new_elocal(%e, $T_OBJ) !! 0;
+            # A repeat_ loop runs its body once ahead of the first cond test,
+            # inside these same last/next/redo regions (Compiler.nqp's
+            # `goto redo_lbl` before the test). The builder duplicates the
+            # body-with-redo emission for that pre-run when repeat is set.
             epush(%e, $W_LOOPH);
             epush(%e, $is_until);
+            epush(%e, $repeat);
             epush(%e, $has_next);
+            epush(%e, $has_label);
+            epush(%e, $lbl_local);
             my int $ct_at := nqp::elems(%e<code>);
             epush(%e, 0);
             epush(%e, $lid);
             epush(%e, $nrid);
             epush(%e, $outer);
+            if $has_label {
+                # The label value, bound into $lbl_local by the builder before
+                # the loop's try; evaluated in the outer handler context.
+                %e<hidx> := $outer;
+                self.encode_child($label_node, %e, $T_OBJ);
+            }
             %e<hidx> := $lid;
             my int $condt := self.encode_loop_cond(@operands[0], %e, $im, $im_tmp);
             nqp::bindpos(%e<code>, $ct_at, $condt);
@@ -2321,7 +2345,19 @@ class QAST::TruffleEncoder {
                 cbail('bind to a lexicalref through lexical scope')
                     if self.resolve_lexref($name, %e)[0] == 2;
                 epush(%e, $W_LEXBIND); epush(%e, $type); epush(%e, epool(%e, $name));
-                self.encode_child($bindval, %e, $type);
+                my int $ubits := self.sized_uint_bits($var, $name, %e);
+                if $ubits {
+                    # Truncate to the declared width: value & ((1<<bits)-1),
+                    # exactly Compiler.nqp's emit_sized_native_trunc for uint.
+                    self.encode_child(
+                        QAST::Op.new( :op('bitand_i'), $bindval,
+                            QAST::IVal.new(
+                                :value(nqp::sub_i(nqp::bitshiftl_i(1, $ubits), 1)) ) ),
+                        %e, $type);
+                }
+                else {
+                    self.encode_child($bindval, %e, $type);
+                }
             }
             return $type;
         }
@@ -2727,11 +2763,29 @@ class QAST::TruffleEncoder {
     sub lex_rt($typeobj) {
         my int $spec := nqp::isnull($typeobj) ?? 0 !! nqp::objprimspec($typeobj);
         if $spec == 10 {
-            my int $bits := nqp::objprimbits($typeobj);
-            return $T_INT if $bits == 0 || $bits == 64;
-            return -9;
+            # Any uint lexical shares the int slot table (BlockInfo remaps
+            # type 10 -> 1). A SIZED uint (uint8/16/32) additionally masks its
+            # value to `bits` on every bind -- emit_lex_bind_value does that --
+            # so the stored/read long is the correct zero-extended magnitude
+            # (a uint is a subset of Int, so it boxes to a positive Int).
+            return $T_INT;
         }
         rt_of($typeobj)
+    }
+
+    # The width to mask a bind to, if the target lexical is a SIZED uint
+    # (uint8/16/32); 0 otherwise. The bind node's own :returns carries it for
+    # a decl-with-init (`my uint8 $x = v`); a later reassignment reads the
+    # width from the declaration recorded in %e<ownret>.
+    method sized_uint_bits($var, str $name, %e) {
+        my $ret := $var.returns;
+        if nqp::isnull($ret) && nqp::existskey(%e<ownret>, $name) {
+            $ret := %e<ownret>{$name};
+        }
+        return 0 if nqp::isnull($ret);
+        return 0 unless nqp::objprimspec($ret) == 10;
+        my int $bits := nqp::objprimbits($ret);
+        ($bits > 0 && $bits < 64) ?? $bits !! 0
     }
 
     sub rt_of($typeobj) {

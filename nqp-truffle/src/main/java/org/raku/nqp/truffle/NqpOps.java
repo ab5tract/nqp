@@ -137,9 +137,15 @@ final class NqpOps {
         OP_BINDPOS2D_S = 366, OP_BINDPOS3D_I = 367, OP_BINDPOS3D_N = 368, OP_BINDPOS3D_S = 369,
         OP_ABS_N = 370,
         OP_FILEREADABLE = 371, OP_FILEWRITABLE = 372, OP_FILEEXECUTABLE = 373, OP_FILEISLINK = 374,
-        OP_LSTAT = 375, OP_CHOWN = 376, OP_CHMOD = 377, OP_GETENVHASH = 378;
+        OP_LSTAT = 375, OP_CHOWN = 376, OP_CHMOD = 377, OP_GETENVHASH = 378,
+        // Delimited continuations (gather/take, lazy lists). Like the throw
+        // :cont ops, each may suspend: continuationcontrol throws a
+        // SaveStackException that the save-stack machinery captures across
+        // engine frames, and the resumed value waits in the return register.
+        OP_CONTINUATIONRESET = 379, OP_CONTINUATIONCONTROL = 380,
+        OP_CONTINUATIONINVOKE = 381;
 
-    static final int OP_COUNT = 379;
+    static final int OP_COUNT = 382;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -537,6 +543,29 @@ final class NqpOps {
                 Ops.throwcatdyn_c(lng(a[0]), tc);
                 return Ops.result_o(cf);
             }
+            // Delimited continuations. continuationcontrol throws a
+            // SaveStackException captured by the enclosing continuationreset;
+            // each records its frame and, on resume, the value is in the
+            // return register -- the same shape as the throw :cont ops.
+            case OP_CONTINUATIONRESET: {
+                // reset/invoke are @Throws(Throwable) in Ops.kt; a capture's
+                // SaveStackException travels through sneaky() unchanged and is
+                // caught by run()'s handler above (turned into a suspend token).
+                try {
+                    Ops.continuationreset(smo(a[0]), smo(a[1]), tc);
+                } catch (Throwable t) { throw sneaky(t); }
+                return Ops.result_o(cf);
+            }
+            case OP_CONTINUATIONCONTROL: {
+                Ops.continuationcontrol(lng(a[0]), smo(a[1]), smo(a[2]), tc);
+                return Ops.result_o(cf);
+            }
+            case OP_CONTINUATIONINVOKE: {
+                try {
+                    Ops.continuationinvoke(smo(a[0]), smo(a[1]), tc);
+                } catch (Throwable t) { throw sneaky(t); }
+                return Ops.result_o(cf);
+            }
             case OP_ISTYPE_ND: return Ops.istype_nd(smo(a[0]), smo(a[1]), tc);
             case OP_WHO: return Ops.who(smo(a[0]), tc);
             case OP_GETPAYLOAD: return Ops.getpayload(smo(a[0]), tc);
@@ -621,24 +650,30 @@ final class NqpOps {
      * redirected outward the same way {@code Ops._rethrow_label} does.
      */
     private static UnwindException checkedUnwind(Object ex, int target, int outer,
-                                                 CompilationUnit cu, ThreadContext tc) {
+                                                 Object where, CompilationUnit cu, ThreadContext tc) {
         UnwindException u = unwindOf(ex);
         if (u.unwindTarget != target || u.unwindCompUnit != cu) throw u;
-        Ops._rethrow_label(u, outer, tc);
+        // An unlabeled loop redirects any LABELED unwind outward; a labeled
+        // loop instead keeps the ones whose payload is its own label. `where`
+        // is null for an unlabeled loop, the label object for a labeled one --
+        // the two arms of Compiler.nqp's unwind_check (_rethrow_label vs
+        // _is_same_label).
+        if (where == null) Ops._rethrow_label(u, outer, tc);
+        else Ops._is_same_label(u, (SixModelObject) where, outer, tc);
         return u;
     }
 
     @TruffleBoundary
-    static long loopBodyUnwind(Object ex, int target, int outer,
+    static long loopBodyUnwind(Object ex, int target, int outer, Object where,
                                CompilationUnit cu, ThreadContext tc) {
-        UnwindException u = checkedUnwind(ex, target, outer, cu, tc);
+        UnwindException u = checkedUnwind(ex, target, outer, where, cu, tc);
         return (u.category & ExceptionHandling.EX_CAT_REDO) != 0 ? 1L : 0L;
     }
 
     @TruffleBoundary
-    static void loopLastUnwind(Object ex, int target, int outer,
+    static void loopLastUnwind(Object ex, int target, int outer, Object where,
                                CompilationUnit cu, ThreadContext tc) {
-        checkedUnwind(ex, target, outer, cu, tc);
+        checkedUnwind(ex, target, outer, where, cu, tc);
     }
 
     /**
