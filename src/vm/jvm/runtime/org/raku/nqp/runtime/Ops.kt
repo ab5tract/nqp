@@ -1911,7 +1911,7 @@ object Ops {
     fun checkarity(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, required: Int, accepted: Int): CallSiteDescriptor {
         var callSite = cs
         if (callSite.hasFlattening)
-            callSite = callSite.explodeFlattening(cf, args)
+            callSite = callSite.explodeFlattening(cf.tc, args)
         else
             cf.tc.flatArgs = args
         val positionals = callSite.numPositionals

@@ -57,7 +57,7 @@ public class ArgsExpectation {
             if (csd.argFlags.length != 0) {
                 // Probable error, but consider flattening.
                 if (csd.hasFlattening)
-                    csd = csd.explodeFlattening(tc.curFrame, args);
+                    csd = csd.explodeFlattening(tc, args);
                 if (csd.argFlags.length != 0)
                     ExceptionHandling.dieInternal(tc,
                         arityFail(csd.numPositionals, 0));
@@ -72,7 +72,7 @@ public class ArgsExpectation {
             else {
                 /* Flatten if needed. */
                 if (csd.hasFlattening) {
-                    csd = csd.explodeFlattening(tc.curFrame, args);
+                    csd = csd.explodeFlattening(tc, args);
                     args = tc.flatArgs;
                 }
                 if (csd.argFlags.length == 1) {
@@ -114,7 +114,7 @@ public class ArgsExpectation {
             else {
                 /* Flatten if needed. */
                 if (csd.hasFlattening) {
-                    csd = csd.explodeFlattening(tc.curFrame, args);
+                    csd = csd.explodeFlattening(tc, args);
                     args = tc.flatArgs;
                 }
                 if (csd.argFlags.length == 2) {

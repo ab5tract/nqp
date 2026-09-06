@@ -93,7 +93,7 @@ class CallSiteDescriptor(flags: ByteArray, names: Array<String>?) {
     /* Explodes any flattening parts. Creates and puts in place a new callsite
      * and enlarged-as-needed argument arrays.
      */
-    fun explodeFlattening(cf: CallFrame, oldArgs: Array<Any?>): CallSiteDescriptor {
+    fun explodeFlattening(tc: ThreadContext, oldArgs: Array<Any?>): CallSiteDescriptor {
         val newFlags = ArrayList<Byte>()
         val newArgs = ArrayList<Any?>()
         val newNames = ArrayList<String>()
@@ -104,33 +104,33 @@ class CallSiteDescriptor(flags: ByteArray, names: Array<String>?) {
             when (af.toInt()) {
                 ARG_OBJ.toInt() or ARG_FLAT.toInt() -> {
                     val flatArray = oldArgs[oldArgsIdx++] as SixModelObject
-                    val prim = flatArray.st.REPR.get_value_storage_spec(cf.tc, flatArray.st)!!.boxedPrimitive
-                    val elems = flatArray.elems(cf.tc)
+                    val prim = flatArray.st.REPR.get_value_storage_spec(tc, flatArray.st)!!.boxedPrimitive
+                    val elems = flatArray.elems(tc)
                     for (i in 0 until elems) {
                         if (prim == BoxedPrimitive.NONE) {
-                            newArgs.add(flatArray.at_pos_boxed(cf.tc, i))
+                            newArgs.add(flatArray.at_pos_boxed(tc, i))
                             newFlags.add(ARG_OBJ)
                         } else {
-                            flatArray.at_pos_native(cf.tc, i)
+                            flatArray.at_pos_native(tc, i)
                             when (prim) {
                                 BoxedPrimitive.INT -> {
-                                    newArgs.add(cf.tc.nativeI)
+                                    newArgs.add(tc.nativeI)
                                     newFlags.add(ARG_INT)
                                 }
                                 BoxedPrimitive.UINT -> {
-                                    newArgs.add(cf.tc.nativeI)
+                                    newArgs.add(tc.nativeI)
                                     newFlags.add(ARG_UINT)
                                 }
                                 BoxedPrimitive.NUM -> {
-                                    newArgs.add(cf.tc.nativeN)
+                                    newArgs.add(tc.nativeN)
                                     newFlags.add(ARG_NUM)
                                 }
                                 BoxedPrimitive.STR -> {
-                                    newArgs.add(cf.tc.nativeS)
+                                    newArgs.add(tc.nativeS)
                                     newFlags.add(ARG_STR)
                                 }
                                 else ->
-                                    throw ExceptionHandling.dieInternal(cf.tc, "Unknown boxed primitive")
+                                    throw ExceptionHandling.dieInternal(tc, "Unknown boxed primitive")
                             }
                         }
                     }
@@ -146,7 +146,7 @@ class CallSiteDescriptor(flags: ByteArray, names: Array<String>?) {
                         }
                     }
                     else {
-                        throw ExceptionHandling.dieInternal(cf.tc, "Flattening named argument must have VMHash REPR instead of " + flatHash.st.REPR.name)
+                        throw ExceptionHandling.dieInternal(tc, "Flattening named argument must have VMHash REPR instead of " + flatHash.st.REPR.name)
                     }
                 }
                 ARG_OBJ.toInt() or ARG_NAMED.toInt(),
@@ -174,7 +174,7 @@ class CallSiteDescriptor(flags: ByteArray, names: Array<String>?) {
         val args = arrayOfNulls<Any>(newArgs.size)
         for (i in 0 until newArgs.size)
             args[i] = newArgs[i]
-        cf.tc.flatArgs = args
+        tc.flatArgs = args
 
         return exploded
     }
