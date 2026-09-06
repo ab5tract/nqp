@@ -195,6 +195,30 @@ object ExceptionHandling {
         throw RuntimeException(e)
     }
 
+    /**
+     * Before the unwinder is thrown to [handlerFrame], give back the
+     * live-invocation count of every frame it is about to tear past. Those
+     * frames never run leave() (the exception flies straight to the handler),
+     * so without this their StaticCodeInfo.liveInvocations stays over-counted
+     * -- which is what kept CallFrame.<init>'s outer-resolution search hunting
+     * the caller chain for module mainlines that exited long ago. Only frames
+     * strictly between the current frame and the handler are given back, and
+     * only once the handler is confirmed on the caller chain (so a lexical
+     * handler that is not a dynamic ancestor never makes us decrement past
+     * it). Idempotent via CallFrame.left.
+     */
+    private fun giveBackTornFrames(tc: ThreadContext, handlerFrame: CallFrame?) {
+        if (handlerFrame == null) return
+        var f = tc.curFrame
+        while (f != null && f !== handlerFrame) f = f.caller
+        if (f !== handlerFrame) return   // handler not on the caller chain
+        f = tc.curFrame
+        while (f != null && f !== handlerFrame) {
+            f.countLeft()
+            f = f.caller
+        }
+    }
+
     @JvmStatic
     private fun invokeHandler(tc0: ThreadContext, handlerInfo0: LongArray?,
                               category: Long, handlerFrame0: CallFrame?, dieSReturn0: Boolean,
@@ -223,6 +247,7 @@ object ExceptionHandling {
                 tc.unwinder.unwindCompUnit = handlerFrame!!.codeRef.staticInfo.compUnit
                 tc.unwinder.category = category
                 tc.unwinder.payload = null
+                giveBackTornFrames(tc, handlerFrame)
                 throw tc.unwinder
             }
             EX_UNWIND_OBJECT -> {
@@ -239,6 +264,7 @@ object ExceptionHandling {
                  * seeing a return go by, say -- would otherwise leave the
                  * thread's slot holding whatever that code threw last. */
                 tc.lastPayload = tc.unwinder.payload
+                giveBackTornFrames(tc, handlerFrame)
                 throw tc.unwinder
             }
             EX_BLOCK -> {
@@ -285,6 +311,7 @@ object ExceptionHandling {
                 tc.unwinder.result = Ops.result_o(tc.frame)
                 if (Ops.isnull(exObj) == 0L)
                     tc.unwinder.payload = exObj!!.payload as SixModelObject?
+                giveBackTornFrames(tc, handlerFrame)
                 throw tc.unwinder
             }
             else -> throw dieInternal(tc, "Unknown exception kind")
