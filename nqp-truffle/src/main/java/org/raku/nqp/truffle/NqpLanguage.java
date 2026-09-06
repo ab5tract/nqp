@@ -65,6 +65,8 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
                 this, BytecodeConfig.DEFAULT, b -> NqpProgramBuilder.build(b, p));
             NqpRootNode root = nodes.getNode(0);
             root.programSize = p.code().length;
+            root.resultType = p.resultType();
+            root.needsFrame = p.needsFrame();
             CallTarget target = root.getCallTarget();
             PARSED.put(source, target);
             return new RxLanguage.ConstantRootNode(this, new Program(target)).getCallTarget();

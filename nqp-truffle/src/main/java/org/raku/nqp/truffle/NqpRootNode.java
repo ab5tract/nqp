@@ -68,6 +68,18 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     /** The block's name, learned at its first run (the wire carries none). */
     volatile String blockName;
 
+    /** The block's static result type (wire T_OBJ/INT/NUM/STR); set at
+     *  parse. For a frame-free block the direct-entry road reads this to
+     *  deposit the program's return value into the caller's registers,
+     *  where a framed block's own StoreRet would have. */
+    int resultType;
+
+    /** False when the block runs with no CallFrame (the encoder proved it
+     *  frame-free: no lexicals, no dispatch, no nested block, no
+     *  frame-reading op, positional local-scope params only). Set at parse
+     *  from the wire header; default (framed) is the safe value. */
+    boolean needsFrame = true;
+
     @Override
     public String getName() {
         String n = blockName;
@@ -462,8 +474,8 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static Object doCheck(VirtualFrame f, int required, int accepted) {
             Object[] fa = f.getArguments();
             try {
-                return NqpOps.checkarity((CallFrame) fa[ARG_CF], (CallSiteDescriptor) fa[ARG_CSD],
-                (Object[]) fa[ARG_ARGS], required, accepted);
+                return NqpOps.checkarity((CallFrame) fa[ARG_CF], (ThreadContext) fa[ARG_TC],
+                (CallSiteDescriptor) fa[ARG_CSD], (Object[]) fa[ARG_ARGS], required, accepted);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -491,7 +503,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doParam(VirtualFrame f, int idx, int opt, int type, Object csd, Object args) {
             try {
-                return NqpOps.posparam(cf(f), csd, (Object[]) args, idx, opt != 0, type);
+                return NqpOps.posparam(cf(f), tc(f), cu(f), csd, (Object[]) args, idx, opt != 0, type);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -675,7 +687,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doCheck(VirtualFrame f, Object allowed, Object csd) {
             try {
-                NqpOps.checkNoExtraNamed(cf(f), csd, (String[]) allowed);
+                NqpOps.checkNoExtraNamed(cf(f), tc(f), csd, (String[]) allowed);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }

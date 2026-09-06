@@ -369,6 +369,7 @@ class QAST::TruffleEncoder {
     my int $code_encoded := 0;
     my int $code_bail_p := 0;
     my int $code_leaf := 0;
+    my int $code_noframe := 0;
     my int $code_precomp := 0;
     my %code_desugar;
     my int $code_skip_anon := 0;
@@ -385,6 +386,14 @@ class QAST::TruffleEncoder {
         $code_encoded  := nqp::existskey(%env, 'NQP_CODE_ENCODED') ?? 1 !! 0;
         $code_bail_p   := nqp::existskey(%env, 'NQP_CODE_BAIL') ?? 1 !! 0;
         $code_leaf     := nqp::existskey(%env, 'NQP_CODE_LEAF') ?? 1 !! 0;
+        # NQP_CODE_NOFRAME: mark a block frame-free (needsFrame=0 in the wire
+        # header) when it declares no lexicals, makes no dispatch, has no
+        # nested block, reads no frame (lex/getlexouter/ctx/usecapture/args),
+        # runs no handler region, and takes only positional local-scope
+        # params. Such a block runs with cf==null and the runtime skips the
+        # CallFrame allocation entirely. Off by default: the header word is
+        # always 1 (needs frame), so the emitted programs are unchanged.
+        $code_noframe  := nqp::existskey(%env, 'NQP_CODE_NOFRAME') ?? 1 !! 0;
         $code_precomp  := nqp::existskey(%env, 'NQP_CODE_PRECOMP') ?? 1 !! 0;
         if nqp::existskey(%env, 'NQP_CODE_DESUGAR') {
             for nqp::split(',', %env<NQP_CODE_DESUGAR>) { %code_desugar{$_} := 1 }
@@ -665,10 +674,11 @@ class QAST::TruffleEncoder {
             'params', nqp::list(), 'decls', nqp::list(),
             'nested', nqp::list(),
             'block', $block, 'qast', $node, 'comp', $comp, 'dispatches', 0,
-            'hidx', 0);
-        epush(%e, 1);   # wire version
+            'frame_op', 0, 'hidx', 0);
+        epush(%e, 2);   # wire version
         epush(%e, 0);   # result type, patched below
         epush(%e, 0);   # local count, patched below
+        epush(%e, 1);   # needs frame, patched below (index 3)
         my str $out := '';
         my $err := nqp::null();
         try {
@@ -698,7 +708,33 @@ class QAST::TruffleEncoder {
         my @code := %e<code>;
         my @ltypes := %e<ltypes>;
         nqp::bindpos(@code, 2, nqp::elems(@ltypes));
-        nqp::splice(@code, @ltypes, 3, 0);
+        # A block needs a CallFrame unless it is frame-free: no declared
+        # lexicals, no dispatch, no nested block, no frame-reading op, and
+        # only positional local-scope params (patch_params sets frame_op for
+        # named/slurpy/lexical-scope). Off the knob, always 1.
+        #
+        # Placeholder lexical declarations do not force a frame: a `static`
+        # container prototype, a `contvar`/`statevar` slot, and the implicit
+        # `%_` are all dead unless the body actually reads them -- and every
+        # such read emits a lexical op, which sets frame_op. So the bare decl
+        # never needs a CallFrame; only a real use does. This is what makes a
+        # method with `my` variables or container parameters frame-free: the
+        # value lives in a lowered local, and the kept lexical is just a
+        # prototype the body never names. A `lex`/`lexref` decl (a lexical
+        # the optimizer did NOT lower, i.e. one that escapes) still counts.
+        # (`state` keeps forcing a frame: its once-only init runs at frame
+        # construction, subtle enough to leave for later.)
+        my int $fdecls := 0;
+        for %e<decls> {
+            my str $k := $_[0];
+            $fdecls := $fdecls + 1
+                unless $k eq 'static' || $k eq 'cont'
+                    || nqp::iseq_s($_[1].name, '%_');
+        }
+        my int $needs_frame := %e<frame_op>
+            || $fdecls || %e<dispatches> || nqp::elems(%e<nested>);
+        nqp::bindpos(@code, 3, ($code_noframe && !$needs_frame) ?? 0 !! 1);
+        nqp::splice(@code, @ltypes, 4, 0);
         # The size gate, BEFORE the commit: the program travels as one
         # string constant, which the class file caps at 65535 UTF-8
         # bytes (the rx descriptor's cliff). A refusal after the commit
@@ -834,6 +870,16 @@ class QAST::TruffleEncoder {
             my int $kind := $p.slurpy
                 ?? ($p.named ?? 3 !! 1)
                 !! ($p.named ?? 2 !! 0);
+            # A discard `%_` named slurpy (the JVM lowering annotates it):
+            # accepts and discards stray nameds, builds no hash, binds
+            # nothing. Kind 4 tells the builder to suppress the extra-named
+            # rejection but emit no fetch -- so it needs no CallFrame and does
+            # not force a frame. Off the knob it stays a normal kind-3 slurpy.
+            $kind := 4 if $code_noframe && $kind == 3 && $p.ann('discard_named');
+            # Frame-free covers positional local-scope params and the kind-4
+            # discard slurpy; a real named/slurpy fetch and a lexical-scope
+            # bind both go through the CallFrame.
+            %e<frame_op> := 1 if $kind != 0 && $kind != 4;
             epush(%e, $kind);
             my int $ptype := $p.slurpy ?? $T_OBJ !! rt_of($p.returns);
             my int $uint := 0;
@@ -858,10 +904,11 @@ class QAST::TruffleEncoder {
                 epush(%e, %e<locals>{$p.name}[0]);
             }
             else {
+                %e<frame_op> := 1;   # a lexical-scope param bind needs the frame
                 epush(%e, 0);
                 epush(%e, epool(%e, $p.name));
             }
-            if $kind == 2 || $kind == 3 {
+            if $kind == 2 || $kind == 3 || $kind == 4 {
                 epush(%e, epool(%e, ~$p.named));
             }
             if $p.default {
@@ -1205,6 +1252,7 @@ class QAST::TruffleEncoder {
             # inside these same last/next/redo regions (Compiler.nqp's
             # `goto redo_lbl` before the test). The builder duplicates the
             # body-with-redo emission for that pre-run when repeat is set.
+            %e<frame_op> := 1;
             epush(%e, $W_LOOPH);
             epush(%e, $is_until);
             epush(%e, $repeat);
@@ -1542,11 +1590,13 @@ class QAST::TruffleEncoder {
         }
         if $name eq 'curlexpad' {
             cbail('curlexpad arity') if nqp::elems(@($op));
+            %e<frame_op> := 1;
             epush(%e, $W_CURLEXPAD);
             return $T_OBJ;
         }
         if $name eq 'p6argvmarray' {
             cbail('p6argvmarray arity') if nqp::elems(@($op));
+            %e<frame_op> := 1;
             epush(%e, $W_P6ARGVMARRAY);
             return $T_OBJ;
         }
@@ -1555,6 +1605,7 @@ class QAST::TruffleEncoder {
             # exactly Compiler.nqp's usecapture(tc, csd, args). A 0-operand
             # op that reads cf.csd/cf.args, mirroring p6argvmarray.
             cbail('usecapture arity') if nqp::elems(@($op));
+            %e<frame_op> := 1;
             epush(%e, $W_USECAPTURE);
             return $T_OBJ;
         }
@@ -1667,11 +1718,13 @@ class QAST::TruffleEncoder {
             # Bind the closure, then the guarded region; the pair is a
             # two-statement STMTS whose value is the handle's.
             epush(%e, $W_STMTS); epush(%e, 2);
+            %e<frame_op> := 1;
             epush(%e, $W_LEXBIND); epush(%e, $T_OBJ); epush(%e, epool(%e, $hname));
             epush(%e, $W_OPCALL); epush(%e, 96); epush(%e, 1);   # takeclosure
             epush(%e, $W_CODEREF);
             nqp::push(%e<nested>, [nqp::elems(%e<code>), $hblock]);
             epush(%e, 0);
+            %e<frame_op> := 1;
             epush(%e, $W_HANDLE);
             epush(%e, $hid);
             epush(%e, $outer);
@@ -1693,6 +1746,7 @@ class QAST::TruffleEncoder {
             my int $mask := %handler_names{$type};
             my int $outer := %e<hidx>;
             my int $hid := &*REGISTER_UNWIND_HANDLER($outer, $mask, :ex_obj(1));
+            %e<frame_op> := 1;
             epush(%e, $W_HANDLEPAYLOAD);
             epush(%e, $hid);
             epush(%e, $outer);
@@ -1726,6 +1780,7 @@ class QAST::TruffleEncoder {
         }
         if $name eq 'getlexouter' {
             cbail('getlexouter shape') unless nqp::istype($op[0], QAST::SVal);
+            %e<frame_op> := 1;
             epush(%e, $W_GETLEXOUTER);
             epush(%e, epool(%e, $op[0].value));
             return $T_OBJ;
@@ -2337,6 +2392,7 @@ class QAST::TruffleEncoder {
             }
             my int $type := self.lexical_type_of($name, %e, $scope);
             if nqp::isnull($bindval) {
+                %e<frame_op> := 1;
                 epush(%e, $W_LEXGET); epush(%e, $type); epush(%e, epool(%e, $name));
             }
             else {
@@ -2344,6 +2400,7 @@ class QAST::TruffleEncoder {
                 # the bytecode path; a bail keeps that error its own.
                 cbail('bind to a lexicalref through lexical scope')
                     if self.resolve_lexref($name, %e)[0] == 2;
+                %e<frame_op> := 1;
                 epush(%e, $W_LEXBIND); epush(%e, $type); epush(%e, epool(%e, $name));
                 my int $ubits := self.sized_uint_bits($var, $name, %e);
                 if $ubits {
@@ -2403,11 +2460,13 @@ class QAST::TruffleEncoder {
             my int $kind := @r[0];
             if !nqp::isnull($bindval) {
                 cbail('bind to a non-reference lexicalref ' ~ $name) unless $kind == 2;
+                %e<frame_op> := 1;
                 epush(%e, $W_LEXBIND); epush(%e, $T_OBJ); epush(%e, epool(%e, $name));
                 self.encode_child($bindval, %e, $T_OBJ);
                 return $T_OBJ;
             }
             if $kind == 2 {
+                %e<frame_op> := 1;
                 epush(%e, $W_LEXGET); epush(%e, $T_OBJ); epush(%e, epool(%e, $name));
                 return $T_OBJ;
             }
@@ -2415,6 +2474,7 @@ class QAST::TruffleEncoder {
             cbail('lexicalref to a non-native ' ~ $name) if $t == $T_OBJ;
             cbail('lexicalref type') if $t < 0 || $t > 3;
             my int $spec := $kind == 1 ?? sized_native_ref_spec(@r[2]) !! 0;
+            %e<frame_op> := 1;
             epush(%e, $W_LEXREF); epush(%e, $t); epush(%e, epool(%e, $name)); epush(%e, $spec);
             return $T_OBJ;
         }
@@ -2590,6 +2650,7 @@ class QAST::TruffleEncoder {
 
     method encode_lexget(str $name, %e) {
         my int $type := self.lexical_type_of($name, %e, 'lexical');
+        %e<frame_op> := 1;
         epush(%e, $W_LEXGET); epush(%e, $type); epush(%e, epool(%e, $name));
         $type
     }

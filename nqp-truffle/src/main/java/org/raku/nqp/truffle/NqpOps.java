@@ -1369,9 +1369,26 @@ final class NqpOps {
     /* ----- parameter binding, mirroring the emitted prologue ----- */
 
     @TruffleBoundary
-    static CallSiteDescriptor checkarity(CallFrame cf, CallSiteDescriptor csd, Object[] args,
-                                         int required, int accepted) {
-        return Ops.checkarity(cf, csd, args, required, accepted);
+    static CallSiteDescriptor checkarity(CallFrame cf, ThreadContext tc, CallSiteDescriptor csd,
+                                         Object[] args, int required, int accepted) {
+        if (cf != null)
+            return Ops.checkarity(cf, csd, args, required, accepted);
+        /* Frame-free: Ops.checkarity keeps csd/args on the frame (for a
+         * later HLL error against the original arguments); a frame-free
+         * block does no such custom binding, so only the flatten and the
+         * arity check remain, against tc. */
+        CallSiteDescriptor cs = csd;
+        if (cs.hasFlattening) cs = cs.explodeFlattening(tc, args);
+        else tc.flatArgs = args;
+        int positionals = cs.numPositionals;
+        if (positionals < required || (positionals > accepted && accepted != -1))
+            throw ExceptionHandling.dieInternal(tc, "Too "
+                + (positionals < required ? "few" : "many")
+                + " positionals passed; expected " + required
+                + (accepted != required && accepted != -1 ? " to " + accepted : "")
+                + " argument" + (required == 1 && accepted == 1 ? "" : "s")
+                + " but got " + positionals);
+        return cs;
     }
 
     @TruffleBoundary
@@ -1383,7 +1400,10 @@ final class NqpOps {
      * posparam_<t>/namedparam_<t> (and their opt_ forms): a native
      * parameter unboxes on the way in and binds into the typed slot. */
     @TruffleBoundary
-    static Object posparam(CallFrame cf, Object csd, Object[] args, int idx, boolean opt, int type) {
+    static Object posparam(CallFrame cf, ThreadContext tc, CompilationUnit cu, Object csd,
+                           Object[] args, int idx, boolean opt, int type) {
+        if (cf == null)
+            return posparamFree(tc, cu, (CallSiteDescriptor) csd, args, idx, opt, type);
         CallSiteDescriptor cs = (CallSiteDescriptor) csd;
         switch (type) {
             case NqpWire.T_INT:
@@ -1396,6 +1416,71 @@ final class NqpOps {
                 return opt ? Ops.posparam_opt_u(cf, cs, args, idx) : Ops.posparam_u(cf, cs, args, idx);
             default:
                 return opt ? Ops.posparam_opt_o(cf, cs, args, idx) : Ops.posparam_o(cf, cs, args, idx);
+        }
+    }
+
+    /**
+     * The frame-free positional fetch: the same by-declared-type binding
+     * Ops.posparam_&lt;t&gt; does, but reading the box types from the
+     * CompilationUnit and the optional-existed flag from the ThreadContext
+     * directly, so no CallFrame is needed. Only positional params reach
+     * here (the encoder keeps named/slurpy blocks framed).
+     */
+    @TruffleBoundary
+    private static Object posparamFree(ThreadContext tc, CompilationUnit cu, CallSiteDescriptor cs,
+                                       Object[] args, int idx, boolean opt, int type) {
+        if (opt) {
+            if (idx >= cs.numPositionals) {
+                tc.lastParameterExisted = 0;
+                switch (type) {
+                    case NqpWire.T_INT: case NqpWire.T_UINT: return 0L;
+                    case NqpWire.T_NUM: return 0.0d;
+                    default: return null;   // T_STR, T_OBJ
+                }
+            }
+            tc.lastParameterExisted = 1;
+        }
+        byte flag = cs.argFlags[idx];
+        Object raw = args[idx];
+        var hll = cu.hllConfig;
+        switch (type) {
+            case NqpWire.T_INT: case NqpWire.T_UINT:
+                switch (flag) {
+                    case CallSiteDescriptor.ARG_INT: case CallSiteDescriptor.ARG_UINT:
+                        return (long) raw;
+                    case CallSiteDescriptor.ARG_OBJ:
+                        return Ops.decont((SixModelObject) raw, tc).get_int(tc);
+                    default:
+                        throw ExceptionHandling.dieInternal(tc, "Expected native int argument");
+                }
+            case NqpWire.T_NUM:
+                switch (flag) {
+                    case CallSiteDescriptor.ARG_NUM: return (double) raw;
+                    case CallSiteDescriptor.ARG_OBJ:
+                        return Ops.decont((SixModelObject) raw, tc).get_num(tc);
+                    default:
+                        throw ExceptionHandling.dieInternal(tc, "Expected native num argument");
+                }
+            case NqpWire.T_STR:
+                switch (flag) {
+                    case CallSiteDescriptor.ARG_STR: return (String) raw;
+                    case CallSiteDescriptor.ARG_OBJ:
+                        return Ops.decont((SixModelObject) raw, tc).get_str(tc);
+                    default:
+                        throw ExceptionHandling.dieInternal(tc, "Expected native str argument");
+                }
+            default:   // T_OBJ
+                switch (flag) {
+                    case CallSiteDescriptor.ARG_OBJ: return (SixModelObject) raw;
+                    case CallSiteDescriptor.ARG_INT: case CallSiteDescriptor.ARG_UINT:
+                        return Ops.box_i((long) raw, hll.intBoxType, tc);
+                    case CallSiteDescriptor.ARG_NUM:
+                        return Ops.box_n((double) raw, hll.numBoxType, tc);
+                    case CallSiteDescriptor.ARG_STR:
+                        return Ops.box_s((String) raw, hll.strBoxType, tc);
+                    default:
+                        throw ExceptionHandling.dieInternal(tc, "Error in argument processing");
+                }
         }
     }
 
@@ -1438,11 +1523,21 @@ final class NqpOps {
          * as field writes for the reason lexO gives. */
         CallFrame caller = cf.caller;
         if (caller == null) { returnSlow(type, v, cf); return; }
+        storeReturnInto(type, v, caller);
+    }
+
+    /**
+     * Writes a typed result into a frame's return registers. The frame-free
+     * direct-entry road calls this with the caller frame, doing what a
+     * framed callee's own StoreRet-into-cf.caller would have done, from the
+     * program's return value instead.
+     */
+    static void storeReturnInto(int type, Object v, CallFrame target) {
         switch (type) {
-            case NqpWire.T_INT -> { caller.iRet = lng(v); caller.retType = (byte) CallFrame.RET_INT; }
-            case NqpWire.T_NUM -> { caller.nRet = dbl(v); caller.retType = (byte) CallFrame.RET_NUM; }
-            case NqpWire.T_STR -> { caller.sRet = (String) v; caller.retType = (byte) CallFrame.RET_STR; }
-            default -> { caller.oRet = (SixModelObject) v; caller.retType = (byte) CallFrame.RET_OBJ; }
+            case NqpWire.T_INT -> { target.iRet = lng(v); target.retType = (byte) CallFrame.RET_INT; }
+            case NqpWire.T_NUM -> { target.nRet = dbl(v); target.retType = (byte) CallFrame.RET_NUM; }
+            case NqpWire.T_STR -> { target.sRet = (String) v; target.retType = (byte) CallFrame.RET_STR; }
+            default -> { target.oRet = (SixModelObject) v; target.retType = (byte) CallFrame.RET_OBJ; }
         }
     }
 
@@ -1462,7 +1557,7 @@ final class NqpOps {
      * declared named parameters.
      */
     @TruffleBoundary
-    static void checkNoExtraNamed(CallFrame cf, Object csdO, String[] allowed) {
+    static void checkNoExtraNamed(CallFrame cf, ThreadContext tc, Object csdO, String[] allowed) {
         CallSiteDescriptor csd = (CallSiteDescriptor) csdO;
         String[] names = csd.names;
         if (names == null) return;
@@ -1470,7 +1565,7 @@ final class NqpOps {
         for (String n : names) {
             for (String a : allowed) if (a.equals(n)) continue outer;
             throw org.raku.nqp.runtime.ExceptionHandling.dieInternal(
-                cf.tc, "Unexpected named argument '" + n + "' passed");
+                tc, "Unexpected named argument '" + n + "' passed");
         }
     }
 
