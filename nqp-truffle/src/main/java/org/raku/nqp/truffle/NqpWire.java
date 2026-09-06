@@ -179,16 +179,33 @@ public final class NqpWire {
         return neg ? -v : v;
     }
 
-    /** {@code <len>:<chars>}, length-prefixed so any character can travel. */
+    /** {@code <len>:<chars>}, length-prefixed so any character can travel.
+     * NFG: len is a grapheme count (the encoder's nqp::chars), so consume that
+     * many graphemes; grapheme count is invariant under NFC. */
     private static String parsePooled(String s, int[] cursor) {
         int len = parseInt(s, cursor);
         int at = cursor[0];
         if (at >= s.length() || s.charAt(at) != ':')
             throw new IllegalArgumentException("nqpp: expected ':' at " + at);
         at++;
-        String out = s.substring(at, at + len);
-        cursor[0] = at + len;
+        int end = graphemeEnd(s, at, len);
+        String out = s.substring(at, end);
+        cursor[0] = end;
         return out;
+    }
+
+    /** The UTF-16 offset {@code count} graphemes past {@code from}. */
+    private static int graphemeEnd(String s, int from, int count) {
+        if (count <= 0) return from;
+        java.text.BreakIterator bi = java.text.BreakIterator.getCharacterInstance();
+        bi.setText(s);
+        int pos = from;
+        for (int n = count; n > 0; n--) {
+            int next = bi.following(pos);
+            if (next == java.text.BreakIterator.DONE) return s.length();
+            pos = next;
+        }
+        return pos;
     }
 
     private NqpWire() { }

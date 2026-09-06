@@ -89,12 +89,14 @@ class TruffleGrammarEngine : GrammarEngine {
                 /* The resumed choices are exhausted; the scan is the next
                  * one. Retry whole matches from the following positions,
                  * exactly what the bytecode path's scan marks resume to. */
-                val eos = target.length
-                at2 += if (at2 < eos - 1 && target[at2] == '\r' && target[at2 + 1] == '\n') 2 else 1
+                /* NFG: positions are grapheme indices, so scan by one grapheme.
+                 * A CR LF pair is a single grapheme, so no fixup is needed. */
+                val eos = rx.eos()
+                at2 += 1
                 while (at2 <= eos) {
                     end2 = p.target.call(target, at2, rx, stateOut) as Int
                     if (end2 >= 0) break
-                    at2 += if (at2 < eos - 1 && target[at2] == '\r' && target[at2 + 1] == '\n') 2 else 1
+                    at2 += 1
                 }
             }
             if (end2 >= 0 && at2 >= 0) {
@@ -115,16 +117,15 @@ class TruffleGrammarEngine : GrammarEngine {
          * there or not at all. Getting that backwards makes every subrule
          * silently search forward, which parses -- just not the language. */
         if (p.scan && invocantFrom == -1) {
-            val eos = target.length
+            /* NFG: grapheme indices. A CR LF pair is one grapheme, so scanning
+             * by one grapheme never offers a position inside it -- which is
+             * exactly the atom-not-char stepping the old UTF-16 code emulated. */
+            val eos = rx.eos()
             end = RxVmNode.NO_MATCH
             while (at <= eos) {
                 end = p.target.call(target, at, rx, stateOut) as Int
                 if (end >= 0) break
-                /* By atom, not by char: a CR directly followed by LF is one
-                 * fused pair (RxProgram.CRLF), and an NFG backend has no
-                 * position inside it to offer a match. Stepping into the LF
-                 * would let <[\x0A]> find a newline NFG says is not there. */
-                at += if (at < eos - 1 && target[at] == '\r' && target[at + 1] == '\n') 2 else 1
+                at += 1
             }
             if (end < 0) at = from
         } else {
