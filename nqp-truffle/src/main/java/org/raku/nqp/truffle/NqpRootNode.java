@@ -593,9 +593,9 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     @ConstantOperand(type = int.class, name = "outer")
     public static final class LoopBodyUnwind {
         @Specialization
-        static long doRoute(VirtualFrame f, int target, int outer, Object ex) {
+        static long doRoute(VirtualFrame f, int target, int outer, Object where, Object ex) {
             try {
-                return NqpOps.loopBodyUnwind(ex, target, outer, cu(f), tc(f));
+                return NqpOps.loopBodyUnwind(ex, target, outer, where, cu(f), tc(f));
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -608,9 +608,9 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     @ConstantOperand(type = int.class, name = "outer")
     public static final class LoopLastUnwind {
         @Specialization
-        static void doRoute(VirtualFrame f, int target, int outer, Object ex) {
+        static void doRoute(VirtualFrame f, int target, int outer, Object where, Object ex) {
             try {
-                NqpOps.loopLastUnwind(ex, target, outer, cu(f), tc(f));
+                NqpOps.loopLastUnwind(ex, target, outer, where, cu(f), tc(f));
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
