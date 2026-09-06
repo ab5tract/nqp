@@ -35,7 +35,9 @@ package org.raku.nqp.truffle;
  * 10 LOCBIND type idx child
  * 11 IFV condType negate hasElse cond then [else]  value; no else = null
  * 12 IFS condType negate hasElse cond then [else]  statement, value null
- * 13 LOOP until repeat condType cond body    value null
+ * 13 LOOP until repeat hasNext condType cond body [next]  value null
+ *    hasNext=1 adds a 3rd operand (C-style loop incr / NEXT-expr), run in
+ *    void after the body, before the cond re-test.
  * 14 DISPATCH rtype pName nargs (flag [pName])* child*  dispatchUncached
  *    flag bits: 0-1 arg type (obj/str used), 2 named, 3 flat
  * 15 OPCALL opId nargs child*  the NqpOps table
@@ -47,13 +49,15 @@ package org.raku.nqp.truffle;
  *    hasDefault. Emitted only as the first child of the root STMTS.
  * 18 GETLEXOUTER pName
  * 19 CODEREF qbid               cu.lookupCodeRef, the BVal road
- * 20 LOOPH until condType lastId nrId outerIdx cond body
+ * 20 LOOPH until hasNext condType lastId nrId outerIdx cond body [next]
  *    a while/until loop WITH last/next/redo handlers: the encoder
  *    registered lastId (LAST) and nrId (NEXT|REDO) rows in the block's
  *    handler table; the builder emits the same delimited TryCatch shape
  *    the bytecode path does (curHandler=lastId around cond+loop, nrId
  *    around the body; body catch routes NEXT/REDO, loop catch swallows
- *    LAST; outerIdx restored after). Value null, like LOOP.
+ *    LAST; outerIdx restored after). Value null, like LOOP. hasNext=1 adds
+ *    a 3rd operand run in void under lastId after the body (and after a NEXT
+ *    unwind), before the cond re-test.
  * 21 JNULL                      a Java null: what aconst_null answers
  *    (fresh object locals, valueless else branches) -- NOT the VMNull
  *    singleton NULLC stands for.
@@ -114,6 +118,8 @@ public final class NqpWire {
     public static final int P6ARGVMARRAY = 26;
     /** A classlib op from the registry: rtype, class, method, descriptor, tc, nargs, arg types, then the args. */
     public static final int CLASSLIB = 27;
+    /** usecapture: the frame's own args, captured for a re-dispatch. */
+    public static final int USECAPTURE = 28;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;
