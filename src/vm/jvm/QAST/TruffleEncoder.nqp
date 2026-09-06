@@ -419,20 +419,32 @@ class QAST::TruffleEncoder {
             my int $slash := nqp::index($k, '/');
             %covered{'op:' ~ ($slash >= 0 ?? nqp::substr($k, 0, $slash) !! $k)} := 1;
         }
+        # The classlib registry (Compiler.nqp's map_classlib_*_op, published
+        # as hllsyms) is the encoder's fallback for an op with no hand row,
+        # so its ops count as covered too -- otherwise the survey undercounts
+        # every op that moved from a hand op3 row to the registry. Upper
+        # bound like the rest: a :cont op or an arg type the fallback cannot
+        # carry still bails per use, and NQP_CODE_BAIL shows it.
+        my $creg := nqp::gethllsym('nqp', 'CODE_CLASSLIB_OPS');
+        if !nqp::isnull($creg) {
+            for $creg { %covered{'op:' ~ $_.key} := 1 }
+        }
+        my $hreg := nqp::gethllsym('nqp', 'CODE_CLASSLIB_HLL_OPS');
+        if !nqp::isnull($hreg) {
+            for $hreg {
+                for $_.value { %covered{'op:' ~ $_.key} := 1 }
+            }
+        }
         1
     }
     sub emit_init() {
         return 0 if $emit_init_done;
         $emit_init_done := 1;
-        op3('say', 0, $T_STR, 's');
-        op3('print', 1, $T_STR, 's');
         op3('add_i', 2, $T_INT, 'ii');
         op3('sub_i', 3, $T_INT, 'ii');
         op3('mul_i', 4, $T_INT, 'ii');
-        op3('div_i', 5, $T_INT, 'ii');
         op3('mod_i', 6, $T_INT, 'ii');
         op3('neg_i', 7, $T_INT, 'i');
-        op3('abs_i', 8, $T_INT, 'i');
         op3('bitand_i', 9, $T_INT, 'ii');
         op3('bitor_i', 10, $T_INT, 'ii');
         op3('bitxor_i', 11, $T_INT, 'ii');
@@ -457,69 +469,18 @@ class QAST::TruffleEncoder {
         op3('isle_n', 30, $T_INT, 'nn');
         op3('isgt_n', 31, $T_INT, 'nn');
         op3('isge_n', 32, $T_INT, 'nn');
-        op3('concat', 33, $T_STR, 'ss');
-        op3('chars', 34, $T_INT, 's');
-        op3('uc', 35, $T_STR, 's');
-        op3('lc', 36, $T_STR, 's');
         op3('substr/2', 37, $T_STR, 'si');
         op3('substr/3', 38, $T_STR, 'sii');
         op3('index/2', 39, $T_INT, 'ss');
         op3('index/3', 40, $T_INT, 'ssi');
-        op3('eqat', 41, $T_INT, 'ssi');
-        op3('chr', 42, $T_STR, 'i');
-        op3('join', 43, $T_STR, 'so');
-        op3('split', 44, $T_OBJ, 'ss');
         op3('iseq_s', 45, $T_INT, 'ss');
         op3('isne_s', 46, $T_INT, 'ss');
         op3('islt_s', 47, $T_INT, 'ss');
         op3('isle_s', 48, $T_INT, 'ss');
         op3('isgt_s', 49, $T_INT, 'ss');
         op3('isge_s', 50, $T_INT, 'ss');
-        op3('decont', 51, $T_OBJ, 'o');
-        op3('isnull', 52, $T_INT, 'o');
-        op3('isconcrete', 53, $T_INT, 'o');
-        op3('defined', 53, $T_INT, 'o');
-        op3('istrue', 54, $T_INT, 'o');
-        op3('istype', 55, $T_INT, 'oo');
-        op3('eqaddr', 56, $T_INT, 'oo');
-        op3('what', 57, $T_OBJ, 'o');
-        op3('create', 58, $T_OBJ, 'o');
-        op3('clone', 59, $T_OBJ, 'o');
-        op3('elems', 60, $T_INT, 'o');
-        op3('push', 61, $T_OBJ, 'oo');
-        op3('pop', 62, $T_OBJ, 'o');
-        op3('shift', 63, $T_OBJ, 'o');
-        op3('unshift', 64, $T_OBJ, 'oo');
-        op3('atpos', 65, $T_OBJ, 'oi');
-        op3('bindpos', 66, $T_OBJ, 'oio');
-        op3('atkey', 67, $T_OBJ, 'os');
-        op3('bindkey', 68, $T_OBJ, 'oso');
-        op3('existskey', 69, $T_INT, 'os');
-        op3('deletekey', 70, $T_OBJ, 'os');
-        op3('iscont', 71, $T_INT, 'o');
-        op3('hllize', 72, $T_OBJ, 'o');
-        op3('islist', 73, $T_INT, 'o');
-        op3('ishash', 74, $T_INT, 'o');
-        op3('unbox_i', 75, $T_INT, 'o');
-        op3('unbox_n', 76, $T_NUM, 'o');
-        op3('unbox_s', 77, $T_STR, 'o');
-        op3('box_i', 78, $T_OBJ, 'i');
-        op3('box_n', 79, $T_OBJ, 'n');
-        op3('box_s', 80, $T_OBJ, 's');
         op3('ord/1', 83, $T_INT, 's');
         op3('null_s', 84, $T_STR, '');
-        op3('getlexdyn', 86, $T_OBJ, 's');
-        op3('forceouterctx', 88, $T_OBJ, 'oo');
-        op3('can', 89, $T_INT, 'os');
-        op3('isinvokable', 90, $T_INT, 'o');
-        op3('setelems', 91, $T_OBJ, 'oi');
-        op3('existspos', 92, $T_INT, 'oi');
-        op3('clone_nd', 93, $T_OBJ, 'o');
-        op3('setcodeobj', 94, $T_OBJ, 'oo');
-        op3('getcurhllsym', 95, $T_OBJ, 's');
-        op3('takeclosure', 96, $T_OBJ, 'o');
-        op3('getcodeobj', 97, $T_OBJ, 'o');
-        op3('curcode', 98, $T_OBJ, '');
         op3('p6capturelex', 100, $T_OBJ, 'o');
         op3('p6sink', 101, $T_OBJ, 'o');
         op3('p6store', 102, $T_OBJ, 'oo');
@@ -530,13 +491,10 @@ class QAST::TruffleEncoder {
         op3('p6bindattrinvres', 107, $T_OBJ, 'ooso');
         # 108 is `control`, encoded as a special case with a synthetic
         # category argument.
-        op3('lastexpayload', 109, $T_OBJ, '');
         op3('throwpayloadlex', 110, $T_OBJ, 'io');
         op3('throwpayloadlexcaller', 111, $T_OBJ, 'io');
         # The routine calling-convention family (Phase 5): what the Phase 1
         # census said gates two thirds of the setting's blocks.
-        op3('assertparamcheck', 112, $T_OBJ, 'i');
-        op3('bindcomplete', 113, $T_OBJ, '');
         op3('p6typecheckrv', 114, $T_OBJ, 'ooo');
         # 115 is p6decontrv_rt, reached only through the p6decontrv
         # desugar below (the rw split is a compile-time decision).
@@ -549,28 +507,7 @@ class QAST::TruffleEncoder {
         # the hinted getattr/bindattr overloads stay bytecode's, since a
         # hint is a compile-time slot index this encoder does not carry.
         op3('getattr', 81, $T_OBJ, 'oos');
-        op3('getattr_i', 117, $T_INT, 'oos');
-        op3('getattr_n', 118, $T_NUM, 'oos');
-        op3('getattr_s', 119, $T_STR, 'oos');
         op3('bindattr', 82, $T_OBJ, 'ooso');
-        op3('bindattr_i', 121, $T_INT, 'oosi');
-        op3('bindattr_n', 122, $T_NUM, 'oosn');
-        op3('bindattr_s', 123, $T_STR, 'ooss');
-        op3('atpos_i', 124, $T_INT, 'oi');
-        op3('atpos_n', 125, $T_NUM, 'oi');
-        op3('atpos_s', 126, $T_STR, 'oi');
-        op3('bindpos_i', 127, $T_INT, 'oii');
-        op3('bindpos_n', 128, $T_NUM, 'oin');
-        op3('bindpos_s', 129, $T_STR, 'ois');
-        op3('atkey_i', 130, $T_INT, 'os');
-        op3('atkey_n', 131, $T_NUM, 'os');
-        op3('atkey_s', 132, $T_STR, 'os');
-        op3('bindkey_i', 133, $T_INT, 'osi');
-        op3('bindkey_n', 134, $T_NUM, 'osn');
-        op3('bindkey_s', 135, $T_STR, 'oss');
-        op3('iscont_i', 136, $T_INT, 'o');
-        op3('iscont_n', 137, $T_INT, 'o');
-        op3('iscont_s', 138, $T_INT, 'o');
         # Chosen by sole-blocker count over a CORE.c NQP_CODE_REPORT run
         # (2026-09-03): these seven alone gate ~500 of the setting's
         # blocks. assign_i/assign_s are NOT table rows -- their bytecode
@@ -579,41 +516,11 @@ class QAST::TruffleEncoder {
         # would corrupt it for the bytecode path; encode_op does the same
         # rewrite on a copy of the target instead (see 'assign_i' there),
         # and the container road is these four rows.
-        op3('hllbool', 148, $T_OBJ, 'i');
-        op3('jvm_container_assign_i', 162, $T_OBJ, 'oi');
-        op3('jvm_container_assign_u', 163, $T_OBJ, 'oi');
-        op3('jvm_container_assign_n', 164, $T_OBJ, 'on');
-        op3('jvm_container_assign_s', 165, $T_OBJ, 'os');
-        op3('istype_nd', 149, $T_INT, 'oo');
-        op3('who', 150, $T_OBJ, 'o');
-        op3('getpayload', 151, $T_OBJ, 'o');
-        op3('iterator', 152, $T_OBJ, 'o');
-        op3('iterval', 153, $T_OBJ, 'o');
-        op3('assign', 154, $T_OBJ, 'oo');
         op3('p6bindassert', 155, $T_OBJ, 'oo');
         # Second sole-blocker batch off the same CORE.c report. push_i/_n/_s
         # are the bare ops only: the list_i/list_n/list_s CONSTRUCTORS that
         # would also use them stay reverted (see the note in encode_op).
-        op3('push_i', 145, $T_INT, 'oi');
-        op3('push_n', 146, $T_NUM, 'on');
-        op3('push_s', 147, $T_STR, 'os');
-        op3('iterkey_s', 156, $T_STR, 'o');
-        op3('splice', 157, $T_OBJ, 'ooii');
-        op3('how', 158, $T_OBJ, 'o');
-        op3('exception', 166, $T_OBJ, '');
-        op3('getextype', 167, $T_INT, 'o');
-        op3('setextype', 168, $T_INT, 'oi');
-        op3('setpayload', 169, $T_OBJ, 'oo');
-        op3('getmessage', 170, $T_STR, 'o');
-        op3('setmessage', 171, $T_STR, 'os');
-        op3('newexception', 172, $T_OBJ, '');
-        op3('backtrace', 173, $T_OBJ, 'o');
-        op3('backtracestrings', 174, $T_OBJ, 'o');
-        op3('isfalse', 175, $T_INT, 'o');
         op3('isbig_I', 176, $T_INT, 'o');
-        op3('atposref_i', 177, $T_OBJ, 'oi');
-        op3('atposref_u', 178, $T_OBJ, 'oi');
-        op3('isrwcont', 179, $T_INT, 'o');
         # The :cont family: the engine reads a resumed result off the
         # frame's return register, as the bytecode path does.
         op3('die', 180, $T_STR, 's');
@@ -621,159 +528,34 @@ class QAST::TruffleEncoder {
         op3('throw', 181, $T_OBJ, 'o');
         op3('rethrow', 182, $T_OBJ, 'o');
         op3('throwextype', 183, $T_OBJ, 'i');
-        op3('isconcrete_nd', 184, $T_INT, 'o');
-        op3('gethllsym', 185, $T_OBJ, 'ss');
         op3('box_i/2', 186, $T_OBJ, 'io');
         op3('box_n/2', 187, $T_OBJ, 'no');
         op3('box_s/2', 188, $T_OBJ, 'so');
-        op3('isnanorinf', 189, $T_INT, 'n');
-        op3('where', 190, $T_INT, 'o');
-        op3('getlexcaller', 191, $T_OBJ, 's');
-        op3('getcomp', 192, $T_OBJ, 's');
-        op3('atposref_n', 193, $T_OBJ, 'oi');
-        op3('atposref_s', 194, $T_OBJ, 'oi');
-        op3('atpos_u', 195, $T_INT, 'oi');
-        op3('bindpos_u', 196, $T_INT, 'oii');
-        op3('slice', 197, $T_OBJ, 'oii');
-        op3('dimensions', 198, $T_OBJ, 'o');
         op3('sha1', 199, $T_STR, 's');
-        op3('isnull_s', 200, $T_INT, 's');
         op3('iseq_I', 201, $T_INT, 'oo');
         op3('isne_I', 202, $T_INT, 'oo');
         op3('islt_I', 203, $T_INT, 'oo');
         op3('isle_I', 204, $T_INT, 'oo');
         op3('isgt_I', 205, $T_INT, 'oo');
         op3('isge_I', 206, $T_INT, 'oo');
-        op3('decont_i', 207, $T_INT, 'o');
-        op3('decont_n', 208, $T_NUM, 'o');
-        op3('decont_s', 209, $T_STR, 'o');
-        op3('unshift_i', 210, $T_INT, 'oi');
-        op3('unshift_n', 211, $T_NUM, 'on');
-        op3('unshift_s', 212, $T_STR, 'os');
         op3('tostr_I', 213, $T_STR, 'o');
         op3('add_I', 214, $T_OBJ, 'ooo');
         op3('sub_I', 215, $T_OBJ, 'ooo');
         op3('mul_I', 216, $T_OBJ, 'ooo');
-        op3('pop_i', 217, $T_INT, 'o');
-        op3('pop_n', 218, $T_NUM, 'o');
-        op3('pop_s', 219, $T_STR, 'o');
-        op3('shift_i', 220, $T_INT, 'o');
-        op3('shift_n', 221, $T_NUM, 'o');
-        op3('shift_s', 222, $T_STR, 'o');
-        op3('objprimspec', 223, $T_INT, 'o');
-        op3('x', 224, $T_STR, 'si');
-        op3('cmp_i', 225, $T_INT, 'ii');
-        op3('numdimensions', 226, $T_INT, 'o');
-        op3('rand_n', 227, $T_NUM, 'n');
-        op3('ordat', 228, $T_INT, 'si');
-        op3('iscclass', 229, $T_INT, 'isi');
-        op3('findcclass', 230, $T_INT, 'isii');
-        op3('findnotcclass', 231, $T_INT, 'isii');
-        op3('ctxlexpad', 232, $T_OBJ, 'o');
-        op3('stat', 233, $T_INT, 'si');
-        op3('readfh', 234, $T_OBJ, 'ooi');
-        op3('time', 235, $T_INT, '');
-        op3('atomicadd_i', 236, $T_INT, 'oi');
-        op3('atposnd_i', 237, $T_INT, 'oo');
-        op3('ordfirst', 238, $T_INT, 's');
-        op3('cmp_n', 239, $T_INT, 'nn');
-        op3('cmp_s', 240, $T_INT, 'ss');
         op3('cmp_I', 241, $T_INT, 'oo');
         op3('div_I', 242, $T_OBJ, 'ooo');
-        op3('replace', 243, $T_STR, 'siis');
-        op3('setwho', 244, $T_OBJ, 'oo');
-        op3('findmethod', 245, $T_OBJ, 'os');
-        op3('inf', 246, $T_NUM, '');
-        op3('neginf', 247, $T_NUM, '');
-        op3('nan', 248, $T_NUM, '');
         # The grammar engine's rxmatch: descriptor, cursor, cursor class,
         # target, from, invocant-from, restart, invocant, callback.
         op3('rxmatch', 249, $T_OBJ, 'soosiiioo');
-        op3('atposnd', 250, $T_OBJ, 'oo');
-        op3('atposnd_n', 251, $T_NUM, 'oo');
-        op3('atposnd_s', 252, $T_STR, 'oo');
-        op3('objectid', 253, $T_INT, 'o');
         op3('tryfindmethod', 254, $T_OBJ, 'os');
-        op3('getlexrelcaller', 255, $T_OBJ, 'os');
-        op3('rindexfrom', 256, $T_INT, 'ssi');
-        op3('ordbaseat', 257, $T_INT, 'si');
-        op3('floor_n', 258, $T_NUM, 'n');
-        op3('ceil_n', 259, $T_NUM, 'n');
-        op3('rindexfromend', 260, $T_INT, 'ss');
-        op3('indexic', 261, $T_INT, 'ssi');
-        op3('indexim', 262, $T_INT, 'ssi');
-        op3('indexicim', 263, $T_INT, 'ssi');
         op3('pow_I', 264, $T_OBJ, 'oooo');
-        op3('ctxcallerskipthunks', 265, $T_OBJ, 'o');
-        op3('multidimref_i', 266, $T_OBJ, 'oo');
-        op3('multidimref_u', 267, $T_OBJ, 'oo');
-        op3('multidimref_n', 268, $T_OBJ, 'oo');
-        op3('multidimref_s', 269, $T_OBJ, 'oo');
-        op3('indexfrom', 40, $T_INT, 'ssi');
-        op3('atpos2d', 270, $T_OBJ, 'oii');
-        op3('atpos2d_i', 271, $T_INT, 'oii');
-        op3('atpos2d_n', 272, $T_NUM, 'oii');
-        op3('atpos2d_s', 273, $T_STR, 'oii');
-        op3('atpos3d', 274, $T_OBJ, 'oiii');
-        op3('atpos3d_i', 275, $T_INT, 'oiii');
-        op3('atpos3d_n', 276, $T_NUM, 'oiii');
-        op3('atpos3d_s', 277, $T_STR, 'oiii');
-        op3('bindposnd', 278, $T_OBJ, 'ooo');
-        op3('bindpos2d', 279, $T_OBJ, 'oiio');
-        op3('bindpos3d', 280, $T_OBJ, 'oiiio');
         op3('ctx', 281, $T_OBJ, '');
-        op3('ctxcaller', 282, $T_OBJ, 'o');
-        op3('ctxouterskipthunks', 283, $T_OBJ, 'o');
-        op3('reprname', 284, $T_STR, 'o');
         op3('bitand_I', 285, $T_OBJ, 'ooo');
         op3('neg_I', 286, $T_OBJ, 'oo');
         op3('gcd_I', 287, $T_OBJ, 'ooo');
         op3('fromnum_I', 288, $T_OBJ, 'no');
         op3('rand_I', 289, $T_OBJ, 'oo');
-        op3('unbox_u', 290, $T_UINT, 'o');
-        op3('getattr_u', 291, $T_UINT, 'oos');
-        op3('bindhllsym', 292, $T_OBJ, 'sso');
-        op3('iseq_u', 293, $T_INT, 'ii');
-        op3('isne_u', 294, $T_INT, 'ii');
-        op3('islt_u', 295, $T_INT, 'ii');
-        op3('isle_u', 296, $T_INT, 'ii');
-        op3('isgt_u', 297, $T_INT, 'ii');
-        op3('isge_u', 298, $T_INT, 'ii');
-        op3('cmp_u', 299, $T_INT, 'ii');
-        op3('mod_n', 300, $T_NUM, 'nn');
         op3('radix_I', 301, $T_OBJ, 'isiio');
-        op3('atomicstore_i', 302, $T_INT, 'oi');
-        op3('cas', 303, $T_OBJ, 'ooo');
-        op3('closefh', 304, $T_OBJ, 'o');
-        op3('filenofh', 305, $T_INT, 'o');
-        op3('decode', 306, $T_STR, 'os');
-        op3('lock', 307, $T_OBJ, 'o');
-        op3('unlock', 308, $T_OBJ, 'o');
-        op3('opendir', 309, $T_OBJ, 's');
-        op3('nextfiledir', 310, $T_STR, 'o');
-        op3('getlexreldyn', 311, $T_OBJ, 'os');
-        op3('bindattr_u', 312, $T_INT, 'oosi');
-        op3('getattrref_u', 313, $T_OBJ, 'oos');
-        op3('sqrt_n', 314, $T_NUM, 'n');
-        op3('log_n', 315, $T_NUM, 'n');
-        op3('exp_n', 316, $T_NUM, 'n');
-        op3('sin_n', 317, $T_NUM, 'n');
-        op3('asin_n', 318, $T_NUM, 'n');
-        op3('cos_n', 319, $T_NUM, 'n');
-        op3('acos_n', 320, $T_NUM, 'n');
-        op3('tan_n', 321, $T_NUM, 'n');
-        op3('atan_n', 322, $T_NUM, 'n');
-        op3('sinh_n', 323, $T_NUM, 'n');
-        op3('cosh_n', 324, $T_NUM, 'n');
-        op3('tanh_n', 325, $T_NUM, 'n');
-        op3('atan2_n', 326, $T_NUM, 'nn');
-        op3('closedir', 327, $T_INT, 'o');
-        op3('atomicload_i', 328, $T_INT, 'o');
-        op3('getlexrel', 329, $T_OBJ, 'os');
-        op3('captureposarg', 330, $T_OBJ, 'oi');
-        op3('unipropcode', 331, $T_INT, 's');
-        op3('strtocodes', 332, $T_OBJ, 'sio');
-        op3('stat_time', 333, $T_NUM, 'si');
         op3('mod_I', 334, $T_OBJ, 'ooo');
         op3('expmod_I', 335, $T_OBJ, 'oooo');
         op3('abs_I', 336, $T_OBJ, 'oo');
@@ -789,43 +571,6 @@ class QAST::TruffleEncoder {
         op3('bool_I', 346, $T_INT, 'o');
         op3('tonum_I', 347, $T_NUM, 'o');
         op3('div_In', 348, $T_NUM, 'oo');
-        op3('gcd_i', 349, $T_INT, 'ii');
-        op3('lcm_i', 350, $T_INT, 'ii');
-        op3('coerce_is', 351, $T_STR, 'i');
-        op3('coerce_ns', 352, $T_STR, 'n');
-        op3('coerce_us', 353, $T_STR, 'i');
-        op3('coerce_in', 354, $T_NUM, 'i');
-        op3('flip', 355, $T_STR, 's');
-        op3('tclc', 356, $T_STR, 's');
-        op3('codes', 357, $T_INT, 's');
-        op3('cas_i', 358, $T_INT, 'oii');
-        op3('atomicinc_i', 359, $T_INT, 'o');
-        op3('atomicdec_i', 360, $T_INT, 'o');
-        op3('bindposnd_i', 361, $T_INT, 'ooi');
-        op3('bindposnd_n', 362, $T_NUM, 'oon');
-        op3('bindposnd_s', 363, $T_STR, 'oos');
-        op3('bindpos2d_i', 364, $T_INT, 'oiii');
-        op3('bindpos2d_n', 365, $T_NUM, 'oiin');
-        op3('bindpos2d_s', 366, $T_STR, 'oiis');
-        op3('bindpos3d_i', 367, $T_INT, 'oiiii');
-        op3('bindpos3d_n', 368, $T_NUM, 'oiiin');
-        op3('bindpos3d_s', 369, $T_STR, 'oiiis');
-        op3('abs_n', 370, $T_NUM, 'n');
-        op3('filereadable', 371, $T_INT, 's');
-        op3('filewritable', 372, $T_INT, 's');
-        op3('fileexecutable', 373, $T_INT, 's');
-        op3('fileislink', 374, $T_INT, 's');
-        op3('lstat', 375, $T_INT, 'si');
-        op3('chown', 376, $T_INT, 'sii');
-        op3('chmod', 377, $T_INT, 'si');
-        op3('getenvhash', 378, $T_OBJ, '');
-        op3('getattrref_i', 159, $T_OBJ, 'oos');
-        op3('getattrref_n', 160, $T_OBJ, 'oos');
-        op3('getattrref_s', 161, $T_OBJ, 'oos');
-        op3('hlllist', 139, $T_OBJ, '');
-        op3('bootintarray', 142, $T_OBJ, '');
-        op3('bootnumarray', 143, $T_OBJ, '');
-        op3('bootstrarray', 144, $T_OBJ, '');
         1
     }
 
