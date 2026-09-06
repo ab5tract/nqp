@@ -8,6 +8,9 @@ import org.raku.nqp.sixmodel.SixModelObject
 class VMHashInstance : SixModelObject() {
     lateinit var storage: HashMap<String, SixModelObject?>
 
+    // NOTE: keys are raw here. VMHash is the low-level hash the COMPILER itself
+    // uses for exact-string bookkeeping; NFC-folding keys here broke the build.
+    // Canonical-equivalence for Raku hashes belongs at the Raku Hash level.
     override fun at_key_boxed(tc: ThreadContext, key: String?): SixModelObject? {
         return storage[key!!]
     }
