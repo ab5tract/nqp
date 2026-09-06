@@ -832,8 +832,8 @@ class QAST::TruffleEncoder {
     # Coercion kinds, matching NqpOps.
     sub coerce_kind(int $from, int $to) {
         if $from == $T_INT { return $to == $T_OBJ ?? 0 !! $to == $T_NUM ?? 6 !! $to == $T_STR ?? 8 !! -1 }
-        if $from == $T_NUM { return $to == $T_OBJ ?? 1 !! $to == $T_INT ?? 7 !! -1 }
-        if $from == $T_STR { return $to == $T_OBJ ?? 2 !! -1 }
+        if $from == $T_NUM { return $to == $T_OBJ ?? 1 !! $to == $T_INT ?? 7 !! $to == $T_STR ?? 14 !! -1 }
+        if $from == $T_STR { return $to == $T_OBJ ?? 2 !! $to == $T_INT ?? 13 !! $to == $T_NUM ?? 15 !! -1 }
         if $from == $T_OBJ { return $to == $T_INT ?? 3 !! $to == $T_NUM ?? 4 !! $to == $T_STR ?? 5 !! $to == $T_UINT ?? 12 !! -1 }
         # A uint boxes/widens UNSIGNED: 2^64-1 is a large Int, not -1.
         if $from == $T_UINT { return $to == $T_OBJ ?? 9 !! $to == $T_NUM ?? 10 !! $to == $T_STR ?? 11 !! -1 }
@@ -1549,19 +1549,105 @@ class QAST::TruffleEncoder {
         if $name eq 'callmethod' {
             return self.encode_callmethod($op, %e);
         }
+        if $name eq 'numify' {
+            # numify(x): x in num context, exactly Compiler.nqp's as_jast(x, :want(NUM)).
+            cbail('numify arity') unless nqp::elems(@($op)) == 1;
+            return self.encode_node($op[0], %e, $T_NUM);
+        }
+        if $name eq 'settypefinalize' {
+            # A no-op stub on the JVM (Compiler.nqp: as_jast($op[0])); the
+            # finalize wiring is not hooked up, so just yield the child.
+            cbail('settypefinalize arity') unless nqp::elems(@($op)) >= 1;
+            return self.encode_node($op[0], %e, $want);
+        }
+        if $name eq 'p6invokeflat' {
+            # p6invokeflat(callee, args): a call with the argument list
+            # flattened, exactly the registered desugar (src/vm/jvm/Raku/
+            # Ops.nqp): $op[1].flat(1); call($op[0], $op[1]).
+            cbail('p6invokeflat arity') unless nqp::elems(@($op)) == 2;
+            $op[1].flat(1);
+            return self.encode_node(
+                QAST::Op.new( :op('call'), $op[0], $op[1] ), %e, $want);
+        }
         if $name eq 'chain' || $name eq 'chainstatic' {
-            cbail('chained chain') if nqp::istype($op[0], QAST::Op)
-                && ($op[0].op eq 'chain' || $op[0].op eq 'chainstatic');
-            cbail('chain arity') unless nqp::elems(@($op)) == 2;
+            # A nested chain (`$a < $b < $c`) short-circuits and shares the
+            # middle operand, exactly as Compiler.nqp's chain_codegen: each
+            # link is a lang-call comparing the previous operand with the
+            # next, and a false link is the result. Desugar the whole nest
+            # into binds + ifs (a fresh tree over the same children, so a
+            # later bail hands the bytecode path the untouched op) and let
+            # the simple-chain road below encode each individual link.
+            if nqp::istype($op[0], QAST::Op)
+                && ($op[0].op eq 'chain' || $op[0].op eq 'chainstatic') {
+                my @callees;
+                my @operands;
+                my $cur := $op;
+                while nqp::istype($cur, QAST::Op)
+                    && ($cur.op eq 'chain' || $cur.op eq 'chainstatic') {
+                    cbail('unnamed chain link') if $cur.name eq '';
+                    cbail('chain link arity') unless nqp::elems(@($cur)) == 2;
+                    nqp::unshift(@callees, $cur.name);
+                    nqp::unshift(@operands, $cur[1]);
+                    $cur := $cur[0];
+                }
+                nqp::unshift(@operands, $cur);
+                my int $nlinks := nqp::elems(@callees);
+                my @v;
+                my int $k := 0;
+                while $k <= $nlinks { nqp::push(@v, $op.unique('chain_o')); $k++ }
+                my @r;
+                $k := 0;
+                while $k < $nlinks { nqp::push(@r, $op.unique('chain_r')); $k++ }
+                # link($i): result of links $i..end, with @v[$i] and @v[$i+1] bound.
+                my $linkq;
+                $linkq := -> int $i {
+                    my $call := QAST::Op.new( :op('call'), :name(@callees[$i]),
+                        QAST::Var.new( :name(@v[$i]),   :scope('local') ),
+                        QAST::Var.new( :name(@v[$i + 1]), :scope('local') ) );
+                    $i == $nlinks - 1
+                        ?? $call
+                        !! QAST::Stmts.new(
+                             QAST::Op.new( :op('bind'),
+                               QAST::Var.new( :name(@r[$i]), :scope('local'), :decl('var') ),
+                               $call ),
+                             QAST::Op.new( :op('if'),
+                               QAST::Var.new( :name(@r[$i]), :scope('local') ),
+                               QAST::Stmts.new(
+                                 QAST::Op.new( :op('bind'),
+                                   QAST::Var.new( :name(@v[$i + 2]), :scope('local'), :decl('var') ),
+                                   @operands[$i + 2] ),
+                                 $linkq($i + 1) ),
+                               QAST::Var.new( :name(@r[$i]), :scope('local') ) ) );
+                };
+                my $tree := QAST::Stmts.new(
+                    QAST::Op.new( :op('bind'),
+                      QAST::Var.new( :name(@v[0]), :scope('local'), :decl('var') ), @operands[0] ),
+                    QAST::Op.new( :op('bind'),
+                      QAST::Var.new( :name(@v[1]), :scope('local'), :decl('var') ), @operands[1] ),
+                    $linkq(0) );
+                return self.encode_node($tree, %e, $want);
+            }
+            # A simple (non-nested) link: named (callee is $op.name, two
+            # operands) or unnamed (callee is $op[0], two operands after).
+            my int $named := $op.name ne '';
+            cbail('chain arity') unless nqp::elems(@($op)) == ($named ?? 2 !! 3);
+            my $lop := $named ?? $op[0] !! $op[1];
+            my $rop := $named ?? $op[1] !! $op[2];
             epush(%e, $W_DISPATCH);
             %e<dispatches> := %e<dispatches> + 1;
             epush(%e, rt_of($op.returns));
             epush(%e, epool(%e, 'lang-call'));
             epush(%e, 3);
             epush(%e, $T_OBJ); epush(%e, $T_OBJ); epush(%e, $T_OBJ);
-            self.encode_op_named_lexical_decont($op.name, %e);
-            self.encode_child($op[0], %e, $T_OBJ);
-            self.encode_child($op[1], %e, $T_OBJ);
+            if $named {
+                self.encode_op_named_lexical_decont($op.name, %e);
+            }
+            else {
+                epush(%e, $W_OPCALL); epush(%e, 51); epush(%e, 1);   # decont
+                self.encode_child($op[0], %e, $T_OBJ);
+            }
+            self.encode_child($lop, %e, $T_OBJ);
+            self.encode_child($rop, %e, $T_OBJ);
             return rt_of($op.returns);
         }
         if $name eq 'dispatch' {
