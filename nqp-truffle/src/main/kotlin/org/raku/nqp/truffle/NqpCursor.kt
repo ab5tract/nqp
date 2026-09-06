@@ -43,15 +43,19 @@ class NqpCursor(
     private var captureBaseC: Int = -1
     private var captureBaseB: Int = -1
 
-    /* NFG: the target as grapheme atoms, built once. The engine indexes by
-     * grapheme, so positions are indices into this and eos is its length. */
-    private val atomArray: IntArray = NFGString.atomsOf(target)
+    /* NFG: the target as its interned (cached) TruffleString-backed value. The
+     * engine indexes by grapheme, so positions are indices into its atom array
+     * and eos is its grapheme count -- both cached on the shared instance, so a
+     * second NqpCursor over the same source (another rule of the same parse)
+     * pays nothing to obtain them. */
+    private val nfg: NFGString = NFGString.of(target)
+    private val atomArray: IntArray = nfg.atoms()
 
     override fun target(): String = target
 
     override fun atoms(): IntArray = atomArray
 
-    override fun eos(): Int = atomArray.size
+    override fun eos(): Int = nfg.chars()
 
     /**
      * Calls a rule of the grammar.

@@ -127,24 +127,32 @@ class NFGString private constructor(
 
         private val EMPTY_CLUSTERS = emptyArray<String>()
 
-        /** Grapheme atoms of [s] (codepoint >=0 or synthetic id <0), for the engine. */
-        @JvmStatic
-        /* Cache: the engine builds an atom array per NqpCursor (per grammar-rule
-         * invocation on the same source), so without this the per-parse cost is
-         * O(rules x source). A WeakHashMap (not a bounded LRU, which would
-         * thrash the source against parse captures) keeps the live source cached
-         * while dead strings GC out. Same-source lookups are O(1) (identity). */
-        private val atomsCache: MutableMap<String, IntArray> =
-            java.util.Collections.synchronizedMap(java.util.WeakHashMap<String, IntArray>())
+        /* Intern one NFGString per source string. The runtime engine reads a
+         * source's graphemes many times over (per grammar-rule invocation, and
+         * again for chars/atoms), so caching the VALUE -- not just its atom
+         * array -- lets every one of those reads share the same instance and
+         * its per-instance chars/atoms caches. A WeakHashMap (not a bounded LRU,
+         * which would thrash the live source against parse captures) keeps the
+         * live source cached while dead strings GC out; same-source lookups are
+         * O(1) by identity. */
+        private val internCache: MutableMap<String, NFGString> =
+            java.util.Collections.synchronizedMap(java.util.WeakHashMap<String, NFGString>())
 
+        /** The interned (cached) NFGString for [s]. */
         @JvmStatic
-        fun atomsOf(s: String): IntArray {
-            if (s.isEmpty()) return IntArray(0)
-            atomsCache[s]?.let { return it }
-            val a = fromJavaString(s).atoms()
-            atomsCache[s] = a
-            return a
+        fun of(s: String): NFGString {
+            if (s.isEmpty()) return EMPTY
+            internCache[s]?.let { return it }
+            val v = fromJavaString(s)
+            internCache[s] = v
+            return v
         }
+
+        /** Grapheme atoms of [s] (codepoint >=0 or synthetic id <0), for the
+         *  engine -- the interned value's cached atom array. */
+        @JvmStatic
+        fun atomsOf(s: String): IntArray =
+            if (s.isEmpty()) IntArray(0) else of(s).atoms()
 
         /** Canonicalizing builder: no synthetics -> flat; else general. */
         private fun fromGraphemes(g: List<Int>): NFGString {
@@ -163,8 +171,23 @@ class NFGString private constructor(
 
     val isFlat: Boolean get() = flat != null
 
+    /* Derived views computed once. NFGString is an immutable value, so these
+     * never go stale; they turn repeated chars()/atoms() -- which the engine
+     * does per source, many times -- from a TruffleString node execution (or an
+     * int[] rebuild) into a field read. Benign lazy state on an immutable value:
+     * every computation is idempotent, so an unsynchronized race only recomputes. */
+    private var cachedChars: Int = -1
+    private var cachedAtoms: IntArray? = null
+
     /** Number of graphemes (`.chars`). */
-    fun chars(): Int = if (flat != null) CP_LEN.execute(flat, UTF16) else graphemes!!.size
+    fun chars(): Int {
+        var c = cachedChars
+        if (c < 0) {
+            c = if (flat != null) CP_LEN.execute(flat, UTF16) else graphemes!!.size
+            cachedChars = c
+        }
+        return c
+    }
 
     /**
      * The grapheme at grapheme index [i]: a codepoint (`>= 0`) or a synthetic id
@@ -180,10 +203,12 @@ class NFGString private constructor(
      */
     fun atoms(): IntArray {
         if (graphemes != null) return graphemes
+        cachedAtoms?.let { return it }
         val n = chars()
         val a = IntArray(n)
         var i = 0
         while (i < n) { a[i] = CP_AT.execute(flat, i, UTF16); i++ }
+        cachedAtoms = a
         return a
     }
 
