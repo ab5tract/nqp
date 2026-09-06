@@ -747,6 +747,53 @@ final class NqpOps {
         }
     }
 
+    /* ---- Per-eval-server-run reset of the resolution inline caches --------
+     *
+     * WvalSite/LexSite/AttrSite each cache a run-owned object: a resolved
+     * WVal with its GlobalContext, a StaticCodeInfo, a generated P6Opaque
+     * class. The parsed CallTargets that embed them are cached process-wide
+     * by source (NqpLanguage.PARSED, kept so warm-up survives a run), so a
+     * site last written by one run pins that whole run -- its GlobalContext,
+     * and through it the serialization-context graph and the run's byte
+     * class loader (~180MB) -- until some later run happens to re-execute the
+     * same instruction. Distinct programs, which is the eval server's whole
+     * point, touch distinct cold sites, so each program leaks its run: this
+     * is the eval-server leak. (Repeating the SAME files hides it -- every
+     * site is rewritten each round, so only the last run stays pinned, the
+     * "healthy 2 GlobalContexts" the old leak-check saw.)
+     *
+     * Every site registers here and goes cold with the dispatch caches at
+     * the start of each run (DispatchBootstrap.resetAll -> this resettable).
+     * The identity checks these caches already make -- site.gc == tc.gc, the
+     * sci compare, o.getClass() == site.storage -- mean clearing is pure
+     * retention hygiene: a live run never matches a cleared entry, and
+     * re-resolving a cold site is exactly what its first execution pays
+     * anyway. The dispatch programs (EngineSite reset separately) and the
+     * parsed CallTargets are left intact, so no warm-up is thrown away. This
+     * restores the invariant CodeEngines already documents: a cached program
+     * must resolve its run-owned objects afresh, not hold them across runs. */
+    private static final java.util.Queue<WvalSite> WVAL_SITES =
+        new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private static final java.util.Queue<LexSite> LEX_SITES =
+        new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private static final java.util.Queue<AttrSite> ATTR_SITES =
+        new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    static {
+        org.raku.nqp.dispatch.DispatchBootstrap.registerResettable(NqpOps::resetSites);
+    }
+
+    /** Returns every resolution inline cache to its built state; see above.
+     *  Runs under RUN_LOCK, between runs, with no program executing -- so the
+     *  writes race no reader even for the plain-field sites. */
+    static void resetSites() {
+        for (WvalSite s : WVAL_SITES) { s.value = null; s.gc = null; }
+        for (LexSite s : LEX_SITES)   { s.sci = null; s.depth = 0; s.idx = 0; }
+        for (AttrSite s : ATTR_SITES) {
+            s.getter = null; s.setter = null; s.storage = null; s.resolved = false;
+        }
+    }
+
     /**
      * One dispatch instruction's constant: its callsite shape plus its
      * inline cache. Programs are shared process-wide (parsed call targets
@@ -979,6 +1026,7 @@ final class NqpOps {
         @CompilationFinal org.raku.nqp.runtime.StaticCodeInfo sci;
         @CompilationFinal int depth;
         @CompilationFinal int idx;
+        LexSite() { LEX_SITES.add(this); }
     }
 
     static Object getlex(int type, String name, LexSite site, ThreadContext tc, CallFrame cf) {
@@ -1209,6 +1257,7 @@ final class NqpOps {
     static final class WvalSite {
         org.raku.nqp.runtime.GlobalContext gc;
         SixModelObject value;
+        WvalSite() { WVAL_SITES.add(this); }
     }
 
     static Object wval(String handle, int idx, WvalSite site, ThreadContext tc) {
@@ -1238,6 +1287,7 @@ final class NqpOps {
         @CompilationFinal java.lang.invoke.MethodHandle getter;
         @CompilationFinal java.lang.invoke.MethodHandle setter;
         @CompilationFinal boolean resolved;
+        AttrSite() { ATTR_SITES.add(this); }
     }
 
     static Object getattr(AttrSite site, Object o, Object ch, String name, ThreadContext tc) {
