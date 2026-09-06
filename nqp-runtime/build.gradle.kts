@@ -33,6 +33,13 @@ repositories {
 dependencies {
     // See NqpDeps (buildSrc) for provenance; shared with the root project.
     NqpDeps.thirdParty.forEach { implementation(it) }
+    // TruffleString backs the NFG string fast path (org.raku.nqp.runtime.NFGString).
+    // compileOnly, not implementation: truffle-api stays isolated in nqp-truffle's
+    // module (so the engine binds its optimizing runtime, see nqp-truffle's
+    // build.gradle.kts) and is NOT bundled into nqp-runtime.jar. On this branch the
+    // runner always puts nqp-runtime + the truffle modules on the path together, so
+    // TruffleString resolves at runtime from the engine module already present.
+    compileOnly("org.graalvm.truffle:truffle-api:${property("truffleVersion")}")
 }
 
 // The monomorphized VMArrayInstance_* REPR classes are generated from one
