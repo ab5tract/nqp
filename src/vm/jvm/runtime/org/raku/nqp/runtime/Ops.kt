@@ -4969,12 +4969,10 @@ object Ops {
     /* String operations. */
     @JvmStatic
     fun chars(`val`: String?): Long {
-        // NOTE: UTF-16 length. Grapheme-indexed chars requires the regex engine's
-        // position model to also be grapheme-based (RxCursor/Cursor.nqp track
-        // UTF-16 positions and share nqp::substr/eqat with Raku values); until
-        // that engine port lands, grapheme-indexing here desyncs the compiler at
-        // astral source chars. See docs/jvm-nfg-representation.md.
-        return `val`!!.length.toLong()
+        // NFG: count graphemes. The regex engine (RxVmNode) is grapheme-indexed
+        // to match (NFG on TruffleString), so runtime positions and engine
+        // positions share the same grapheme space.
+        return NFG.graphemeClusters(`val`!!).size.toLong()
     }
 
     @JvmStatic
@@ -5114,9 +5112,9 @@ object Ops {
 
         val dlen = delimiter.length
         if (dlen == 0) {
-            for (i in 0 until slen) {
-                val item = string.substring(i, i + 1)
-                val value = box_s(item, hllConfig.strBoxType, tc)
+            // NFG: an empty delimiter splits into graphemes, not UTF-16 units.
+            for (g in NFG.graphemeClusters(string)) {
+                val value = box_s(g, hllConfig.strBoxType, tc)
                 array.push_boxed(tc, value)
             }
         } else {
@@ -5140,8 +5138,23 @@ object Ops {
 
     @JvmStatic
     fun indexfrom(string: String?, pattern: String?, fromIndex: Long): Long {
-        if (fromIndex > string!!.length) { return -1 }
-        return string.indexOf(pattern!!, fromIndex.toInt()).toLong()
+        // NFG: grapheme-aligned search returning a grapheme index.
+        val h = NFG.graphemeClusters(string!!)
+        val n = NFG.graphemeClusters(pattern!!)
+        var from = fromIndex.toInt()
+        if (from < 0) from = 0
+        if (from > h.size) return -1
+        if (n.isEmpty()) return from.toLong()
+        val last = h.size - n.size
+        var i = from
+        while (i <= last) {
+            var k = 0
+            var ok = true
+            while (k < n.size) { if (h[i + k] != n[k]) { ok = false; break }; k++ }
+            if (ok) return i.toLong()
+            i++
+        }
+        return -1
     }
 
     @JvmStatic
@@ -5243,39 +5256,63 @@ object Ops {
         return if (hit < 0) -1 else origin[hit].toLong()
     }
 
+    // NFG: greatest grapheme index i <= `fromIn` where `n` matches in `h`.
+    private fun rindexGraph(h: Array<String>, n: Array<String>, fromIn: Int): Long {
+        if (n.isEmpty()) return minOf(fromIn, h.size).toLong()
+        var i = minOf(fromIn, h.size - n.size)
+        while (i >= 0) {
+            var k = 0
+            var ok = true
+            while (k < n.size) { if (h[i + k] != n[k]) { ok = false; break }; k++ }
+            if (ok) return i.toLong()
+            i--
+        }
+        return -1
+    }
+
     @JvmStatic
     fun rindexfromend(string: String?, pattern: String?): Long {
-        /* NOTE: explicit start index, because Kotlin's lastIndexOf(String)
-         * extension defaults to lastIndex (length - 1) while Java's
-         * String.lastIndexOf(String) searches from length — they differ
-         * for an empty pattern. */
-        return string!!.lastIndexOf(pattern!!, string.length).toLong()
+        val h = NFG.graphemeClusters(string!!)
+        return rindexGraph(h, NFG.graphemeClusters(pattern!!), h.size)
     }
 
     @JvmStatic
     fun rindexfrom(string: String?, pattern: String?, fromIndex: Long): Long {
-        if (fromIndex > string!!.length) { return -1 }
-        return string.lastIndexOf(pattern!!, fromIndex.toInt()).toLong()
+        val h = NFG.graphemeClusters(string!!)
+        if (fromIndex > h.size) return -1
+        return rindexGraph(h, NFG.graphemeClusters(pattern!!), fromIndex.toInt())
     }
 
     @JvmStatic
     fun substr2(`val`: String?, offset: Long): String {
+        // NFG: offset is a grapheme index (negative counts from the end).
+        val g = NFG.graphemeClusters(`val`!!)
         var theOffset = offset
-        if (theOffset >= `val`!!.length)
-            return ""
-        if (theOffset < 0)
-            theOffset += `val`.length
-        return `val`.substring(theOffset.toInt())
+        if (theOffset >= g.size) return ""
+        if (theOffset < 0) theOffset += g.size
+        if (theOffset < 0) theOffset = 0
+        val sb = StringBuilder()
+        var i = theOffset.toInt()
+        while (i < g.size) { sb.append(g[i]); i++ }
+        return sb.toString()
     }
 
     @JvmStatic
     fun substr3(`val`: String?, offset: Long, length: Long): String {
-        if (offset >= `val`!!.length)
-            return ""
-        var end = (offset + length).toInt()
-        if (end > `val`.length)
-            end = `val`.length
-        return `val`.substring(offset.toInt(), end)
+        // NFG: offset/length count graphemes, not UTF-16 units.
+        val g = NFG.graphemeClusters(`val`!!)
+        var start = offset
+        if (start < 0) start += g.size
+        if (start < 0) start = 0
+        if (start >= g.size) return ""
+        var end = start + length
+        if (end > g.size) end = g.size.toLong()
+        if (end < start) end = start
+        val sb = StringBuilder()
+        var i = start.toInt()
+        val stop = end.toInt()
+        while (i < stop) { sb.append(g[i]); i++ }
+        return sb.toString()
     }
 
     // keep this till we reboostrap
@@ -5284,22 +5321,24 @@ object Ops {
         return string_equal_at(false, haystack, needle, offset)
     }
 
-    // does haystack have needle as a substring at offset?
+    // does haystack have needle as a substring at grapheme offset?
     private fun string_equal_at(ignoreCase: Boolean, haystack: String?, needle: String?, offset: Long): Long {
-        val haylen = haystack!!.length.toLong()
-        val needlelen = needle!!.length.toLong()
-
-        var theOffset = offset
-        if (theOffset < 0) {
-            theOffset += haylen
-            if (theOffset < 0) {
-                theOffset = 0
-            }
+        // NFG: compare grapheme-aligned, with a grapheme-indexed offset.
+        val h = NFG.graphemeClusters(haystack!!)
+        val n = NFG.graphemeClusters(needle!!)
+        var pos = offset
+        if (pos < 0) {
+            pos += h.size
+            if (pos < 0) pos = 0
         }
-        if (haylen - theOffset < needlelen) {
-            return 0
+        if (pos > h.size) return 0
+        if (pos + n.size > h.size) return 0
+        val p = pos.toInt()
+        for (i in n.indices) {
+            val same = if (ignoreCase) h[p + i].equals(n[i], ignoreCase = true) else h[p + i] == n[i]
+            if (!same) return 0
         }
-        return if (haystack.regionMatches(theOffset.toInt(), needle, 0, needlelen.toInt(), ignoreCase = ignoreCase)) 1 else 0
+        return 1
     }
 
     @JvmStatic
@@ -5349,34 +5388,26 @@ object Ops {
 
     @JvmStatic
     fun ordfirst(str: String?): Long {
-        if (str!!.isEmpty()) {
-            return -1
-        }
-        else {
-            return str.codePointAt(0).toLong()
-        }
+        // NFG: base codepoint of the first grapheme.
+        val g = NFG.graphemeClusters(str!!)
+        return if (g.isEmpty()) -1 else g[0].codePointAt(0).toLong()
     }
 
     @JvmStatic
     fun ordat(str: String?, offset: Long): Long {
-        if (offset < 0 || offset >= str!!.length) {
-            return -1
-        }
-        else {
-            return str.codePointAt(offset.toInt()).toLong()
-        }
+        // NFG: base codepoint of the grapheme at grapheme index `offset`.
+        val g = NFG.graphemeClusters(str!!)
+        return if (offset < 0 || offset >= g.size) -1 else g[offset.toInt()].codePointAt(0).toLong()
     }
 
     @JvmStatic
     fun ordbaseat(str: String?, offset: Long): Long {
-        if (offset < 0 || offset >= str!!.length) {
-            return -1
-        }
-        else {
-            val code = str.codePointAt(offset.toInt())
-            val letter = String(intArrayOf(code), 0, 1)
-            return Normalizer.normalize(letter, Normalizer.Form.NFD).codePointAt(0).toLong()
-        }
+        // NFG: NFD base of the grapheme at grapheme index `offset`.
+        val g = NFG.graphemeClusters(str!!)
+        if (offset < 0 || offset >= g.size) return -1
+        val code = g[offset.toInt()].codePointAt(0)
+        val letter = String(intArrayOf(code), 0, 1)
+        return Normalizer.normalize(letter, Normalizer.Form.NFD).codePointAt(0).toLong()
     }
 
     @JvmStatic
@@ -5429,12 +5460,27 @@ object Ops {
 
     @JvmStatic
     fun flip(str: String?): String {
-        return StringBuffer(str!!).reverse().toString()
+        // NFG: reverse by grapheme (keep combining marks with their base).
+        val g = NFG.graphemeClusters(str!!)
+        val sb = StringBuilder()
+        var i = g.size - 1
+        while (i >= 0) { sb.append(g[i]); i-- }
+        return sb.toString()
     }
 
     @JvmStatic
     fun replace(str: String?, offset: Long, count: Long, repl: String?): String {
-        return StringBuffer(str!!).replace(offset.toInt(), (offset + count).toInt(), repl!!).toString()
+        // NFG: splice by grapheme index.
+        val g = NFG.graphemeClusters(str!!)
+        val o = offset.toInt()
+        val c = count.toInt()
+        val sb = StringBuilder()
+        var i = 0
+        while (i < o && i < g.size) { sb.append(g[i]); i++ }
+        sb.append(repl!!)
+        i = o + c
+        while (i < g.size) { sb.append(g[i]); i++ }
+        return sb.toString()
     }
 
     /* Brute force, but not normally needed for most programs. */
@@ -5899,9 +5945,11 @@ object Ops {
 
     @JvmStatic
     fun iscclass(cclass: Long, target: String?, offset: Long): Long {
-        if (offset < 0 || offset >= target!!.length)
+        // NFG: offset is a grapheme index; test the grapheme's base codepoint.
+        val g = NFG.graphemeClusters(target!!)
+        if (offset < 0 || offset >= g.size)
             return 0
-        val test = target[offset.toInt()]
+        val test = g[offset.toInt()].codePointAt(0)
         when (cclass.toInt()) {
         CCLASS_ANY ->
             return 1
@@ -5909,34 +5957,34 @@ object Ops {
             return if (Character.isDigit(test)) 1 else 0
         CCLASS_WHITESPACE -> {
             if (Character.isSpaceChar(test)) return 1
-            if (test >= '\t' && test <= '\r') return 1
-            if (test == '\u0085') return 1
+            if (test >= '\t'.code && test <= '\r'.code) return 1
+            if (test == 0x85) return 1
             return 0
         }
         CCLASS_PRINTING -> {
             if (((1 shl Character.getType(test)) and NONPRINT_TYPES) != 0) return 0
-            return if (test < '\t' || test > '\r') 1 else 0
+            return if (test < '\t'.code || test > '\r'.code) 1 else 0
         }
         CCLASS_WORD ->
-            return if (test == '_' || Character.isLetterOrDigit(test)) 1 else 0
+            return if (test == '_'.code || Character.isLetterOrDigit(test)) 1 else 0
         CCLASS_NEWLINE ->
             return if ((Character.getType(test) == Character.LINE_SEPARATOR.toInt()) ||
-                    (test == '\n' || test == '\u000b' || test == '\u000C' || test == '\r' ||
-                     test == '\u0085' || test == '\u2029'))
+                    (test == '\n'.code || test == 0x0B || test == 0x0C || test == '\r'.code ||
+                     test == 0x85 || test == 0x2029))
                     1 else 0
         CCLASS_ALPHABETIC ->
-            return if (Character.isAlphabetic(test.code)) 1 else 0
+            return if (Character.isAlphabetic(test)) 1 else 0
         CCLASS_UPPERCASE ->
             return if (Character.isUpperCase(test)) 1 else 0
         CCLASS_LOWERCASE ->
             return if (Character.isLowerCase(test)) 1 else 0
         CCLASS_HEXADECIMAL ->
             return if (Character.isDigit(test) ||
-                    (test >= 'A' && test <= 'F' || test >= 'a' && test <= 'f'))
+                    (test >= 'A'.code && test <= 'F'.code || test >= 'a'.code && test <= 'f'.code))
                     1 else 0
         CCLASS_BLANK ->
             return if ((Character.getType(test) == Character.SPACE_SEPARATOR.toInt()) ||
-                    (test == '\t'))
+                    (test == '\t'.code))
                     1 else 0
         CCLASS_CONTROL ->
             return if (Character.isISOControl(test)) 1 else 0
@@ -5956,7 +6004,8 @@ object Ops {
 
     @JvmStatic
     fun findcclass(cclass: Long, target: String?, offset: Long, count: Long): Long {
-        val length = target!!.length.toLong()
+        // NFG: bound by grapheme count; offset/count are grapheme indices.
+        val length = NFG.graphemeClusters(target!!).size.toLong()
         var end = offset + count
         end = if (length < end) length else end
 
@@ -5971,7 +6020,8 @@ object Ops {
 
     @JvmStatic
     fun findnotcclass(cclass: Long, target: String?, offset: Long, count: Long): Long {
-        val length = target!!.length.toLong()
+        // NFG: bound by grapheme count; offset/count are grapheme indices.
+        val length = NFG.graphemeClusters(target!!).size.toLong()
         var end = offset + count
         end = if (length < end) length else end
 
@@ -6114,13 +6164,12 @@ object Ops {
 
     @JvmStatic
     fun ischarprop(propName: String?, target: String?, offset: Long): Long {
-        val iOffset = offset.toInt()
-        if (offset >= target!!.length)
+        // NFG: offset is a grapheme index; check the grapheme's base codepoint.
+        val g = NFG.graphemeClusters(target!!)
+        if (offset < 0 || offset >= g.size)
             return 0
-        val check = if (target.codePointAt(iOffset) >= 65536)
-            target.substring(iOffset, iOffset + 2)
-        else
-            target.substring(iOffset, iOffset + 1)
+        val base = g[offset.toInt()].codePointAt(0)
+        val check = String(Character.toChars(base))
         val derived = derivedProps.get(propName)
         if (derived != null) {
             /* It's one of the derived properties; see if the codepoint is
@@ -8075,7 +8124,10 @@ object Ops {
     /* The NFA evaluator. */
     private fun runNFA(tc: ThreadContext, nfa: NFAInstance, target: String, pos: Long): IntArray {
         var curPos = pos
-        val eos = target.length
+        /* NFG: base codepoints of each grapheme; curPos is a grapheme index. */
+        val gclusters = NFG.graphemeClusters(target)
+        val bases = IntArray(gclusters.size) { gi -> gclusters[gi].codePointAt(0) }
+        val eos = bases.size
         var gen = 1
 
         /* Allocate a "done states" array. */
@@ -8162,14 +8214,14 @@ object Ops {
 
                     when (act) {
                         NFA.EDGE_CODEPOINT -> {
-                            val arg = edgeInfo[i]!!.argI.toChar()
-                            if (target[curPos.toInt()] == arg)
+                            val arg = edgeInfo[i]!!.argI
+                            if (bases[curPos.toInt()] == arg)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CODEPOINT_LL -> {
-                            val arg = edgeInfo[i]!!.argI.toChar()
-                            if (target[curPos.toInt()] == arg) {
+                            val arg = edgeInfo[i]!!.argI
+                            if (bases[curPos.toInt()] == arg) {
                                 val fate = (edgeInfo[i]!!.act shr 8) and 0xfffff  /* act is probably signed 32 bits */
                                 nextst.add(to)
                                 while (usedlonglit <= fate)
@@ -8179,8 +8231,8 @@ object Ops {
                             continue
                         }
                         NFA.EDGE_CODEPOINT_NEG -> {
-                            val arg = edgeInfo[i]!!.argI.toChar()
-                            if (target[curPos.toInt()] != arg)
+                            val arg = edgeInfo[i]!!.argI
+                            if (bases[curPos.toInt()] != arg)
                                 nextst.add(to)
                             continue
                         }
@@ -8196,29 +8248,29 @@ object Ops {
                         }
                         NFA.EDGE_CHARLIST -> {
                             val arg = edgeInfo[i]!!.argS
-                            if (arg!!.indexOf(target[curPos.toInt()]) >= 0)
+                            if (arg!!.indexOf(bases[curPos.toInt()].toChar()) >= 0)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CHARLIST_NEG -> {
                             val arg = edgeInfo[i]!!.argS
-                            if (arg!!.indexOf(target[curPos.toInt()]) < 0)
+                            if (arg!!.indexOf(bases[curPos.toInt()].toChar()) < 0)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CODEPOINT_I -> {
                             val ucArg = edgeInfo[i]!!.argUc
                             val lcArg = edgeInfo[i]!!.argLc
-                            val ord = target[curPos.toInt()]
-                            if (ord == lcArg || ord == ucArg)
+                            val ord = bases[curPos.toInt()]
+                            if (ord == lcArg.code || ord == ucArg.code)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CODEPOINT_I_LL -> {
                             val ucArg = edgeInfo[i]!!.argUc
                             val lcArg = edgeInfo[i]!!.argLc
-                            val ord = target[curPos.toInt()]
-                            if (ord == lcArg || ord == ucArg) {
+                            val ord = bases[curPos.toInt()]
+                            if (ord == lcArg.code || ord == ucArg.code) {
                                 val fate = (edgeInfo[i]!!.act shr 8) and 0xfffff  /* act is probably signed 32 bits */
                                 nextst.add(to)
                                 while (usedlonglit <= fate)
@@ -8230,24 +8282,24 @@ object Ops {
                         NFA.EDGE_CODEPOINT_I_NEG -> {
                             val ucArg = edgeInfo[i]!!.argUc
                             val lcArg = edgeInfo[i]!!.argLc
-                            val ord = target[curPos.toInt()]
-                            if (ord != lcArg && ord != ucArg)
+                            val ord = bases[curPos.toInt()]
+                            if (ord != lcArg.code && ord != ucArg.code)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CHARRANGE -> {
                             val ucArg = edgeInfo[i]!!.argUc
                             val lcArg = edgeInfo[i]!!.argLc
-                            val ord = target[curPos.toInt()]
-                            if (ord >= lcArg && ord <= ucArg)
+                            val ord = bases[curPos.toInt()]
+                            if (ord >= lcArg.code && ord <= ucArg.code)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CHARRANGE_NEG -> {
                             val ucArg = edgeInfo[i]!!.argUc
                             val lcArg = edgeInfo[i]!!.argLc
-                            val ord = target[curPos.toInt()]
-                            if (ord < lcArg || ord > ucArg)
+                            val ord = bases[curPos.toInt()]
+                            if (ord < lcArg.code || ord > ucArg.code)
                                 nextst.add(to)
                             continue
                         }

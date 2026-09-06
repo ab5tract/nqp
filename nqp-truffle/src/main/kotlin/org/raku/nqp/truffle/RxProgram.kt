@@ -180,7 +180,10 @@ class RxProgram private constructor(
          * this. Negative, like MoarVM's synthetics, so it can never collide
          * with a real codepoint.
          */
-        const val CRLF = -0x0D0A
+        /* NFG: the CR LF grapheme's atom is the interned synthetic for [CR, LF],
+         * the same value NFGString produces for a target CR LF, so pattern-side
+         * char-class preds that mention CRLF compare equal to it. */
+        @JvmField val CRLF: Int = org.raku.nqp.runtime.NFGSynthetics.intern(intArrayOf(13, 10))
 
         /* Every opcode, exactly once. A duplicate number means two when-
          * branches on the same constant, the first silently shadowing the
