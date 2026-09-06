@@ -19,14 +19,34 @@ import java.text.Normalizer
 object NFG {
     private val EMPTY = emptyArray<String>()
 
+    /* A cache keyed by the source string. The runtime string ops
+     * (chars/substr/index/iscclass/...) re-segment on every call, and the
+     * compiler calls them per-position on one large source, which is O(n^2)
+     * without this — the Actions.nqp compile stalled on it. A WeakHashMap, NOT
+     * a size-bounded LRU: parsing a large source produces thousands of distinct
+     * capture strings, and a bounded cache thrashes them against the source
+     * (re-segmenting it, back to O(n^2)). Weak keys mean the live source stays
+     * cached while dead captures GC out — no thrashing and no leak. Strings are
+     * immutable and String.equals short-circuits on identity, so a repeat call
+     * on the same source object is an O(1) hit. */
+    private val cache: MutableMap<String, Array<String>> =
+        java.util.Collections.synchronizedMap(java.util.WeakHashMap<String, Array<String>>())
+
     /**
      * NFC-normalize [s] and split it into extended grapheme clusters, each a
      * Java `String` of its codepoints. A cluster's base codepoint — what
-     * `nqp::ordat` yields — is `cluster.codePointAt(0)`.
+     * `nqp::ordat` yields — is `cluster.codePointAt(0)`. Cached per source.
      */
     @JvmStatic
     fun graphemeClusters(s: String): Array<String> {
         if (s.isEmpty()) return EMPTY
+        cache[s]?.let { return it }
+        val computed = segment(s)
+        cache[s] = computed
+        return computed
+    }
+
+    private fun segment(s: String): Array<String> {
         val nfc = Normalizer.normalize(s, Normalizer.Form.NFC)
         val bi = BreakIterator.getCharacterInstance()
         bi.setText(nfc)

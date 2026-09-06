@@ -43,9 +43,19 @@ class NqpCursor(
     private var captureBaseC: Int = -1
     private var captureBaseB: Int = -1
 
+    /* NFG: the target as its interned (cached) TruffleString-backed value. The
+     * engine indexes by grapheme, so positions are indices into its atom array
+     * and eos is its grapheme count -- both cached on the shared instance, so a
+     * second NqpCursor over the same source (another rule of the same parse)
+     * pays nothing to obtain them. */
+    private val nfg: NFGString = NFGString.of(target)
+    private val atomArray: IntArray = nfg.atoms()
+
     override fun target(): String = target
 
-    override fun eos(): Int = target.length
+    override fun atoms(): IntArray = atomArray
+
+    override fun eos(): Int = nfg.chars()
 
     /**
      * Calls a rule of the grammar.
@@ -107,8 +117,13 @@ class NqpCursor(
         return if (pos < 0) RxVmNode.NO_MATCH else pos.toInt()
     }
 
-    override fun charProp(property: String, pos: Int): Boolean =
-        Ops.ischarprop(property, target, pos.toLong()) != 0L
+    override fun charProp(property: String, pos: Int): Boolean {
+        // NFG: pos is a grapheme index; test the property of the grapheme's base
+        // codepoint (synthetics carry their base first).
+        val atom = atomArray[pos]
+        val base = if (atom >= 0) atom else org.raku.nqp.runtime.NFGSynthetics.baseOf(atom)
+        return Ops.ischarprop(property, String(Character.toChars(base)), 0L) != 0L
+    }
 
     /**
      * Runs one piece of the rule's own code, and says whether it held.

@@ -27,7 +27,7 @@ import com.oracle.truffle.api.nodes.Node
 class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
 
     fun match(cursor: RxCursor, startPos: Int): Int =
-        run(cursor, cursor.target(), cursor.eos(), startPos, null, null)
+        run(cursor, cursor.atoms(), cursor.target(), cursor.eos(), startPos, null, null)
 
     /**
      * Matches, and on success leaves the live choice state in [stateOut]
@@ -35,7 +35,7 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
      * a rule that passed with :backtrack re-enterable.
      */
     fun match(cursor: RxCursor, startPos: Int, stateOut: Array<EngineState?>): Int =
-        run(cursor, cursor.target(), cursor.eos(), startPos, null, stateOut)
+        run(cursor, cursor.atoms(), cursor.target(), cursor.eos(), startPos, null, stateOut)
 
     /**
      * Resumes a previous match from its saved choice state: the engine
@@ -43,7 +43,7 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
      * most recent choice point exactly as an in-match failure would.
      */
     fun resume(cursor: RxCursor, state: EngineState, stateOut: Array<EngineState?>): Int =
-        run(cursor, cursor.target(), cursor.eos(), 0, state, stateOut)
+        run(cursor, cursor.atoms(), cursor.target(), cursor.eos(), 0, state, stateOut)
 
     /*
      * Deliberately not @ExplodeLoop. Exploding along the program's control
@@ -56,6 +56,7 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
      */
     private fun run(
         cursor: RxCursor,
+        atoms: IntArray,
         target: String,
         eos: Int,
         startPos: Int,
@@ -135,27 +136,23 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     val text = pool[code[pc + 1]] as String
                     val flags = code[pc + 2]
                     val ignoreCase = (flags and RxProgram.F_IGNORECASE) != 0
-                    /* A literal whose last character is a bare CR does not
-                     * match into a CR LF pair: on an NFG backend the pair is
-                     * one grapheme and a lone CR is not it. A literal that
-                     * carries the "\r\n" itself compares both characters and
-                     * is unaffected. */
-                    val compared = if ((flags and RxProgram.F_IGNOREMARK) != 0) {
-                        /* The mark-insensitive comparisons live in the
-                         * runtime, same as the bytecode path's eqatim. */
-                        pos + text.length <= eos &&
-                            literalIgnoreMark(target, text, pos, ignoreCase)
+                    /* NFG: compare grapheme atoms. A bare CR literal is atom 13
+                     * and a CR LF grapheme in the target is a synthetic, so the
+                     * "don't match into a fused pair" rule falls out of the atom
+                     * comparison -- no special case needed. */
+                    val lit = literalAtoms(text)
+                    val fits = pos + lit.size <= eos
+                    val hit = if ((flags and RxProgram.F_IGNOREMARK) != 0) {
+                        /* The mark-insensitive comparisons live in the runtime,
+                         * same as the bytecode path's eqatim (grapheme-indexed). */
+                        fits && literalIgnoreMark(target, text, pos, ignoreCase)
                     } else {
-                        pos + text.length <= eos &&
-                            target.regionMatches(pos, text, 0, text.length, ignoreCase)
+                        fits && atomsEqualAt(atoms, pos, lit, ignoreCase)
                     }
-                    val hit = compared &&
-                        !(text.isNotEmpty() && text[text.length - 1] == '\r' &&
-                            pos + text.length < eos && target[pos + text.length] == '\n')
                     if (hit == ((flags and RxProgram.F_NEGATE) != 0)) {
                         failed = true
                     } else {
-                        if ((flags and RxProgram.F_ZEROWIDTH) == 0) pos += text.length
+                        if ((flags and RxProgram.F_ZEROWIDTH) == 0) pos += lit.size
                         pc += 3
                     }
                 }
@@ -165,11 +162,11 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                         failed = true
                     } else {
                         val pred = pool[code[pc + 1]] as RxProgram.CharPred
-                        val cp = atomAt(target, pos, eos)
+                        val cp = atoms[pos]
                         if (!pred.holds(cp)) {
                             failed = true
                         } else {
-                            pos += atomWidth(cp)
+                            pos += 1
                             pc += 2
                         }
                     }
@@ -179,7 +176,7 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     if (pos >= eos) {
                         failed = true
                     } else {
-                        pos += atomWidth(atomAt(target, pos, eos))
+                        pos += 1
                         pc += 1
                     }
                 }
@@ -188,13 +185,15 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     if (pos >= eos) {
                         failed = true
                     } else {
-                        val cp = target.codePointAt(pos)
-                        if (cp != '\n'.code && cp != '\r'.code) {
+                        /* NFG: one newline grapheme. A CR LF pair is a single
+                         * grapheme (a synthetic whose base is CR), so isNl
+                         * accepts it and it advances by one, no LF fixup. */
+                        val cp = atoms[pos]
+                        val b = baseOf(cp)
+                        if (b != '\n'.code && b != '\r'.code) {
                             failed = true
                         } else {
                             pos += 1
-                            if (cp == '\r'.code && pos < eos && target[pos] == '\n')
-                                pos += 1
                             pc += 1
                         }
                     }
@@ -207,11 +206,11 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                         /* The fused pair equals no single codepoint, so a
                          * bare CR or LF literal fails on it -- and its
                          * negation matches, consuming both characters. */
-                        val cp = atomAt(target, pos, eos)
+                        val cp = atoms[pos]
                         if ((cp == code[pc + 1]) == (code[pc + 2] != 0)) {
                             failed = true
                         } else {
-                            pos += atomWidth(cp)
+                            pos += 1
                             pc += 3
                         }
                     }
@@ -221,11 +220,11 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     if (pos >= eos) {
                         failed = true
                     } else {
-                        val cp = atomAt(target, pos, eos)
-                        if (Character.isDigit(cp) == (code[pc + 1] != 0)) {
+                        val cp = atoms[pos]
+                        if (Character.isDigit(baseOf(cp)) == (code[pc + 1] != 0)) {
                             failed = true
                         } else {
-                            pos += atomWidth(cp)
+                            pos += 1
                             pc += 2
                         }
                     }
@@ -235,12 +234,12 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     if (pos >= eos) {
                         failed = true
                     } else {
-                        val cp = atomAt(target, pos, eos)
-                        val inClass = Character.isLetterOrDigit(cp) || cp == '_'.code
+                        val cp = atoms[pos]
+                        val inClass = Character.isLetterOrDigit(baseOf(cp)) || baseOf(cp) == '_'.code
                         if (inClass == (code[pc + 1] != 0)) {
                             failed = true
                         } else {
-                            pos += atomWidth(cp)
+                            pos += 1
                             pc += 2
                         }
                     }
@@ -250,16 +249,18 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     if (pos >= eos) {
                         failed = true
                     } else {
-                        val cp = atomAt(target, pos, eos)
+                        val cp = atoms[pos]
                         /* CCLASS_WHITESPACE, not Character.isWhitespace: the
                          * latter excludes NBSP and NEL, which nqp's \s
-                         * includes (see Ops.iscclass). */
-                        val inClass = cp == RxProgram.CRLF || cp in 9..13 ||
-                            cp == 0x85 || Character.isSpaceChar(cp)
+                         * includes (see Ops.iscclass). NFG: on the base, so the
+                         * CR LF grapheme (base CR) is whitespace. */
+                        val sb = baseOf(cp)
+                        val inClass = sb in 9..13 ||
+                            sb == 0x85 || Character.isSpaceChar(sb)
                         if (inClass == (code[pc + 1] != 0)) {
                             failed = true
                         } else {
-                            pos += atomWidth(cp)
+                            pos += 1
                             pc += 2
                         }
                     }
@@ -269,19 +270,19 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     if (pos >= eos) {
                         failed = true
                     } else {
-                        val cp = atomAt(target, pos, eos)
+                        val cp = atoms[pos]
                         val inRange = cp >= code[pc + 1] && cp <= code[pc + 2]
                         if (inRange == (code[pc + 3] != 0)) {
                             failed = true
                         } else {
-                            pos += atomWidth(cp)
+                            pos += 1
                             pc += 4
                         }
                     }
                 }
 
                 RxProgram.ANCHOR -> {
-                    if (!anchorHolds(code[pc + 1], target, pos, eos)) {
+                    if (!anchorHolds(code[pc + 1], atoms, pos, eos)) {
                         failed = true
                     } else {
                         pc += 2
@@ -333,7 +334,7 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                         /* A scan steps by atom, so it never offers a match a
                          * position inside a CR LF pair -- an NFG backend has
                          * no such position to offer. */
-                        pos += atomWidth(atomAt(target, pos, eos))
+                        pos += 1
                         pc += 1
                     }
                 }
@@ -357,7 +358,7 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                         negate
                     } else {
                         val pred = pool[code[pc + 1]] as RxProgram.CharPred
-                        pred.holds(atomAt(target, pos, eos)) != negate
+                        pred.holds(atoms[pos]) != negate
                     }
                     if (ok) pc += 3 else failed = true
                     /* pos deliberately untouched: that is what zero-width is. */
@@ -394,18 +395,19 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                         failed = true
                     } else {
                         val flags = code[pc + 2]
-                        /* The fused pair carries no single codepoint's
-                         * property: on MoarVM not even <:Space> holds of the
-                         * CR LF grapheme. So the pair fails every positive
-                         * property test without asking the runtime. */
-                        val cp = atomAt(target, pos, eos)
-                        val holds = cp != RxProgram.CRLF &&
+                        /* A synthetic grapheme (a fused pair, or base+combiners)
+                         * carries no single codepoint's property: on MoarVM not
+                         * even <:Space> holds of the CR LF grapheme. So a
+                         * synthetic (atom < 0) fails every positive property test
+                         * without asking the runtime. */
+                        val cp = atoms[pos]
+                        val holds = cp >= 0 &&
                             charProp(cursor, pool[code[pc + 1]] as String, pos)
                         if (holds == ((flags and RxProgram.F_NEGATE) != 0)) {
                             failed = true
                         } else {
                             if ((flags and RxProgram.F_ZEROWIDTH) == 0) {
-                                pos += atomWidth(cp)
+                                pos += 1
                             }
                             pc += 3
                         }
@@ -803,7 +805,8 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
         @CompilationFinal(dimensions = 1)
         private val ANCHOR_KINDS = RxTree.Anchor.Kind.entries.toTypedArray()
 
-        private fun anchorHolds(kind: Int, target: String, pos: Int, eos: Int): Boolean =
+        /* NFG: positions are grapheme indices, so anchors read the atom array. */
+        private fun anchorHolds(kind: Int, atoms: IntArray, pos: Int, eos: Int): Boolean =
             when (ANCHOR_KINDS[kind]) {
                 RxTree.Anchor.Kind.BOS -> pos == 0
                 RxTree.Anchor.Kind.EOS -> pos == eos
@@ -813,14 +816,14 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                  * newline: a line neither starts at end-of-string after a
                  * final newline (bol) nor ends right after one (eol). */
                 RxTree.Anchor.Kind.BOL ->
-                    pos == 0 || (pos < eos && isNl(target[pos - 1]))
+                    pos == 0 || (pos < eos && isNl(atoms[pos - 1]))
                 RxTree.Anchor.Kind.EOL ->
-                    (pos < eos && isNl(target[pos]))
-                        || (pos == eos && (pos == 0 || !isNl(target[pos - 1])))
+                    (pos < eos && isNl(atoms[pos]))
+                        || (pos == eos && (pos == 0 || !isNl(atoms[pos - 1])))
                 RxTree.Anchor.Kind.LWB ->
-                    pos < eos && isWord(target, pos) && (pos == 0 || !isWord(target, pos - 1))
+                    pos < eos && isWord(atoms, pos) && (pos == 0 || !isWord(atoms, pos - 1))
                 RxTree.Anchor.Kind.RWB ->
-                    pos > 0 && isWord(target, pos - 1) && (pos == eos || !isWord(target, pos))
+                    pos > 0 && isWord(atoms, pos - 1) && (pos == eos || !isWord(atoms, pos))
                 /* The two constant assertions: `<?>` always holds, and the
                  * fail anchor is how QAST::Compiler spells a branch that is
                  * dead. */
@@ -828,32 +831,47 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                 RxTree.Anchor.Kind.FAIL -> false
             }
 
-        private fun isWord(target: String, pos: Int): Boolean {
-            val c = target[pos]
-            return Character.isLetterOrDigit(c) || c == '_'
+        private fun isWord(atoms: IntArray, pos: Int): Boolean {
+            val c = baseOf(atoms[pos])
+            return Character.isLetterOrDigit(c) || c == '_'.code
         }
 
-        /* CCLASS_NEWLINE, inlined from Ops.iscclass so the anchor test
-         * stays a few char compares under partial evaluation. */
-        private fun isNl(c: Char): Boolean =
-            c == '\n' || c == '\u000B' || c == '\u000C' || c == '\r' ||
-            c == '\u0085' || c == '\u2029' ||
-            Character.getType(c) == Character.LINE_SEPARATOR.toInt()
+        /* The base codepoint of a grapheme atom: itself if a codepoint, else the
+         * synthetic's first codepoint. Used by the \w/\s/\d/anchor tests. */
+        private fun baseOf(atom: Int): Int =
+            if (atom >= 0) atom else org.raku.nqp.runtime.NFGSynthetics.baseOf(atom)
 
-        /*
-         * The atom at a position: the codepoint there, except that a CR
-         * directly followed by LF reads as the fused pair. See
-         * RxProgram.CRLF for why the fusion is synthesized here.
-         */
-        private fun atomAt(target: String, pos: Int, eos: Int): Int {
-            val c = target[pos]
-            return if (c == '\r' && pos + 1 < eos && target[pos + 1] == '\n') RxProgram.CRLF
-            else target.codePointAt(pos)
+        /* A CHAR literal's grapheme atoms. Off the PE fast path (allocates), but
+         * a literal is a pool constant so this is stable per program site. */
+        @TruffleBoundary
+        private fun literalAtoms(text: String): IntArray =
+            NFGString.atomsOf(text)
+
+        /* Does the target's atoms at [pos] equal [lit] grapheme-for-grapheme?
+         * Case-insensitive comparison only folds plain codepoint atoms. */
+        private fun atomsEqualAt(atoms: IntArray, pos: Int, lit: IntArray, ignoreCase: Boolean): Boolean {
+            var i = 0
+            while (i < lit.size) {
+                val a = atoms[pos + i]
+                val b = lit[i]
+                if (a != b) {
+                    if (!ignoreCase || a < 0 || b < 0) return false
+                    if (Character.toLowerCase(a) != Character.toLowerCase(b) &&
+                        Character.toUpperCase(a) != Character.toUpperCase(b)) return false
+                }
+                i++
+            }
+            return true
         }
 
-        /** How many chars the atom covers -- two for the fused pair. */
-        private fun atomWidth(cp: Int): Int =
-            if (cp == RxProgram.CRLF) 2 else Character.charCount(cp)
+        /* CCLASS_NEWLINE, inlined from Ops.iscclass. NFG: tested on the atom's
+         * base codepoint, so the CR LF grapheme (base CR) counts as a newline. */
+        private fun isNl(atom: Int): Boolean {
+            val c = baseOf(atom)
+            return c == '\n'.code || c == 0x0B || c == 0x0C || c == '\r'.code ||
+                c == 0x85 || c == 0x2029 ||
+                Character.getType(c) == Character.LINE_SEPARATOR.toInt()
+        }
 
         private fun grow(array: IntArray): IntArray = array.copyOf(array.size * 2)
 
