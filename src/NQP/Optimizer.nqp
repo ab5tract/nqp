@@ -36,6 +36,24 @@ class NQP::Optimizer {
             }
         }
 
+        # Record a use that must be treated as belonging to a nested block, so
+        # lexicals_to_locals keeps the variable lexical. Used for a regex
+        # qastnode / subrule-arg body: the engine (QAST::RxDescriptor) turns it
+        # into a callback block that closes over the rule's lexicals but cannot
+        # reach the rule frame's locals, so lowering one of those it touches
+        # would leave the callback referencing a local that is not there.
+        method add_usage_inner($var) {
+            if $var.scope eq 'lexical' {
+                my $name   := $var.name;
+                my @usages := %!usages_inner{$name};
+                unless @usages {
+                    @usages := [];
+                    %!usages_inner{$name} := @usages;
+                }
+                nqp::push(@usages, $var);
+            }
+        }
+
         method poison_lowering() { $!poisoned := 1; }
 
         method get_decls() { %!decls }
@@ -120,6 +138,14 @@ class NQP::Optimizer {
     has @!block_stack;
     has @!block_var_stack;
     has %!adverbs;
+
+    # Depth counter: while > 0 we are visiting the body of a regex qastnode or
+    # subrule-arg callback, whose lexical uses must be recorded as inner (so
+    # they stay lexical for the engine callback). A counter, not a flag, so
+    # nested callbacks restore the outer state.
+    has int $!in_rx_callback;
+    method enter_rx_callback() { $!in_rx_callback := $!in_rx_callback + 1 }
+    method exit_rx_callback()  { $!in_rx_callback := $!in_rx_callback - 1 }
 
     method optimize($ast, *%adverbs) {
         %!adverbs := %adverbs;
@@ -364,7 +390,12 @@ class NQP::Optimizer {
                 }
             }
             else {
-                @!block_var_stack[$top].add_usage($var);
+                if $!in_rx_callback {
+                    @!block_var_stack[$top].add_usage_inner($var);
+                }
+                else {
+                    @!block_var_stack[$top].add_usage($var);
+                }
             }
         }
     }
@@ -389,18 +420,26 @@ class NQP::Optimizer {
                             :main_lang_optimizer(sub ($node) {
                                 if nqp::istype($node, QAST::Regex) {
                                     if $node.rxtype eq 'subrule' {
-                                        # Visit subrule args.
+                                        # Visit subrule args. These become part
+                                        # of an engine callback, so their lexical
+                                        # uses must stay lexical (not lowered).
                                         if nqp::istype($node[0], QAST::Node) {
+                                            self.enter_rx_callback();
                                             self.visit_children($node[0]);
+                                            self.exit_rx_callback();
                                             return $node;
                                         }
                                     }
                                     elsif $node.rxtype eq 'qastnode' {
                                         # QAST node, and probably with statements.
+                                        # Its body becomes an engine callback, so
+                                        # keep the lexicals it touches lexical.
                                         my $child := $node[0];
                                         if nqp::istype($child, QAST::Stmts) ||
                                                 nqp::istype($child, QAST::Stmt) {
+                                            self.enter_rx_callback();
                                             self.visit_children($child);
+                                            self.exit_rx_callback();
                                             return $node;
                                         }
                                     }
