@@ -129,7 +129,22 @@ class NFGString private constructor(
 
         /** Grapheme atoms of [s] (codepoint >=0 or synthetic id <0), for the engine. */
         @JvmStatic
-        fun atomsOf(s: String): IntArray = fromJavaString(s).atoms()
+        /* Cache: the engine builds an atom array per NqpCursor (per grammar-rule
+         * invocation on the same source), so without this the per-parse cost is
+         * O(rules x source). A WeakHashMap (not a bounded LRU, which would
+         * thrash the source against parse captures) keeps the live source cached
+         * while dead strings GC out. Same-source lookups are O(1) (identity). */
+        private val atomsCache: MutableMap<String, IntArray> =
+            java.util.Collections.synchronizedMap(java.util.WeakHashMap<String, IntArray>())
+
+        @JvmStatic
+        fun atomsOf(s: String): IntArray {
+            if (s.isEmpty()) return IntArray(0)
+            atomsCache[s]?.let { return it }
+            val a = fromJavaString(s).atoms()
+            atomsCache[s] = a
+            return a
+        }
 
         /** Canonicalizing builder: no synthetics -> flat; else general. */
         private fun fromGraphemes(g: List<Int>): NFGString {
