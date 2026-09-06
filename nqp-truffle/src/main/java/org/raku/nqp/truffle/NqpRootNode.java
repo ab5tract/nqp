@@ -289,6 +289,18 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     }
 
     @Operation
+    public static final class UseCapture {
+        @Specialization
+        static Object doUse(VirtualFrame f) {
+            try {
+                return NqpOps.usecapture(tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
     public static final class P6ArgVmArray {
         @Specialization
         static Object doArgs(VirtualFrame f) {

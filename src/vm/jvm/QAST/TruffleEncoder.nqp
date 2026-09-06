@@ -48,7 +48,7 @@ class QAST::TruffleEncoder {
     my $extra_ops := 'assign_i assign_n assign_s assign_u bind call
         callmethod callstatic chain chainstatic const curlexpad
         control defor dispatch getlexouter handle handlepayload hash if
-        ifnull list list_i list_n list_s locallifetime null p6argvmarray p6assign
+        ifnull list list_i list_n list_s locallifetime null p6argvmarray p6assign usecapture
         p6decontrv p6decontrv_6c
         repeat_until repeat_while stmt stmts unless until while';
 
@@ -315,6 +315,7 @@ class QAST::TruffleEncoder {
     my int $W_CURLEXPAD := 25;
     my int $W_P6ARGVMARRAY := 26;
     my int $W_CLASSLIB := 27;
+    my int $W_USECAPTURE := 28;
 
     # Handler categories, matching ExceptionHandling on the runtime side
     # (and the Compiler's own copies).
@@ -1142,7 +1143,17 @@ class QAST::TruffleEncoder {
                 elsif $_.named eq 'label' { cbail('labeled loop') }
                 else { nqp::push(@operands, $_) }
             }
-            cbail('loop shape') unless nqp::elems(@operands) == 2;
+            # 2 operands = cond+body; a 3rd is the loop's "next" expression
+            # (a C-style `loop(init;cond;incr)` increment or a NEXT-phaser
+            # body), run after the body and after a NEXT unwind, before the
+            # cond re-test -- exactly Compiler.nqp's 2-or-3 operand shape.
+            cbail('loop shape')
+                unless nqp::elems(@operands) == 2 || nqp::elems(@operands) == 3;
+            my int $has_next := nqp::elems(@operands) == 3 ?? 1 !! 0;
+            # A repeat_ loop runs its body once ahead of the first test; the
+            # "next" would have to run in that pre-run too, and getting that
+            # ordering wrong is worse than not encoding this rare combination.
+            cbail('repeat loop with next-expr') if $repeat && $has_next;
             # A body that takes the condition (`while $x -> $y {}`): the
             # bytecode path binds the condition into an __IM_ local and
             # calls the body with it. Here the condition child becomes
@@ -1154,12 +1165,14 @@ class QAST::TruffleEncoder {
                 epush(%e, $W_LOOP);
                 epush(%e, $is_until);
                 epush(%e, $repeat);
+                epush(%e, $has_next);
                 my int $ct_at := nqp::elems(%e<code>);
                 epush(%e, 0);
                 my int $condt := self.encode_loop_cond(@operands[0], %e, $im, $im_tmp);
                 nqp::bindpos(%e<code>, $ct_at, $condt);
                 if $im { self.encode_immediate_call(@operands[1], %e, 1, $T_OBJ, $im_tmp) }
                 else { self.encode_node(@operands[1], %e, $T_VOID) }
+                if $has_next { self.encode_node(@operands[2], %e, $T_VOID) }
                 return $T_OBJ;
             }
             # A handled loop: register the same LAST and NEXT|REDO rows the
@@ -1179,6 +1192,7 @@ class QAST::TruffleEncoder {
             cbail('repeat loop with handlers') if $repeat;
             epush(%e, $W_LOOPH);
             epush(%e, $is_until);
+            epush(%e, $has_next);
             my int $ct_at := nqp::elems(%e<code>);
             epush(%e, 0);
             epush(%e, $lid);
@@ -1190,6 +1204,11 @@ class QAST::TruffleEncoder {
             %e<hidx> := $nrid;
             if $im { self.encode_immediate_call(@operands[1], %e, 1, $T_OBJ, $im_tmp) }
             else { self.encode_node(@operands[1], %e, $T_VOID) }
+            # The "next" expression runs under the LAST handler (a `last` in
+            # it still exits the loop; a `next`/`redo` there is not caught),
+            # after the body and after a NEXT unwind -- Compiler.nqp:1370.
+            %e<hidx> := $lid;
+            if $has_next { self.encode_node(@operands[2], %e, $T_VOID) }
             %e<hidx> := $outer;
             return $T_OBJ;
         }
@@ -1293,6 +1312,22 @@ class QAST::TruffleEncoder {
         }
         if $name eq 'callmethod' {
             return self.encode_callmethod($op, %e);
+        }
+        if $name eq 'sprintf' || $name eq 'sprintfdirectives'
+            || $name eq 'sprintfaddargumenthandler' {
+            # All three desugar to a call of the nqp hll sub of the same
+            # name, exactly Compiler.nqp: call(gethllsym('nqp', name), args)
+            # returning str (int for sprintfdirectives).
+            my $call := QAST::Op.new( :op('call'),
+                :returns($name eq 'sprintfdirectives' ?? int !! str),
+                QAST::Op.new( :op('gethllsym'),
+                    QAST::SVal.new( :value('nqp') ),
+                    QAST::SVal.new( :value($name) ) ) );
+            for @($op) { $call.push($_) }
+            return self.encode_node($call, %e, $want);
+        }
+        if $name eq 'xor' {
+            return self.encode_xor($op, %e, $want);
         }
         if $name eq 'numify' {
             # numify(x): x in num context, exactly Compiler.nqp's as_jast(x, :want(NUM)).
@@ -1489,6 +1524,14 @@ class QAST::TruffleEncoder {
         if $name eq 'p6argvmarray' {
             cbail('p6argvmarray arity') if nqp::elems(@($op));
             epush(%e, $W_P6ARGVMARRAY);
+            return $T_OBJ;
+        }
+        if $name eq 'usecapture' {
+            # The current frame's arguments captured for a re-dispatch,
+            # exactly Compiler.nqp's usecapture(tc, csd, args). A 0-operand
+            # op that reads cf.csd/cf.args, mirroring p6argvmarray.
+            cbail('usecapture arity') if nqp::elems(@($op));
+            epush(%e, $W_USECAPTURE);
             return $T_OBJ;
         }
         if $name eq 'syscall' {
@@ -1810,6 +1853,71 @@ class QAST::TruffleEncoder {
         epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
         epush(%e, $W_SVAL); epush(%e, epool(%e, 'defined'));
         epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $mtmp);
+    }
+
+    # xor: variadic "exactly one true". Desugared to scratch locals and
+    # nested ifs that reproduce Compiler.nqp's label-based flow: evaluate
+    # children left to right; the moment a SECOND true appears, short-circuit
+    # (skipping the rest) to the :false child, or null; otherwise yield the
+    # single true value, or -- when none is true -- the last child. $t = "a
+    # true has been seen and frozen into $r", $x = "two trues seen". Kept out
+    # of encode_op: that method is already near the codegen size limit.
+    method encode_xor($op, %e, int $want) {
+        my @childlist;
+        my $f_ast;
+        for @($op) {
+            if $_.named eq 'false' { $f_ast := $_ }
+            else { nqp::push(@childlist, $_) }
+        }
+        cbail('xor arity') unless nqp::elems(@childlist) >= 2;
+        my str $r := $op.unique('xor_r');
+        my str $t := $op.unique('xor_t');
+        my str $x := $op.unique('xor_x');
+        my str $b := $op.unique('xor_b');
+        my str $u := $op.unique('xor_u');
+        my $lget := -> str $n { QAST::Var.new( :name($n), :scope('local') ) };
+        my $tree := QAST::Stmts.new(
+            QAST::Op.new( :op('bind'),
+                QAST::Var.new( :name($r), :scope('local'), :decl('var') ),
+                @childlist[0] ),
+            QAST::Op.new( :op('bind'),
+                QAST::Var.new( :name($t), :scope('local'), :decl('var'), :returns(int) ),
+                QAST::Op.new( :op('istrue'), $lget($r) ) ),
+            QAST::Op.new( :op('bind'),
+                QAST::Var.new( :name($x), :scope('local'), :decl('var'), :returns(int) ),
+                QAST::IVal.new( :value(0) ) ),
+            QAST::Op.new( :op('bind'),
+                QAST::Var.new( :name($b), :scope('local'), :decl('var') ),
+                QAST::Op.new( :op('null') ) ),
+            QAST::Op.new( :op('bind'),
+                QAST::Var.new( :name($u), :scope('local'), :decl('var'), :returns(int) ),
+                QAST::IVal.new( :value(0) ) ) );
+        my int $ci := 1;
+        my int $nc := nqp::elems(@childlist);
+        while $ci < $nc {
+            # unless $x { $b := ck; $u := istrue($b);
+            #   if $u { if $t {$x:=1} else {$r:=$b;$t:=1} }
+            #   else  { unless $t {$r:=$b} } }
+            my $per := QAST::Stmts.new(
+                QAST::Op.new( :op('bind'), $lget($b), @childlist[$ci] ),
+                QAST::Op.new( :op('bind'), $lget($u),
+                    QAST::Op.new( :op('istrue'), $lget($b) ) ),
+                QAST::Op.new( :op('if'), $lget($u),
+                    QAST::Op.new( :op('if'), $lget($t),
+                        QAST::Op.new( :op('bind'), $lget($x), QAST::IVal.new( :value(1) ) ),
+                        QAST::Stmts.new(
+                            QAST::Op.new( :op('bind'), $lget($r), $lget($b) ),
+                            QAST::Op.new( :op('bind'), $lget($t), QAST::IVal.new( :value(1) ) ) ) ),
+                    QAST::Op.new( :op('unless'), $lget($t),
+                        QAST::Op.new( :op('bind'), $lget($r), $lget($b) ) ) ) );
+            $tree.push( QAST::Op.new( :op('unless'), $lget($x), $per ) );
+            $ci++;
+        }
+        $tree.push( QAST::Op.new( :op('if'), $lget($x),
+            QAST::Op.new( :op('bind'), $lget($r),
+                nqp::defined($f_ast) ?? $f_ast !! QAST::Op.new( :op('null') ) ) ) );
+        $tree.push( $lget($r) );
+        return self.encode_node($tree, %e, $want);
     }
 
     method encode_if($op, %e, int $want, int $negate, int $withy = 0) {

@@ -114,6 +114,9 @@ final class NqpProgramBuilder {
             case NqpWire.P6ARGVMARRAY:
                 if (emit) b.emitP6ArgVmArray();
                 return at + 1;
+            case NqpWire.USECAPTURE:
+                if (emit) b.emitUseCapture();
+                return at + 1;
             case NqpWire.IVAL:
                 if (emit) b.emitLoadConstant(Long.parseLong(pool[code[at + 1]]));
                 return at + 2;
@@ -196,25 +199,34 @@ final class NqpProgramBuilder {
             case NqpWire.LOOP: {
                 int until = code[at + 1];
                 int repeat = code[at + 2];
-                int condType = code[at + 3];
-                int condAt = at + 4;
+                int hasNext = code[at + 3];
+                int condType = code[at + 4];
+                int condAt = at + 5;
                 int bodyAt = walk(condAt, false);
+                int nextAt = walk(bodyAt, false);
+                // The whole region ends after the "next" expr if it is present.
+                int endAt = hasNext != 0 ? walk(nextAt, false) : nextAt;
                 if (repeat != 0 && emit) {
                     // Run the body once ahead: repeat_while == body; while.
+                    // (repeat + a next-expr is refused by the encoder.)
                     beginSink();
                     walk(bodyAt, true);
                     endSink();
                 }
-                if (emit) b.beginBlock();
-                if (emit) b.beginWhile();
-                walkCond(condAt, condType, until, emit);
-                if (emit) beginSink();
-                at = walk(bodyAt, emit);
-                if (emit) endSink();
-                if (emit) b.endWhile();
-                if (emit) b.emitLoadNull();
-                if (emit) b.endBlock();
-                return at;
+                if (emit) {
+                    b.beginBlock();
+                    b.beginWhile();
+                    walkCond(condAt, condType, until, true);
+                    beginSink();
+                    walk(bodyAt, true);
+                    // The "next" expr runs after the body, before the re-test.
+                    if (hasNext != 0) walk(nextAt, true);
+                    endSink();
+                    b.endWhile();
+                    b.emitLoadNull();
+                    b.endBlock();
+                }
+                return endAt;
             }
             case NqpWire.LOOPH: {
                 // A loop with last/next/redo handlers: the bytecode shape
@@ -225,13 +237,16 @@ final class NqpProgramBuilder {
                 // curHandler delimiting, unwind_check, category routing --
                 // matches the emitted bytecode exactly.
                 int until = code[at + 1];
-                int condType = code[at + 2];
-                int lastId = code[at + 3];
-                int nrId = code[at + 4];
-                int outerIdx = code[at + 5];
-                int condAt = at + 6;
+                int hasNext = code[at + 2];
+                int condType = code[at + 3];
+                int lastId = code[at + 4];
+                int nrId = code[at + 5];
+                int outerIdx = code[at + 6];
+                int condAt = at + 7;
                 int bodyAt = walk(condAt, false);
-                if (!emit) return walk(bodyAt, false);
+                int nextAt = walk(bodyAt, false);
+                int endAt = hasNext != 0 ? walk(nextAt, false) : nextAt;
+                if (!emit) return endAt;
 
                 BytecodeLocal redoL = b.createLocal();
                 b.beginBlock();
@@ -279,6 +294,15 @@ final class NqpProgramBuilder {
                             b.endBlock();
                         }
                         b.endWhile();
+                        // The "next" expr, under lastId: it runs after the
+                        // body's redo loop drains (normal completion or a
+                        // NEXT unwind, which LoopBodyUnwind routed to redo=0),
+                        // before the outer while re-tests the condition.
+                        if (hasNext != 0) {
+                            beginSink();
+                            walk(nextAt, true);
+                            endSink();
+                        }
                         b.endBlock();
                     }
                     b.endWhile();
@@ -296,7 +320,7 @@ final class NqpProgramBuilder {
                 b.endTryCatch();
                 b.emitLoadNull();
                 b.endBlock();
-                return walk(bodyAt, false);
+                return endAt;
             }
             case NqpWire.HANDLE: {
                 // The handle op's nesting, reconstructed: an inner TryCatch
