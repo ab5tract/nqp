@@ -1,6 +1,7 @@
-package org.raku.nqp.runtime
+package org.raku.nqp.truffle
 
 import com.oracle.truffle.api.strings.TruffleString
+import org.raku.nqp.runtime.NFGSynthetics
 import java.text.BreakIterator
 import java.text.Normalizer
 
@@ -126,6 +127,10 @@ class NFGString private constructor(
 
         private val EMPTY_CLUSTERS = emptyArray<String>()
 
+        /** Grapheme atoms of [s] (codepoint >=0 or synthetic id <0), for the engine. */
+        @JvmStatic
+        fun atomsOf(s: String): IntArray = fromJavaString(s).atoms()
+
         /** Canonicalizing builder: no synthetics -> flat; else general. */
         private fun fromGraphemes(g: List<Int>): NFGString {
             if (g.isEmpty()) return EMPTY
@@ -152,6 +157,20 @@ class NFGString private constructor(
      * codepoint) and `.ords` (constituent codepoints) are built on top of it.
      */
     fun graphemeAt(i: Int): Int = if (flat != null) CP_AT.execute(flat, i, UTF16) else graphemes!![i]
+
+    /**
+     * The full grapheme-atom array: one int per grapheme, a codepoint (`>= 0`)
+     * or a synthetic id (`< 0`). This is what the regex engine (RxVmNode) reads,
+     * indexing by grapheme; `atoms().size == chars()`.
+     */
+    fun atoms(): IntArray {
+        if (graphemes != null) return graphemes
+        val n = chars()
+        val a = IntArray(n)
+        var i = 0
+        while (i < n) { a[i] = CP_AT.execute(flat, i, UTF16); i++ }
+        return a
+    }
 
     /** Grapheme-indexed substring. */
     fun substr(offset: Int, length: Int): NFGString {

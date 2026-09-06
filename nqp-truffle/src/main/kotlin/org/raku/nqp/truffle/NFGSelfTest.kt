@@ -1,4 +1,4 @@
-package org.raku.nqp.runtime
+package org.raku.nqp.truffle
 
 /**
  * Phase-1 self-test for [NFGString]. Expected values are the MoarVM reference
@@ -13,6 +13,8 @@ package org.raku.nqp.runtime
  *
  * Run: java -cp <nqp-runtime.jar>:<truffle-api.jar> org.raku.nqp.runtime.NFGSelfTest
  */
+import org.raku.nqp.runtime.NFGSynthetics
+
 object NFGSelfTest {
     private var passed = 0
     private var failed = 0
