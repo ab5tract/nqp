@@ -1,6 +1,7 @@
-package org.raku.nqp.runtime
+package org.raku.nqp.truffle
 
 import com.oracle.truffle.api.strings.TruffleString
+import org.raku.nqp.runtime.NFGSynthetics
 import java.text.BreakIterator
 import java.text.Normalizer
 
@@ -126,6 +127,33 @@ class NFGString private constructor(
 
         private val EMPTY_CLUSTERS = emptyArray<String>()
 
+        /* Intern one NFGString per source string. The runtime engine reads a
+         * source's graphemes many times over (per grammar-rule invocation, and
+         * again for chars/atoms), so caching the VALUE -- not just its atom
+         * array -- lets every one of those reads share the same instance and
+         * its per-instance chars/atoms caches. A WeakHashMap (not a bounded LRU,
+         * which would thrash the live source against parse captures) keeps the
+         * live source cached while dead strings GC out; same-source lookups are
+         * O(1) by identity. */
+        private val internCache: MutableMap<String, NFGString> =
+            java.util.Collections.synchronizedMap(java.util.WeakHashMap<String, NFGString>())
+
+        /** The interned (cached) NFGString for [s]. */
+        @JvmStatic
+        fun of(s: String): NFGString {
+            if (s.isEmpty()) return EMPTY
+            internCache[s]?.let { return it }
+            val v = fromJavaString(s)
+            internCache[s] = v
+            return v
+        }
+
+        /** Grapheme atoms of [s] (codepoint >=0 or synthetic id <0), for the
+         *  engine -- the interned value's cached atom array. */
+        @JvmStatic
+        fun atomsOf(s: String): IntArray =
+            if (s.isEmpty()) IntArray(0) else of(s).atoms()
+
         /** Canonicalizing builder: no synthetics -> flat; else general. */
         private fun fromGraphemes(g: List<Int>): NFGString {
             if (g.isEmpty()) return EMPTY
@@ -143,8 +171,23 @@ class NFGString private constructor(
 
     val isFlat: Boolean get() = flat != null
 
+    /* Derived views computed once. NFGString is an immutable value, so these
+     * never go stale; they turn repeated chars()/atoms() -- which the engine
+     * does per source, many times -- from a TruffleString node execution (or an
+     * int[] rebuild) into a field read. Benign lazy state on an immutable value:
+     * every computation is idempotent, so an unsynchronized race only recomputes. */
+    private var cachedChars: Int = -1
+    private var cachedAtoms: IntArray? = null
+
     /** Number of graphemes (`.chars`). */
-    fun chars(): Int = if (flat != null) CP_LEN.execute(flat, UTF16) else graphemes!!.size
+    fun chars(): Int {
+        var c = cachedChars
+        if (c < 0) {
+            c = if (flat != null) CP_LEN.execute(flat, UTF16) else graphemes!!.size
+            cachedChars = c
+        }
+        return c
+    }
 
     /**
      * The grapheme at grapheme index [i]: a codepoint (`>= 0`) or a synthetic id
@@ -152,6 +195,22 @@ class NFGString private constructor(
      * codepoint) and `.ords` (constituent codepoints) are built on top of it.
      */
     fun graphemeAt(i: Int): Int = if (flat != null) CP_AT.execute(flat, i, UTF16) else graphemes!![i]
+
+    /**
+     * The full grapheme-atom array: one int per grapheme, a codepoint (`>= 0`)
+     * or a synthetic id (`< 0`). This is what the regex engine (RxVmNode) reads,
+     * indexing by grapheme; `atoms().size == chars()`.
+     */
+    fun atoms(): IntArray {
+        if (graphemes != null) return graphemes
+        cachedAtoms?.let { return it }
+        val n = chars()
+        val a = IntArray(n)
+        var i = 0
+        while (i < n) { a[i] = CP_AT.execute(flat, i, UTF16); i++ }
+        cachedAtoms = a
+        return a
+    }
 
     /** Grapheme-indexed substring. */
     fun substr(offset: Int, length: Int): NFGString {

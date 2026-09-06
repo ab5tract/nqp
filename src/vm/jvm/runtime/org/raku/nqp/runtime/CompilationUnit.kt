@@ -415,17 +415,37 @@ abstract class CompilationUnit {
             }, Charsets.UTF_8)
         }
         /* Format, written by the QAST compiler: "N" then per program
-         * " len:content", len in Java chars (nqp::chars agrees). */
+         * " len:content", len a grapheme count (the compiler's nqp::chars) --
+         * NFG graphemes >= UTF-16 units, so a program carrying a multi-unit
+         * grapheme (astral char / NFG cluster) cannot be split by a plain
+         * UTF-16 offset (that under-reads and misaligns every following
+         * program -- the "229" bug). Split with ONE BreakIterator over the
+         * whole text, set once and walked strictly forward: the programs
+         * partition the text, so this is O(text). setText is itself O(text)
+         * and MUST run once, not per program -- a per-program graphemeEnd
+         * (setText each call) was O(n^2) and dominated the CORE.c parse
+         * stage (145s -> 588s). */
         var at = text.indexOf(' ')
         val count = text.substring(0, if (at < 0) text.length else at).toInt()
         val out = arrayOfNulls<String>(count)
+        val bi = java.text.BreakIterator.getCharacterInstance()
+        bi.setText(text)
         var i = 0
         while (i < count) {
             at += 1                        // the leading space
             val colon = text.indexOf(':', at)
             val len = text.substring(at, colon).toInt()
-            out[i] = text.substring(colon + 1, colon + 1 + len)
-            at = colon + 1 + len
+            val start = colon + 1
+            var pos = start
+            var n = len
+            while (n > 0) {
+                val next = bi.following(pos)
+                if (next == java.text.BreakIterator.DONE) { pos = text.length; break }
+                pos = next
+                n--
+            }
+            out[i] = text.substring(start, pos)
+            at = pos
             i += 1
         }
         @Suppress("UNCHECKED_CAST")
