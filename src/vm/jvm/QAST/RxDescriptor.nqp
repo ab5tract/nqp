@@ -341,6 +341,16 @@ class QAST::RxDescriptor {
             for @!bail_reasons { $seen := 1 if $_ eq $why }
             nqp::push(@!bail_reasons, $why) unless $seen;
         }
+        # NQP_RX_STRICT turns the silent fallback into a hard error, so a rule
+        # that stops being engine-encodable surfaces at once rather than quietly
+        # dropping back to the bytecode path. Off by default: the fallback is
+        # still needed downstream (Rakudo's grammars, the descriptor size cap),
+        # this only guards a build that asserts everything encodes.
+        if nqp::existskey(nqp::getenvhash(), 'NQP_RX_STRICT') {
+            my str $name := $!pass_name eq '' ?? '<anon>' !! $!pass_name;
+            nqp::die("NQP_RX_STRICT: rule '" ~ $name
+                ~ "' fell back to the bytecode path: " ~ $why);
+        }
         nqp::null()
     }
 

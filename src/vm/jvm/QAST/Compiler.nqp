@@ -6453,7 +6453,16 @@ class QAST::CompilerJAST {
         # and matters little; refusing it here beats emitting a class that
         # will not load.
         my str $encoded := $desc.encoded;
-        return nqp::null() if nqp::chars($encoded) > 20000;
+        if nqp::chars($encoded) > 20000 {
+            # A real limit, not a missing feature, so NQP_RX_STRICT still reports
+            # it rather than passing silently -- a strict build has to hear about
+            # every rule that does not reach the engine, this one included.
+            nqp::die("NQP_RX_STRICT: rule '" ~ ($name eq '' ?? '<anon>' !! $name)
+                ~ "' descriptor is " ~ nqp::chars($encoded)
+                ~ " chars, over the 20000 class-file constant limit")
+                if nqp::existskey(%env, 'NQP_RX_STRICT');
+            return nqp::null();
+        }
 
         $desc
     }
