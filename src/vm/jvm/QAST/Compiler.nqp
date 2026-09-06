@@ -7097,11 +7097,16 @@ class QAST::CompilerJAST {
         $il.append(JAST::Instruction.new( :op('iflt'), %*REG<fail> ));
 
         $il.append(JAST::PushSVal.new( :value($node[0]) ));
+        # NFG: test the grapheme base codepoint at grapheme index pos, not a raw
+        # UTF-16 unit. tgt.charAt(pos) reads by UTF-16 offset, so an astral
+        # earlier in the target shifts it off the grapheme and every later test
+        # misfires. String.indexOf(int) takes a codepoint, so astral members of
+        # the list match too.
         $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+        $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
+            'ordat', 'Long', $TYPE_STR, 'Long' ));
         $il.append($L2I);
-        $il.append(JAST::Instruction.new( :op('invokevirtual'),
-            $TYPE_STR, 'charAt', 'Char', 'Integer' ));
         $il.append(JAST::Instruction.new( :op('invokevirtual'),
             $TYPE_STR, 'indexOf', 'Integer', 'Integer' ));
         $il.append(JAST::Instruction.new( :op($node.negate ?? 'ifge' !! 'iflt'), %*REG<fail> ));
@@ -7124,12 +7129,12 @@ class QAST::CompilerJAST {
         $il.append($LCMP);
         $il.append(JAST::Instruction.new( :op('ifge'), %*REG<fail> ));
 
+        # NFG: compare the grapheme base codepoint at grapheme index pos.
+        # tgt.codePointAt(pos) reads by UTF-16 offset and desyncs past an astral.
         $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-        $il.append($L2I);
-        $il.append(JAST::Instruction.new( :op('invokevirtual'),
-            $TYPE_STR, 'codePointAt', 'Integer', 'Integer' ));
-        $il.append($I2L);
+        $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
+            'ordat', 'Long', $TYPE_STR, 'Long' ));
         $il.append($DUP2);
 
         $il.append(JAST::PushIVal.new( :value($node[1].value) ));
@@ -7197,16 +7202,18 @@ class QAST::CompilerJAST {
             $il.append(JAST::Instruction.new( :op($node.negate ?? 'ifne' !! 'ifeq'), %*REG<fail> ));
         }
         else {
+            # NFG: grapheme-indexed literal compare. String.regionMatches uses a
+            # UTF-16 offset, but pos is a grapheme index -- an astral earlier in
+            # the target shifts the two apart and every later literal misfires
+            # (the `| x # <astral> | y` alternation was the visible symptom). eqat
+            # and eqatic compare grapheme-aligned at a grapheme offset.
             $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
-            $il.append(JAST::PushIndex.new(
-                :value($subtype eq 'ignorecase' ?? 1 !! 0) ));
-            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-            $il.append($L2I);
             $il.append(JAST::PushSVal.new( :value($litconst) ));
-            $il.append(JAST::PushIndex.new( :value(0) ));
-            $il.append(JAST::PushIndex.new( :value($litlen) ));
-            $il.append(JAST::Instruction.new( :op('invokevirtual'),
-                $TYPE_STR, 'regionMatches', 'Z', 'Z', 'Integer', $TYPE_STR, 'Integer', 'Integer' ));
+            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+            $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
+                ($subtype eq 'ignorecase' ?? 'eqatic' !! 'eqat'),
+                'Long', $TYPE_STR, $TYPE_STR, 'Long' ));
+            $il.append($L2I);
             $il.append(JAST::Instruction.new( :op($node.negate ?? 'ifne' !! 'ifeq'), %*REG<fail> ));
         }
 
@@ -7995,16 +8002,12 @@ class QAST::CompilerJAST {
         $il
     }
 
-    # Step over the character at pos. MoarVM counts a position per codepoint,
-    # where a position here is a UTF-16 unit and a non-BMP codepoint occupies
-    # two of them, so a bare increment would land between the halves of one
-    # character and match a lone surrogate.
+    # Step over the grapheme at pos. Under NFG a regex position is a grapheme
+    # index (as on MoarVM), so one character is always +1 however many
+    # codepoints or UTF-16 units the grapheme spans -- no width lookup.
     method regex_advance_char($il) {
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-        $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
-        $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-        $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
-            "cpwidth", 'Long', $TYPE_STR, 'Long' ));
+        $il.append($IVAL_ONE);
         $il.append($LADD);
         $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
     }
