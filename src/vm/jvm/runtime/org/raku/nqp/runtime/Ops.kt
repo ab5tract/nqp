@@ -4969,6 +4969,11 @@ object Ops {
     /* String operations. */
     @JvmStatic
     fun chars(`val`: String?): Long {
+        // NOTE: UTF-16 length. Grapheme-indexed chars requires the regex engine's
+        // position model to also be grapheme-based (RxCursor/Cursor.nqp track
+        // UTF-16 positions and share nqp::substr/eqat with Raku values); until
+        // that engine port lands, grapheme-indexing here desyncs the compiler at
+        // astral source chars. See docs/jvm-nfg-representation.md.
         return `val`!!.length.toLong()
     }
 
@@ -5495,22 +5500,15 @@ object Ops {
     }
 
     private fun javaNormalizationForm(normalization: Long, tc: ThreadContext): Normalizer.Form {
-        /* NOTE: the duplicated `normalization == 1` (making NFD unreachable)
-         * is preserved from the Java original. */
-        if (normalization == 1L) {
-            return Normalizer.Form.NFC
-        }
-        else if (normalization == 1L) {
-            return Normalizer.Form.NFD
-        }
-        else if (normalization == 2L) {
-            return Normalizer.Form.NFKC
-        }
-        else if (normalization == 3L) {
-            return Normalizer.Form.NFKD
-        }
-        else {
-            throw ExceptionHandling.dieInternal(tc, "Unknown normalization form: '" + normalization + "'")
+        /* nqp::const values (Compiler.nqp): NFC=1, NFD=2, NFKC=3, NFKD=4.
+         * The old code duplicated `== 1L`, leaving NFD unreachable and NFKC/NFKD
+         * off by one. */
+        return when (normalization) {
+            1L -> Normalizer.Form.NFC
+            2L -> Normalizer.Form.NFD
+            3L -> Normalizer.Form.NFKC
+            4L -> Normalizer.Form.NFKD
+            else -> throw ExceptionHandling.dieInternal(tc, "Unknown normalization form: '" + normalization + "'")
         }
     }
 
@@ -6689,34 +6687,40 @@ object Ops {
         return if (a >= b) 1 else 0
     }
 
+    // NFG: string identity/order is over the NFC (canonical) form, so that
+    // canonically-equivalent strings ("é" and "é") compare equal.
+    // Normalizer short-circuits when the input is already NFC.
+    @JvmStatic
+    fun nfcKey(s: String): String = Normalizer.normalize(s, Normalizer.Form.NFC)
+
     @JvmStatic
     fun cmp_s(a: String?, b: String?): Long {
-        val result = a!!.compareTo(b!!)
+        val result = nfcKey(a!!).compareTo(nfcKey(b!!))
         return if (result < 0) -1 else if (result > 0) 1 else 0
     }
     @JvmStatic
     fun iseq_s(a: String?, b: String?): Long {
-        return if (a!! == b) 1 else 0
+        return if (nfcKey(a!!) == nfcKey(b!!)) 1 else 0
     }
     @JvmStatic
     fun isne_s(a: String?, b: String?): Long {
-        return if (a!! == b) 0 else 1
+        return if (nfcKey(a!!) == nfcKey(b!!)) 0 else 1
     }
     @JvmStatic
     fun islt_s(a: String?, b: String?): Long {
-        return if (a!!.compareTo(b!!) < 0) 1 else 0
+        return if (nfcKey(a!!).compareTo(nfcKey(b!!)) < 0) 1 else 0
     }
     @JvmStatic
     fun isle_s(a: String?, b: String?): Long {
-        return if (a!!.compareTo(b!!) <= 0) 1 else 0
+        return if (nfcKey(a!!).compareTo(nfcKey(b!!)) <= 0) 1 else 0
     }
     @JvmStatic
     fun isgt_s(a: String?, b: String?): Long {
-        return if (a!!.compareTo(b!!) > 0) 1 else 0
+        return if (nfcKey(a!!).compareTo(nfcKey(b!!)) > 0) 1 else 0
     }
     @JvmStatic
     fun isge_s(a: String?, b: String?): Long {
-        return if (a!!.compareTo(b!!) >= 0) 1 else 0
+        return if (nfcKey(a!!).compareTo(nfcKey(b!!)) >= 0) 1 else 0
     }
 
     /* Code object related. */
