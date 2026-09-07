@@ -474,6 +474,19 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     }
 
     @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class HllizeOp {
+        @Specialization
+        static Object doHllize(VirtualFrame f, Object site, Object o) {
+            try {
+                return NqpTypeOps.hllize((NqpTypeOps.HllizeSite) site, o, cu(f), tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
     public static final class AssertParamCheckOp {
         @Specialization
         static Object doLong(VirtualFrame f, long ok) {
