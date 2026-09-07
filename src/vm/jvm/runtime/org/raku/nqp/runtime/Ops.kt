@@ -3202,8 +3202,11 @@ object Ops {
      * an invokedynamic per prologue eats into the per-class indy budget. */
     @JvmStatic
     fun bindWillResumeOnFailure(tc: ThreadContext): Long {
-        val record = tc.frame.dispatchRecord ?: return 0
-        return if ((record.program?.bindControl ?: record.bindControl) != null) 1 else 0
+        val frame = tc.frame
+        val record = frame.dispatchRecord
+        val control = if (record != null) record.program?.bindControl ?: record.bindControl
+                      else frame.dispatchProgram?.bindControl
+        return if (control != null) 1 else 0
     }
 
     /* The role a type plays in its language: one of the HLL_ROLE_*

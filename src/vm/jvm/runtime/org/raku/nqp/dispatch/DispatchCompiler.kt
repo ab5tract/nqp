@@ -384,26 +384,24 @@ object DispatchCompiler {
                         tc: ThreadContext, args: Array<Any?>) {
         val calleeObj = evalRaw(callee, tc, args) as SixModelObject?
         val out = evalPlan(plan, tc, args)
-        val record = DispatchRecord(tc, null, program.descriptor, args, tc.curFrame, site)
-        record.program = program
-        record.endRecording()
-        val records = tc.dispatchRecords
-        records.add(record)
+        /* No record and no list entry: the callee's frame carries the
+         * program, arguments and site, and materializes the record if a
+         * bind failure or a resumption ever asks (ThreadContext.pendingProgram). */
+        tc.pendingProgram = program
+        tc.pendingArgs = args
+        tc.pendingSite = site
         try {
-            tc.pendingDispatch = record
-            try {
-                Ops.invokeDirect(tc, calleeObj, descriptor, out)
-            }
-            catch (failure: BindFailureException) {
-                if (failure.record !== record) throw failure
-                Dispatch.resumeAfterBindFailure(tc, record, failure.flag)
-            }
-            finally {
-                tc.pendingDispatch = null
-            }
+            Ops.invokeDirect(tc, calleeObj, descriptor, out)
+        }
+        catch (failure: BindFailureException) {
+            val failed = failure.record
+            if (failed.args !== args || failed.program !== program) throw failure
+            Dispatch.resumeAfterBindFailure(tc, failed, failure.flag)
         }
         finally {
-            records.removeAt(records.size - 1)
+            tc.pendingProgram = null
+            tc.pendingArgs = null
+            tc.pendingSite = null
         }
     }
 }
