@@ -174,7 +174,7 @@ object Dispatch {
          * its dispatch instructions: the program inspects arguments by
          * position, which only means anything on the flattened form. */
         if (descriptor.hasFlattening) {
-            descriptor = descriptor.explodeFlattening(tc.curFrame!!, theArgs)
+            descriptor = descriptor.explodeFlattening(tc, theArgs)
             theArgs = tc.flatArgs!!
         }
         val programs = site.programs
@@ -213,7 +213,7 @@ object Dispatch {
         var theCsd = descriptor
         var theArgs = args
         if (theCsd.hasFlattening) {
-            theCsd = theCsd.explodeFlattening(tc.curFrame!!, theArgs)
+            theCsd = theCsd.explodeFlattening(tc, theArgs)
             theArgs = tc.flatArgs!!
         }
         record(tc, tc.gc.dispatchers.find(tc, name), theCsd, theArgs, null)
