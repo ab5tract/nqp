@@ -87,8 +87,17 @@ class DispatchRecord(
     /** The state of each resumption our program set up; created on first use. */
     private var states: MutableList<ResumeState>? = null
 
-    /** The resumption levels we are working through, innermost first. */
-    val levels = ArrayList<ResumptionLevelState>()
+    /** The resumption levels we are working through, innermost first; created on first use. */
+    private var levelsList: ArrayList<ResumptionLevelState>? = null
+    val levels: ArrayList<ResumptionLevelState>
+        get() {
+            var list = levelsList
+            if (list == null) {
+                list = ArrayList()
+                levelsList = list
+            }
+            return list
+        }
 
     /** How we found the dispatch we are resuming, if we are resuming one. */
     var resumeKind = ResumeKind.NONE

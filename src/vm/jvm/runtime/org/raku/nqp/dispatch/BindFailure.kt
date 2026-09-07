@@ -39,7 +39,7 @@ object BindFailure {
     @JvmStatic
     fun failed(tc: ThreadContext) {
         val frame = tc.frame
-        val record = frame.dispatchRecord
+        val record = frame.invokingDispatch()
         val control = record?.program?.bindControl
         if (record == null || control == null)
             reportToHLL(tc)
@@ -60,10 +60,10 @@ object BindFailure {
      */
     @JvmStatic
     fun complete(tc: ThreadContext) {
-        val record = tc.frame.dispatchRecord ?: return
-        val control = record.program?.bindControl ?: return
+        val frame = tc.frame
+        val control = frame.invokingProgram()?.bindControl ?: return
         if (control.onSuccessToo)
-            throw BindFailureException(record, control.successFlag!!)
+            throw BindFailureException(frame.invokingDispatch()!!, control.successFlag!!)
     }
 
     /**
