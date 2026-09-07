@@ -217,16 +217,6 @@ class DispatchRecord(
     fun shapeOf(capture: SixModelObject?): CaptureShape =
         captures?.get(capture)
             ?: run {
-                if (System.getenv("NQP_DISPATCH_DEBUG") != null) {
-                    System.err.println("BAD CAPTURE on " + Thread.currentThread().name +
-                        " thisRecord=" + (currentDispatcher?.id ?: "?") + "@" +
-                        Integer.toHexString(System.identityHashCode(this)) +
-                        " records=" + tc.dispatchRecords.joinToString(",") { r ->
-                            (r.currentDispatcher?.id ?: "?") + "@" +
-                            Integer.toHexString(System.identityHashCode(r)) +
-                            (if (r.recording) "/rec" else "/done") })
-                    Throwable("bad capture").printStackTrace()
-                }
                 throw ExceptionHandling.dieInternal(tc,
                     "Dispatch operation received a capture that is not part of this dispatch")
             }
@@ -259,17 +249,6 @@ class DispatchRecord(
                 "Dispatch operation expected a tracked value")
         val source = trackedValue.source
         if (source == null || tracked?.get(source) !== trackedValue) {
-            if (System.getenv("NQP_DISPATCH_DEBUG") != null) {
-                System.err.println("BAD TRACKED on " + Thread.currentThread().name +
-                    " thisRecord=" + (currentDispatcher?.id ?: "?") + "@" +
-                    Integer.toHexString(System.identityHashCode(this)) +
-                    " source=" + source +
-                    " records=" + tc.dispatchRecords.joinToString(",") { r ->
-                        (r.currentDispatcher?.id ?: "?") + "@" +
-                        Integer.toHexString(System.identityHashCode(r)) +
-                        (if (r.recording) "/rec" else "/done") })
-                Throwable("bad tracked").printStackTrace()
-            }
             throw ExceptionHandling.dieInternal(tc,
                 "Dispatch operation received a tracked value from another dispatch")
         }
