@@ -363,6 +363,24 @@ class CallFrame : Cloneable {
     /** Set by leave(): the live-invocation count is given back once. */
     @JvmField var left = false
 
+    /**
+     * Give back this frame's live-invocation count when the unwinder tears
+     * it past without running leave() (an exception's target is a handler
+     * further out, so the frames between never reach their postlude). Kept
+     * idempotent with leave() via `left`, and deliberately does NOT run an
+     * exit handler or touch tc.curFrame -- a torn frame's exit handler does
+     * not run here, and only the count needs correcting so CallFrame.<init>'s
+     * outer-resolution search does not keep hunting for outers that have
+     * already exited (the search was ~40% of a dispatch's cost, spent walking
+     * the whole caller chain for over-counted, long-gone module mainlines).
+     */
+    fun countLeft() {
+        if (!left) {
+            left = true
+            codeRef.staticInfo.liveInvocations.decrementAndGet()
+        }
+    }
+
     fun leave() {
         val sci = this.codeRef.staticInfo
         sci.priorInvocation = this
