@@ -38,7 +38,7 @@ package org.raku.nqp.truffle;
  * 13 LOOP until repeat hasNext condType cond body [next]  value null
  *    hasNext=1 adds a 3rd operand (C-style loop incr / NEXT-expr), run in
  *    void after the body, before the cond re-test.
- * 14 DISPATCH rtype pName nargs (flag [pName])* child*  dispatchUncached
+ * 14 DISPATCH rtype pName nargs (flag [pName])* child*
  *    flag bits: 0-1 arg type (obj/str used), 2 named, 3 flat
  * 15 OPCALL opId nargs child*  the NqpOps table
  * 16 COERCE kind child         kinds in NqpOps

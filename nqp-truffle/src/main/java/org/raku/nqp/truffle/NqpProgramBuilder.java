@@ -32,11 +32,6 @@ final class NqpProgramBuilder {
 
     private final NqpWire.Program program;
 
-    /** NQP_CODE_NO_SUSPEND=1: measurement only -- emit no suspension tail
-     *  after table ops and dispatches (continuations through engine frames
-     *  then break), to size what the tail costs in compiled code. */
-    static final boolean NO_SUSPEND = System.getenv("NQP_CODE_NO_SUSPEND") != null;
-
     private NqpProgramBuilder(NqpRootNodeGen.Builder b, NqpWire.Program p) {
         this.b = b;
         this.code = p.code();
@@ -436,7 +431,7 @@ final class NqpProgramBuilder {
                 if (emit) {
                     b.endDispatchOp();
                     b.endStoreLocal();
-                    if (!NO_SUSPEND) emitSuspendCheck(dres);
+                    emitSuspendCheck(dres);
                     b.emitLoadLocal(dres);
                     b.endBlock();
                 }
@@ -451,9 +446,8 @@ final class NqpProgramBuilder {
                 // a Proxy FETCH, a handler); all sites carry the suspension
                 // tail, and the token check speculates to false in compiled
                 // code.
-                boolean suspendable = !NO_SUSPEND;
-                BytecodeLocal ores = emit && suspendable ? b.createLocal() : null;
-                if (emit && suspendable) {
+                BytecodeLocal ores = emit ? b.createLocal() : null;
+                if (emit) {
                     b.beginBlock();
                     b.beginStoreLocal(ores);
                 }
@@ -473,7 +467,7 @@ final class NqpProgramBuilder {
                     else if (attrBind) b.endBindAttrOp();
                     else b.endRunOp();
                 }
-                if (emit && suspendable) {
+                if (emit) {
                     b.endStoreLocal();
                     emitSuspendCheck(ores);
                     b.emitLoadLocal(ores);
@@ -489,16 +483,15 @@ final class NqpProgramBuilder {
                 boolean tcArg = code[at + 5] != 0;
                 int nargs = code[at + 6];
                 at += 7 + nargs;   // the arg types are informational here
-                boolean suspendable = !NO_SUSPEND;
-                BytecodeLocal ores = emit && suspendable ? b.createLocal() : null;
-                if (emit && suspendable) {
+                BytecodeLocal ores = emit ? b.createLocal() : null;
+                if (emit) {
                     b.beginBlock();
                     b.beginStoreLocal(ores);
                 }
                 if (emit) b.beginClassLibOp(rtype, new NqpOps.ClassLibSite(cls, meth, desc, tcArg, nargs));
                 for (int i = 0; i < nargs; i++) at = walk(at, emit);
                 if (emit) b.endClassLibOp();
-                if (emit && suspendable) {
+                if (emit) {
                     b.endStoreLocal();
                     emitSuspendCheck(ores);
                     b.emitLoadLocal(ores);

@@ -14,41 +14,8 @@ public class ArgsExpectation {
     public static final short OBJ        = 2;
     public static final short OBJ_OBJ    = 3;
 
-    /* NQP_INVOKE_TRACE=1: count every invocation through here by routine
-     * name and print the top entries at exit; NQP_INVOKE_TRACE_STACK=name
-     * with NQP_INVOKE_TRACE_STACK_AT=N prints a Java stack at every Nth
-     * invocation of that routine. A JFR profile cannot walk past the
-     * MethodHandle below, so this is how a hot bytecode callee gets its
-     * caller named. */
-    private static final boolean TRACE = System.getenv("NQP_INVOKE_TRACE") != null;
-    private static final String TRACE_STACK = System.getenv("NQP_INVOKE_TRACE_STACK");
-    private static final long TRACE_STACK_AT;
-    private static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong> counts =
-        new java.util.concurrent.ConcurrentHashMap<>();
-    private static final java.util.concurrent.atomic.AtomicLong stackSeen = new java.util.concurrent.atomic.AtomicLong();
-    static {
-        String at = System.getenv("NQP_INVOKE_TRACE_STACK_AT");
-        TRACE_STACK_AT = at == null ? 1L : Long.parseLong(at);
-        if (TRACE) Runtime.getRuntime().addShutdownHook(new Thread(() ->
-            counts.entrySet().stream()
-                .sorted((a, b) -> Long.compare(b.getValue().get(), a.getValue().get())).limit(25)
-                .forEach(e -> System.err.println("invoke " + e.getValue() + " " + e.getKey()))));
-    }
-
-    private static void trace(CodeRef cr) {
-        String name = cr.name == null || cr.name.isEmpty() ? "<anon>" : cr.name;
-        if (TRACE) {
-            String key = name + " " + cr.staticInfo.compUnit.getClass().getSimpleName();
-            counts.computeIfAbsent(key, k -> new java.util.concurrent.atomic.AtomicLong()).incrementAndGet();
-        }
-        if (TRACE_STACK != null && name.equals(TRACE_STACK)
-                && stackSeen.incrementAndGet() % TRACE_STACK_AT == 0L)
-            new Throwable("invoke " + name + " from").printStackTrace();
-    }
-
     public static void invokeByExpectation(ThreadContext tc, CodeRef cr,
             CallSiteDescriptor csd, Object[] args) throws Throwable {
-        if (TRACE || TRACE_STACK != null) trace(cr);
         switch (cr.staticInfo.argsExpectation) {
         case ArgsExpectation.USE_BINDER:
             cr.staticInfo.mh.invokeExact(tc, cr, csd, args);
