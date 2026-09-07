@@ -900,7 +900,24 @@ final class NqpOps {
         }
     }
 
+    /** JESP_TRACE_CLASSLIB=meth: name, once per distinct current frame, the
+     *  code running that classlib op (the caller's frame when frame-free). */
+    private static final String TRACE_CLASSLIB = System.getenv("JESP_TRACE_CLASSLIB");
+    private static final java.util.Set<String> tracedClasslib = new java.util.HashSet<>();
+
+    @TruffleBoundary
+    private static void traceClasslib(ClassLibSite site, ThreadContext tc, CallFrame cf) {
+        CallFrame f = cf != null ? cf : tc.curFrame;
+        String where = f == null ? "<no frame>" : f.codeRef.name
+            + (cf == null ? " (frame-free callee, caller's frame)" : "");
+        synchronized (tracedClasslib) {
+            if (tracedClasslib.add(site.meth + "@" + where))
+                System.err.println("classlib " + site.meth + " in " + where);
+        }
+    }
+
     static Object classlib(int rtype, ClassLibSite site, Object[] a, ThreadContext tc, CallFrame cf) {
+        if (TRACE_CLASSLIB != null && TRACE_CLASSLIB.equals(site.meth)) traceClasslib(site, tc, cf);
         Object[] full = a;
         if (site.tcArg) {
             full = new Object[a.length + 1];
@@ -1334,9 +1351,26 @@ final class NqpOps {
 
     /* ----- parameter binding, mirroring the emitted prologue ----- */
 
-    @TruffleBoundary
+    /** The common case -- no flattening, arity in range -- is a few field
+     *  reads and writes, kept inlinable; a boundary call per entry was
+     *  measurable. Only flattening and the failure go to the slow road.
+     *  spesh drops the check outright once the callsite is known. */
     static CallSiteDescriptor checkarity(CallFrame cf, ThreadContext tc, CallSiteDescriptor csd,
                                          Object[] args, int required, int accepted) {
+        if (!csd.hasFlattening) {
+            int positionals = csd.numPositionals;
+            if (positionals >= required && (positionals <= accepted || accepted == -1)) {
+                tc.flatArgs = args;
+                if (cf != null) { cf.csd = csd; cf.args = args; }
+                return csd;
+            }
+        }
+        return checkaritySlow(cf, tc, csd, args, required, accepted);
+    }
+
+    @TruffleBoundary
+    private static CallSiteDescriptor checkaritySlow(CallFrame cf, ThreadContext tc, CallSiteDescriptor csd,
+                                                     Object[] args, int required, int accepted) {
         if (cf != null)
             return Ops.checkarity(cf, csd, args, required, accepted);
         /* Frame-free: Ops.checkarity keeps csd/args on the frame (for a
@@ -1357,7 +1391,6 @@ final class NqpOps {
         return cs;
     }
 
-    @TruffleBoundary
     static Object[] flatArgs(ThreadContext tc) {
         return tc.flatArgs;
     }
