@@ -433,9 +433,6 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
              * string literal is pushed in pieces and concatenated. */
             if (value != null && value.length > 16000 &&
                     value.toByteArray(Charsets.UTF_8).size > 60000) {
-                if (System.getenv("NQP_DISPATCH_DEBUG") != null)
-                    System.err.println("[big-sval] " + value.length + " chars, starts: '" +
-                        value.substring(0, 80).replace('\n', ' ') + "'")
                 var i = 0
                 var first = true
                 while (i < value.length) {

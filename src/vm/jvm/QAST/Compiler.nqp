@@ -1706,10 +1706,8 @@ my $call_codegen := sub ($qastcomp, $node) {
     # Calls go through the language's call dispatcher, which lang-call looks
     # up from the HLL of what is being invoked. The callee is its first
     # argument, so a named call resolves the name lexically first -- the same
-    # lookup the invokedynamic call path did at its callsite. Set
-    # NQP_JVM_NO_LANG_CALL to compile the old invokedynamic paths instead,
-    # for chasing a dispatch bug back under its rock.
-    unless nqp::getenvhash()<NQP_JVM_NO_LANG_CALL> {
+    # lookup the invokedynamic call path did at its callsite.
+    {
         # The callee is decontainerized at the callsite, the same as MoarVM's
         # call emission: lang-call goes on the callee's type and a container
         # would defeat both the delegation and the callsite's type guard.
@@ -1729,63 +1727,10 @@ my $call_codegen := sub ($qastcomp, $node) {
         }
         return emit_dispatch($qastcomp, $node, 'lang-call', @dispatch-args);
     }
-
-    my $il := JAST::InstructionList.new();
-
-    # If it's a direct call, then use invokedynamic to resolve the name in
-    # the current lexical scope.
-    if $node.name ne "" {
-        # Process arguments and force them into locals.
-        my @argstuff := process_args_onto_stack($qastcomp, @($node), $il);
-        my $cs_idx := @argstuff[0];
-        $*STACK.spill_to_locals($il);
-
-        # Emit the call. Note, name passed as extra arg as some valid names in
-        # Perl 6 are not valid method names on the JVM. We use the fact that
-        # the stack was spilled to sneak the ThreadContext arg in.
-        nqp::unshift(@argstuff[2], 'I');
-        nqp::unshift(@argstuff[2], $TYPE_STR);
-        $il.append(JAST::PushSVal.new( :value($node.name) ));
-        $il.append(JAST::PushIndex.new( :value($cs_idx) ));
-        $il.append($ALOAD_1);
-        $*STACK.obtain($il, |@argstuff[1]) if @argstuff[1];
-        my $indy_meth := $node.op eq 'callstatic' ?? 'subcallstatic_noa' !! 'subcall_noa';
-        $il.append(savesite(JAST::InvokeDynamic.new(
-            $indy_meth, 'V', @argstuff[2],
-            'org/raku/nqp/runtime/IndyBootstrap', $indy_meth
-        )));
-    }
-
-    # Otherwise, it's an indirect call.
-    else {
-        # Ensure we have a thing to invoke.
-        nqp::die("A 'call' node must have a name or at least one child") unless nqp::elems(@($node)) >= 1;
-
-        # Process arguments, making sure first one is an object (since that is
-        # the thing to invoke).
-        my @argstuff := process_args_onto_stack($qastcomp, @($node), $il, :inv_first);
-        my $cs_idx := @argstuff[0];
-        $*STACK.spill_to_locals($il);
-
-        # Emit the call, using the same thread context trick. The first thing
-        # will be invoked.
-        nqp::unshift(@argstuff[2], 'I');
-        $il.append(JAST::PushIndex.new( :value($cs_idx) ));
-        $il.append($ALOAD_1);
-        $*STACK.obtain($il, |@argstuff[1]) if @argstuff[1];
-        $il.append(savesite(JAST::InvokeDynamic.new(
-            'indcall_noa', 'V', @argstuff[2],
-            'org/raku/nqp/runtime/IndyBootstrap', 'indcall_noa'
-        )));
-    }
-
-    result_from_cf($il, rttype_from_typeobj($node.returns));
 }
 QAST::OperationsJAST.add_core_op('call', :!inlinable, $call_codegen);
 QAST::OperationsJAST.add_core_op('callstatic', :!inlinable, $call_codegen);
 my $callmethod_codegen := sub ($qastcomp, $node) {
-    my $il := JAST::InstructionList.new();
-
     # Ensure we have an invocant.
     if nqp::elems(@($node)) == 0 {
         nqp::die("A 'callmethod' node must have at least one child");
@@ -1797,7 +1742,7 @@ my $callmethod_codegen := sub ($qastcomp, $node) {
     # first two and puts the method it found in their place, leaving the
     # invocant to be the method's first argument. Bind the invocant to a local
     # on the way past so the expression is evaluated once and not twice.
-    unless nqp::getenvhash()<NQP_JVM_NO_LANG_CALL> {
+    {
         my @rest := nqp::clone(@children);
         my $inv  := nqp::shift(@rest);
         my $name := $node.name ne ''
@@ -1818,60 +1763,6 @@ my $callmethod_codegen := sub ($qastcomp, $node) {
         nqp::push(@dispatch-args, $_) for @rest;
         return emit_dispatch($qastcomp, $node, 'lang-meth-call', @dispatch-args, :str_second);
     }
-
-    # If it's a direct call, we can get invokedynamic to do something smart
-    # with guard clauses for us.
-    if $node.name ne '' {
-        # Process arguments and force them into locals.
-        my @argstuff := process_args_onto_stack($qastcomp, @children, $il, :obj_first);
-        my $cs_idx := @argstuff[0];
-        $*STACK.spill_to_locals($il);
-
-        # Emit the call. Note, name passed as extra arg as some valid names in
-        # Perl 6 are not valid method names on the JVM. We use the fact that
-        # the stack was spilled to sneak the ThreadContext arg in.
-        nqp::unshift(@argstuff[2], 'I');
-        nqp::unshift(@argstuff[2], $TYPE_STR);
-        $il.append(JAST::PushSVal.new( :value($node.name) ));
-        $il.append(JAST::PushIndex.new( :value($cs_idx) ));
-        $il.append($ALOAD_1);
-        $*STACK.obtain($il, |@argstuff[1]) if @argstuff[1];
-        $il.append(savesite(JAST::InvokeDynamic.new(
-            'methcall_noa', 'V', @argstuff[2],
-            'org/raku/nqp/runtime/IndyBootstrap', 'methcall_noa',
-        )));
-    }
-
-    # Otherwise, it's indirect, and we need to resolve the method each and
-    # every call. Still wire it through invokedynamic, but it can't do quite
-    # so much for us.
-    else {
-        # Ensure we have a name, and re-arrange it to come first.
-        if +@children == 1 {
-            nqp::die("Method call must either supply a name or have a child node that evaluates to the name");
-        }
-        my $inv := nqp::shift(@children);
-        my $name := nqp::shift(@children);
-        nqp::unshift(@children, $inv);
-        nqp::unshift(@children, $name);
-
-        # Process arguments and force them into locals.
-        my @argstuff := process_args_onto_stack($qastcomp, @children, $il, :name_first, :obj_second);
-        my $cs_idx := @argstuff[0];
-        $*STACK.spill_to_locals($il);
-
-        # Emit the call.
-        nqp::unshift(@argstuff[2], 'I');
-        $il.append(JAST::PushIndex.new( :value($cs_idx) ));
-        $il.append($ALOAD_1);
-        $*STACK.obtain($il, |@argstuff[1]) if @argstuff[1];
-        $il.append(savesite(JAST::InvokeDynamic.new(
-            'indmethcall_noa', 'V', @argstuff[2],
-            'org/raku/nqp/runtime/IndyBootstrap', 'indmethcall_noa'
-        )));
-    }
-
-    result_from_cf($il, rttype_from_typeobj($node.returns));
 }
 QAST::OperationsJAST.add_core_op('callmethod', $callmethod_codegen);
 
@@ -6142,17 +6033,12 @@ class QAST::CompilerJAST {
     # so this does not return null in a normal compile: a rule it cannot encode
     # dies in RxDescriptor.bail (or at the size cap below), naming the rule. The
     # one null it can hand back is NQP_RX_SURVEY's diagnostic pass, which the
-    # caller turns into the same hard error. NQP_RX_ENCODED lists the rules that
-    # encode.
+    # caller turns into the same hard error.
     method rx_descriptor($node) {
         my $desc := QAST::RxDescriptor.encode($node);
         return nqp::null() if nqp::isnull($desc);
 
-        my %env := nqp::getenvhash();
         my str $name := $desc.pass_name;
-        if nqp::existskey(%env, 'NQP_RX_ENCODED') {
-            nqp::say('rx engine: ' ~ ($name eq '' ?? '<anon>' !! $name));
-        }
 
         # The descriptor travels as a string constant, and the class file
         # format caps those at 65535 bytes of UTF-8. A rule whose descriptor is

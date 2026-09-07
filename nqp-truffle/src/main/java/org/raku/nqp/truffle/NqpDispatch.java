@@ -1084,9 +1084,4 @@ final class NqpDispatch {
         Dispatch.dispatchWithDescriptor(site, name, csd, tc, args);
     }
 
-    @TruffleBoundary
-    static void dispatchUncached(String name, CallSiteDescriptor csd, ThreadContext tc,
-                                 Object[] args) {
-        Dispatch.dispatchUncached(tc, name, csd, args);
-    }
 }

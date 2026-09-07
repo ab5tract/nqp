@@ -684,11 +684,6 @@ final class NqpOps {
     @TruffleBoundary
     static Object handleUnwind(Object ex, int target, int outer, boolean cares,
                                CompilationUnit cu, ThreadContext tc) {
-        if (System.getenv("NQP_EH_DEBUG") != null)
-            System.err.println("handleUnwind ex=" + ex.getClass().getSimpleName()
-                + " target=" + target
-                + " uTarget=" + (ex instanceof NqpUnwind nu2 ? nu2.unwind.unwindTarget : -1)
-                + " curFrame=" + (tc.curFrame == null ? "?" : tc.curFrame.codeRef.name));
         UnwindException u = unwindOf(ex);
         if (u.unwindTarget != target || u.unwindCompUnit != cu) throw u;
         if (!cares) Ops._rethrow_label(u, outer, tc);
@@ -703,17 +698,7 @@ final class NqpOps {
      */
     @TruffleBoundary
     static void hostErrToUnwind(Object ex, ThreadContext tc) {
-        if (System.getenv("NQP_EH_DEBUG") != null)
-            System.err.println("hostErrToUnwind ex=" + ex.getClass().getSimpleName()
-                + " curFrame=" + (tc.curFrame == null ? "?" : tc.curFrame.codeRef.name));
         if (ex instanceof NqpHostError he) {
-            if (System.getenv("NQP_EH_DEBUG") != null) {
-                StringBuilder sb = new StringBuilder("hostErrToUnwind curFrame chain:");
-                org.raku.nqp.runtime.CallFrame f = tc.curFrame;
-                for (int i = 0; f != null && i < 6; i++, f = f.caller)
-                    sb.append(" ").append(f.codeRef == null ? "?" : f.codeRef.name);
-                System.err.println(sb);
-            }
             throw ExceptionHandling.dieInternal(tc, he.original);
         }
         // NqpUnwind (headed for the enclosing unwind region) and anything
@@ -823,11 +808,6 @@ final class NqpOps {
         }
     }
 
-    /** NQP_CODE_UNCACHED: every engine dispatch records afresh (debugging). */
-    private static final boolean DISPATCH_UNCACHED = System.getenv("NQP_CODE_UNCACHED") != null;
-    /** NQP_CODE_DISPATCH_OLD: the bytecode-side inline cache (MethodHandle
-     *  chain behind a boundary) instead of the folded replay -- the A/B. */
-    private static final boolean DISPATCH_OLD = System.getenv("NQP_CODE_DISPATCH_OLD") != null;
 
     /**
      * One dispatch instruction. The replay of the site's folded programs
@@ -837,9 +817,7 @@ final class NqpOps {
     static Object dispatch(int rtype, String name, EngineSite es, Object[] args,
                            ThreadContext tc, CallFrame cf, com.oracle.truffle.api.nodes.Node node) {
         try {
-            if (DISPATCH_UNCACHED)
-                NqpDispatch.dispatchUncached(name, es.csd, tc, args);
-            else if (DISPATCH_OLD || es.csd.hasFlattening)
+            if (es.csd.hasFlattening)
                 NqpDispatch.dispatchFlattening(es.site, name, es.csd, tc, args);
             else if (!NqpDispatch.replay(es.cache, tc, args, node))
                 NqpDispatch.miss(es.cache, name, tc, args);
@@ -944,20 +922,7 @@ final class NqpOps {
         if (t instanceof UnwindException u) return new NqpUnwind(u);
         if (t instanceof org.raku.nqp.runtime.ControlException) throw sneaky(t);
         if (t instanceof ThreadDeath) throw sneaky(t);
-        if (HOSTERR) hostErr(t);
         return new NqpHostError(t);
-    }
-
-    /* NQP_CODE_HOSTERR=1 prints the Java stack of every host exception
-     * an operation converts; the nqp-level trace names only the message
-     * ("java.lang.NullPointerException"), and the frames are what
-     * locate the operation at fault. */
-    static final boolean HOSTERR = System.getenv("NQP_CODE_HOSTERR") != null;
-
-    @TruffleBoundary
-    private static void hostErr(Throwable t) {
-        System.err.println("code engine: host exception " + t);
-        t.printStackTrace(System.err);
     }
 
     /** The typed read of a call's result off the frame's return registers. */
