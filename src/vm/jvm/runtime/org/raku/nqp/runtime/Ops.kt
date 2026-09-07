@@ -160,6 +160,33 @@ object Ops {
         return v
     }
 
+    /* MoarVM's note/sayfh/printfh, which this backend lacked (2026-09-07):
+     * a line on stderr, and a string or line written through a handle's
+     * writable (the same road writefh takes for bytes). */
+    @JvmStatic
+    fun note(v: String?, tc: ThreadContext): String? {
+        tc.gc.err.println(v)
+        return v
+    }
+
+    @JvmStatic
+    fun printfh(fh: SixModelObject?, v: String?, tc: ThreadContext): String? {
+        writableOf(fh, tc).print(tc, v ?: "")
+        return v
+    }
+
+    @JvmStatic
+    fun sayfh(fh: SixModelObject?, v: String?, tc: ThreadContext): String? {
+        writableOf(fh, tc).say(tc, v ?: "")
+        return v
+    }
+
+    private fun writableOf(fh: SixModelObject?, tc: ThreadContext): IIOSyncWritable {
+        val handle = (fh as? IOHandleInstance)?.handle
+        return handle as? IIOSyncWritable
+            ?: throw ExceptionHandling.dieInternal(tc, "This handle is not writable")
+    }
+
     const val STAT_EXISTS             =  0
     const val STAT_FILESIZE           =  1
     const val STAT_ISDIR              =  2

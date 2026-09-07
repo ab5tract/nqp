@@ -738,16 +738,42 @@ class QAST::TruffleEncoder {
         # the optimizer did NOT lower, i.e. one that escapes) still counts.
         # (`state` keeps forcing a frame: its once-only init runs at frame
         # construction, subtle enough to leave for later.)
+        # The implicit magicals ($/ $! $_ $¢) a routine declares are bare
+        # slots when the body never names them -- kept for a context an
+        # early (BEGIN-time) compilation serialized, which rebinds them by
+        # name into the STATIC lexical table at load; that table a
+        # frame-free block keeps. None of them is dynamic, so a callee's
+        # dynamic lookup never expects to find them on this frame. Any
+        # read by the body itself is a lexical op and sets frame_op.
         my int $fdecls := 0;
         for %e<decls> {
             my str $k := $_[0];
+            my str $n := $_[1].name;
             $fdecls := $fdecls + 1
                 unless $k eq 'static' || $k eq 'cont'
-                    || nqp::iseq_s($_[1].name, '%_');
+                    || nqp::iseq_s($n, '%_')
+                    || nqp::iseq_s($n, '$/') || nqp::iseq_s($n, '$!')
+                    || nqp::iseq_s($n, '$_') || nqp::iseq_s($n, '$¢');
         }
         my int $needs_frame := %e<frame_op>
             || $fdecls || %e<dispatches> || nqp::elems(%e<nested>);
         nqp::bindpos(@code, 3, ($code_noframe && !$needs_frame) ?? 0 !! 1);
+        # NQP_CODE_WHY: the frame verdict with its inputs, per block. On
+        # stdout like the encode/refuse trace, so never export it to make
+        # (the gen-cat recipes pipe stdout into generated sources); run the
+        # one compile you want traced by hand and capture stdout.
+        if nqp::existskey(nqp::getenvhash(), 'NQP_CODE_WHY') {
+            my str $fdecl_names := '';
+            for %e<decls> {
+                my str $k := $_[0];
+                $fdecl_names := $fdecl_names ~ ' ' ~ $k ~ ':' ~ $_[1].name
+                    unless $k eq 'static' || $k eq 'cont' || nqp::iseq_s($_[1].name, '%_');
+            }
+            nqp::say('code frame ' ~ %e<qast>.name
+                ~ ' -> ' ~ ($needs_frame ?? 'framed' !! 'free')
+                ~ ' frame_op=' ~ %e<frame_op> ~ ' fdecls=' ~ $fdecls ~ $fdecl_names
+                ~ ' dispatches=' ~ %e<dispatches> ~ ' nested=' ~ nqp::elems(%e<nested>));
+        }
         nqp::splice(@code, @ltypes, 4, 0);
         # The size gate, BEFORE the commit: the program travels as one
         # string constant, which the class file caps at 65535 UTF-8
