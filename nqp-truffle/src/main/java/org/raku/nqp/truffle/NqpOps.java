@@ -251,7 +251,7 @@ final class NqpOps {
             case OP_BOX_I: return Ops.box_i(lng(a[0]), cu.hllConfig.intBoxType, tc);
             case OP_BOX_N: return Ops.box_n(dbl(a[0]), cu.hllConfig.numBoxType, tc);
             case OP_BOX_S: return Ops.box_s(str(a[0]), cu.hllConfig.strBoxType, tc);
-            case OP_GETATTR: return Ops.getattr(smo(a[0]), smo(a[1]), str(a[2]), tc);
+            case OP_GETATTR: return Ops.getattrIn(smo(a[0]), smo(a[1]), str(a[2]), tc, NqpRaw.hll(cu));
             case OP_BINDATTR: return Ops.bindattr(smo(a[0]), smo(a[1]), str(a[2]), smo(a[3]), tc);
             case OP_ORD: return Ops.ordfirst(str(a[0]));
             case OP_NULL_S: return null;   // the null str, which isnull_s sees
@@ -1273,7 +1273,7 @@ final class NqpOps {
         AttrSite() { ATTR_SITES.add(this); }
     }
 
-    static Object getattr(AttrSite site, Object o, Object ch, String name, ThreadContext tc) {
+    static Object getattr(AttrSite site, Object o, Object ch, String name, ThreadContext tc, CompilationUnit cu) {
         if (!site.resolved) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             resolveAttr(site, o, ch, name, tc);
@@ -1290,7 +1290,7 @@ final class NqpOps {
             /* A null slot may still auto-vivify; the op decides. */
             if (v != null) return v;
         }
-        return getattrSlow(o, ch, name, tc);
+        return getattrSlow(o, ch, name, tc, cu);
     }
 
     static Object bindattr(AttrSite site, Object o, Object ch, String name, Object value,
@@ -1335,8 +1335,11 @@ final class NqpOps {
     }
 
     @TruffleBoundary
-    private static Object getattrSlow(Object o, Object ch, String name, ThreadContext tc) {
-        return Ops.getattr(smo(o), smo(ch), name, tc);
+    /* A native slot read in object context boxes with the BLOCK's language
+     * (cu), never the current frame's: a frame-free callee entered across
+     * languages has its caller's frame on tc. */
+    private static Object getattrSlow(Object o, Object ch, String name, ThreadContext tc, CompilationUnit cu) {
+        return Ops.getattrIn(smo(o), smo(ch), name, tc, NqpRaw.hll(cu));
     }
 
     @TruffleBoundary
