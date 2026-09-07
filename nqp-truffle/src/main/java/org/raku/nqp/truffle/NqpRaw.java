@@ -27,4 +27,28 @@ final class NqpRaw {
     static StaticCodeInfo staticInfo(CodeRef cr) {
         return cr.staticInfo;
     }
+
+    /* The exact-typed MethodHandle calls of the bigint arithmetic site
+     * (NqpTypeOps.bigintArith): Java's polymorphic-signature call is
+     * unambiguous for a void setter, Kotlin's is not something the fast
+     * path should depend on. Both handles are constants of the site, so
+     * PE folds each call to the field access. */
+
+    /** The BigInteger slot of a P6opaque Int, through a (SixModelObject)BigInteger getter. */
+    static java.math.BigInteger getBig(java.lang.invoke.MethodHandle getter, SixModelObject o) {
+        try {
+            return (java.math.BigInteger) getter.invokeExact(o);
+        } catch (Throwable t) {
+            throw com.oracle.truffle.api.CompilerDirectives.shouldNotReachHere(t);
+        }
+    }
+
+    /** Its store, through a (SixModelObject,BigInteger)void setter. */
+    static void setBig(java.lang.invoke.MethodHandle setter, SixModelObject o, java.math.BigInteger v) {
+        try {
+            setter.invokeExact(o, v);
+        } catch (Throwable t) {
+            throw com.oracle.truffle.api.CompilerDirectives.shouldNotReachHere(t);
+        }
+    }
 }
