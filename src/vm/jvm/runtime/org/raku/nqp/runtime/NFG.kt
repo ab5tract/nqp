@@ -46,6 +46,27 @@ object NFG {
         return computed
     }
 
+    private val EMPTY_BASES = IntArray(0)
+
+    /* Base codepoints (grapheme[i].codePointAt(0)) of every grapheme, cached per
+     * source. The LTM NFA reads the base at a handful of positions but is invoked
+     * once per parse position, so rebuilding this array per call is O(source) per
+     * call -- O(n^2) over a whole file, which stalled the bootstrap on QAST.nqp.
+     * Cached, the segmentation and the array are each built once per source. */
+    private val baseCache: MutableMap<String, IntArray> =
+        java.util.Collections.synchronizedMap(java.util.WeakHashMap<String, IntArray>())
+
+    /** Base codepoint of each grapheme of [s], indexed by grapheme. Cached. */
+    @JvmStatic
+    fun baseCodepoints(s: String): IntArray {
+        if (s.isEmpty()) return EMPTY_BASES
+        baseCache[s]?.let { return it }
+        val g = graphemeClusters(s)
+        val a = IntArray(g.size) { g[it].codePointAt(0) }
+        baseCache[s] = a
+        return a
+    }
+
     private fun segment(s: String): Array<String> {
         val nfc = Normalizer.normalize(s, Normalizer.Form.NFC)
         val bi = BreakIterator.getCharacterInstance()
