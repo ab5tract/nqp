@@ -7,7 +7,19 @@ import org.raku.nqp.runtime.ThreadContext
  * A scalar container has a ContainerSpec hung off its STable. It should be a
  * subclass of this abstract base class.
  */
+/**
+ * A fetch that is a plain attribute read: the class handle and name of
+ * the attribute. A container spec whose fetch is exactly that (Raku's
+ * Scalar reads `$!value`) says so, and the engine's decont fast path
+ * then reads the slot's field directly under a type guard, the way the
+ * dispatch fold reads a guarded attribute source.
+ */
+class AttributeFetch(@JvmField val classHandle: SixModelObject, @JvmField val name: String)
+
 abstract class ContainerSpec {
+    /** The attribute a fetch reads, or null when fetching does more than read one. */
+    open fun fetchAttribute(tc: ThreadContext): AttributeFetch? = null
+
     /* Fetches a value out of a container. Used for decontainerization. */
     abstract fun fetch(tc: ThreadContext, cont: SixModelObject): SixModelObject?
 

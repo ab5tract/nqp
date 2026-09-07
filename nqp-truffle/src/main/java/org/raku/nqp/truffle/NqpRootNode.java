@@ -148,29 +148,36 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
 
     // NQP's int is 64-bit throughout; these mirror nqp::add_i and friends.
 
+    /* The native int/num table ops, by op id (a constant, so the switch in
+     * NqpNativeOps folds to the one instruction); jesp diamond 3. */
+
     @Operation
-    public static final class AddI {
-        @Specialization static long doLong(long a, long b) { return a + b; }
+    @ConstantOperand(type = int.class, name = "kind")
+    public static final class IntBinOp {
+        @Specialization static long doLong(int kind, long a, long b) { return NqpNativeOps.intBin(kind, a, b); }
     }
 
     @Operation
-    public static final class SubI {
-        @Specialization static long doLong(long a, long b) { return a - b; }
+    @ConstantOperand(type = int.class, name = "kind")
+    public static final class IntUnOp {
+        @Specialization static long doLong(int kind, long a) { return NqpNativeOps.intUn(kind, a); }
     }
 
     @Operation
-    public static final class MulI {
-        @Specialization static long doLong(long a, long b) { return a * b; }
+    @ConstantOperand(type = int.class, name = "kind")
+    public static final class NumBinOp {
+        @Specialization static double doNum(int kind, double a, double b) { return NqpNativeOps.numBin(kind, a, b); }
     }
 
     @Operation
-    public static final class LtI {
-        @Specialization static boolean doLong(long a, long b) { return a < b; }
+    @ConstantOperand(type = int.class, name = "kind")
+    public static final class NumCmpOp {
+        @Specialization static long doNum(int kind, double a, double b) { return NqpNativeOps.numCmp(kind, a, b); }
     }
 
     @Operation
-    public static final class GtI {
-        @Specialization static boolean doLong(long a, long b) { return a > b; }
+    public static final class NumNegOp {
+        @Specialization static double doNum(double a) { return -a; }
     }
 
     /** nqp truth over a native int: nonzero is true. */
@@ -415,6 +422,103 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
      * null (fresh object locals, valueless else branches) use the
      * builder's LoadNull instead.
      */
+    /* ----- the type-check family with per-instruction sites (jesp diamond 3;
+     * see NqpTypeOps). The builder emits these for the table ops of the same
+     * name; the generic RunOp road remains for everything else. ----- */
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class DecontOp {
+        @Specialization
+        static Object doDecont(VirtualFrame f, Object site, Object o) {
+            try {
+                return NqpTypeOps.decont((NqpTypeOps.DecontSite) site, o, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    public static final class IsNullOp {
+        @Specialization
+        static long doIsNull(Object o) {
+            return NqpTypeOps.isnull(o);
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class IsConcreteOp {
+        @Specialization
+        static long doIsConcrete(VirtualFrame f, Object site, Object o) {
+            try {
+                return NqpTypeOps.isconcrete((NqpTypeOps.IsConcreteSite) site, o, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class IsTypeOp {
+        @Specialization
+        static long doIsType(VirtualFrame f, Object site, Object o, Object type) {
+            try {
+                return NqpTypeOps.istype((NqpTypeOps.IsTypeSite) site, o, type, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    public static final class AssertParamCheckOp {
+        @Specialization
+        static Object doLong(VirtualFrame f, long ok) {
+            try {
+                return NqpTypeOps.assertparamcheck(ok, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+        @Specialization
+        static Object doObject(VirtualFrame f, Object ok) {
+            try {
+                return NqpTypeOps.assertparamcheck(((Number) ok).longValue(), tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class P6TypeCheckRvOp {
+        @Specialization
+        static Object doCheck(VirtualFrame f, Object site, Object rv, Object routine, Object bypass) {
+            try {
+                return NqpTypeOps.p6typecheckrv((NqpTypeOps.RvCheckSite) site, rv, routine, bypass, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class CreateOp {
+        @Specialization
+        static Object doCreate(VirtualFrame f, Object site, Object type) {
+            try {
+                return NqpTypeOps.create((NqpTypeOps.CreateSite) site, type, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
     @Operation
     public static final class NullC {
         @Specialization
