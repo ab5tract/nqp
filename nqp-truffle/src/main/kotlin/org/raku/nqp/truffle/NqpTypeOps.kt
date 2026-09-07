@@ -76,6 +76,66 @@ object NqpTypeOps {
         fun pin() { misses = MAX_MISSES }
     }
 
+    /* ----- hllize ----- */
+
+    /**
+     * nqp::hllize with a site: speculates on one STable whose mapping into
+     * the block's own language is the identity -- the type is owned by that
+     * language already, or plays a role the language does not transform.
+     * That verdict is a function of the STable and the language alone, never
+     * of the object, so one STable compare stands in for the frame chase,
+     * the classlib method handle and the role switch. spesh does the same
+     * (optimize.c optimize_hllize: known type facts delete the op).
+     */
+    class HllizeSite : Site() {
+        @JvmField @field:CompilationFinal var st: STable? = null
+        override fun reset() { st = null; misses = 0 }
+    }
+
+    @JvmStatic
+    fun hllize(site: HllizeSite, o: Any?, cu: org.raku.nqp.runtime.CompilationUnit, tc: ThreadContext): Any? {
+        if (o is SixModelObject) {
+            var st = site.st
+            if (st == null && site.mayResolve()) {
+                CompilerDirectives.transferToInterpreterAndInvalidate()
+                resolveHllize(site, o, cu)
+                st = site.st
+            }
+            if (st != null) {
+                if (NqpRaw.st(o) === st) return o
+                miss(site)
+            }
+        }
+        return hllizeSlow(o, tc)
+    }
+
+    @TruffleBoundary
+    private fun resolveHllize(site: HllizeSite, o: SixModelObject, cu: org.raku.nqp.runtime.CompilationUnit) {
+        if (Ops.isnull(o) == 1L || !o.stInitialized) { site.pin(); return }
+        val st = o.st
+        val identity = hllizeIsIdentity(st, NqpRaw.hll(cu))
+        if (identity) site.st = st else site.pin()
+        if (DEBUG) debug("hllize site " + (if (identity) "resolved on " else "pinned by ") + st.debugName)
+    }
+
+    /** Mirrors Ops.hllizeInternal's branches that answer the object itself. */
+    private fun hllizeIsIdentity(st: STable, wanted: org.raku.nqp.runtime.HLLConfig): Boolean {
+        if (st.hllOwner === wanted) return true
+        val H = org.raku.nqp.runtime.HLLConfig
+        return when (st.hllRole.toInt()) {
+            H.ROLE_INT -> Ops.isnull(wanted.foreignTypeInt) == 1L && Ops.isnull(wanted.foreignTransformInt) == 1L
+            H.ROLE_NUM -> Ops.isnull(wanted.foreignTypeNum) == 1L && Ops.isnull(wanted.foreignTransformNum) == 1L
+            H.ROLE_STR -> Ops.isnull(wanted.foreignTypeStr) == 1L && Ops.isnull(wanted.foreignTransformStr) == 1L
+            H.ROLE_ARRAY -> Ops.isnull(wanted.foreignTransformArray) == 1L
+            H.ROLE_HASH -> Ops.isnull(wanted.foreignTransformHash) == 1L
+            H.ROLE_CODE -> Ops.isnull(wanted.foreignTransformCode) == 1L
+            else -> Ops.isnull(wanted.foreignTransformAny) == 1L
+        }
+    }
+
+    @TruffleBoundary
+    private fun hllizeSlow(o: Any?, tc: ThreadContext): Any? = Ops.hllize(o as SixModelObject?, tc)
+
     /* ----- decont ----- */
 
     /**
