@@ -48,6 +48,14 @@ class P6OpaqueREPRData {
      * Unbox and delegation slots; -1 if no such unbox slot.
      */
     @JvmField var unboxIntSlot = -1
+
+    /**
+     * jesp: shared boxed instances of this type for small integer values
+     * (MoarVM's intcache), filled on demand by the engine's bigint
+     * arithmetic site when JESP_INTCACHE is set; null otherwise. Only ever
+     * used for a type whose box target is a flattened bigint.
+     */
+    @JvmField var intCache: Array<SixModelObject?>? = null
     @JvmField var unboxNumSlot = -1
     @JvmField var unboxStrSlot = -1
     @JvmField var unboxObjSlot = -1

@@ -519,6 +519,21 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         }
     }
 
+    /** add_I/sub_I/mul_I with a site (jesp diamond 4); kind is the op id. */
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    @ConstantOperand(type = int.class, name = "kind")
+    public static final class BigIntArithOp {
+        @Specialization
+        static Object doArith(VirtualFrame f, Object site, int kind, Object a, Object b, Object type) {
+            try {
+                return NqpTypeOps.bigintArith((NqpTypeOps.BigIntSite) site, kind, a, b, type, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
     @Operation
     public static final class NullC {
         @Specialization
