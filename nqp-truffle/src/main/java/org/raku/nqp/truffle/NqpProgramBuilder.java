@@ -482,9 +482,19 @@ final class NqpProgramBuilder {
                     b.beginBlock();
                     b.beginStoreLocal(ores);
                 }
-                if (emit) b.beginClassLibOp(rtype, new NqpOps.ClassLibSite(cls, meth, desc, tcArg, nargs));
+                // A classlib op with a per-instruction site (jesp diamond 6:
+                // hllize). The JVM compiler maps these by name onto Ops, so
+                // the choice is by name too, again at load.
+                Op cop = dedicatedClasslib(cls, meth, nargs);
+                if (emit) {
+                    if (cop != null) beginOp(cop, -1);
+                    else b.beginClassLibOp(rtype, new NqpOps.ClassLibSite(cls, meth, desc, tcArg, nargs));
+                }
                 for (int i = 0; i < nargs; i++) at = walk(at, emit);
-                if (emit) b.endClassLibOp();
+                if (emit) {
+                    if (cop != null) endOp(cop);
+                    else b.endClassLibOp();
+                }
                 if (emit) {
                     b.endStoreLocal();
                     emitSuspendCheck(ores);
@@ -523,8 +533,14 @@ final class NqpProgramBuilder {
 
     /* ----- table ops with a dedicated operation ----- */
 
-    private enum Op { RUN, GETATTR, BINDATTR, DECONT, ISNULL, ISCONCRETE, ISTYPE, ASSERTPARAMCHECK, P6TYPECHECKRV, CREATE,
+    private enum Op { RUN, GETATTR, BINDATTR, DECONT, ISNULL, ISCONCRETE, ISTYPE, HLLIZE, ASSERTPARAMCHECK, P6TYPECHECKRV, CREATE,
                       INT_BIN, INT_UN, NUM_BIN, NUM_CMP, NUM_NEG, BIGINT_ARITH }
+
+    /** Which operation a classlib op becomes; null is the method-handle road. */
+    private static Op dedicatedClasslib(String cls, String meth, int nargs) {
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("hllize") && nargs == 1) return Op.HLLIZE;
+        return null;
+    }
 
     /** Which operation a table op becomes; RUN is the generic road. */
     private static Op dedicatedOp(int id, int nargs) {
@@ -542,6 +558,7 @@ final class NqpProgramBuilder {
         if (id == NqpOps.OP_ISNULL && nargs == 1) return Op.ISNULL;
         if (id == NqpOps.OP_ISCONCRETE && nargs == 1) return Op.ISCONCRETE;
         if (id == NqpOps.OP_ISTYPE && nargs == 2) return Op.ISTYPE;
+        if (id == NqpOps.OP_HLLIZE && nargs == 1) return Op.HLLIZE;
         if (id == NqpOps.OP_ASSERTPARAMCHECK && nargs == 1) return Op.ASSERTPARAMCHECK;
         if (id == NqpOps.OP_P6TYPECHECKRV && nargs == 3) return Op.P6TYPECHECKRV;
         if (id == NqpOps.OP_CREATE && nargs == 1) return Op.CREATE;
@@ -559,6 +576,7 @@ final class NqpProgramBuilder {
             case ISNULL -> b.beginIsNullOp();
             case ISCONCRETE -> b.beginIsConcreteOp(new NqpTypeOps.IsConcreteSite());
             case ISTYPE -> b.beginIsTypeOp(new NqpTypeOps.IsTypeSite());
+            case HLLIZE -> b.beginHllizeOp(new NqpTypeOps.HllizeSite());
             case ASSERTPARAMCHECK -> b.beginAssertParamCheckOp();
             case P6TYPECHECKRV -> b.beginP6TypeCheckRvOp(new NqpTypeOps.RvCheckSite());
             case CREATE -> b.beginCreateOp(new NqpTypeOps.CreateSite());
@@ -580,6 +598,7 @@ final class NqpProgramBuilder {
             case ISNULL -> b.endIsNullOp();
             case ISCONCRETE -> b.endIsConcreteOp();
             case ISTYPE -> b.endIsTypeOp();
+            case HLLIZE -> b.endHllizeOp();
             case ASSERTPARAMCHECK -> b.endAssertParamCheckOp();
             case P6TYPECHECKRV -> b.endP6TypeCheckRvOp();
             case CREATE -> b.endCreateOp();
