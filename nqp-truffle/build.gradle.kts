@@ -36,6 +36,11 @@ kotlin {
     compilerOptions {
         // Matches javac --release 25, as nqp-runtime does.
         jvmTarget = JvmTarget.JVM_25
+        // As nqp-runtime: no null assertions on parameters, calls and
+        // receivers. Their failure paths inline in full under partial
+        // evaluation (NqpDispatch is on the compiled road of every
+        // dispatch instruction), which was a "too deep inlining" bailout.
+        freeCompilerArgs.addAll("-Xno-param-assertions", "-Xno-call-assertions", "-Xno-receiver-assertions")
     }
 }
 
