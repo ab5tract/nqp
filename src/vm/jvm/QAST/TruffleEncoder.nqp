@@ -689,7 +689,7 @@ class QAST::TruffleEncoder {
             'params', nqp::list(), 'decls', nqp::list(),
             'nested', nqp::list(),
             'block', $block, 'qast', $node, 'comp', $comp, 'dispatches', 0,
-            'frame_op', 0, 'hidx', 0);
+            'frame_op', 0, 'uses_hll', 0, 'hidx', 0);
         epush(%e, 2);   # wire version
         epush(%e, 0);   # result type, patched below
         epush(%e, 0);   # local count, patched below
@@ -757,7 +757,11 @@ class QAST::TruffleEncoder {
         }
         my int $needs_frame := %e<frame_op>
             || $fdecls || %e<dispatches> || nqp::elems(%e<nested>);
-        nqp::bindpos(@code, 3, ($code_noframe && !$needs_frame) ?? 0 !! 1);
+        # Bit 0: needs a frame. Bit 1: runs no current-language reader
+        # (%hll_ops), so a frame-free entry may cross languages. A program
+        # from before bit 1 reads as 0 there: the conservative side.
+        nqp::bindpos(@code, 3, (($code_noframe && !$needs_frame) ?? 0 !! 1)
+            + (%e<uses_hll> ?? 0 !! 2));
         # NQP_CODE_WHY: the frame verdict with its inputs, per block. On
         # stdout like the encode/refuse trace, so never export it to make
         # (the gen-cat recipes pipe stdout into generated sources); run the
@@ -772,7 +776,8 @@ class QAST::TruffleEncoder {
             nqp::say('code frame ' ~ %e<qast>.name
                 ~ ' -> ' ~ ($needs_frame ?? 'framed' !! 'free')
                 ~ ' frame_op=' ~ %e<frame_op> ~ ' fdecls=' ~ $fdecls ~ $fdecl_names
-                ~ ' dispatches=' ~ %e<dispatches> ~ ' nested=' ~ nqp::elems(%e<nested>));
+                ~ ' dispatches=' ~ %e<dispatches> ~ ' nested=' ~ nqp::elems(%e<nested>)
+                ~ ' uses_hll=' ~ %e<uses_hll>);
         }
         nqp::splice(@code, @ltypes, 4, 0);
         # The size gate, BEFORE the commit: the program travels as one
@@ -1195,10 +1200,11 @@ class QAST::TruffleEncoder {
     # caller, or phaser flags -- things a frame-free block, which has no
     # frame, cannot answer (tc.curFrame is its caller's). The current-HLL
     # readers (hllbool, hllize, getattr's native boxing ...) are NOT here:
-    # NqpDispatch enters a callee frame-free only in its caller's language,
-    # so those read the right unit through the caller. spesh's inline.c has
-    # both rules: no :useshll op across HLLs, and no inlining of frames
-    # that introspect themselves.
+    # they are tracked separately, in %hll_ops below: a block that runs
+    # none of them may be entered frame-free ACROSS languages (wire bit 1),
+    # the rest only in the caller's language, where the caller's frame
+    # answers the right unit. spesh's inline.c has both rules: no :useshll
+    # op across HLLs, and no inlining of frames that introspect themselves.
     my %frame_forcing_ops := nqp::hash(
         'curcode', 1, 'callercode', 1, 'getcodecuid', 1,
         'getlexcaller', 1, 'getlexrelcaller', 1, 'ctxcaller', 1, 'ctxcallerskipthunks', 1,
@@ -1209,10 +1215,42 @@ class QAST::TruffleEncoder {
         'p6setpre', 1, 'p6clearpre', 1, 'p6inpre', 1, 'p6stateinit', 1, 'p6takefirstflag', 1,
     );
 
+    # Ops whose runtime reads the CURRENT language off tc's frame (spesh's
+    # :useshll): a frame-free callee entered across languages would read its
+    # caller's. The union of MoarVM's oplist marks and the JVM runtime's own
+    # readers (every Ops function that reaches hllConfig through the frame,
+    # mapped back to its op name through the classlib table; 2026-09-07).
+    # getattr is NOT here: the engine boxes a native slot with the block's
+    # own unit (NqpOps.getattrSlow -> Ops.getattrIn). Ops naming their
+    # language (hllizefor, hllboolfor) read no frame either.
+    my %hll_ops := nqp::hash(
+        'hllize', 1, 'hllbool', 1, 'hllboxtype_i', 1, 'hllboxtype_n', 1, 'hllboxtype_s', 1,
+        'hlllist', 1, 'hllhash', 1, 'getcurhllsym', 1, 'bindcurhllsym', 1,
+        'usecompileehllconfig', 1, 'usecompilerhllconfig', 1,
+        'die', 1, 'die_s', 1, 'newexception', 1,
+        'iterator', 1, 'iter', 1, 'split', 1, 'radix', 1, 'radix_I', 1,
+        'getlexdyn', 1, 'getlexreldyn', 1,
+        'captureposarg', 1, 'capturenamedshash', 1, 'capturehasnameds', 1,
+        'getlexref_i', 1, 'getlexref_n', 1, 'getlexref_s', 1, 'getlexref_u', 1,
+        'getlexref_i32', 1, 'getlexref_i16', 1, 'getlexref_i8', 1, 'getlexref_n32', 1,
+        'getlexref_u32', 1, 'getlexref_u16', 1, 'getlexref_u8', 1,
+        'getlexref_ni', 1, 'getlexref_nn', 1, 'getlexref_ns', 1, 'getlexref_nu', 1,
+        'getattrref_i', 1, 'getattrref_n', 1, 'getattrref_s', 1, 'getattrref_u', 1,
+        'getattrsref_i', 1, 'getattrsref_n', 1, 'getattrsref_s', 1, 'getattrsref_u', 1,
+        'atposref_i', 1, 'atposref_n', 1, 'atposref_s', 1, 'atposref_u', 1,
+        'multidimref_i', 1, 'multidimref_n', 1, 'multidimref_s', 1, 'multidimref_u', 1,
+        'getenvhash', 1, 'clargs', 1, 'getsignals', 1, 'getrusage', 1, 'backendconfig', 1,
+        'getstdin', 1, 'getstdout', 1, 'getstderr', 1,
+        'open', 1, 'openasync', 1, 'opendir', 1, 'socket', 1,
+        'getcodelocation', 1, 'compunitcodes', 1,
+        'jvmclasspaths', 1, 'jvmgetproperties', 1, 'jvmgetconfig', 1,
+    );
+
     method encode_op($op, %e, int $want) {
         my str $name := $op.op;
 
         %e<frame_op> := 1 if nqp::existskey(%frame_forcing_ops, $name);
+        %e<uses_hll> := 1 if nqp::existskey(%hll_ops, $name);
         # A generic return type instantiates against the routine's own frame
         # (RakOps.p6typecheckrv makes a ContextRef of tc.curFrame): framed.
         # Unknown is treated as generic.

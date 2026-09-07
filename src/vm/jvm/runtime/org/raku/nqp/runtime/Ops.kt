@@ -3411,21 +3411,33 @@ object Ops {
 
     /* Attribute operations. */
     @JvmStatic
-    fun getattr(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext): SixModelObject? {
+    fun getattr(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext): SixModelObject? =
+        getattrIn(obj, ch, name, tc, null)
+
+    /** getattr boxing a native slot with an explicit language: the code
+     *  engine passes the block's own unit's, since a frame-free callee
+     *  entered across languages has its caller's frame on tc. Null means
+     *  the frame's, resolved ONLY on the boxing branch: the current frame
+     *  is a dummy without a code ref while a unit deserializes, and an
+     *  eager read there took the bootstrap down as "Missing or wrong
+     *  version of dependency". */
+    @JvmStatic
+    fun getattrIn(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext, hllIn: HLLConfig?): SixModelObject? {
         try {
             return obj!!.get_attribute_boxed(tc, decont(ch, tc), name, STable.NO_HINT)
         }
         catch (badRef: P6OpaqueBaseInstance.BadReferenceRuntimeException) {
             var retval: SixModelObject? = createNull(tc)
             obj!!.get_attribute_native(tc, decont(ch, tc), name, STable.NO_HINT)
+            val hll = hllIn ?: tc.frame.codeRef.staticInfo.compUnit.hllConfig
             if (tc.nativeType == ThreadContext.NATIVE_INT) {
-                retval = box_i(tc.nativeI, tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)
+                retval = box_i(tc.nativeI, hll.intBoxType, tc)
             }
             else if (tc.nativeType == ThreadContext.NATIVE_NUM) {
-                retval = box_n(tc.nativeN, tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc)
+                retval = box_n(tc.nativeN, hll.numBoxType, tc)
             }
             else if (tc.nativeType == ThreadContext.NATIVE_STR) {
-                retval = box_s(tc.nativeS, tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
+                retval = box_s(tc.nativeS, hll.strBoxType, tc)
             }
             else if (tc.nativeType == ThreadContext.NATIVE_JVM_OBJ) {
                 /* Resolve through the class handle the access named, not
