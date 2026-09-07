@@ -18,6 +18,7 @@ import java.util.Objects
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import org.raku.nqp.dispatch.ArgKind
+import org.raku.nqp.dispatch.BindFailure
 import org.raku.nqp.dispatch.BindFailureException
 import org.raku.nqp.dispatch.BindReturnException
 import org.raku.nqp.dispatch.Captures
@@ -614,14 +615,14 @@ object NqpDispatch {
      */
     @JvmStatic
     @ExplodeLoop
-    fun replay(cache: Cache, tc: ThreadContext, args: Array<Any?>, node: Node): Boolean {
+    fun replay(cache: Cache, tc: ThreadContext, args: Array<Any?>, node: Node, callerHll: HLLConfig?): Boolean {
         if (!cache.stable.isValid) CompilerDirectives.transferToInterpreterAndInvalidate()
         val programs = cache.programs
         for (i in programs.indices) {
             val p = programs[i]
             if (matches(p, tc, args)) {
                 if (STATS) { count(hits); count(hitsByKind[p.kind]) }
-                realize(p, cache.site, tc, args, node)
+                realize(p, cache.site, tc, args, node, callerHll)
                 return true
             }
         }
@@ -663,7 +664,7 @@ object NqpDispatch {
     /* ----- outcomes ----- */
 
     private fun realize(p: Program, site: DispatchCallSite, tc: ThreadContext,
-                        args: Array<Any?>, node: Node) {
+                        args: Array<Any?>, node: Node, callerHll: HLLConfig?) {
         /* A literal callee with an engine body: through the adopted call
          * node, so the callee inlines into this root. The resumable kind
          * too -- a multi's candidate is one -- with the dispatch carried
@@ -691,9 +692,9 @@ object NqpDispatch {
             }
             if (cn != null) {
                 if (p.kind == K_INVOKE_MAPPED) {
-                    enterDirect(tc, lit, cn, p.descriptor, mapArgs(p.map!!, args))
+                    enterMappedDirect(tc, lit, cn, p.descriptor, mapArgs(p.map!!, args), callerHll)
                 } else {
-                    enterResumableDirect(p, site, tc, args, lit, cn, evalPlan(p.plan!!, tc, args))
+                    enterResumableDirect(p, site, tc, args, lit, cn, evalPlan(p.plan!!, tc, args), callerHll)
                 }
                 return
             }
@@ -871,20 +872,83 @@ object NqpDispatch {
      */
     private fun enterResumableDirect(p: Program, site: DispatchCallSite, tc: ThreadContext,
                                      args: Array<Any?>, cr: CodeRef, cn: DirectCallNode,
-                                     out: Array<Any?>) {
+                                     out: Array<Any?>, callerHll: HLLConfig?) {
         val root = engineRootOf(cn.callTarget)
-        val framed = root == null || root.needsFrame
+        val framed = root == null || root.needsFrame || !sameHll(cr, callerHll)
         if (framed) leavePending(p, site, tc, args)
         try {
-            enterDirect(tc, cr, cn, p.descriptor, out)
+            enterDirect(tc, cr, cn, p.descriptor, out, callerHll)
         }
         catch (failure: BindFailureException) {
             if (!owns(failure, p, args)) throw failure
             resumeAfterBindFailure(tc, failure.record, failure.flag)
         }
+        catch (failure: NqpFrameFreeBindFailure) {
+            frameFreeBindFailed(p, site, tc, args, cr, out)
+        }
         finally {
             if (framed) clearPending(tc)
         }
+    }
+
+    /**
+     * A frame-free callee's bind check failed (jesp diamond 5): it had no
+     * frame to find its dispatch on, so this road -- which is that
+     * dispatch -- resumes it with the failure flag if the program asked
+     * for bind failures as resumptions, else reports to the language's
+     * bind_error handler with the callee, callsite and arguments it has.
+     */
+    @TruffleBoundary
+    private fun frameFreeBindFailed(p: Program, site: DispatchCallSite, tc: ThreadContext,
+                                    args: Array<Any?>, cr: CodeRef, out: Array<Any?>) {
+        val program = p.program
+        val control = program.bindControl
+        if (control != null) {
+            val record = DispatchRecord(tc, null, program.descriptor, args, tc.curFrame, site)
+            record.program = program
+            record.endRecording()
+            Dispatch.resumeAfterBindFailure(tc, record, control.failureFlag)
+        }
+        else reportFrameFree(tc, cr, p.descriptor, out)
+    }
+
+    /** The bind_error road for a frame-free callee; a produced value is the call's result. */
+    @TruffleBoundary
+    private fun reportFrameFree(tc: ThreadContext, cr: CodeRef, csd: CallSiteDescriptor?, args: Array<Any?>) {
+        val produced = BindFailure.reportFrameFree(tc, cr, csd, args)
+        val caller = tc.curFrame ?: tc.dummyCaller
+        caller.oRet = produced
+        caller.retType = CallFrame.RET_OBJ.toByte()
+    }
+
+    /** The mapped road's direct entry, owning a frame-free callee's bind failure. */
+    private fun enterMappedDirect(tc: ThreadContext, cr: CodeRef, cn: DirectCallNode,
+                                  csd: CallSiteDescriptor?, out: Array<Any?>, callerHll: HLLConfig?) {
+        try {
+            enterDirect(tc, cr, cn, csd, out, callerHll)
+        }
+        catch (failure: NqpFrameFreeBindFailure) {
+            reportFrameFree(tc, cr, csd, out)
+        }
+    }
+
+    /**
+     * spesh's inlining rule, at the call site: a callee runs frame-free
+     * only in its caller's language. Every "current HLL" the runtime reads
+     * (hllbool, hllize, the box types getattr uses for a native slot, ...)
+     * comes from tc.curFrame's compilation unit, which for a frame-free
+     * callee is the caller's; same language, same answer. A Raku accessor
+     * entered from NQP dispatcher code built NQP's Bool -- null -- until
+     * this. Both units are constants of the call node, so PE folds it.
+     */
+    private fun sameHll(cr: CodeRef, callerHll: HLLConfig?): Boolean =
+        callerHll != null && NqpRaw.hll(NqpRaw.staticInfo(cr).compUnit) === callerHll
+
+    /** The language of the frame we are in, for the invoke road (boundary code). */
+    private fun currentHll(tc: ThreadContext): HLLConfig? {
+        val cf = tc.curFrame ?: return null
+        val cr = cf.codeRef ?: return null
+        return NqpRaw.hll(NqpRaw.staticInfo(cr).compUnit)
     }
 
     /** The NqpRootNode behind an engine CallTarget, or null. */
@@ -927,7 +991,7 @@ object NqpDispatch {
     private fun enterEngine(tc: ThreadContext, cr: CodeRef, target: CallTarget,
                             csd: CallSiteDescriptor?, args: Array<Any?>) {
         val ffRoot = engineRootOf(target)
-        if (ffRoot != null && !ffRoot.needsFrame) {
+        if (ffRoot != null && !ffRoot.needsFrame && sameHll(cr, currentHll(tc))) {
             /* No CallFrame: the block proved frame-free. Its own StoreRet
              * (cf==null) only passes the value through, so the program's
              * return value is the block value; deliver it to the caller. */
@@ -938,6 +1002,7 @@ object NqpDispatch {
             catch (sse: SaveStackException) { throw frameFreeSuspend(cr) }
             catch (u: NqpUnwind) { throw u.unwind }
             catch (h: NqpHostError) { throw dieInternal(tc, h.original) }
+            catch (failure: NqpFrameFreeBindFailure) { reportFrameFree(tc, cr, csd, args); return }
             catch (ce: ControlException) { throw ce }
             catch (t: Throwable) { throw dieInternal(tc, t) }
             if (r is ContinuationResult) throw frameFreeSuspend(cr)
@@ -998,14 +1063,14 @@ object NqpDispatch {
      * the frame and flies on as the Truffle carrier it already is.
      */
     private fun enterDirect(tc: ThreadContext, cr: CodeRef, cn: DirectCallNode,
-                            csd: CallSiteDescriptor?, args: Array<Any?>) {
+                            csd: CallSiteDescriptor?, args: Array<Any?>, callerHll: HLLConfig?) {
         /* A frame-free callee runs with cf==null: no CallFrame is built and
          * none is left, so partial evaluation scalar-replaces the callee's
          * VirtualFrame across this inlined call -- the whole point of the
          * port. root.needsFrame is constant for this call node, so the
          * branch folds. */
         val root = engineRootOf(cn.callTarget)
-        val framed = root == null || root.needsFrame
+        val framed = root == null || root.needsFrame || !sameHll(cr, callerHll)
         val cf = if (framed) newFrame(tc, cr) else null
         val r: Any?
         try {
@@ -1017,6 +1082,15 @@ object NqpDispatch {
         }
         catch (h: NqpHostError) {
             throw dieInternal(tc, h.original)
+        }
+        catch (br: BindReturnException) {
+            /* As enterEngine: a bind_error handler stood in for the call
+             * (a Junction autothread); its value is the call's result. */
+            if (cf != null) leave(cf)
+            val caller = tc.curFrame ?: tc.dummyCaller
+            caller.oRet = br.value
+            caller.retType = CallFrame.RET_OBJ.toByte()
+            return
         }
         catch (ce: ControlException) {
             if (cf != null) leave(cf)

@@ -28,6 +28,11 @@ final class NqpRaw {
         return cr.staticInfo;
     }
 
+    /** {@code cu.hllConfig} without the lateinit check: a block's language, static per unit. */
+    static org.raku.nqp.runtime.HLLConfig hll(org.raku.nqp.runtime.CompilationUnit cu) {
+        return cu.hllConfig;
+    }
+
     /* The exact-typed MethodHandle calls of the bigint arithmetic site
      * (NqpTypeOps.bigintArith): Java's polymorphic-signature call is
      * unambiguous for a void setter, Kotlin's is not something the fast

@@ -815,11 +815,12 @@ final class NqpOps {
      * invocation cross into the bytecode world.
      */
     static Object dispatch(int rtype, String name, EngineSite es, Object[] args,
-                           ThreadContext tc, CallFrame cf, com.oracle.truffle.api.nodes.Node node) {
+                           ThreadContext tc, CallFrame cf, com.oracle.truffle.api.nodes.Node node,
+                           CompilationUnit cu) {
         try {
             if (es.csd.hasFlattening)
                 NqpDispatch.dispatchFlattening(es.site, name, es.csd, tc, args);
-            else if (!NqpDispatch.replay(es.cache, tc, args, node))
+            else if (!NqpDispatch.replay(es.cache, tc, args, node, NqpRaw.hll(cu)))
                 NqpDispatch.miss(es.cache, name, tc, args);
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
             /* A continuation is being captured through this frame: hand a

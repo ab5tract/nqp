@@ -396,9 +396,15 @@ class QAST::TruffleEncoder {
         # nested block, reads no frame (lex/getlexouter/ctx/usecapture/args),
         # runs no handler region, and takes only positional local-scope
         # params. Such a block runs with cf==null and the runtime skips the
-        # CallFrame allocation entirely. Off by default: the header word is
-        # always 1 (needs frame), so the emitted programs are unchanged.
-        $code_noframe  := nqp::existskey(%env, 'NQP_CODE_NOFRAME') ?? 1 !! 0;
+        # CallFrame allocation entirely. ON by default since 2026-09-07
+        # (jesp diamond 5: spesh's inlining leaves no frame for an inlined
+        # leaf); NQP_CODE_NOFRAME=0 makes every header word 1 again. The
+        # CORE.d "Bind check failed" that kept it off was a frame-free
+        # callee's assertparamcheck reading the caller's frame for its
+        # dispatch; NqpDispatch now owns that failure (NqpFrameFreeBindFailure).
+        $code_noframe  := nqp::existskey(%env, 'NQP_CODE_NOFRAME')
+            ?? (nqp::atkey(%env, 'NQP_CODE_NOFRAME') ne '0' ?? 1 !! 0)
+            !! 1;
         $code_precomp  := nqp::existskey(%env, 'NQP_CODE_PRECOMP') ?? 1 !! 0;
         # Desugars are ON BY DEFAULT (every register_op_desugar entry builds
         # a fresh tree, so applying one and bailing leaves the original tree
@@ -1159,8 +1165,43 @@ class QAST::TruffleEncoder {
         $type
     }
 
+    # Ops whose runtime asks the CURRENT FRAME for the block's own code ref,
+    # caller, or phaser flags -- things a frame-free block, which has no
+    # frame, cannot answer (tc.curFrame is its caller's). The current-HLL
+    # readers (hllbool, hllize, getattr's native boxing ...) are NOT here:
+    # NqpDispatch enters a callee frame-free only in its caller's language,
+    # so those read the right unit through the caller. spesh's inline.c has
+    # both rules: no :useshll op across HLLs, and no inlining of frames
+    # that introspect themselves.
+    my %frame_forcing_ops := nqp::hash(
+        'curcode', 1, 'callercode', 1, 'getcodecuid', 1,
+        'getlexcaller', 1, 'getlexrelcaller', 1, 'ctxcaller', 1, 'ctxcallerskipthunks', 1,
+        'backtrace', 1, 'backtracestrings', 1,
+        'p6bindsig', 1, 'p6trybindsig', 1, 'p6bindcaptosig', 1, 'p6isbindable', 1,
+        'p6capturelex', 1, 'p6capturelexwhere', 1,
+        'p6finddispatcher', 1, 'p6argsfordispatcher', 1, 'p6bindfailerror', 1,
+        'p6setpre', 1, 'p6clearpre', 1, 'p6inpre', 1, 'p6stateinit', 1, 'p6takefirstflag', 1,
+    );
+
     method encode_op($op, %e, int $want) {
         my str $name := $op.op;
+
+        %e<frame_op> := 1 if nqp::existskey(%frame_forcing_ops, $name);
+        # A generic return type instantiates against the routine's own frame
+        # (RakOps.p6typecheckrv makes a ContextRef of tc.curFrame): framed.
+        # Unknown is treated as generic.
+        if $name eq 'p6typecheckrv' {
+            my int $generic := 1;
+            if nqp::elems(@($op)) == 3 && nqp::istype($op[1], QAST::WVal) {
+                my $block := $op[1].value;
+                try {
+                    my $returns := $block.signature.returns;
+                    $generic := nqp::isnull($returns) ?? 0
+                        !! ($returns.HOW.archetypes($returns).generic ?? 1 !! 0);
+                }
+            }
+            %e<frame_op> := 1 if $generic;
+        }
 
         if $name eq 'bind' {
             cbail('bind arity') unless nqp::elems(@($op)) == 2;
