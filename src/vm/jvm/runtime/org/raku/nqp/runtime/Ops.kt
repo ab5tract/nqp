@@ -1276,28 +1276,6 @@ object Ops {
                 return curFrame.iLex!![found]
             curFrame = curFrame.outer
         }
-        if (System.getenv("NQP_EH_DEBUG") != null) {
-            val sb = StringBuilder("getlex_i MISS '$name' outer chain:")
-            var f = tc.curFrame
-            var i = 0
-            while (f != null && i < 8) {
-                sb.append(" [").append(f.codeRef.name).append("]")
-                f = f.outer
-                i++
-            }
-            System.err.println(sb)
-            var s: StaticCodeInfo? = tc.curFrame?.codeRef?.staticInfo
-            val sb2 = StringBuilder("static chain:")
-            var j = 0
-            while (s != null && j < 8) {
-                sb2.append(" [").append(s.oLexicalNames?.joinToString(",") ?: "-")
-                   .append(if (s.iTryGetLexicalIdx(name) != -1) " HAS-$name" else "")
-                   .append("]")
-                s = s.outerStaticInfo
-                j++
-            }
-            System.err.println(sb2)
-        }
         throw ExceptionHandling.dieInternal(tc, "Lexical '" + name + "' not found")
     }
     @JvmStatic
@@ -9100,11 +9078,6 @@ object Ops {
                 return
             } catch (sse: SaveStackException) {
                 if (isnull(sse.key) == 0L && sse.key !== theKey) {
-                    if (System.getenv("NQP_DEBUG_CONT") != null)
-                        System.err.println("reset key mismatch: have " +
-                            (if (theKey == null) "null" else theKey.javaClass.simpleName + "@" +
-                                Integer.toHexString(System.identityHashCode(theKey))) +
-                            " want " + sse)
                     // This is intended for an outer scope, so just append ourself
                     throw sse.pushFrame(0, resetReenter, arrayOf<Any?>(theKey), null)
                 }
@@ -9153,8 +9126,6 @@ object Ops {
 
     @JvmStatic
     fun continuationcontrol(protect: Long, key: SixModelObject?, run: SixModelObject?, tc: ThreadContext) {
-        if (System.getenv("NQP_DEBUG_CONT") != null)
-            Throwable("continuationcontrol on " + Thread.currentThread().name).printStackTrace()
         throw SaveStackException(key, protect != 0L, run)
     }
 

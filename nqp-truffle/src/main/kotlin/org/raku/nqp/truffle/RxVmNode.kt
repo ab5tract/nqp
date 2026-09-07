@@ -556,7 +556,7 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     if (matched == ((flags and RxProgram.F_NEGATE) != 0)) {
                         failed = true
                     } else {
-                        if (SUBRETRY && matched && (flags and RxProgram.F_NEGATE) == 0 &&
+                        if (matched && (flags and RxProgram.F_NEGATE) == 0 &&
                             (flags and RxProgram.F_SUBRATCHET) == 0
                         ) {
                             if (choiceTop + CHOICE_WIDTH > choices.size) {
@@ -593,8 +593,6 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                     /* Flagged at encode time: the callee (!BACKREF) walks the
                      * caller cursor's capture stack, so the captures made so
                      * far must be on it. Ordinary subrule calls skip this. */
-                    if (TRACE_SYNC) System.err.println(
-                        "rx SUB $name flags=$flags pending=$pendingTop synced=$syncedTop")
                     if ((flags and RxProgram.F_CSTACK) != 0 && pendingTop > syncedTop) {
                         sync(cursor, pending, syncedTop, pendingTop)
                         syncedTop = pendingTop
@@ -611,7 +609,7 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
                          * re-running the call, which is the bstack contract.
                          * Recorded before pos moves so the choice restores
                          * the pre-call position when the retries run out. */
-                        if (SUBRETRY && matched && (flags and RxProgram.F_NEGATE) == 0 &&
+                        if (matched && (flags and RxProgram.F_NEGATE) == 0 &&
                             (flags and RxProgram.F_SUBRATCHET) == 0
                         ) {
                             if (choiceTop + CHOICE_WIDTH > choices.size) {
@@ -771,16 +769,6 @@ class RxVmNode(@CompilationFinal private val program: RxProgram) : Node() {
     }
 
     companion object {
-        /* Kill-switch for the newest of the backtracking machinery: set
-         * NQP_RX_NO_SUBRETRY to stop subrule calls becoming re-enterable
-         * choice points, for bisecting a wrong parse. Runtime-side because
-         * the feature is; the NQP_RX_NO knobs govern only what the encoder
-         * emits. */
-        @JvmField val SUBRETRY: Boolean = System.getenv("NQP_RX_NO_SUBRETRY") == null
-
-        /* Debug: trace subrule calls' capture-sync decisions. */
-        @JvmField val TRACE_SYNC: Boolean = System.getenv("NQP_RX_TRACE_SYNC") != null
-
         /* Debug: abort a run after this many steps with a state summary. */
         @JvmField val MAX_STEPS: Long = System.getenv("NQP_RX_MAXSTEPS")?.toLongOrNull() ?: 0L
 
