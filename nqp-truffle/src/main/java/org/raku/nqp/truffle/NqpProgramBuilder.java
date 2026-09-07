@@ -524,7 +524,7 @@ final class NqpProgramBuilder {
     /* ----- table ops with a dedicated operation ----- */
 
     private enum Op { RUN, GETATTR, BINDATTR, DECONT, ISNULL, ISCONCRETE, ISTYPE, ASSERTPARAMCHECK, P6TYPECHECKRV, CREATE,
-                      INT_BIN, INT_UN, NUM_BIN, NUM_CMP, NUM_NEG }
+                      INT_BIN, INT_UN, NUM_BIN, NUM_CMP, NUM_NEG, BIGINT_ARITH }
 
     /** Which operation a table op becomes; RUN is the generic road. */
     private static Op dedicatedOp(int id, int nargs) {
@@ -545,6 +545,8 @@ final class NqpProgramBuilder {
         if (id == NqpOps.OP_ASSERTPARAMCHECK && nargs == 1) return Op.ASSERTPARAMCHECK;
         if (id == NqpOps.OP_P6TYPECHECKRV && nargs == 3) return Op.P6TYPECHECKRV;
         if (id == NqpOps.OP_CREATE && nargs == 1) return Op.CREATE;
+        if ((id == NqpOps.OP_ADD_I_BIG || id == NqpOps.OP_SUB_I_BIG || id == NqpOps.OP_MUL_I_BIG) && nargs == 3)
+            return Op.BIGINT_ARITH;
         return Op.RUN;
     }
 
@@ -565,6 +567,7 @@ final class NqpProgramBuilder {
             case NUM_BIN -> b.beginNumBinOp(id);
             case NUM_CMP -> b.beginNumCmpOp(id);
             case NUM_NEG -> b.beginNumNegOp();
+            case BIGINT_ARITH -> b.beginBigIntArithOp(new NqpTypeOps.BigIntSite(), id);
         }
     }
 
@@ -585,6 +588,7 @@ final class NqpProgramBuilder {
             case NUM_BIN -> b.endNumBinOp();
             case NUM_CMP -> b.endNumCmpOp();
             case NUM_NEG -> b.endNumNegOp();
+            case BIGINT_ARITH -> b.endBigIntArithOp();
         }
     }
 
