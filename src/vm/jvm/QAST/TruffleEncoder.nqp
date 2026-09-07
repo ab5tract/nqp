@@ -214,7 +214,7 @@ class QAST::TruffleEncoder {
         my int $ok_nodes := 0;
         # Per-tag: how many blocks it blocks, and how many it alone blocks.
         # "Sole" is the free prioritization signal; the honest yield of a
-        # tag group still needs an NQP_CODE_ALSO run, exactly like NQP_RX_NO.
+        # tag group still needs an NQP_CODE_ALSO run.
         my %blocked;
         my %sole;
         for @blocks -> %blk {
@@ -288,9 +288,6 @@ class QAST::TruffleEncoder {
     #   NQP_CODE_SKIP=a,b     refuse these blocks by name
     #   NQP_CODE_SKIP_ANON=1  refuse blocks with no name
     #   NQP_CODE_ONLY=a,b     refuse everything else
-    #   NQP_CODE_LEAF=1      refuse blocks that dispatch at all: a block
-    #                        that never calls can never be caught inside a
-    #                        continuation, so this is the conservative mode
     #   NQP_CODE_PRECOMP=1   precompiled (comp_mode) units encode too: the
     #                        program bakes into the emitted class as a
     #                        string constant, exactly as an rx descriptor
@@ -378,7 +375,6 @@ class QAST::TruffleEncoder {
     my int $code_run := 0;
     my int $code_encoded := 0;
     my int $code_bail_p := 0;
-    my int $code_leaf := 0;
     my int $code_noframe := 0;
     my int $code_precomp := 0;
     my %code_no_desugar;
@@ -395,7 +391,6 @@ class QAST::TruffleEncoder {
         return 0 unless $code_run;
         $code_encoded  := nqp::existskey(%env, 'NQP_CODE_ENCODED') ?? 1 !! 0;
         $code_bail_p   := nqp::existskey(%env, 'NQP_CODE_BAIL') ?? 1 !! 0;
-        $code_leaf     := nqp::existskey(%env, 'NQP_CODE_LEAF') ?? 1 !! 0;
         # NQP_CODE_NOFRAME: mark a block frame-free (needsFrame=0 in the wire
         # header) when it declares no lexicals, makes no dispatch, has no
         # nested block, reads no frame (lex/getlexouter/ctx/usecapture/args),
@@ -697,7 +692,6 @@ class QAST::TruffleEncoder {
         my $err := nqp::null();
         try {
             nqp::bindpos(%e<code>, 1, self.encode_body($node, %e));
-            cbail('leaf-only') if $code_leaf && %e<dispatches>;
             CATCH { $err := $! }
         }
         if !nqp::isnull($err) {
