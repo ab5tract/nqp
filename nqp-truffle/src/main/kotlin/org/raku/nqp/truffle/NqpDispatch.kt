@@ -874,7 +874,7 @@ object NqpDispatch {
                                      args: Array<Any?>, cr: CodeRef, cn: DirectCallNode,
                                      out: Array<Any?>, callerHll: HLLConfig?) {
         val root = engineRootOf(cn.callTarget)
-        val framed = root == null || root.needsFrame || !sameHll(cr, callerHll)
+        val framed = root == null || root.needsFrame || !frameFreeEntryOk(root, cr, callerHll)
         if (framed) leavePending(p, site, tc, args)
         try {
             enterDirect(tc, cr, cn, p.descriptor, out, callerHll)
@@ -944,6 +944,36 @@ object NqpDispatch {
     private fun sameHll(cr: CodeRef, callerHll: HLLConfig?): Boolean =
         callerHll != null && NqpRaw.hll(NqpRaw.staticInfo(cr).compUnit) === callerHll
 
+    /** JESP_HLLFREE=0 keeps every frame-free entry in its caller's language
+     *  (diamond 5 behaviour); JESP_HLLFREE_TRACE=1 names, once each, the
+     *  callees entered frame-free in another language (or from a unit whose
+     *  language is not yet known) and what the caller's language was. */
+    private val HLLFREE_ON: Boolean = System.getenv("JESP_HLLFREE") != "0"
+    private val HLLFREE_TRACE: Boolean = System.getenv("JESP_HLLFREE_TRACE") != null
+    private val hllFreeTraced = java.util.HashSet<String>()
+
+    /** Whether a frame-free entry into `root` is allowed from a caller in
+     *  `callerHll`: always in the same language; across languages (or from
+     *  a caller whose language is unknown) only for a block the encoder
+     *  marked as reading no current language (jesp diamond 7). */
+    private fun frameFreeEntryOk(root: NqpRootNode, cr: CodeRef, callerHll: HLLConfig?): Boolean {
+        if (sameHll(cr, callerHll)) return true
+        if (!root.hllFree || !HLLFREE_ON) return false
+        if (HLLFREE_TRACE) traceHllFree(cr, callerHll)
+        return true
+    }
+
+    @TruffleBoundary
+    private fun traceHllFree(cr: CodeRef, callerHll: HLLConfig?) {
+        val key = (cr.name ?: "<anon>") + "@" + (callerHll?.name ?: "null")
+        synchronized(hllFreeTraced) {
+            if (hllFreeTraced.add(key))
+                System.err.println("hllfree> " + (cr.name ?: "<anon>") + " ("
+                    + (NqpRaw.hll(NqpRaw.staticInfo(cr).compUnit)?.name ?: "null")
+                    + ") entered frame-free from caller language " + (callerHll?.name ?: "null"))
+        }
+    }
+
     /** The language of the frame we are in, for the invoke road (boundary code). */
     private fun currentHll(tc: ThreadContext): HLLConfig? {
         val cf = tc.curFrame ?: return null
@@ -991,7 +1021,7 @@ object NqpDispatch {
     private fun enterEngine(tc: ThreadContext, cr: CodeRef, target: CallTarget,
                             csd: CallSiteDescriptor?, args: Array<Any?>) {
         val ffRoot = engineRootOf(target)
-        if (ffRoot != null && !ffRoot.needsFrame && sameHll(cr, currentHll(tc))) {
+        if (ffRoot != null && !ffRoot.needsFrame && frameFreeEntryOk(ffRoot, cr, currentHll(tc))) {
             /* No CallFrame: the block proved frame-free. Its own StoreRet
              * (cf==null) only passes the value through, so the program's
              * return value is the block value; deliver it to the caller. */
@@ -1070,7 +1100,7 @@ object NqpDispatch {
          * port. root.needsFrame is constant for this call node, so the
          * branch folds. */
         val root = engineRootOf(cn.callTarget)
-        val framed = root == null || root.needsFrame || !sameHll(cr, callerHll)
+        val framed = root == null || root.needsFrame || !frameFreeEntryOk(root, cr, callerHll)
         val cf = if (framed) newFrame(tc, cr) else null
         val r: Any?
         try {

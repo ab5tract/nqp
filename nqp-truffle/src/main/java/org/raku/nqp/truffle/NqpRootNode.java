@@ -79,6 +79,9 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
      *  frame-reading op, positional local-scope params only). Set at parse
      *  from the wire header; default (framed) is the safe value. */
     boolean needsFrame = true;
+    /** No op in the block reads the current language: a frame-free entry
+     *  may cross languages (the wire's bit 1; jesp diamond 7). */
+    boolean hllFree = false;
 
     @Override
     public String getName() {
@@ -391,7 +394,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doGet(VirtualFrame f, Object site, Object obj, Object ch, Object name) {
             try {
-                return NqpOps.getattr((NqpOps.AttrSite) site, obj, ch, (String) name, tc(f));
+                return NqpOps.getattr((NqpOps.AttrSite) site, obj, ch, (String) name, tc(f), cu(f));
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
