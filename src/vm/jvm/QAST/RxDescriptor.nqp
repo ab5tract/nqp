@@ -337,11 +337,21 @@ class QAST::RxDescriptor {
                 if nqp::existskey(nqp::getenvhash(), 'NQP_RX_BAIL');
         }
         if $!survey {
+            # A diagnostic pass (NQP_RX_SURVEY) over a whole compile: collect
+            # every reason a rule cannot encode, without dying, so the gaps can
+            # be read at once rather than one rebuild at a time.
             my int $seen := 0;
             for @!bail_reasons { $seen := 1 if $_ eq $why }
             nqp::push(@!bail_reasons, $why) unless $seen;
+            nqp::null()
         }
-        nqp::null()
+        else {
+            # The per-node bytecode codegen is gone (QAST::Compiler), so a rule
+            # the engine cannot encode cannot be compiled at all -- fail naming
+            # it, rather than the vanished silent fallback.
+            my str $name := $!pass_name eq '' ?? '<anon>' !! $!pass_name;
+            nqp::die("regex engine cannot encode rule '" ~ $name ~ "': " ~ $why)
+        }
     }
 
     method bail_reason() { $!bail_reason }
