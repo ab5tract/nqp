@@ -119,7 +119,7 @@ object NqpDispatch {
         override fun eval(tc: ThreadContext, args: Array<Any?>): Any? {
             val v = from.eval(tc, args)
             if (v !is SixModelObject) return null
-            val st = v.st ?: return null
+            val st = NqpRaw.st(v) ?: return null
             return st.HOW
         }
     }
@@ -235,7 +235,7 @@ object NqpDispatch {
     class TypeChk(on: Src, @JvmField val type: STable?) : Chk(on) {
         override fun test(tc: ThreadContext, args: Array<Any?>): Boolean {
             val v = on.eval(tc, args)
-            return v is SixModelObject && v.st === type
+            return v is SixModelObject && NqpRaw.st(v) === type
         }
     }
 
@@ -265,7 +265,7 @@ object NqpDispatch {
         override fun test(tc: ThreadContext, args: Array<Any?>): Boolean {
             val v = on.eval(tc, args)
             if (v !is SixModelObject) return false
-            val st = v.st ?: return false
+            val st = NqpRaw.st(v) ?: return false
             return st.hllOwner === hll
         }
     }
@@ -670,7 +670,7 @@ object NqpDispatch {
          * lazily by the callee's frame. */
         val lit = p.calleeLiteral
         if (lit is CodeRef && (p.kind == K_INVOKE_MAPPED || p.kind == K_INVOKE_RESUMABLE)
-                && lit.staticInfo.argsExpectation == ArgsExpectation.USE_BINDER) {
+                && NqpRaw.staticInfo(lit).argsExpectation == ArgsExpectation.USE_BINDER) {
             var cn = p.callNode
             /* Adopt only once a target exists (a bytecode-bodied callee
              * never has one; one not yet run has none yet): the check is
@@ -679,7 +679,7 @@ object NqpDispatch {
              * cycle. Re-adopt when the instruction's node changed, a few
              * times at most. */
             if (cn == null) {
-                if (lit.staticInfo.engineTarget != null) {
+                if (NqpRaw.staticInfo(lit).engineTarget != null) {
                     CompilerDirectives.transferToInterpreterAndInvalidate()
                     cn = adoptCallNode(p, lit, node)
                 }
@@ -1009,7 +1009,7 @@ object NqpDispatch {
         val cf = if (framed) newFrame(tc, cr) else null
         val r: Any?
         try {
-            r = cn.call(cr.staticInfo.compUnit, tc, cf, csd, args)
+            r = cn.call(NqpRaw.staticInfo(cr).compUnit, tc, cf, csd, args)
         }
         catch (u: NqpUnwind) {
             if (cf != null) leave(cf)

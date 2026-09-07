@@ -451,22 +451,16 @@ final class NqpProgramBuilder {
                     b.beginBlock();
                     b.beginStoreLocal(ores);
                 }
-                // getattr/bindattr get a per-instruction slot cache; see
-                // NqpOps.AttrSite. Same suspension wrapper as any table op.
-                boolean attrGet = id == NqpOps.OP_GETATTR && nargs == 3;
-                boolean attrBind = id == NqpOps.OP_BINDATTR && nargs == 4;
-                if (emit) {
-                    if (attrGet) b.beginGetAttrOp(new NqpOps.AttrSite());
-                    else if (attrBind) b.beginBindAttrOp(new NqpOps.AttrSite());
-                    else b.beginRunOp(id);
-                }
+                // The ops with a per-instruction site: getattr/bindattr
+                // (NqpOps.AttrSite) and the type-check family (NqpTypeOps,
+                // jesp diamond 3). Chosen here, at load: no wire format or
+                // setting recompile is involved. Same suspension wrapper as
+                // any table op.
+                Op op = dedicatedOp(id, nargs);
+                if (emit) beginOp(op, id);
                 at += 3;
                 for (int i = 0; i < nargs; i++) at = walk(at, emit);
-                if (emit) {
-                    if (attrGet) b.endGetAttrOp();
-                    else if (attrBind) b.endBindAttrOp();
-                    else b.endRunOp();
-                }
+                if (emit) endOp(op);
                 if (emit) {
                     b.endStoreLocal();
                     emitSuspendCheck(ores);
@@ -524,6 +518,73 @@ final class NqpProgramBuilder {
                     + " of " + code.length + " words; program:" + sb
                     + "; pool=" + java.util.Arrays.toString(pool));
             }
+        }
+    }
+
+    /* ----- table ops with a dedicated operation ----- */
+
+    private enum Op { RUN, GETATTR, BINDATTR, DECONT, ISNULL, ISCONCRETE, ISTYPE, ASSERTPARAMCHECK, P6TYPECHECKRV, CREATE,
+                      INT_BIN, INT_UN, NUM_BIN, NUM_CMP, NUM_NEG }
+
+    /** Which operation a table op becomes; RUN is the generic road. */
+    private static Op dedicatedOp(int id, int nargs) {
+        switch (NqpNativeOps.kindOf(id, nargs)) {
+            case NqpNativeOps.INT_BIN: return Op.INT_BIN;
+            case NqpNativeOps.INT_UN: return Op.INT_UN;
+            case NqpNativeOps.NUM_BIN: return Op.NUM_BIN;
+            case NqpNativeOps.NUM_CMP: return Op.NUM_CMP;
+            case NqpNativeOps.NUM_NEG: return Op.NUM_NEG;
+            default: break;
+        }
+        if (id == NqpOps.OP_GETATTR && nargs == 3) return Op.GETATTR;
+        if (id == NqpOps.OP_BINDATTR && nargs == 4) return Op.BINDATTR;
+        if (id == NqpOps.OP_DECONT && nargs == 1) return Op.DECONT;
+        if (id == NqpOps.OP_ISNULL && nargs == 1) return Op.ISNULL;
+        if (id == NqpOps.OP_ISCONCRETE && nargs == 1) return Op.ISCONCRETE;
+        if (id == NqpOps.OP_ISTYPE && nargs == 2) return Op.ISTYPE;
+        if (id == NqpOps.OP_ASSERTPARAMCHECK && nargs == 1) return Op.ASSERTPARAMCHECK;
+        if (id == NqpOps.OP_P6TYPECHECKRV && nargs == 3) return Op.P6TYPECHECKRV;
+        if (id == NqpOps.OP_CREATE && nargs == 1) return Op.CREATE;
+        return Op.RUN;
+    }
+
+    private void beginOp(Op op, int id) {
+        switch (op) {
+            case RUN -> b.beginRunOp(id);
+            case GETATTR -> b.beginGetAttrOp(new NqpOps.AttrSite());
+            case BINDATTR -> b.beginBindAttrOp(new NqpOps.AttrSite());
+            case DECONT -> b.beginDecontOp(new NqpTypeOps.DecontSite());
+            case ISNULL -> b.beginIsNullOp();
+            case ISCONCRETE -> b.beginIsConcreteOp(new NqpTypeOps.IsConcreteSite());
+            case ISTYPE -> b.beginIsTypeOp(new NqpTypeOps.IsTypeSite());
+            case ASSERTPARAMCHECK -> b.beginAssertParamCheckOp();
+            case P6TYPECHECKRV -> b.beginP6TypeCheckRvOp(new NqpTypeOps.RvCheckSite());
+            case CREATE -> b.beginCreateOp(new NqpTypeOps.CreateSite());
+            case INT_BIN -> b.beginIntBinOp(id);
+            case INT_UN -> b.beginIntUnOp(id);
+            case NUM_BIN -> b.beginNumBinOp(id);
+            case NUM_CMP -> b.beginNumCmpOp(id);
+            case NUM_NEG -> b.beginNumNegOp();
+        }
+    }
+
+    private void endOp(Op op) {
+        switch (op) {
+            case RUN -> b.endRunOp();
+            case GETATTR -> b.endGetAttrOp();
+            case BINDATTR -> b.endBindAttrOp();
+            case DECONT -> b.endDecontOp();
+            case ISNULL -> b.endIsNullOp();
+            case ISCONCRETE -> b.endIsConcreteOp();
+            case ISTYPE -> b.endIsTypeOp();
+            case ASSERTPARAMCHECK -> b.endAssertParamCheckOp();
+            case P6TYPECHECKRV -> b.endP6TypeCheckRvOp();
+            case CREATE -> b.endCreateOp();
+            case INT_BIN -> b.endIntBinOp();
+            case INT_UN -> b.endIntUnOp();
+            case NUM_BIN -> b.endNumBinOp();
+            case NUM_CMP -> b.endNumCmpOp();
+            case NUM_NEG -> b.endNumNegOp();
         }
     }
 
