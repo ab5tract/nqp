@@ -91,7 +91,6 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
 
     /** Compiles the current programs into a chain, if they compile. */
     fun recompile() {
-        if (DispatchCompiler.disabled) return
         val compiled = DispatchCompiler.compileChain(this) ?: return
         chain = compiled
         if (fromIndy)

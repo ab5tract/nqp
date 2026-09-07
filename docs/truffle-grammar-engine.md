@@ -13,7 +13,7 @@ diff and that cost a wrong turn to rediscover.
 **A descriptor has no bytecode matcher behind it.** The choice is made when
 the rule is compiled, so:
 
-* `NQP_JVM_NO_TRUFFLE=1` must be set for the **compile and the run alike**.
+* (Historical: the `NQP_JVM_NO_TRUFFLE=1` bytecode-regex fallback was removed on 2026-09-07; the engine is the only regex path.)
   It decides whether descriptors are emitted at all. A tree compiled with
   descriptors cannot run without the engine, and says so rather than failing
   quietly.

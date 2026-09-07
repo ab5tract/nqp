@@ -244,13 +244,9 @@ object Dispatch {
                 as org.raku.nqp.runtime.CompilationUnit).getCallSites()
     }
 
-    private val oldDescRoad = System.getenv("NQP_DISPATCH_OLDDESC") != null
-
     private fun descriptorForClass(siteClass: Class<*>, csIdx: Int, tc: ThreadContext): CallSiteDescriptor =
         if (csIdx < 0)
             Ops.emptyCallSite
-        else if (oldDescRoad)
-            tc.frame.codeRef.staticInfo.compUnit.callSites!![csIdx]
         else
             siteTables.get(siteClass)[csIdx]
 
@@ -338,12 +334,6 @@ object Dispatch {
                  * would hold captures of a dead recording and die far
                  * away in a dispatcher syscall. Refuse here, loudly, the
                  * way MoarVM refuses captures across a dispatch. */
-                if (System.getenv("NQP_DISPATCH_DEBUG") != null) {
-                    System.err.println("CAPTURE ACROSS RECORDING of " +
-                        (record.currentDispatcher?.id ?: dispatcher?.id ?: "?") +
-                        " on " + Thread.currentThread().name)
-                    Throwable("capture across recording").printStackTrace()
-                }
                 throw ExceptionHandling.dieInternal(tc,
                     "Cannot capture a continuation across a dispatch recording (" +
                     (record.currentDispatcher?.id ?: dispatcher?.id ?: "?") + ")")

@@ -11,61 +11,6 @@
 # the rest go on working.
 
 class QAST::RxDescriptor {
-    # NQP_RX_NO=a,b refuses named features that the encoder otherwise
-    # handles.
-    #
-    # What a group of rxtypes is worth is not the number of rules that name
-    # it first, nor the number of times it occurs: a rule moves to the engine
-    # only when everything in it can be encoded, so the yield of a group is
-    # how many rules it CLOSES OUT, and that can only be had by measuring
-    # with and without it. Rebuilding nqp to find out costs two and a half
-    # minutes; this costs a run.
-    #
-    #   anchor-const   the constant `pass` and `fail` anchors
-    #   quant-sep      quantifiers with a separator, `a+ % ','`
-    #   uniprop        Unicode property tests, <:Alpha>
-    #   subrule-args   subrule calls carrying literal arguments
-    #   goal           the `~` construct
-    #   backtrack      backtrackable (non-ratcheted) rules without subrules
-    #   subrule-callback  subrule calls carried as callback pieces (lexical
-    #                     and other computed callees, computed arguments)
-    #   qastnode       `{ ... }` and `<?{ ... }>` run back in the rule's frame
-    #   dynquant       `x ** {$n}`, bounds evaluated at match time
-    my %rx_no;
-    my int $rx_no_read := 0;
-    sub rx_refuses(str $feature) {
-        unless $rx_no_read {
-            $rx_no_read := 1;
-            my %env := nqp::getenvhash();
-            if nqp::existskey(%env, 'NQP_RX_NO') {
-                for nqp::split(',', %env<NQP_RX_NO>) { %rx_no{$_} := 1 }
-            }
-        }
-        nqp::existskey(%rx_no, $feature)
-    }
-
-    # NQP_RX_TRY=a,b turns ON a feature that is written but not trusted.
-    #
-    # The opposite sense to NQP_RX_NO, deliberately: what sits behind this is
-    # known to produce a wrong parse, so off has to be the default and turning
-    # it on has to be an act of intent rather than an omission.
-    #
-    # (No feature currently sits here. qastnode graduated to NQP_RX_NO once
-    # its wrong parse was traced to captures the cursor could not yet see:
-    # the engine now syncs pending captures before a callback runs.)
-    my %rx_try;
-    my int $rx_try_read := 0;
-    sub rx_tries(str $feature) {
-        unless $rx_try_read {
-            $rx_try_read := 1;
-            my %env := nqp::getenvhash();
-            if nqp::existskey(%env, 'NQP_RX_TRY') {
-                for nqp::split(',', %env<NQP_RX_TRY>) { %rx_try{$_} := 1 }
-            }
-        }
-        nqp::existskey(%rx_try, $feature)
-    }
-
     # Tags, matching RxDescriptor.java.
     my int $SEQ     := 1;
     my int $ALT     := 2;
@@ -211,8 +156,7 @@ class QAST::RxDescriptor {
     #    seen. A backtrackable rule with no subrule calls keeps every choice
     #    point internal and encodes. Resuming such a rule from OUTSIDE
     #    (exhaustive `:ex`-style matching of an already-passed cursor) still
-    #    answers no further match; that is the remaining divergence, and
-    #    `NQP_RX_NO=backtrack` refuses the whole feature for bisecting it.
+    #    answers no further match; that is the remaining divergence.
     #
     # 2. The name to pass to !cursor_pass, which is what makes it reduce and
     #    build the match tree. Dropping it would give a rule that matches the
@@ -245,7 +189,6 @@ class QAST::RxDescriptor {
         }
         unless $pass.backtrack eq 'r' {
             nqp::bindattr_i(self, QAST::RxDescriptor, '$!backtrackable', 1);
-            self.bail('backtrackable rule (refused)') if rx_refuses('backtrack');
         }
     }
 
@@ -405,11 +348,6 @@ class QAST::RxDescriptor {
         # The callback dispatch has already bound $!pos and $\xa2 when the
         # piece runs, which is the same prologue the direct call gets, and
         # the piece's value is the subcursor.
-        return self.bail($named
-            ?? 'subrule with unencodable arguments (refused)'
-            !! 'subrule via a variable (refused)')
-            if rx_refuses('subrule-callback');
-
         # Same limits as qastnode: the piece lands in a block the backend
         # invents, which reaches the rule's lexicals but not its locals,
         # and runs one frame deeper than the inline call it replaces.
@@ -451,7 +389,6 @@ class QAST::RxDescriptor {
         my @args;
         my int $i := 1;
         my int $n := nqp::elems($call);
-        return nqp::null if $n > 1 && rx_refuses('subrule-args');
         while $i < $n {
             my $arg := $call[$i];
             # A named or flattened argument arrives at the callee differently
@@ -735,8 +672,6 @@ class QAST::RxDescriptor {
         elsif $rxtype eq 'anchor' {
             my str $subtype := $node.subtype;
             return self.bail('anchor ' ~ $subtype) unless nqp::existskey(%anchor, $subtype);
-            return self.bail('anchor ' ~ $subtype)
-                if ($subtype eq 'pass' || $subtype eq 'fail') && rx_refuses('anchor-const');
             self.emit($ANCHOR);
             self.emit(%anchor{$subtype});
         }
@@ -746,10 +681,6 @@ class QAST::RxDescriptor {
             # the engine's program has to say too.
             my int $sep := nqp::elems($node) > 1 ?? 1 !! 0;
             if $sep {
-                if rx_refuses('quant-sep') {
-                    self.bail('quant with separator');
-                    return nqp::null unless $!survey;
-                }
                 # Nothing in NQP builds a quant with more than a body and a
                 # separator, so a third child means something this does not
                 # understand rather than something it can guess at.
@@ -778,7 +709,6 @@ class QAST::RxDescriptor {
             # max), -1 meaning unbounded -- and min 0 with max 0 matches
             # nothing at all. The expression runs back in the rule's frame
             # on the callback channel, under the same limits as any piece.
-            return self.bail('rxtype dynquant (refused)') if rx_refuses('dynquant');
             my $bounds := $node[1];
             my str $lowered := self.reads_outer_local($bounds, nqp::hash());
             return self.bail('dynquant bounds over a lowered local ' ~ $lowered)
@@ -817,9 +747,6 @@ class QAST::RxDescriptor {
             # code it comes BACK for it: the code becomes one branch of a
             # block the rule hands over, and the descriptor carries only
             # which branch.
-            # OFF by default, and it must stay that way until the failure
-            # below is understood. Turn it on with NQP_RX_TRY=qastnode.
-            #
             # What is known: with this enabled, nqp bootstraps and compiles
             # itself, but the first program compiled by a stage whose OWN code
             # carries descriptors mis-parses -- `package_def` reaches
@@ -843,7 +770,6 @@ class QAST::RxDescriptor {
             # without checking. The previous guess here was wrong --
             # NQP::Actions.variable_declarator hoists `my $x` into $BLOCK[0],
             # so declarations were never the problem.
-            return self.bail('rxtype qastnode (refused)') if rx_refuses('qastnode');
             return self.bail('qastnode without a body') unless nqp::elems($node) == 1;
 
             # The block is nested inside the rule's, so it reaches the rule's
@@ -871,7 +797,6 @@ class QAST::RxDescriptor {
             nqp::push(@!callbacks, $node[0]);
         }
         elsif $rxtype eq 'uniprop' {
-            return self.bail('rxtype uniprop') if rx_refuses('uniprop');
             if nqp::elems($node) == 1 {
                 self.emit($UNIPROP);
                 self.emit(self.constant(~$node[0]));
@@ -986,7 +911,6 @@ class QAST::RxDescriptor {
             # The third child is the rule that reports the missing goal --
             # <.FAILGOAL(')', 'argument list')> -- so nothing of this shape
             # can be encoded until a subrule can carry literal arguments.
-            return self.bail('rxtype goal') if rx_refuses('goal');
             return self.bail('goal without three children')
                 unless nqp::elems($node) == 3;
             self.walk(QAST::Regex.new(

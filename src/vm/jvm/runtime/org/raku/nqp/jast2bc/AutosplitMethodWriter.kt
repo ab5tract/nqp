@@ -865,7 +865,6 @@ internal class AutosplitMethodWriter(
             nlocal = Math.max(nlocal, (an as VarInsnNode).`var` + size)
         }
 
-        val traceInsn = System.getenv("NQP_AUTOSPLIT_TRACE_INSN")?.toIntOrNull() ?: -1
 
         val state = TypeInference(insnList.size)
         val initial = Frame(arrayOf(), 0, 0)
@@ -895,38 +894,7 @@ internal class AutosplitMethodWriter(
             for (ce in successors[insn]) {
                 // assume exceptions follow non-exceptions
                 if (ce.exn != null) inf.thrown(ce.exn)
-                if (traceInsn >= 0 && ce.to == traceInsn) {
-                    System.err.printf("merge into %d from %d (exn=%s) stack=[%s]\n",
-                        ce.to, insn, ce.exn ?: "no",
-                        Arrays.toString(Arrays.copyOfRange(inf.stack, inf.sbase, inf.sp)))
-                    for (j in maxOf(0, insn - 30)..minOf(insnList.size - 1, insn + 1)) {
-                        val nod = insnList[j]
-                        val detail = when (nod) {
-                            is FieldInsnNode -> "${nod.owner}.${nod.name} : ${nod.desc}"
-                            is MethodInsnNode -> "${nod.owner}.${nod.name}"
-                            is LdcInsnNode -> "ldc ${nod.cst}"
-                            is VarInsnNode -> "var ${nod.`var`}"
-                            is JumpInsnNode -> "-> " + insnList.indexOf(nod.label)
-                            else -> ""
-                        }
-                        System.err.printf("  src insn %d: %s opcode=%d %s\n", j, nod.javaClass.simpleName, nod.getOpcode(), detail)
-                    }
-                }
-                try {
-                    state.merge(ce.to, inf)
-                } catch (e: RuntimeException) {
-                    if (System.getenv("NQP_AUTOSPLIT_DEBUG") != null) {
-                        System.err.printf("autosplit merge failure in %s: insn %d -> %d (exn edge: %s)\n",
-                            name, insn, ce.to, ce.exn ?: "no")
-                        System.err.printf("incoming frame: [%s]\n", inf.describe())
-                        state.frames[ce.to]?.let { System.err.printf("existing frame: [%s]\n", it.describe()) }
-                        for (j in maxOf(0, minOf(insn, ce.to) - 12)..minOf(insnList.size - 1, maxOf(insn, ce.to) + 3)) {
-                            val nod = insnList[j]
-                            System.err.printf("  insn %d: %s opcode=%d\n", j, nod.javaClass.simpleName, nod.getOpcode())
-                        }
-                    }
-                    throw e
-                }
+                state.merge(ce.to, inf)
             }
             step++
             if (DEBUG_FRAGMENT && (step % 10000) == 0) System.out.printf("Inference step %d\n", step)
