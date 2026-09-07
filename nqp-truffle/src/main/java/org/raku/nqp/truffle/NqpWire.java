@@ -141,8 +141,13 @@ public final class NqpWire {
          *  types. */
         public int treeStart() { return 4 + nlocals; }
         public int resultType() { return code[1]; }
-        /** false for a frame-free block (runs with cf==null); true otherwise. */
-        public boolean needsFrame() { return needsFrameWord != 0; }
+        /** Bit 0: false for a frame-free block (runs with cf==null); true otherwise. */
+        public boolean needsFrame() { return (needsFrameWord & 1) != 0; }
+        /** Bit 1: the block runs no op that reads the current language
+         *  (spesh's :useshll), so a frame-free entry may cross languages.
+         *  A program encoded before the bit existed reads as not free:
+         *  the conservative side. */
+        public boolean hllFree() { return (needsFrameWord & 2) != 0; }
         public int localType(int i) { return code[4 + i]; }
     }
 
