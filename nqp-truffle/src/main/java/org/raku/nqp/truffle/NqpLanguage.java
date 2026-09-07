@@ -126,10 +126,10 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
     private static void buildAdd(NqpRootNodeGen.Builder b) {
         b.beginRoot();
         b.beginReturn();
-        b.beginAddI();
+        b.beginIntBinOp(NqpOps.OP_ADD_I);
         b.emitLoadArgument(0);
         b.emitLoadArgument(1);
-        b.endAddI();
+        b.endIntBinOp();
         b.endReturn();
         b.endRoot();
     }
@@ -153,16 +153,16 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
         b.endStoreLocal();
 
         b.beginWhile();
-        b.beginGtI();
+        b.beginNonZero(); b.beginIntBinOp(NqpOps.OP_ISGT_I);
         b.emitLoadLocal(i);
         b.emitLoadConstant(0L);
-        b.endGtI();
+        b.endIntBinOp(); b.endNonZero();
         b.beginBlock();
         b.beginStoreLocal(t);
-        b.beginAddI();
+        b.beginIntBinOp(NqpOps.OP_ADD_I);
         b.emitLoadLocal(a);
         b.emitLoadLocal(c);
-        b.endAddI();
+        b.endIntBinOp();
         b.endStoreLocal();
         b.beginStoreLocal(a);
         b.emitLoadLocal(c);
@@ -171,10 +171,10 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
         b.emitLoadLocal(t);
         b.endStoreLocal();
         b.beginStoreLocal(i);
-        b.beginSubI();
+        b.beginIntBinOp(NqpOps.OP_SUB_I);
         b.emitLoadLocal(i);
         b.emitLoadConstant(1L);
-        b.endSubI();
+        b.endIntBinOp();
         b.endStoreLocal();
         b.endBlock();
         b.endWhile();
