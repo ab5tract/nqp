@@ -343,9 +343,11 @@ object Syscalls {
          * decide whether to report a bind failure or leave it to the dispatch.
          */
         define("bind-will-resume-on-failure") { args ->
-            val record = args.tc.frame.dispatchRecord
-            bool(record != null &&
-                (record.program?.bindControl ?: record.bindControl) != null)
+            val frame = args.tc.frame
+            val record = frame.dispatchRecord
+            val control = if (record != null) record.program?.bindControl ?: record.bindControl
+                          else frame.dispatchProgram?.bindControl
+            bool(control != null)
         }
         define("dispatcher-resume-on-bind-failure", INT) { args ->
             args.recording.setBindControl(BindControl(args.int(0), null, false))

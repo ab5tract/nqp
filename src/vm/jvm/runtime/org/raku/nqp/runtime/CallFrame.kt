@@ -2,6 +2,8 @@ package org.raku.nqp.runtime
 
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap
 
+import org.raku.nqp.dispatch.DispatchCallSite
+import org.raku.nqp.dispatch.DispatchProgram
 import org.raku.nqp.dispatch.DispatchRecord
 import org.raku.nqp.sixmodel.SerializationContext
 import org.raku.nqp.sixmodel.SixModelObject
@@ -134,6 +136,43 @@ class CallFrame : Cloneable {
      */
     @JvmField var dispatchRecord: DispatchRecord? = null
 
+    /**
+     * The same dispatch, carried lazily: a settled program replayed by the
+     * engine or the compiled chain leaves these on ThreadContext for the
+     * frame it invokes, and no DispatchRecord exists until invokingDispatch()
+     * is asked for one. See ThreadContext.pendingProgram.
+     */
+    @JvmField var dispatchProgram: DispatchProgram? = null
+    @JvmField var dispatchArgs: Array<Any?>? = null
+    @JvmField var dispatchSite: DispatchCallSite? = null
+
+    /**
+     * The program of the dispatch that invoked this frame, if a settled one
+     * did; null for no dispatch and for one still recording. Answers what
+     * the bind-control questions ask without materializing a record.
+     */
+    fun invokingProgram(): DispatchProgram? {
+        val record = dispatchRecord
+        return if (record != null) record.program else dispatchProgram
+    }
+
+    /**
+     * The dispatch that invoked this frame as a record, materialized from
+     * the carried program on first need and kept, so that the resume states
+     * a resumption creates on it survive for the next resumption.
+     */
+    fun invokingDispatch(): DispatchRecord? {
+        var record = dispatchRecord
+        if (record == null) {
+            val program = dispatchProgram ?: return null
+            record = DispatchRecord(tc, null, program.descriptor, dispatchArgs!!, caller, dispatchSite)
+            record.program = program
+            record.endRecording()
+            dispatchRecord = record
+        }
+        return record
+    }
+
     // Empty constructor for things that want to fake one up.
     constructor()
 
@@ -148,6 +187,17 @@ class CallFrame : Cloneable {
         if (pendingDispatch != null) {
             this.dispatchRecord = pendingDispatch
             tc.pendingDispatch = null
+        }
+        else {
+            val pendingProgram = tc.pendingProgram
+            if (pendingProgram != null) {
+                this.dispatchProgram = pendingProgram
+                this.dispatchArgs = tc.pendingArgs
+                this.dispatchSite = tc.pendingSite
+                tc.pendingProgram = null
+                tc.pendingArgs = null
+                tc.pendingSite = null
+            }
         }
 
         // Set outer; if it's explicitly in the code ref, use that. If not,
