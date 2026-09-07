@@ -16,6 +16,7 @@ import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.TypeObject
 import org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance
+import org.raku.nqp.sixmodel.reprs.P6OpaqueDelegateInstance
 import org.raku.nqp.sixmodel.reprs.P6OpaqueREPRData
 
 /**
@@ -99,6 +100,12 @@ object NqpTypeOps {
     @JvmStatic
     fun decont(site: DecontSite, o: Any?, tc: ThreadContext): Any? {
         if (o is SixModelObject) {
+            /* A non-container is its own decont, for any type: a field load
+             * and a null test, no speculation. The site speculates only on
+             * the container it sees, so a site that alternates between a
+             * Scalar and a plain value stays fast on both. */
+            val ost = NqpRaw.st(o)
+            if (ost != null && ost.ContainerSpec == null) return o
             var st = site.st
             if (st == null && site.mayResolve()) {
                 CompilerDirectives.transferToInterpreterAndInvalidate()
@@ -106,13 +113,17 @@ object NqpTypeOps {
                 st = site.st
             }
             if (st != null) {
-                if (NqpRaw.st(o) === st) {
-                    if (!site.container || o is TypeObject) return o
-                    if (o.javaClass === site.storage && (o as P6OpaqueBaseInstance).delegate == null) {
+                if (ost === st) {
+                    if (o is TypeObject) return o
+                    /* A deserialized container is a delegating wrapper; read
+                     * the delegate's field, as the fold's AttrSrc does. */
+                    val target = if (o is P6OpaqueDelegateInstance) o.delegate else o
+                    if (target != null && target.javaClass === site.storage
+                            && (target as P6OpaqueBaseInstance).delegate == null) {
                         val getter = site.getter
                         if (getter != null) {
                             val v: SixModelObject? = try {
-                                getter.invokeExact(o as SixModelObject) as SixModelObject?
+                                getter.invokeExact(target as SixModelObject) as SixModelObject?
                             } catch (t: Throwable) {
                                 throw CompilerDirectives.shouldNotReachHere(t)
                             }
@@ -130,12 +141,7 @@ object NqpTypeOps {
     @TruffleBoundary
     private fun resolveDecont(site: DecontSite, o: SixModelObject, tc: ThreadContext) {
         val st = o.st ?: run { site.pin(); return }
-        val cs = st.ContainerSpec
-        if (cs == null) {
-            site.container = false
-            site.st = st
-            return
-        }
+        val cs = st.ContainerSpec ?: run { site.pin(); return }   // handled inline; never reached
         val fetch = cs.fetchAttribute(tc)
         val rd = st.REPRData
         if (fetch != null && rd is P6OpaqueREPRData) {
@@ -168,7 +174,14 @@ object NqpTypeOps {
         site.reset()
         site.misses = misses
         if (misses >= MAX_MISSES) site.pin()
+        if (DEBUG) debug("miss " + site.javaClass.simpleName + " #" + misses)
     }
+
+    /** JESP_DEBUG=1 narrates site resolution and misses on stderr. */
+    @JvmField val DEBUG: Boolean = System.getenv("JESP_DEBUG") != null
+
+    @TruffleBoundary
+    private fun debug(msg: String) { System.err.println("jesp: $msg") }
 
     /* ----- isnull ----- */
 
@@ -407,4 +420,176 @@ object NqpTypeOps {
     @TruffleBoundary
     private fun createSlow(type: Any?, tc: ThreadContext): Any? =
         Ops.create(type as SixModelObject?, tc)
+
+    /* ----- add_I / sub_I / mul_I: jesp diamond 4 (spesh's sp_add_I) ----- */
+
+    /**
+     * Speculates that both operands and the result type are one P6opaque
+     * type whose box target is a flattened bigint (Raku's Int): its
+     * storage class, the BigInteger slot's getter and setter, and the
+     * prototype to clone for a result. Two operands that fit in 63 bits
+     * are added in a long; the result is boxed by cloning the prototype
+     * (or, with JESP_INTCACHE set, taken from the type's shared cache of
+     * small values -- MoarVM's intcache, gated so its worth can be
+     * measured). Anything else -- a large value, an overflow, a
+     * P6bigintInstance operand, a mixed type -- is Ops.add_I as before.
+     */
+    class BigIntSite : Site() {
+        @JvmField @field:CompilationFinal var st: STable? = null
+        @JvmField @field:CompilationFinal var storage: Class<*>? = null
+        @JvmField @field:CompilationFinal var getter: MethodHandle? = null
+        @JvmField @field:CompilationFinal var setter: MethodHandle? = null
+        @JvmField @field:CompilationFinal var proto: P6OpaqueBaseInstance? = null
+        @JvmField @field:CompilationFinal var cache: Array<SixModelObject?>? = null
+
+        override fun reset() {
+            st = null; storage = null; getter = null; setter = null; proto = null; cache = null; misses = 0
+        }
+    }
+
+    /** JESP_INTCACHE=1 shares boxed Ints for CACHE_MIN..CACHE_MAX per type. */
+    @JvmField val INT_CACHE: Boolean = System.getenv("JESP_INTCACHE") != null
+    const val CACHE_MIN = -16L
+    const val CACHE_MAX = 255L
+
+    @JvmStatic
+    fun bigintArith(site: BigIntSite, kind: Int, a: Any?, b: Any?, type: Any?, tc: ThreadContext): Any? {
+        if (a is SixModelObject && b is SixModelObject && type is SixModelObject) {
+            var st = site.st
+            if (st == null && site.mayResolve()) {
+                CompilerDirectives.transferToInterpreterAndInvalidate()
+                resolveBigInt(site, a, b, type, tc)
+                st = site.st
+            }
+            if (st != null) {
+                /* A deserialized constant is a delegating wrapper around
+                 * the real instance (the fold's AttrSrc looks through it
+                 * the same way); the STable is the wrapper's, the storage
+                 * class the delegate's. */
+                val ra = if (a is P6OpaqueDelegateInstance) a.delegate else a
+                val rb = if (b is P6OpaqueDelegateInstance) b.delegate else b
+                if (NqpRaw.st(a) === st && NqpRaw.st(b) === st && NqpRaw.st(type) === st
+                        && ra != null && rb != null
+                        && ra.javaClass === site.storage && rb.javaClass === site.storage
+                        && (ra as P6OpaqueBaseInstance).delegate == null
+                        && (rb as P6OpaqueBaseInstance).delegate == null) {
+                    val getter = site.getter
+                    val setter = site.setter
+                    val proto = site.proto
+                    if (getter != null && setter != null && proto != null) {
+                        val x = NqpRaw.getBig(getter, ra)
+                        val y = NqpRaw.getBig(getter, rb)
+                        if (x != null && y != null && x.bitLength() < 63 && y.bitLength() < 63) {
+                            val xl = x.toLong()
+                            val yl = y.toLong()
+                            val r: Long
+                            val fits: Boolean
+                            when (kind) {
+                                NqpOps.OP_ADD_I_BIG -> { r = xl + yl; fits = ((xl xor r) and (yl xor r)) >= 0 }
+                                NqpOps.OP_SUB_I_BIG -> { r = xl - yl; fits = ((xl xor yl) and (xl xor r)) >= 0 }
+                                else -> {
+                                    r = xl * yl
+                                    fits = xl == 0L || (r / xl == yl && !(xl == -1L && yl == Long.MIN_VALUE))
+                                }
+                            }
+                            if (fits) return boxSmall(site, r, proto, setter)
+                        }
+                    }
+                }
+                else {
+                    if (DEBUG) debugBigMiss(site, a, b, type, st)
+                    miss(site)
+                }
+            }
+        }
+        return bigintSlow(kind, a, b, type, tc)
+    }
+
+    private fun boxSmall(site: BigIntSite, r: Long, proto: P6OpaqueBaseInstance, setter: MethodHandle): SixModelObject {
+        if (INT_CACHE && r >= CACHE_MIN && r <= CACHE_MAX) {
+            val cache = site.cache
+            if (cache != null) {
+                val idx = (r - CACHE_MIN).toInt()
+                val hit = cache[idx]
+                if (hit != null) return hit
+                val made = allocateBig(proto, r, setter)
+                cache[idx] = made
+                return made
+            }
+        }
+        return allocateBig(proto, r, setter)
+    }
+
+    private fun allocateBig(proto: P6OpaqueBaseInstance, r: Long, setter: MethodHandle): SixModelObject {
+        val res = proto.instClone()
+        NqpRaw.setBig(setter, res, java.math.BigInteger.valueOf(r))
+        return res
+    }
+
+    @TruffleBoundary
+    private fun debugBigMiss(site: BigIntSite, a: SixModelObject, b: SixModelObject, type: SixModelObject, st: STable) {
+        debug("bigint guard: a.st=" + (a.st === st) + " b.st=" + (b.st === st) + " type.st=" + (type.st === st)
+            + " a.class=" + (a.javaClass === site.storage) + " b.class=" + (b.javaClass === site.storage)
+            + " a.delegate=" + ((a as? P6OpaqueBaseInstance)?.delegate == null)
+            + " classes=" + a.javaClass.name + "@" + System.identityHashCode(a.javaClass)
+            + " vs " + site.storage?.name + "@" + System.identityHashCode(site.storage)
+            + " typeclass=" + type.javaClass.name)
+    }
+
+    @TruffleBoundary
+    private fun resolveBigInt(site: BigIntSite, a: SixModelObject, b: SixModelObject, type: SixModelObject, tc: ThreadContext) {
+        val st = a.st
+        if (st == null || b.st !== st || type.st !== st) {
+            if (DEBUG) debug("bigint pin: types differ a=" + a.st?.debugName + "/" + a.javaClass.name
+                + " b=" + b.st?.debugName + " type=" + type.st?.debugName + "/" + type.javaClass.name
+                + " same-ab=" + (b.st === st) + " same-type=" + (type.st === st))
+            site.pin(); return
+        }
+        val rd = st.REPRData as? P6OpaqueREPRData ?: run { if (DEBUG) debug("bigint pin: not P6opaque"); site.pin(); return }
+        val storage = rd.jvmClass
+        val proto = rd.instance
+        val slot = rd.unboxIntSlot
+        if (storage == null || proto == null || slot < 0) {
+            if (DEBUG) debug("bigint pin: storage=$storage proto=$proto slot=$slot")
+            site.pin(); return
+        }
+        try {
+            val f = storage.getField("field_$slot")
+            if (f.type != java.math.BigInteger::class.java) {
+                if (DEBUG) debug("bigint pin: field type " + f.type.name)
+                site.pin(); return
+            }
+            if (DEBUG) debug("bigint resolved: storage=" + storage.name + " slot=$slot cache=$INT_CACHE")
+            val lookup = MethodHandles.lookup()
+            site.getter = lookup.unreflectGetter(f)
+                .asType(MethodType.methodType(java.math.BigInteger::class.java, SixModelObject::class.java))
+            site.setter = lookup.unreflectSetter(f)
+                .asType(MethodType.methodType(Void.TYPE, SixModelObject::class.java, java.math.BigInteger::class.java))
+        } catch (e: ReflectiveOperationException) {
+            site.pin(); return
+        }
+        if (INT_CACHE) {
+            var cache = rd.intCache
+            if (cache == null) {
+                cache = arrayOfNulls<SixModelObject>((CACHE_MAX - CACHE_MIN + 1).toInt())
+                rd.intCache = cache
+            }
+            site.cache = cache
+        }
+        site.storage = storage
+        site.proto = proto
+        site.st = st
+    }
+
+    @TruffleBoundary
+    private fun bigintSlow(kind: Int, a: Any?, b: Any?, type: Any?, tc: ThreadContext): Any? {
+        val x = a as SixModelObject?
+        val y = b as SixModelObject?
+        val t = type as SixModelObject?
+        return when (kind) {
+            NqpOps.OP_ADD_I_BIG -> Ops.add_I(x, y, t, tc)
+            NqpOps.OP_SUB_I_BIG -> Ops.sub_I(x, y, t, tc)
+            else -> Ops.mul_I(x, y, t, tc)
+        }
+    }
 }
