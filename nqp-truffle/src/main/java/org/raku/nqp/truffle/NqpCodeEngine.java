@@ -52,8 +52,11 @@ public final class NqpCodeEngine implements CodeEngine {
                            CallSiteDescriptor csd, Object[] args) {
         Object r;
         if (program instanceof com.oracle.truffle.api.RootCallTarget rct
-                && rct.getRootNode() instanceof NqpRootNode root && root.blockName == null)
+                && rct.getRootNode() instanceof NqpRootNode root && root.blockName == null) {
             root.blockName = cf.codeRef == null ? "" : cf.codeRef.name;
+            // The frame-free overrides (NQP_FRAMEFREE*), now that the name is known.
+            NqpFrameFree.apply(root, root.blockName);
+        }
         try {
             // The program stores its own return value, typed; see StoreRet.
             r = program.call(cu, tc, cf, csd, args);

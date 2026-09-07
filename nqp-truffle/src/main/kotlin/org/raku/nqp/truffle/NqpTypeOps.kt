@@ -9,6 +9,7 @@ import java.lang.invoke.MethodType
 import java.util.concurrent.ConcurrentLinkedQueue
 import org.raku.nqp.dispatch.BindFailure
 import org.raku.nqp.dispatch.DispatchBootstrap
+import org.raku.nqp.runtime.CallFrame
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.REPR
@@ -270,10 +271,18 @@ object NqpTypeOps {
 
     /* ----- assertparamcheck ----- */
 
-    /** nqp::assertparamcheck: the flag test inline, the failure behind a boundary. */
+    /**
+     * nqp::assertparamcheck: the flag test inline, the failure behind a
+     * boundary. A framed block's failure finds its dispatch on the frame;
+     * a frame-free block (cf == null) has none and throws
+     * NqpFrameFreeBindFailure for the direct road that entered it to own.
+     */
     @JvmStatic
-    fun assertparamcheck(ok: Long, tc: ThreadContext): Any? {
-        if (ok == 0L) failed(tc)
+    fun assertparamcheck(ok: Long, cf: CallFrame?, tc: ThreadContext): Any? {
+        if (ok == 0L) {
+            if (cf == null) throw frameFreeFailure()
+            failed(tc)
+        }
         return null
     }
 
@@ -281,6 +290,9 @@ object NqpTypeOps {
     private fun failed(tc: ThreadContext) {
         BindFailure.failed(tc)
     }
+
+    @TruffleBoundary
+    private fun frameFreeFailure(): NqpFrameFreeBindFailure = NqpFrameFreeBindFailure()
 
     /* ----- p6typecheckrv (Rakudo) ----- */
 

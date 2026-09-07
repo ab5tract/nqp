@@ -478,7 +478,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doLong(VirtualFrame f, long ok) {
             try {
-                return NqpTypeOps.assertparamcheck(ok, tc(f));
+                return NqpTypeOps.assertparamcheck(ok, cf(f), tc(f));
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -486,7 +486,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doObject(VirtualFrame f, Object ok) {
             try {
-                return NqpTypeOps.assertparamcheck(((Number) ok).longValue(), tc(f));
+                return NqpTypeOps.assertparamcheck(((Number) ok).longValue(), cf(f), tc(f));
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -575,7 +575,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
                                  @Variadic Object[] args,
                                  @com.oracle.truffle.api.dsl.Bind com.oracle.truffle.api.nodes.Node node) {
             try {
-                return NqpOps.dispatch(rtype, name, (NqpOps.EngineSite) site, args, tc(f), cf(f), node);
+                return NqpOps.dispatch(rtype, name, (NqpOps.EngineSite) site, args, tc(f), cf(f), node, cu(f));
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
