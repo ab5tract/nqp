@@ -2560,6 +2560,9 @@ QAST::OperationsJAST.map_classlib_core_op('associative_bind', $TYPE_OPS, 'bindke
 # I/O opcodes
 QAST::OperationsJAST.map_classlib_core_op('print', $TYPE_OPS, 'print', [$RT_STR], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('say', $TYPE_OPS, 'say', [$RT_STR], $RT_STR, :tc);
+QAST::OperationsJAST.map_classlib_core_op('note', $TYPE_OPS, 'note', [$RT_STR], $RT_STR, :tc);
+QAST::OperationsJAST.map_classlib_core_op('printfh', $TYPE_OPS, 'printfh', [$RT_OBJ, $RT_STR], $RT_STR, :tc);
+QAST::OperationsJAST.map_classlib_core_op('sayfh', $TYPE_OPS, 'sayfh', [$RT_OBJ, $RT_STR], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('stat', $TYPE_OPS, 'stat', [$RT_STR, $RT_INT], $RT_INT);
 QAST::OperationsJAST.map_classlib_core_op('lstat', $TYPE_OPS, 'lstat', [$RT_STR, $RT_INT], $RT_INT);
 QAST::OperationsJAST.map_classlib_core_op('stat_time', $TYPE_OPS, 'stat_time', [$RT_STR, $RT_INT], $RT_NUM);
