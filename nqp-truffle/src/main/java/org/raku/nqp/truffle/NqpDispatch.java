@@ -926,8 +926,51 @@ final class NqpDispatch {
      * a bind-return from a junction autothread lands its value as the
      * call's result in the caller's registers.
      */
+    /** The NqpRootNode behind an engine CallTarget, or null. */
+    private static NqpRootNode engineRootOf(Object target) {
+        return target instanceof com.oracle.truffle.api.RootCallTarget rct
+            && rct.getRootNode() instanceof NqpRootNode r ? r : null;
+    }
+
+    @TruffleBoundary
+    private static RuntimeException frameFreeSuspend(CodeRef cr) {
+        return new IllegalStateException(
+            "continuation captured through a frame-free block ("
+            + (cr.name == null || cr.name.isEmpty() ? "<anon>" : cr.name) + ")");
+    }
+
+    /**
+     * Delivers a frame-free callee's return value into the caller's
+     * registers, doing what a framed callee's StoreRet-into-cf.caller would
+     * have done -- the caller then reads it with readResult exactly as
+     * before. tc.curFrame is unchanged (the callee never had a frame), so
+     * it is the caller.
+     */
+    private static void frameFreeResult(ThreadContext tc, int resultType, Object r) {
+        CallFrame caller = tc.curFrame != null ? tc.curFrame : tc.dummyCaller;
+        NqpOps.storeReturnInto(resultType, r, caller);
+    }
+
     private static void enterEngine(ThreadContext tc, CodeRef cr, CallTarget target,
                                     CallSiteDescriptor csd, Object[] args) {
+        NqpRootNode ffRoot = engineRootOf(target);
+        if (ffRoot != null && !ffRoot.needsFrame) {
+            /* No CallFrame: the block proved frame-free. Its own StoreRet
+             * (cf==null) only passes the value through, so the program's
+             * return value is the block value; deliver it to the caller. */
+            Object r;
+            try {
+                r = target.call(cr.staticInfo.compUnit, tc, null, csd, args);
+            }
+            catch (org.raku.nqp.runtime.SaveStackException sse) { throw frameFreeSuspend(cr); }
+            catch (NqpUnwind u) { throw u.unwind; }
+            catch (NqpHostError h) { throw dieInternal(tc, h.original); }
+            catch (ControlException ce) { throw ce; }
+            catch (Throwable t) { throw dieInternal(tc, t); }
+            if (r instanceof ContinuationResult) throw frameFreeSuspend(cr);
+            frameFreeResult(tc, ffRoot.resultType, r);
+            return;
+        }
         CallFrame callerFrame = tc.curFrame;
         try {
             /* Frame construction walks the caller chain for an outer and
@@ -984,29 +1027,38 @@ final class NqpDispatch {
      */
     private static void enterDirect(ThreadContext tc, CodeRef cr, DirectCallNode cn,
                                     CallSiteDescriptor csd, Object[] args) {
-        CallFrame cf = newFrame(tc, cr);
+        /* A frame-free callee runs with cf==null: no CallFrame is built and
+         * none is left, so partial evaluation scalar-replaces the callee's
+         * VirtualFrame across this inlined call -- the whole point of the
+         * port. root.needsFrame is constant for this call node, so the
+         * branch folds. */
+        NqpRootNode root = engineRootOf(cn.getCallTarget());
+        boolean framed = root == null || root.needsFrame;
+        CallFrame cf = framed ? newFrame(tc, cr) : null;
         Object r;
         try {
             r = cn.call(cr.staticInfo.compUnit, tc, cf, csd, args);
         }
         catch (NqpUnwind u) {
-            leave(cf);
+            if (cf != null) leave(cf);
             throw u;
         }
         catch (NqpHostError h) {
             throw dieInternal(tc, h.original);
         }
         catch (org.raku.nqp.runtime.ControlException ce) {
-            leave(cf);
+            if (cf != null) leave(cf);
             throw ce;
         }
         catch (Throwable t) {
             throw dieInternal(tc, t);
         }
         if (r instanceof ContinuationResult) {
+            if (cf == null) throw frameFreeSuspend(cr);
             throw NqpCodeEngine.suspendFrame((ContinuationResult) r, cf);
         }
-        leave(cf);
+        if (cf != null) leave(cf);
+        else frameFreeResult(tc, root.resultType, r);
     }
 
     @TruffleBoundary

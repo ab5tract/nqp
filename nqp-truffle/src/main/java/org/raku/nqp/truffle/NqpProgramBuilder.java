@@ -575,39 +575,47 @@ final class NqpProgramBuilder {
             int target = code[at + 3];
             at += 4;
             String named = null;
-            if (kind == 2 || kind == 3) named = pool[code[at++]];
+            if (kind == 2 || kind == 3 || kind == 4) named = pool[code[at++]];
             if (kind == 2) namedAllowed.add(named);
-            if (kind == 3) namedSlurpy = true;
+            // Kind 4 is a discard `%_` named slurpy: it suppresses the
+            // extra-named rejection exactly as a real slurpy does, but binds
+            // nothing and needs no CallFrame -- the whole point of the
+            // frame-free path for methods.
+            if (kind == 3 || kind == 4) namedSlurpy = true;
             int hasDefault = code[at++];
             if (type != NqpWire.T_OBJ && kind != 0 && kind != 2)
                 throw new IllegalStateException("nqpp: a slurpy parameter is always an object");
 
-            if (emit) beginBindTarget(scope, target,
-                    type == NqpWire.T_UINT ? NqpWire.T_INT : type);
-            if (hasDefault != 0) {
-                // v = fetched-if-existed else default; the existed flag is
-                // read before anything can clobber it.
-                if (emit) {
-                    b.beginBlock();
-                    b.beginStoreLocal(tmp);
-                }
-                emitFetch(kind, named, posIdx, 1, csdL, argsL, emit, type);
-                if (emit) {
-                    b.endStoreLocal();
-                    b.beginConditional();
-                    b.emitParamExisted();
-                    b.emitLoadLocal(tmp);
-                }
-                at = walk(at, emit);
-                if (emit) {
-                    b.endConditional();
-                    b.endBlock();
-                }
+            if (kind == 4) {
+                // No bind, no fetch; hasDefault is 0 and there are no tasks.
             } else {
-                emitFetch(kind, named, posIdx, 0, csdL, argsL, emit, type);
+                if (emit) beginBindTarget(scope, target,
+                        type == NqpWire.T_UINT ? NqpWire.T_INT : type);
+                if (hasDefault != 0) {
+                    // v = fetched-if-existed else default; the existed flag is
+                    // read before anything can clobber it.
+                    if (emit) {
+                        b.beginBlock();
+                        b.beginStoreLocal(tmp);
+                    }
+                    emitFetch(kind, named, posIdx, 1, csdL, argsL, emit, type);
+                    if (emit) {
+                        b.endStoreLocal();
+                        b.beginConditional();
+                        b.emitParamExisted();
+                        b.emitLoadLocal(tmp);
+                    }
+                    at = walk(at, emit);
+                    if (emit) {
+                        b.endConditional();
+                        b.endBlock();
+                    }
+                } else {
+                    emitFetch(kind, named, posIdx, 0, csdL, argsL, emit, type);
+                }
+                if (emit) endBindTarget(scope);
+                if (kind == 0) posIdx++;
             }
-            if (emit) endBindTarget(scope);
-            if (kind == 0) posIdx++;
             // Param tasks: whatever the declaration carried as children
             // (the bytecode path's emit_param_tasks), run after the bind.
             int ntasks = code[at++];
