@@ -302,6 +302,47 @@ final class NqpProgramBuilder {
                 b.endBlock();
                 return endAt;
             }
+            case NqpWire.FORLOOP: {
+                // nqp::for: LOOPH's shape (unlabeled, no repeat, no next-expr)
+                // with the iteration split into a fetch (pre) that runs once
+                // per iteration and a call (body) that the redo loop re-runs.
+                int condType = code[at + 1];
+                int lastId = code[at + 2];
+                int nrId = code[at + 3];
+                int outerIdx = code[at + 4];
+                int condAt = at + 5;
+                int preAt = walk(condAt, false);
+                int bodyAt = walk(preAt, false);
+                int endAt = walk(bodyAt, false);
+                if (!emit) return endAt;
+
+                BytecodeLocal redoL = b.createLocal();
+                b.beginBlock();
+                b.beginTryCatch();
+                {   // try: the loop itself, cond and all, under lastId.
+                    b.beginBlock();
+                    b.emitSetCurHandler(lastId);
+                    b.beginWhile();
+                    walkCond(condAt, condType, 0, true);
+                    emitForBody(redoL, preAt, bodyAt, nrId, lastId);
+                    b.endWhile();
+                    b.emitSetCurHandler(outerIdx);
+                    b.endBlock();
+                }
+                {   // catch: a LAST aimed here ends the loop quietly.
+                    b.beginBlock();
+                    b.emitSetCurHandler(outerIdx);
+                    b.beginLoopLastUnwind(lastId, outerIdx);
+                    b.emitLoadNull();
+                    b.emitLoadException();
+                    b.endLoopLastUnwind();
+                    b.endBlock();
+                }
+                b.endTryCatch();
+                b.emitLoadNull();
+                b.endBlock();
+                return endAt;
+            }
             case NqpWire.HANDLE: {
                 // The handle op's nesting, reconstructed: an inner TryCatch
                 // makes host throwables into nqp exceptions FROM INSIDE the
@@ -855,6 +896,67 @@ final class NqpProgramBuilder {
             endSink();
         }
         b.endBlock();
+    }
+
+    /**
+     * One iteration of a for loop (W_FORLOOP): [pre; body] under nrId once,
+     * then body alone for as long as a REDO unwind keeps re-arming it. The
+     * first pass sets the flag to 0 ahead and lets the catch arm overwrite
+     * it (1 for REDO, 0 for NEXT), so a normal iteration never enters the
+     * redo loop; `body` is walked twice, once per emission site, as the
+     * repeat_ loops duplicate theirs.
+     */
+    private void emitForBody(BytecodeLocal redoL, int preAt, int bodyAt, int nrId, int lastId) {
+        b.beginBlock();
+        b.beginStoreLocal(redoL);
+        b.emitLoadConstant(0L);
+        b.endStoreLocal();
+        emitForPass(redoL, preAt, bodyAt, nrId, lastId);
+        b.beginWhile();
+        b.beginNonZero();
+        b.emitLoadLocal(redoL);
+        b.endNonZero();
+        {
+            b.beginBlock();
+            b.beginStoreLocal(redoL);
+            b.emitLoadConstant(0L);
+            b.endStoreLocal();
+            emitForPass(redoL, -1, bodyAt, nrId, lastId);
+            b.endBlock();
+        }
+        b.endWhile();
+        b.endBlock();
+    }
+
+    /** A guarded [pre;] body run under nrId; the catch arm routes NEXT/REDO into redoL. */
+    private void emitForPass(BytecodeLocal redoL, int preAt, int bodyAt, int nrId, int lastId) {
+        b.beginTryCatch();
+        {
+            b.beginBlock();
+            b.emitSetCurHandler(nrId);
+            if (preAt >= 0) {
+                beginSink();
+                walk(preAt, true);
+                endSink();
+            }
+            beginSink();
+            walk(bodyAt, true);
+            endSink();
+            b.emitSetCurHandler(lastId);
+            b.endBlock();
+        }
+        {   // catch: route NEXT/REDO, rethrow the rest.
+            b.beginBlock();
+            b.emitSetCurHandler(lastId);
+            b.beginStoreLocal(redoL);
+            b.beginLoopBodyUnwind(nrId, lastId);
+            b.emitLoadNull();
+            b.emitLoadException();
+            b.endLoopBodyUnwind();
+            b.endStoreLocal();
+            b.endBlock();
+        }
+        b.endTryCatch();
     }
 
     /** Discards the value the wrapped child leaves. */

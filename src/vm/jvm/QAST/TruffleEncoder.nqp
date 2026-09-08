@@ -328,6 +328,7 @@ class QAST::TruffleEncoder {
     my int $W_LEXGET_OUTER := 29;
     my int $W_LEXBIND_OUTER := 30;
     my int $W_SAVECAPTURE := 31;
+    my int $W_FORLOOP := 32;
 
     # Handler categories, matching ExceptionHandling on the runtime side
     # (and the Compiler's own copies).
@@ -1698,17 +1699,27 @@ class QAST::TruffleEncoder {
     # takes a split path it mishandles (a null/unreachable frame -> NPE).
     # $name is the op name already computed by encode_op.
     # nqp::for(list, block): the iterator loop Compiler.nqp's add_core_op('for')
-    # builds. iter+while gives last/next (the while's own regions); the fetch
-    # of the block's arity values sits in the while body so `next` re-fetches;
-    # `redo` must re-run only the call with the same values, so the call rides
-    # an inner one-shot loop whose innermost REDO handle re-arms it. Value
-    # context returns the iterated list; void returns nothing. Labelled/
-    # :nohandler forms are refused for now.
+    # builds. The list, its iterator and the block ride scratch locals; each
+    # iteration fetches the block's arity values (shift) into locals and
+    # calls the block with them. The handled form is its own wire op,
+    # W_FORLOOP: the same LAST / NEXT|REDO regions a handled while has, but
+    # with the fetch OUTSIDE the redo loop and only the call inside it, so
+    # `redo` re-runs the call with the same values while `next` re-fetches
+    # (Compiler.nqp's goto redo_lbl sits between the fetch and the call).
+    # No per-iteration allocation: the earlier desugar through `handle`
+    # failed because a handle's handler is a nested block -- a separate frame
+    # that cannot see this block's locals -- and would have taken a closure
+    # per iteration besides. :nohandler is the plain W_LOOP over fetch+call.
+    # Value context answers the iterated list; void answers nothing. The
+    # labelled form is still refused (nothing emits nqp::for with a label:
+    # NQP has no loop labels, and Raku's for is its own iterator loop).
     method encode_for($op, %e, int $want) {
+        my int $nohandler := 0;
         my @ops;
         for @($op) {
-            cbail('for :' ~ $_.named) if $_.named ne '';
-            nqp::push(@ops, $_);
+            if $_.named eq 'nohandler' { $nohandler := 1 }
+            elsif $_.named ne '' { cbail('for :' ~ $_.named) }
+            else { nqp::push(@ops, $_) }
         }
         cbail('for needs 2 operands') unless nqp::elems(@ops) == 2;
         cbail('for block not a block') unless nqp::istype(@ops[1], QAST::Block);
@@ -1720,38 +1731,103 @@ class QAST::TruffleEncoder {
         my str $iterL  := QAST::Node.unique('for_iter');
         my str $blockL := QAST::Node.unique('for_block');
         my str $listL  := QAST::Node.unique('for_list');
-        my str $redoL  := QAST::Node.unique('for_redo');
         my sub lv($n)  { QAST::Var.new( :name($n), :scope('local') ) }
         my sub ld($n)  { QAST::Var.new( :name($n), :scope('local'), :decl('var') ) }
         my $call := QAST::Op.new( :op('call'), lv($blockL) );
-        my $body := QAST::Stmts.new();
+        my $pre := QAST::Stmts.new();
         my int $i := 0;
         while $i < $arity {
             my str $t := QAST::Node.unique('for_v');
-            $body.push(QAST::Op.new( :op('bind'), ld($t),
+            $pre.push(QAST::Op.new( :op('bind'), ld($t),
                 QAST::Op.new( :op('shift'), lv($iterL) ) ));
             $call.push(lv($t));
             $i := $i + 1;
         }
-        # redo: one-shot inner loop that re-arms on a REDO control exception.
-        $body.push(QAST::Op.new( :op('bind'), ld($redoL), QAST::IVal.new( :value(1) ) ));
-        $body.push(QAST::Op.new( :op('while'), lv($redoL),
-            QAST::Stmts.new(
-                QAST::Op.new( :op('bind'), lv($redoL), QAST::IVal.new( :value(0) ) ),
-                QAST::Op.new( :op('handle'), $call,
-                    'REDO', QAST::Op.new( :op('bind'), lv($redoL), QAST::IVal.new( :value(1) ) ) ) ) ));
-        my $stmts := QAST::Stmts.new(
-            QAST::Op.new( :op('bind'), ld($listL), @ops[0] ),
-            QAST::Op.new( :op('bind'), ld($iterL), QAST::Op.new( :op('iterator'), lv($listL) ) ),
-            QAST::Op.new( :op('bind'), ld($blockL), $blk ),
-            QAST::Op.new( :op('while'), QAST::Op.new( :op('istrue'), lv($iterL) ), $body ) );
-        $stmts.push(lv($listL)) unless $want == $T_VOID;
-        self.encode_node($stmts, %e, $want)
+        my $cond := QAST::Op.new( :op('istrue'), lv($iterL) );
+
+        # [bind list; bind iter; bind block; loop; (list)]
+        epush(%e, $W_STMTS);
+        epush(%e, $want == $T_VOID ?? 4 !! 5);
+        self.encode_node(QAST::Op.new( :op('bind'), ld($listL), @ops[0] ), %e, $T_VOID);
+        self.encode_node(QAST::Op.new( :op('bind'), ld($iterL),
+            QAST::Op.new( :op('iterator'), lv($listL) ) ), %e, $T_VOID);
+        self.encode_node(QAST::Op.new( :op('bind'), ld($blockL), $blk ), %e, $T_VOID);
+        if $nohandler {
+            # W_LOOP until=0 repeat=0 hasNext=0 condType cond body
+            epush(%e, $W_LOOP);
+            epush(%e, 0); epush(%e, 0); epush(%e, 0);
+            my int $ct_at := nqp::elems(%e<code>);
+            epush(%e, 0);
+            nqp::bindpos(%e<code>, $ct_at, self.encode_node($cond, %e, $T_ANY));
+            $pre.push($call);
+            self.encode_node($pre, %e, $T_VOID);
+        }
+        else {
+            # The same rows a handled while registers; the runtime's handler
+            # walk reads them from this block's StaticCodeInfo.
+            my int $outer := %e<hidx>;
+            my int $lid := &*REGISTER_UNWIND_HANDLER($outer, $EX_CAT_LAST, :ex_obj(1));
+            my int $nrid := &*REGISTER_UNWIND_HANDLER($lid, $EX_CAT_NEXT +| $EX_CAT_REDO, :ex_obj(1));
+            %e<frame_op> := 1;
+            epush(%e, $W_FORLOOP);
+            my int $ct_at := nqp::elems(%e<code>);
+            epush(%e, 0);
+            epush(%e, $lid);
+            epush(%e, $nrid);
+            epush(%e, $outer);
+            %e<hidx> := $lid;
+            nqp::bindpos(%e<code>, $ct_at, self.encode_node($cond, %e, $T_ANY));
+            %e<hidx> := $nrid;
+            self.encode_node($pre, %e, $T_VOID);
+            self.encode_node($call, %e, $T_VOID);
+            %e<hidx> := $outer;
+        }
+        return $T_OBJ if $want == $T_VOID;   # the loop's null, discarded
+        self.encode_node(lv($listL), %e, $T_OBJ)
     }
 
     method encode_op_tail($op, str $name, %e, int $want) {
         if $name eq 'for' {
             return self.encode_for($op, %e, $want);
+        }
+        if $name eq 'postinc' || $name eq 'postdec' {
+            # NQP/Ops.nqp's postinc: the old value into a scratch local, the
+            # variable rebound to it +/- 1, the local as the value. The same
+            # fresh-tree contract and null->0 auto-vivification as preinc
+            # (an object variable never assigned reads as 0, so the answer
+            # for that case is a boxed 0 where bytecode answered the null).
+            cbail($name ~ ' arity') unless nqp::elems(@($op)) == 1;
+            cbail($name ~ ' target not a var') unless nqp::istype($op[0], QAST::Var);
+            my str $aop  := $name eq 'postinc' ?? 'add_i' !! 'sub_i';
+            my int $spec := nqp::isnull($op[0].returns) ?? 0 !! nqp::objprimspec($op[0].returns);
+            my str $tmp  := QAST::Node.unique('post_old');
+            my $read;
+            if $spec == 0 {
+                $read := QAST::Op.new( :op('if'),
+                    QAST::Op.new( :op('isnull'), $op[0].shallow_clone ),
+                    QAST::IVal.new( :value(0) ),
+                    $op[0].shallow_clone );
+            }
+            else {
+                $read := $op[0].shallow_clone;
+            }
+            my $tdecl := QAST::Var.new( :name($tmp), :scope('local'), :decl('var') );
+            my $tread := QAST::Var.new( :name($tmp), :scope('local') );
+            if $spec != 0 {
+                $tdecl.returns($op[0].returns);
+                $tread.returns($op[0].returns);
+            }
+            return self.encode_node(QAST::Stmts.new(
+                QAST::Op.new( :op('bind'), $tdecl, $read ),
+                QAST::Op.new( :op('bind'), $op[0].shallow_clone,
+                    QAST::Op.new( :op($aop), $tread, QAST::IVal.new( :value(1) ) ) ),
+                $tread.shallow_clone ), %e, $want);
+        }
+        if $name eq 'indexingoptimized' {
+            # A string-indexing hint on the JVM: the operand wanted as a str
+            # (Compiler.nqp: as_jast($op[0], :want($RT_STR))).
+            cbail('indexingoptimized arity') unless nqp::elems(@($op)) == 1;
+            return self.encode_child($op[0], %e, $T_STR);
         }
         if $name eq 'register' || $name eq 'delegate'
                 || $name eq 'track' || $name eq 'guard' {
