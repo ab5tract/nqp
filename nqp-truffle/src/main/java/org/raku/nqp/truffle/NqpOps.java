@@ -248,7 +248,7 @@ final class NqpOps {
             case OP_EXISTSKEY: return Ops.existskey(smo(a[0]), str(a[1]), tc);
             case OP_DELETEKEY: return Ops.deletekey(smo(a[0]), str(a[1]), tc);
             case OP_ISCONT: return Ops.iscont(smo(a[0]));
-            case OP_HLLIZE: return Ops.hllize(smo(a[0]), tc);
+            case OP_HLLIZE: return Ops.hllizeIn(smo(a[0]), NqpRaw.hll(cu), tc);   // the block's language, not the frame's
             case OP_ISLIST: return Ops.islist(smo(a[0]), tc);
             case OP_ISHASH: return Ops.ishash(smo(a[0]), tc);
             case OP_UNBOX_I: return Ops.unbox_i(smo(a[0]), tc);

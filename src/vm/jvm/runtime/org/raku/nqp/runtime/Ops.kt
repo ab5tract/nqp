@@ -7945,6 +7945,19 @@ object Ops {
         else
             return hllizeInternal(obj, wanted, tc)
     }
+    /** hllize into an explicit language: the code engine passes its block's
+     *  own unit's, since a frame-free callee entered across languages has
+     *  its CALLER's frame on tc -- reading the frame there hllized a Raku
+     *  method's NQP array into nqp, i.e. not at all (2026-09-09, the
+     *  `List:D` return check on Parameter.constraint_list called from
+     *  RakuAST). The getattrIn twin of this. */
+    @JvmStatic
+    fun hllizeIn(obj: SixModelObject?, wanted: HLLConfig, tc: ThreadContext): SixModelObject? {
+        if (isnull(obj) == 0L && obj!!.stInitialized && obj.st.hllOwner === wanted)
+            return obj
+        else
+            return hllizeInternal(obj, wanted, tc)
+    }
     @JvmStatic
     fun hllizefor(obj: SixModelObject?, language: String, tc: ThreadContext): SixModelObject? {
         val wanted = tc.gc.getHLLConfigFor(language)
