@@ -425,14 +425,73 @@ abstract class CompilationUnit {
          * and MUST run once, not per program -- a per-program graphemeEnd
          * (setText each call) was O(n^2) and dominated the CORE.c parse
          * stage (145s -> 588s). */
+        /* jesp diamond 8: even O(text), the iterator was 16% of a process's
+         * visible start-up samples -- setText builds the whole boundary
+         * table and every following() is a binary search into it, once per
+         * grapheme of every program of every unit. Program text is source-
+         * derived and almost all ASCII, where a grapheme is one UTF-16 unit
+         * unless the unit is a CR (CR LF is one cluster) or the NEXT unit
+         * extends it (combining marks, ZWJ, variation selectors and every
+         * other extender sit at or above U+0300, as do surrogates, jamo and
+         * prepend characters). So walk the text linearly, count such units
+         * as one grapheme each, and ask the iterator -- created on first
+         * need, so an all-simple unit never pays setText -- only for the
+         * rest. NQP_SIDECAR_CHECK=1 re-derives every program the old way
+         * and dies on a difference; NQP_SIDECAR_STATS=1 reports on stderr
+         * how many graphemes took the iterator. */
         var at = text.indexOf(' ')
         val count = text.substring(0, if (at < 0) text.length else at).toInt()
         val out = arrayOfNulls<String>(count)
+        val end = text.length
+        var bi: java.text.BreakIterator? = null
+        var slow = 0L
+        var total = 0L
+        var i = 0
+        while (i < count) {
+            at += 1                        // the leading space
+            val colon = text.indexOf(':', at)
+            val len = text.substring(at, colon).toInt()
+            val start = colon + 1
+            var pos = start
+            var n = len
+            total += len
+            while (n > 0 && pos < end) {
+                val c = text[pos]
+                if (c < '\u0300' && c != '\r' && (pos + 1 >= end || text[pos + 1] < '\u0300')) {
+                    pos += 1
+                } else {
+                    if (bi == null) {
+                        bi = java.text.BreakIterator.getCharacterInstance()
+                        bi.setText(text)
+                    }
+                    slow += 1
+                    val next = bi.following(pos)
+                    if (next == java.text.BreakIterator.DONE) { pos = end; break }
+                    pos = next
+                }
+                n--
+            }
+            out[i] = text.substring(start, pos)
+            at = pos
+            i += 1
+        }
+        if (System.getenv("NQP_SIDECAR_STATS") != null)
+            System.err.println("sidecar $name: $count programs, $total graphemes, $slow via the iterator")
+        if (System.getenv("NQP_SIDECAR_CHECK") != null)
+            checkEnginePrograms(text, count, out)
+        @Suppress("UNCHECKED_CAST")
+        return out as Array<String>
+    }
+
+    /** The pre-diamond-8 split -- one iterator over the whole text, every
+     *  grapheme through following() -- re-run to verify the linear walk. */
+    private fun checkEnginePrograms(text: String, count: Int, got: Array<String?>) {
+        var at = text.indexOf(' ')
         val bi = java.text.BreakIterator.getCharacterInstance()
         bi.setText(text)
         var i = 0
         while (i < count) {
-            at += 1                        // the leading space
+            at += 1
             val colon = text.indexOf(':', at)
             val len = text.substring(at, colon).toInt()
             val start = colon + 1
@@ -444,11 +503,12 @@ abstract class CompilationUnit {
                 pos = next
                 n--
             }
-            out[i] = text.substring(start, pos)
+            val want = text.substring(start, pos)
+            if (want != got[i])
+                throw IllegalStateException("sidecar split differs at program $i of ${javaClass.simpleName}:" +
+                    " old ${want.length} units, new ${got[i]?.length} units")
             at = pos
             i += 1
         }
-        @Suppress("UNCHECKED_CAST")
-        return out as Array<String>
     }
 }
