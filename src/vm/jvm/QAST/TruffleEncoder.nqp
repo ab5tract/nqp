@@ -51,7 +51,8 @@ class QAST::TruffleEncoder {
         ifnull list list_i list_n list_s locallifetime null p6argvmarray p6assign usecapture
         p6decontrv p6decontrv_6c
         repeat_until repeat_while stmt stmts unless until while
-        numify';
+        numify preinc predec falsey stringify intify
+        register delegate track guard savecapture for';
 
     # Node kinds the encoder handles outside the op table.
     my $covered_nodes := 'QAST::ParamTypeCheck';
@@ -326,6 +327,8 @@ class QAST::TruffleEncoder {
     my int $W_USECAPTURE := 28;
     my int $W_LEXGET_OUTER := 29;
     my int $W_LEXBIND_OUTER := 30;
+    my int $W_SAVECAPTURE := 31;
+    my int $W_FORLOOP := 32;
 
     # Handler categories, matching ExceptionHandling on the runtime side
     # (and the Compiler's own copies).
@@ -378,6 +381,7 @@ class QAST::TruffleEncoder {
     my int $code_run := 0;
     my int $code_encoded := 0;
     my int $code_bail_p := 0;
+    my int $code_strict := 0;
     my int $code_noframe := 0;
     my int $code_precomp := 0;
     my %code_no_desugar;
@@ -394,6 +398,12 @@ class QAST::TruffleEncoder {
         return 0 unless $code_run;
         $code_encoded  := nqp::existskey(%env, 'NQP_CODE_ENCODED') ?? 1 !! 0;
         $code_bail_p   := nqp::existskey(%env, 'NQP_CODE_BAIL') ?? 1 !! 0;
+        # NQP_CODE_STRICT: a refusal is a HARD ERROR, not a silent fallback to
+        # bytecode. The campaign tool for reaching zero refusals -- the build
+        # stops at the first uncovered op (named), and there is no fallback to
+        # corrupt (killing the commit-before-refusal trap). Off = the old
+        # fallback, so normal builds are unaffected.
+        $code_strict   := nqp::existskey(%env, 'NQP_CODE_STRICT') ?? 1 !! 0;
         # NQP_CODE_NOFRAME: mark a block frame-free (needsFrame=0 in the wire
         # header) when it declares no lexicals, makes no dispatch, has no
         # nested block, reads no frame (lex/getlexouter/ctx/usecapture/args),
@@ -716,6 +726,9 @@ class QAST::TruffleEncoder {
                     ~ ($name eq '' ?? '<anon ' ~ $node.cuid ~ '>' !! $name)
                     ~ ' ' ~ $msg);
             }
+            # NQP_CODE_STRICT: no fallback -- a refusal is a hard error naming
+            # the block and the uncovered op, so the campaign build stops here.
+            nqp::rethrow($err) if $code_strict;
             return '';
         }
 
@@ -1209,6 +1222,16 @@ class QAST::TruffleEncoder {
     # answers the right unit. spesh's inline.c has both rules: no :useshll
     # op across HLLs, and no inlining of frames that introspect themselves.
     my %frame_forcing_ops := nqp::hash(
+        # The throw family and the loop controls read the block's OWN frame
+        # after the handler runs -- a block handler that resumes leaves its
+        # result in the frame's return register (Ops.result_o(cf)), and a
+        # frame-free block has cf == null there (2026-09-08: t/nqp/044's
+        # resumed die from a frame-free `oops()` NPE'd on cf.retType). The
+        # continuation ops and ctx hand cf to the runtime the same way.
+        'die', 1, 'die_s', 1, 'throw', 1, 'rethrow', 1, 'throwextype', 1,
+        'throwpayloadlex', 1, 'throwpayloadlexcaller', 1, 'control', 1,
+        'continuationreset', 1, 'continuationcontrol', 1, 'continuationinvoke', 1,
+        'ctx', 1,
         'curcode', 1, 'callercode', 1, 'getcodecuid', 1,
         'getlexcaller', 1, 'getlexrelcaller', 1, 'ctxcaller', 1, 'ctxcallerskipthunks', 1,
         'backtrace', 1, 'backtracestrings', 1,
@@ -1522,24 +1545,71 @@ class QAST::TruffleEncoder {
         if $name eq 'xor' {
             return self.encode_xor($op, %e, $want);
         }
-        if $name eq 'numify' {
-            # numify(x): x in num context, exactly Compiler.nqp's as_jast(x, :want(NUM)).
-            cbail('numify arity') unless nqp::elems(@($op)) == 1;
-            return self.encode_node($op[0], %e, $T_NUM);
+        if $name eq 'falsey' {
+            # falsey(x): the logical negation of truthiness, an int. not_i and
+            # istrue are both covered (istrue is classlib [RT_OBJ]->RT_INT), so
+            # not_i(istrue(x)); a native operand coerces to obj for istrue,
+            # matching the JAST handler's boxed result. Non-committing.
+            cbail('falsey arity') unless nqp::elems(@($op)) == 1;
+            return self.encode_op(QAST::Op.new( :op('not_i'),
+                QAST::Op.new( :op('istrue'), $op[0] ) ), %e, $want);
         }
-        # Deferred to a follow-up batch (2026-09-08), each surfaced by the
-        # error-driven build:
-        #   stringify/intify -- unlike numify, their obj->str/int coercion is
-        #     not a plain unbox; an arbitrary object needs the HLL's
-        #     stringification (JAST's :want(STR) path), and encode_node's
-        #     coercion raw-unboxes ("P6opaque cannot unbox to a native string").
-        #   preinc/predec -- a `bind var (add_i/sub_i var 1)` rewrite NPEs the
-        #     encoder inside encode_block (Compiler.nqp:1017 -> :4685), not
-        #     fixed by shallow_cloning the read. Likely cause (2026-09-08): the
-        #     op auto-vivifies a null/undefined value to 0 before incrementing
-        #     (`my $x; --$x == -1`), which a bare var read into add_i skips --
-        #     add_i on the null blows up. The fix wants a defined-or-0 read
-        #     (isnull(var) ?? 0 !! var), not a plain var read.
+        if $name eq 'numify' {
+            # numify(x): x in num context, exactly Compiler.nqp's as_jast(x,
+            # :want(NUM)). encode_CHILD, not encode_node: the node road only
+            # passes the want down and answers whatever type the child has,
+            # so numify(~$/) came back a str and dec_number handed
+            # QAST::NVal.new a P6str (2026-09-08, t/nqp/041-flat.t). The
+            # child road inserts the coercion and answers num.
+            cbail('numify arity') unless nqp::elems(@($op)) == 1;
+            return self.encode_child($op[0], %e, $T_NUM);
+        }
+        if $name eq 'stringify' || $name eq 'intify' {
+            # Coerce the child to the wanted native type via encode_child (not
+            # encode_node): that inserts $W_COERCE, whose obj->str/int road is
+            # Ops.smart_stringify/smart_intify -- the proper stringification,
+            # not a raw unbox (which failed on a P6opaque). Mirrors the JAST
+            # as_jast(x, :want(STR/INT)) path.
+            cbail($name ~ ' arity') unless nqp::elems(@($op)) == 1;
+            return self.encode_child($op[0], %e, $name eq 'stringify' ?? $T_STR !! $T_INT);
+        }
+        # ++/-- on a variable: bind var (add_i/sub_i <read> 1), the original
+        # QAST::Var kept as the bind lvalue. The read differs by the var's
+        # native spec (nqp::objprimspec, as native_assign_bind_scope uses):
+        #   object var (spec 0) -- the value may be null (an uninitialized
+        #     `my $x`), which the op auto-vivifies to 0 before ++/-- (so
+        #     `my $x; --$x == -1`). The JAST add_i unboxes null as 0; the
+        #     engine's native add_i would blow up on it, so read defined-or-0.
+        #   native var (spec 1/2/3) -- never null (0-initialised), read direct.
+        # Reads are shallow_clones so no node is encoded twice.
+        if $name eq 'preinc' || $name eq 'predec' {
+            cbail($name ~ ' arity') unless nqp::elems(@($op)) == 1;
+            cbail($name ~ ' target not a var') unless nqp::istype($op[0], QAST::Var);
+            my str $aop  := $name eq 'preinc' ?? 'add_i' !! 'sub_i';
+            my int $spec := nqp::isnull($op[0].returns) ?? 0 !! nqp::objprimspec($op[0].returns);
+            # Fresh-tree contract: NOTHING may reference the input node -- if
+            # encoding this rewrite bails, encode_block hands the ORIGINAL
+            # block to the bytecode path, and a shared node left in a
+            # half-encoded state corrupts it (obtain NPE at Compiler.nqp:3994).
+            # So clone the target too, not just the reads.
+            my $target := $op[0].shallow_clone;
+            my $read;
+            if $spec == 0 {
+                $read := QAST::Op.new( :op('if'),
+                    QAST::Op.new( :op('isnull'), $op[0].shallow_clone ),
+                    QAST::IVal.new( :value(0) ),
+                    $op[0].shallow_clone );
+            }
+            else {
+                $read := $op[0].shallow_clone;
+            }
+            return self.encode_op(QAST::Op.new( :op('bind'), $target,
+                QAST::Op.new( :op($aop), $read, QAST::IVal.new( :value(1) ) ) ), %e, $want);
+        }
+        # stringify/intify still deferred: unlike numify, their obj->str/int
+        # coercion is not a plain unbox -- an arbitrary object needs the HLL's
+        # stringification (JAST's :want(STR) path), and encode_node's coercion
+        # raw-unboxes ("P6opaque cannot unbox to a native string", 2026-09-08).
         if $name eq 'settypefinalize' {
             # A no-op stub on the JVM (Compiler.nqp: as_jast($op[0])); the
             # finalize wiring is not hooked up, so just yield the child.
@@ -1643,7 +1713,160 @@ class QAST::TruffleEncoder {
     # the 64KB JVM method limit -- above it jast2bc's AutosplitMethodWriter
     # takes a split path it mishandles (a null/unreachable frame -> NPE).
     # $name is the op name already computed by encode_op.
+    # nqp::for(list, block): the iterator loop Compiler.nqp's add_core_op('for')
+    # builds. The list, its iterator and the block ride scratch locals; each
+    # iteration fetches the block's arity values (shift) into locals and
+    # calls the block with them. The handled form is its own wire op,
+    # W_FORLOOP: the same LAST / NEXT|REDO regions a handled while has, but
+    # with the fetch OUTSIDE the redo loop and only the call inside it, so
+    # `redo` re-runs the call with the same values while `next` re-fetches
+    # (Compiler.nqp's goto redo_lbl sits between the fetch and the call).
+    # No per-iteration allocation: the earlier desugar through `handle`
+    # failed because a handle's handler is a nested block -- a separate frame
+    # that cannot see this block's locals -- and would have taken a closure
+    # per iteration besides. :nohandler is the plain W_LOOP over fetch+call.
+    # Value context answers the iterated list; void answers nothing. The
+    # labelled form is still refused (nothing emits nqp::for with a label:
+    # NQP has no loop labels, and Raku's for is its own iterator loop).
+    method encode_for($op, %e, int $want) {
+        my int $nohandler := 0;
+        my @ops;
+        for @($op) {
+            if $_.named eq 'nohandler' { $nohandler := 1 }
+            elsif $_.named ne '' { cbail('for :' ~ $_.named) }
+            else { nqp::push(@ops, $_) }
+        }
+        cbail('for needs 2 operands') unless nqp::elems(@ops) == 2;
+        cbail('for block not a block') unless nqp::istype(@ops[1], QAST::Block);
+        my $blk := @ops[1];
+        my str $bt := $blk.blocktype;
+        $blk.blocktype('declaration') if $bt eq 'immediate';
+        $blk.blocktype('declaration_static') if $bt eq 'immediate_static';
+        my int $arity := $blk.arity || 1;
+        my str $iterL  := QAST::Node.unique('for_iter');
+        my str $blockL := QAST::Node.unique('for_block');
+        my str $listL  := QAST::Node.unique('for_list');
+        my sub lv($n)  { QAST::Var.new( :name($n), :scope('local') ) }
+        my sub ld($n)  { QAST::Var.new( :name($n), :scope('local'), :decl('var') ) }
+        my $call := QAST::Op.new( :op('call'), lv($blockL) );
+        my $pre := QAST::Stmts.new();
+        my int $i := 0;
+        while $i < $arity {
+            my str $t := QAST::Node.unique('for_v');
+            $pre.push(QAST::Op.new( :op('bind'), ld($t),
+                QAST::Op.new( :op('shift'), lv($iterL) ) ));
+            $call.push(lv($t));
+            $i := $i + 1;
+        }
+        my $cond := QAST::Op.new( :op('istrue'), lv($iterL) );
+
+        # [bind list; bind iter; bind block; loop; (list)]
+        epush(%e, $W_STMTS);
+        epush(%e, $want == $T_VOID ?? 4 !! 5);
+        self.encode_node(QAST::Op.new( :op('bind'), ld($listL), @ops[0] ), %e, $T_VOID);
+        self.encode_node(QAST::Op.new( :op('bind'), ld($iterL),
+            QAST::Op.new( :op('iterator'), lv($listL) ) ), %e, $T_VOID);
+        self.encode_node(QAST::Op.new( :op('bind'), ld($blockL), $blk ), %e, $T_VOID);
+        if $nohandler {
+            # W_LOOP until=0 repeat=0 hasNext=0 condType cond body
+            epush(%e, $W_LOOP);
+            epush(%e, 0); epush(%e, 0); epush(%e, 0);
+            my int $ct_at := nqp::elems(%e<code>);
+            epush(%e, 0);
+            nqp::bindpos(%e<code>, $ct_at, self.encode_node($cond, %e, $T_ANY));
+            $pre.push($call);
+            self.encode_node($pre, %e, $T_VOID);
+        }
+        else {
+            # The same rows a handled while registers; the runtime's handler
+            # walk reads them from this block's StaticCodeInfo.
+            my int $outer := %e<hidx>;
+            my int $lid := &*REGISTER_UNWIND_HANDLER($outer, $EX_CAT_LAST, :ex_obj(1));
+            my int $nrid := &*REGISTER_UNWIND_HANDLER($lid, $EX_CAT_NEXT +| $EX_CAT_REDO, :ex_obj(1));
+            %e<frame_op> := 1;
+            epush(%e, $W_FORLOOP);
+            my int $ct_at := nqp::elems(%e<code>);
+            epush(%e, 0);
+            epush(%e, $lid);
+            epush(%e, $nrid);
+            epush(%e, $outer);
+            %e<hidx> := $lid;
+            nqp::bindpos(%e<code>, $ct_at, self.encode_node($cond, %e, $T_ANY));
+            %e<hidx> := $nrid;
+            self.encode_node($pre, %e, $T_VOID);
+            self.encode_node($call, %e, $T_VOID);
+            %e<hidx> := $outer;
+        }
+        return $T_OBJ if $want == $T_VOID;   # the loop's null, discarded
+        self.encode_node(lv($listL), %e, $T_OBJ)
+    }
+
     method encode_op_tail($op, str $name, %e, int $want) {
+        if $name eq 'for' {
+            return self.encode_for($op, %e, $want);
+        }
+        if $name eq 'postinc' || $name eq 'postdec' {
+            # NQP/Ops.nqp's postinc: the old value into a scratch local, the
+            # variable rebound to it +/- 1, the local as the value. The same
+            # fresh-tree contract and null->0 auto-vivification as preinc
+            # (an object variable never assigned reads as 0, so the answer
+            # for that case is a boxed 0 where bytecode answered the null).
+            cbail($name ~ ' arity') unless nqp::elems(@($op)) == 1;
+            cbail($name ~ ' target not a var') unless nqp::istype($op[0], QAST::Var);
+            my str $aop  := $name eq 'postinc' ?? 'add_i' !! 'sub_i';
+            my int $spec := nqp::isnull($op[0].returns) ?? 0 !! nqp::objprimspec($op[0].returns);
+            my str $tmp  := QAST::Node.unique('post_old');
+            my $read;
+            if $spec == 0 {
+                $read := QAST::Op.new( :op('if'),
+                    QAST::Op.new( :op('isnull'), $op[0].shallow_clone ),
+                    QAST::IVal.new( :value(0) ),
+                    $op[0].shallow_clone );
+            }
+            else {
+                $read := $op[0].shallow_clone;
+            }
+            my $tdecl := QAST::Var.new( :name($tmp), :scope('local'), :decl('var') );
+            my $tread := QAST::Var.new( :name($tmp), :scope('local') );
+            if $spec != 0 {
+                $tdecl.returns($op[0].returns);
+                $tread.returns($op[0].returns);
+            }
+            return self.encode_node(QAST::Stmts.new(
+                QAST::Op.new( :op('bind'), $tdecl, $read ),
+                QAST::Op.new( :op('bind'), $op[0].shallow_clone,
+                    QAST::Op.new( :op($aop), $tread, QAST::IVal.new( :value(1) ) ) ),
+                $tread.shallow_clone ), %e, $want);
+        }
+        if $name eq 'indexingoptimized' {
+            # A string-indexing hint on the JVM: the operand wanted as a str
+            # (Compiler.nqp: as_jast($op[0], :want($RT_STR))).
+            cbail('indexingoptimized arity') unless nqp::elems(@($op)) == 1;
+            return self.encode_child($op[0], %e, $T_STR);
+        }
+        if $name eq 'register' || $name eq 'delegate'
+                || $name eq 'track' || $name eq 'guard' {
+            # New-dispatch definition ops (Compiler.nqp add_dispatcher_op): a
+            # dispatch to the 'boot-syscall' dispatcher, the operation named by
+            # a 'dispatcher-<kind>' string. register/delegate pass their
+            # children through; track/guard fold their first (constant-string)
+            # operand into the dispatcher name (the trailing '-' is the JAST
+            # spelling). Reduces to the covered 'dispatch' op.
+            my $disp := QAST::Op.new( :op('dispatch'),
+                QAST::SVal.new( :value('boot-syscall') ) );
+            if $name eq 'register' || $name eq 'delegate' {
+                $disp.push( QAST::SVal.new( :value('dispatcher-' ~ $name) ) );
+                for @($op) { $disp.push($_) }
+            }
+            else {
+                cbail($name ~ ' kind not a constant string')
+                    unless nqp::elems(@($op)) && nqp::istype($op[0], QAST::SVal);
+                $disp.push( QAST::SVal.new( :value('dispatcher-' ~ $name ~ '-' ~ $op[0].value) ) );
+                my int $i := 1;
+                while $i < nqp::elems(@($op)) { $disp.push($op[$i]); $i := $i + 1; }
+            }
+            return self.encode_op($disp, %e, $want);
+        }
         if $name eq 'dispatch' {
             # The generic dispatch-by-name op several desugars produce;
             # the first child names the dispatcher.
@@ -1749,6 +1972,15 @@ class QAST::TruffleEncoder {
             cbail('usecapture arity') if nqp::elems(@($op));
             %e<frame_op> := 1;
             epush(%e, $W_USECAPTURE);
+            return $T_OBJ;
+        }
+        if $name eq 'savecapture' {
+            # The current frame's args saved into a capture, Compiler.nqp's
+            # savecapture(tc, csd, args) -- a 0-operand frame reader, exactly
+            # like usecapture but Ops.savecapture on the engine side.
+            cbail('savecapture arity') if nqp::elems(@($op));
+            %e<frame_op> := 1;
+            epush(%e, $W_SAVECAPTURE);
             return $T_OBJ;
         }
         if $name eq 'syscall' {
@@ -2235,7 +2467,18 @@ class QAST::TruffleEncoder {
             else {
                 epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
             }
-            self.encode_child($op[1], %e, $rt);
+            if $want == $T_ANY {
+                # Compiler.nqp: the common type of the then-arm and the
+                # condition, object when they differ.
+                my int $m1 := nqp::elems(%e<code>);
+                my int $t1 := self.encode_node($op[1], %e, $T_ANY);
+                $t1 := $T_INT if $t1 == $T_UINT;
+                $rt := $t1 == $condt ?? $condt !! $T_OBJ;
+                self.coerce_at(%e, $m1, $t1, $rt);
+            }
+            else {
+                self.encode_child($op[1], %e, $rt);
+            }
             if $condt != $rt {
                 my int $kind := coerce_kind($condt, $rt);
                 cbail('if result coercion') if $kind < 0;
@@ -2256,10 +2499,43 @@ class QAST::TruffleEncoder {
         my int $condt := self.encode_node($op[0], %e, $T_ANY);
         $condt := $T_INT if $condt == $T_UINT;
         nqp::bindpos(%e<code>, $ct_at, $condt);
-        my int $btype := $void ?? $T_VOID !! ($want == $T_ANY ?? $T_OBJ !! $want);
-        self.encode_child($op[1], %e, $btype);
-        self.encode_child($op[2], %e, $btype) if $n == 3;
-        $void ?? $T_OBJ !! ($want == $T_ANY ?? $T_OBJ !! $want)
+        if $void || $want != $T_ANY {
+            my int $btype := $void ?? $T_VOID !! $want;
+            self.encode_child($op[1], %e, $btype);
+            self.encode_child($op[2], %e, $btype) if $n == 3;
+            return $void ?? $T_OBJ !! $want;
+        }
+        # No wanted type: Compiler.nqp's rule, the arms' common type when
+        # they agree, object otherwise. Boxing both unconditionally made
+        # `nqp::delegate($c ?? 'a' !! 'b', ...)` declare its dispatcher
+        # name as an object argument ("Argument 0 to the
+        # 'dispatcher-delegate' syscall is a obj, but should be a str",
+        # Rakudo's dispatchers.nqp, 2026-09-09).
+        my int $m1 := nqp::elems(%e<code>);
+        my int $t1 := self.encode_node($op[1], %e, $T_ANY);
+        my int $m2 := nqp::elems(%e<code>);
+        my int $t2 := self.encode_node($op[2], %e, $T_ANY);
+        return $t1 if $t1 == $t2;
+        self.coerce_at(%e, $m2, $t2, $T_OBJ);
+        self.coerce_at(%e, $m1, $t1, $T_OBJ);
+        $T_OBJ
+    }
+
+    # Retro-fits a coercion around an already encoded subtree that starts at
+    # $mark, the way encode_child does after the fact: the two-cell COERCE
+    # prefix moves everything after $mark two places, so the deferred
+    # nested-block slots are shifted with it. A no-op when no coercion is
+    # needed (the int/uint pair shares its slot).
+    method coerce_at(%e, int $mark, int $from, int $to) {
+        return 0 if $from == $to
+            || ($from == $T_UINT && $to == $T_INT) || ($from == $T_INT && $to == $T_UINT);
+        my int $kind := coerce_kind($from, $to);
+        cbail('no coercion ' ~ $from ~ '->' ~ $to) if $kind < 0;
+        nqp::splice(%e<code>, [$W_COERCE, $kind], $mark, 0);
+        for %e<nested> -> $nb {
+            nqp::bindpos($nb, 0, $nb[0] + 2) if $nb[0] >= $mark;
+        }
+        1
     }
 
     # lang-call: the callee (decontainerized) first, then the arguments.
