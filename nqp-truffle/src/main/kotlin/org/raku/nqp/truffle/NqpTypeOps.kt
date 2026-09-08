@@ -76,6 +76,71 @@ object NqpTypeOps {
         fun pin() { misses = MAX_MISSES }
     }
 
+    /* ----- p6sink ----- */
+
+    /**
+     * Rakudo's p6sink with a site: a statement's value in void context is
+     * sunk by calling its `sink` method through the dispatcher, and the
+     * runtime road for that builds a callsite descriptor, a string key and
+     * a map lookup on every call -- for a `sink` that, on nearly every type,
+     * is Mu's empty one. The verdict is a function of the STable: a
+     * container is never sunk, and a type whose `sink` resolves to Mu's
+     * (or to none) needs no call at all. Anything else keeps the road.
+     */
+    class SinkSite : Site() {
+        @JvmField @field:CompilationFinal var st: STable? = null
+        @JvmField @field:CompilationFinal var trivial: Boolean = false
+        override fun reset() { st = null; trivial = false; misses = 0 }
+    }
+
+    @JvmStatic
+    fun p6sink(site: SinkSite, o: Any?, tc: ThreadContext): Any? {
+        if (o is SixModelObject) {
+            var st = site.st
+            if (st == null && site.mayResolve()) {
+                CompilerDirectives.transferToInterpreterAndInvalidate()
+                resolveSink(site, o, tc)
+                st = site.st
+            }
+            if (st != null) {
+                if (NqpRaw.st(o) === st) {
+                    if (site.trivial) return o
+                    return sinkSlow(o, tc)
+                }
+                miss(site)
+            }
+        }
+        return sinkSlow(o, tc)
+    }
+
+    @TruffleBoundary
+    private fun resolveSink(site: SinkSite, o: SixModelObject, tc: ThreadContext) {
+        if (Ops.isnull(o) == 1L || !o.stInitialized) { site.pin(); return }
+        val st = o.st
+        val trivial = st.ContainerSpec != null || run {
+            val m = Ops.findmethodNonFatal(o, "sink", tc)
+            Ops.isnull(m) == 1L || m === muSink(tc)
+        }
+        site.st = st
+        site.trivial = trivial
+        if (DEBUG) debug("sink site " + (if (trivial) "trivial" else "calls sink") + " for " + st.debugName)
+    }
+
+    /** Mu's `sink` (the Raku language's null value is Mu), found once. */
+    @Volatile private var muSinkCache: SixModelObject? = null
+    @TruffleBoundary
+    private fun muSink(tc: ThreadContext): SixModelObject? {
+        muSinkCache?.let { return it }
+        val mu = tc.gc.getHLLConfigFor("Raku").nullValue ?: return null
+        val m = Ops.findmethodNonFatal(mu, "sink", tc)
+        if (Ops.isnull(m) == 0L) muSinkCache = m
+        return m
+    }
+
+    @TruffleBoundary
+    private fun sinkSlow(o: Any?, tc: ThreadContext): Any? =
+        Rak.P6SINK.invokeExact(o as SixModelObject?, tc) as SixModelObject?
+
     /* ----- hllize ----- */
 
     /**
@@ -421,6 +486,7 @@ object NqpTypeOps {
     private object Rak {
         @JvmField val P6TYPECHECKRV: MethodHandle
         @JvmField val P6TYPECHECKRV_CACHEABLE: MethodHandle
+        @JvmField val P6SINK: MethodHandle
 
         init {
             val c = Class.forName("org.raku.rakudo.RakOps")
@@ -428,6 +494,7 @@ object NqpTypeOps {
             val smo = SixModelObject::class.java
             val tcc = ThreadContext::class.java
             P6TYPECHECKRV = l.findStatic(c, "p6typecheckrv", MethodType.methodType(smo, smo, smo, smo, tcc))
+            P6SINK = l.findStatic(c, "p6sink", MethodType.methodType(smo, smo, tcc))
             P6TYPECHECKRV_CACHEABLE = l.findStatic(c, "p6typecheckrvCacheable",
                 MethodType.methodType(java.lang.Long.TYPE, smo, tcc))
         }

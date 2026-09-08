@@ -16,6 +16,37 @@ import org.raku.nqp.sixmodel.SixModelObject
 class CallFrame : Cloneable {
     companion object {
         /**
+         * The frame a code ref's block reads its outer lexicals from: the
+         * captured outer when the code ref has one, else -- while the outer
+         * block has a live invocation somewhere -- the nearest such frame on
+         * the caller chain, else the outer block's prior invocation. The
+         * constructor uses this (and auto-closes when it answers null); a
+         * frame-free block's outer lexical read uses it directly, having no
+         * frame of its own to walk from.
+         *
+         * The caller-chain search can only succeed while the outer block has
+         * a live invocation; see StaticCodeInfo.liveInvocations. Measured
+         * over a module compile: ~1.1 million searches, 77 callers deep on
+         * average, zero successes -- the code refs are methods of precompiled
+         * classes whose outer mainline exited long ago.
+         */
+        @JvmStatic
+        fun outerFor(tc: ThreadContext, cr: CodeRef): CallFrame? {
+            cr.outer?.let { return it }
+            val wanted = cr.staticInfo.outerStaticInfo ?: return null
+            if (wanted.liveInvocations.get() > 0) {
+                var checkFrame = tc.curFrame
+                while (checkFrame != null) {
+                    if (checkFrame.codeRef.staticInfo.mh === wanted.mh &&
+                            checkFrame.codeRef.staticInfo.compUnit === wanted.compUnit)
+                        return checkFrame
+                    checkFrame = checkFrame.caller
+                }
+            }
+            return wanted.priorInvocation
+        }
+
+        /**
          * A frame that holds a scope but was never invoked, whose outer is
          * the nearest live instance of the static frame it belongs inside
          * (auto-closing one if there is none). This is what a phaser needs
@@ -203,34 +234,10 @@ class CallFrame : Cloneable {
         // Set outer; if it's explicitly in the code ref, use that. If not,
         // go hunting for one. Fall back to outer's prior invocation.
         val sci = cr.staticInfo
-        if (cr.outer != null) {
-            this.outer = cr.outer
-        }
-        else {
+        this.outer = outerFor(tc, cr)
+        if (this.outer == null) {
             val wanted = sci.outerStaticInfo
-            if (wanted != null) {
-                /* The caller-chain search can only succeed while the outer
-                 * block has a live invocation somewhere; see
-                 * StaticCodeInfo.liveInvocations. Measured over a module
-                 * compile: ~1.1 million searches, 77 callers deep on
-                 * average, zero successes -- the code refs are methods of
-                 * precompiled classes whose outer mainline exited long ago. */
-                if (wanted.liveInvocations.get() > 0) {
-                    var checkFrame = tc.curFrame
-                    while (checkFrame != null) {
-                        if (checkFrame.codeRef.staticInfo.mh === wanted.mh &&
-                                checkFrame.codeRef.staticInfo.compUnit === wanted.compUnit) {
-                            this.outer = checkFrame
-                            break
-                        }
-                        checkFrame = checkFrame.caller
-                    }
-                }
-                if (this.outer == null)
-                    this.outer = wanted.priorInvocation
-                if (this.outer == null)
-                    this.autoClose(wanted)
-            }
+            if (wanted != null) this.autoClose(wanted)
         }
 
         // Set up lexical storage.

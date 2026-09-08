@@ -56,6 +56,9 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     static final int ARG_CF = 2;
     static final int ARG_CSD = 3;
     static final int ARG_ARGS = 4;
+    /** The program's own code ref: what a frame-free block reaches its
+     *  outer through (LexGetOuter/LexBindOuter), having no frame to walk. */
+    static final int ARG_CR = 5;
 
     protected NqpRootNode(NqpLanguage language, FrameDescriptor frameDescriptor) {
         super(language, frameDescriptor);
@@ -267,6 +270,40 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         }
     }
 
+    /** A read of an OUTER lexical from a block with no frame of its own:
+     *  the walk starts at the code ref's resolved outer. */
+    @Operation
+    @ConstantOperand(type = int.class, name = "type")
+    @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class LexGetOuter {
+        @Specialization
+        static Object doGet(VirtualFrame f, int type, String name, Object site) {
+            try {
+                return NqpOps.getlexOuter(type, name, (NqpOps.LexSite) site, tc(f),
+                    (org.raku.nqp.runtime.CodeRef) f.getArguments()[ARG_CR]);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = int.class, name = "type")
+    @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class LexBindOuter {
+        @Specialization
+        static Object doBind(VirtualFrame f, int type, String name, Object site, Object v) {
+            try {
+                return NqpOps.bindlexOuter(type, name, v, (NqpOps.LexSite) site, tc(f),
+                    (org.raku.nqp.runtime.CodeRef) f.getArguments()[ARG_CR]);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
     @Operation
     @ConstantOperand(type = int.class, name = "type")
     @ConstantOperand(type = String.class, name = "name")
@@ -470,6 +507,19 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static long doIsType(VirtualFrame f, Object site, Object o, Object type) {
             try {
                 return NqpTypeOps.istype((NqpTypeOps.IsTypeSite) site, o, type, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class P6SinkOp {
+        @Specialization
+        static Object doSink(VirtualFrame f, Object site, Object o) {
+            try {
+                return NqpTypeOps.p6sink((NqpTypeOps.SinkSite) site, o, tc(f));
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }

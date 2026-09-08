@@ -1040,7 +1040,7 @@ object NqpDispatch {
              * return value is the block value; deliver it to the caller. */
             val r: Any?
             try {
-                r = target.call(cr.staticInfo.compUnit, tc, null, csd, args)
+                r = target.call(cr.staticInfo.compUnit, tc, null, csd, args, cr)
             }
             catch (sse: SaveStackException) { throw frameFreeSuspend(cr) }
             catch (u: NqpUnwind) { throw u.unwind }
@@ -1117,7 +1117,7 @@ object NqpDispatch {
         val cf = if (framed) newFrame(tc, cr) else null
         val r: Any?
         try {
-            r = cn.call(NqpRaw.staticInfo(cr).compUnit, tc, cf, csd, args)
+            r = cn.call(NqpRaw.staticInfo(cr).compUnit, tc, cf, csd, args, cr)
         }
         catch (u: NqpUnwind) {
             if (cf != null) leave(cf)
