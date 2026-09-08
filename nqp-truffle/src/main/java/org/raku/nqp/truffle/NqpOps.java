@@ -1707,6 +1707,11 @@ final class NqpOps {
         return Ops.usecapture(tc, cf.csd, cf.args);
     }
 
+    /** savecapture: the frame's own csd+args saved into a capture. */
+    static Object savecapture(ThreadContext tc, CallFrame cf) {
+        return Ops.savecapture(tc, cf.csd, cf.args);
+    }
+
     /** rakudo's p6argvmarray: the frame's raw arguments as a BOOTArray. */
     @TruffleBoundary
     static Object p6argvmarray(ThreadContext tc, CallFrame cf) {

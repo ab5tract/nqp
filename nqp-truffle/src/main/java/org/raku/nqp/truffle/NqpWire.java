@@ -131,6 +131,8 @@ public final class NqpWire {
      *  than its frame, so the block needs no frame for it. */
     public static final int LEXGET_OUTER = 29;
     public static final int LEXBIND_OUTER = 30;
+    /** savecapture: the frame's own args saved into a capture (like usecapture). */
+    public static final int SAVECAPTURE = 31;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;
