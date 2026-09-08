@@ -958,6 +958,19 @@ object NqpDispatch {
      *  marked as reading no current language (jesp diamond 7). */
     private fun frameFreeEntryOk(root: NqpRootNode, cr: CodeRef, callerHll: HLLConfig?): Boolean {
         if (sameHll(cr, callerHll)) return true
+        /* Only a DIFFERENT language crosses. Two cases that are not one:
+         * an unknown caller language (the caller's unit has no config yet:
+         * still loading, binding its setting), and two configs of the SAME
+         * language -- a bootstrap holds the compiler's `nqp` config and the
+         * compilee's `nqp` config as distinct objects, and diamond 5 framed
+         * every call between them. Letting those through as "cross-language"
+         * ran the World's own methods frame-free with a mismatched config
+         * during module setup and bound stage2's NQPHLL to stage1's setting. */
+        if (callerHll == null) return false
+        val calleeHll = NqpRaw.hll(NqpRaw.staticInfo(cr).compUnit) ?: return false
+        val cn = calleeHll.name
+        val rn = callerHll.name
+        if (cn === rn || (cn != null && cn == rn)) return false
         if (!root.hllFree || !HLLFREE_ON) return false
         if (HLLFREE_TRACE) traceHllFree(cr, callerHll)
         return true
