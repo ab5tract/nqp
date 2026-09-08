@@ -323,6 +323,8 @@ class QAST::TruffleEncoder {
     my int $W_P6ARGVMARRAY := 26;
     my int $W_CLASSLIB := 27;
     my int $W_USECAPTURE := 28;
+    my int $W_LEXGET_OUTER := 29;
+    my int $W_LEXBIND_OUTER := 30;
 
     # Handler categories, matching ExceptionHandling on the runtime side
     # (and the Compiler's own copies).
@@ -2504,17 +2506,36 @@ class QAST::TruffleEncoder {
                 return $T_OBJ;
             }
             my int $type := self.lexical_type_of($name, %e, $scope);
+            # An OUTER lexical (declared in an enclosing block, not this
+            # one) is read or bound from the program's code ref's resolved
+            # outer, so it does not need this block's frame: a block whose
+            # only lexical traffic is with its outers runs frame-free
+            # (jesp: arguments in registers, part two). The block's own
+            # lexicals, and anything not found statically, keep the frame.
+            my int $outer := $scope eq 'lexical'
+                && !nqp::existskey(%e<own>, $name)
+                && self.lexical_in_scope($name, %e);
             if nqp::isnull($bindval) {
-                %e<frame_op> := 1;
-                epush(%e, $W_LEXGET); epush(%e, $type); epush(%e, epool(%e, $name));
+                if $outer {
+                    epush(%e, $W_LEXGET_OUTER); epush(%e, $type); epush(%e, epool(%e, $name));
+                }
+                else {
+                    %e<frame_op> := 1;
+                    epush(%e, $W_LEXGET); epush(%e, $type); epush(%e, epool(%e, $name));
+                }
             }
             else {
                 # "Cannot bind to QAST::Var resolving to a lexicalref" on
                 # the bytecode path; a bail keeps that error its own.
                 cbail('bind to a lexicalref through lexical scope')
                     if self.resolve_lexref($name, %e)[0] == 2;
-                %e<frame_op> := 1;
-                epush(%e, $W_LEXBIND); epush(%e, $type); epush(%e, epool(%e, $name));
+                if $outer {
+                    epush(%e, $W_LEXBIND_OUTER); epush(%e, $type); epush(%e, epool(%e, $name));
+                }
+                else {
+                    %e<frame_op> := 1;
+                    epush(%e, $W_LEXBIND); epush(%e, $type); epush(%e, epool(%e, $name));
+                }
                 my int $ubits := self.sized_uint_bits($var, $name, %e);
                 if $ubits {
                     # Truncate to the declared width: value & ((1<<bits)-1),
