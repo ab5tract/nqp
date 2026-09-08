@@ -360,6 +360,18 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     }
 
     @Operation
+    public static final class SaveCapture {
+        @Specialization
+        static Object doSave(VirtualFrame f) {
+            try {
+                return NqpOps.savecapture(tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
     public static final class P6ArgVmArray {
         @Specialization
         static Object doArgs(VirtualFrame f) {
