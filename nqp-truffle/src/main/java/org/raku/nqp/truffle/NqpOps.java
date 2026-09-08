@@ -6,6 +6,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import org.raku.nqp.runtime.CallFrame;
 import org.raku.nqp.runtime.CallSiteDescriptor;
+import org.raku.nqp.runtime.CodeRef;
 import org.raku.nqp.runtime.CompilationUnit;
 import org.raku.nqp.runtime.ExceptionHandling;
 import org.raku.nqp.runtime.Ops;
@@ -1015,6 +1016,36 @@ final class NqpOps {
         @CompilationFinal int depth;
         @CompilationFinal int idx;
         LexSite() { LEX_SITES.add(this); }
+    }
+
+    /* An OUTER lexical read or bind from a block that has no frame of its
+     * own (jesp: arguments in registers, part two). The walk a framed
+     * callee would start at cf.outer starts at the frame the code ref
+     * resolves its outer to -- the captured outer, else the outer block's
+     * live or prior invocation, exactly as the CallFrame constructor
+     * decides -- so a block whose only lexical traffic is with its outers
+     * needs no CallFrame. The site's depth counts from that frame. */
+    static Object getlexOuter(int type, String name, LexSite site, ThreadContext tc, CodeRef cr) {
+        return getlex(type, name, site, tc, outerOf(tc, cr));
+    }
+
+    static Object bindlexOuter(int type, String name, Object v, LexSite site, ThreadContext tc, CodeRef cr) {
+        return bindlex(type, name, v, site, tc, outerOf(tc, cr));
+    }
+
+    private static CallFrame outerOf(ThreadContext tc, CodeRef cr) {
+        CallFrame o = cr.outer;
+        if (o != null) return o;
+        return outerOfSlow(tc, cr);
+    }
+
+    @TruffleBoundary
+    private static CallFrame outerOfSlow(ThreadContext tc, CodeRef cr) {
+        CallFrame o = CallFrame.outerFor(tc, cr);
+        if (o == null)
+            throw ExceptionHandling.dieInternal(tc, "No outer frame for a frame-free lexical read in "
+                + (cr.name == null ? "<anon>" : cr.name));
+        return o;
     }
 
     static Object getlex(int type, String name, LexSite site, ThreadContext tc, CallFrame cf) {

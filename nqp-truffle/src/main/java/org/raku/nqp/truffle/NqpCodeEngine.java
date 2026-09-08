@@ -59,7 +59,7 @@ public final class NqpCodeEngine implements CodeEngine {
         }
         try {
             // The program stores its own return value, typed; see StoreRet.
-            r = program.call(cu, tc, cf, csd, args);
+            r = program.call(cu, tc, cf, csd, args, cf.codeRef);
         } catch (NqpUnwind wrapped) {
             /* An unwind no handler region in the program claimed: hand the
              * naked host exception back to the bytecode frames above, which

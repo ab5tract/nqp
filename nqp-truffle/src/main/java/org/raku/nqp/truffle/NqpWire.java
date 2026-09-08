@@ -126,6 +126,11 @@ public final class NqpWire {
     public static final int CLASSLIB = 27;
     /** usecapture: the frame's own args, captured for a re-dispatch. */
     public static final int USECAPTURE = 28;
+    /** 29 LEXGET_OUTER type name / 30 LEXBIND_OUTER type name child: a read or
+     *  bind of an OUTER lexical, resolved from the program's code ref rather
+     *  than its frame, so the block needs no frame for it. */
+    public static final int LEXGET_OUTER = 29;
+    public static final int LEXBIND_OUTER = 30;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;
