@@ -2467,7 +2467,18 @@ class QAST::TruffleEncoder {
             else {
                 epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
             }
-            self.encode_child($op[1], %e, $rt);
+            if $want == $T_ANY {
+                # Compiler.nqp: the common type of the then-arm and the
+                # condition, object when they differ.
+                my int $m1 := nqp::elems(%e<code>);
+                my int $t1 := self.encode_node($op[1], %e, $T_ANY);
+                $t1 := $T_INT if $t1 == $T_UINT;
+                $rt := $t1 == $condt ?? $condt !! $T_OBJ;
+                self.coerce_at(%e, $m1, $t1, $rt);
+            }
+            else {
+                self.encode_child($op[1], %e, $rt);
+            }
             if $condt != $rt {
                 my int $kind := coerce_kind($condt, $rt);
                 cbail('if result coercion') if $kind < 0;
@@ -2488,10 +2499,43 @@ class QAST::TruffleEncoder {
         my int $condt := self.encode_node($op[0], %e, $T_ANY);
         $condt := $T_INT if $condt == $T_UINT;
         nqp::bindpos(%e<code>, $ct_at, $condt);
-        my int $btype := $void ?? $T_VOID !! ($want == $T_ANY ?? $T_OBJ !! $want);
-        self.encode_child($op[1], %e, $btype);
-        self.encode_child($op[2], %e, $btype) if $n == 3;
-        $void ?? $T_OBJ !! ($want == $T_ANY ?? $T_OBJ !! $want)
+        if $void || $want != $T_ANY {
+            my int $btype := $void ?? $T_VOID !! $want;
+            self.encode_child($op[1], %e, $btype);
+            self.encode_child($op[2], %e, $btype) if $n == 3;
+            return $void ?? $T_OBJ !! $want;
+        }
+        # No wanted type: Compiler.nqp's rule, the arms' common type when
+        # they agree, object otherwise. Boxing both unconditionally made
+        # `nqp::delegate($c ?? 'a' !! 'b', ...)` declare its dispatcher
+        # name as an object argument ("Argument 0 to the
+        # 'dispatcher-delegate' syscall is a obj, but should be a str",
+        # Rakudo's dispatchers.nqp, 2026-09-09).
+        my int $m1 := nqp::elems(%e<code>);
+        my int $t1 := self.encode_node($op[1], %e, $T_ANY);
+        my int $m2 := nqp::elems(%e<code>);
+        my int $t2 := self.encode_node($op[2], %e, $T_ANY);
+        return $t1 if $t1 == $t2;
+        self.coerce_at(%e, $m2, $t2, $T_OBJ);
+        self.coerce_at(%e, $m1, $t1, $T_OBJ);
+        $T_OBJ
+    }
+
+    # Retro-fits a coercion around an already encoded subtree that starts at
+    # $mark, the way encode_child does after the fact: the two-cell COERCE
+    # prefix moves everything after $mark two places, so the deferred
+    # nested-block slots are shifted with it. A no-op when no coercion is
+    # needed (the int/uint pair shares its slot).
+    method coerce_at(%e, int $mark, int $from, int $to) {
+        return 0 if $from == $to
+            || ($from == $T_UINT && $to == $T_INT) || ($from == $T_INT && $to == $T_UINT);
+        my int $kind := coerce_kind($from, $to);
+        cbail('no coercion ' ~ $from ~ '->' ~ $to) if $kind < 0;
+        nqp::splice(%e<code>, [$W_COERCE, $kind], $mark, 0);
+        for %e<nested> -> $nb {
+            nqp::bindpos($nb, 0, $nb[0] + 2) if $nb[0] >= $mark;
+        }
+        1
     }
 
     # lang-call: the callee (decontainerized) first, then the arguments.
