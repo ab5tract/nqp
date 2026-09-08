@@ -215,15 +215,20 @@ final class NqpProgramBuilder {
                 int nextAt = walk(bodyAt, false);
                 // The whole region ends after the "next" expr if it is present.
                 int endAt = hasNext != 0 ? walk(nextAt, false) : nextAt;
-                if (repeat != 0 && emit) {
-                    // Run the body once ahead: repeat_while == body; while.
-                    // (repeat + a next-expr is refused by the encoder.)
-                    beginSink();
-                    walk(bodyAt, true);
-                    endSink();
-                }
                 if (emit) {
                     b.beginBlock();
+                    if (repeat != 0) {
+                        // Run the body once ahead: repeat_while == body; while.
+                        // (repeat + a next-expr is refused by the encoder.)
+                        // INSIDE the Block: emitted before it, the pre-run
+                        // was a second, void operation where the parent
+                        // expected the loop's single value child ("StoreLocal
+                        // expected a value-producing child", every
+                        // `repeat {} while` in t/nqp/014-while.t, 2026-09-08).
+                        beginSink();
+                        walk(bodyAt, true);
+                        endSink();
+                    }
                     b.beginWhile();
                     walkCond(condAt, condType, until, true);
                     beginSink();

@@ -1222,6 +1222,16 @@ class QAST::TruffleEncoder {
     # answers the right unit. spesh's inline.c has both rules: no :useshll
     # op across HLLs, and no inlining of frames that introspect themselves.
     my %frame_forcing_ops := nqp::hash(
+        # The throw family and the loop controls read the block's OWN frame
+        # after the handler runs -- a block handler that resumes leaves its
+        # result in the frame's return register (Ops.result_o(cf)), and a
+        # frame-free block has cf == null there (2026-09-08: t/nqp/044's
+        # resumed die from a frame-free `oops()` NPE'd on cf.retType). The
+        # continuation ops and ctx hand cf to the runtime the same way.
+        'die', 1, 'die_s', 1, 'throw', 1, 'rethrow', 1, 'throwextype', 1,
+        'throwpayloadlex', 1, 'throwpayloadlexcaller', 1, 'control', 1,
+        'continuationreset', 1, 'continuationcontrol', 1, 'continuationinvoke', 1,
+        'ctx', 1,
         'curcode', 1, 'callercode', 1, 'getcodecuid', 1,
         'getlexcaller', 1, 'getlexrelcaller', 1, 'ctxcaller', 1, 'ctxcallerskipthunks', 1,
         'backtrace', 1, 'backtracestrings', 1,
@@ -1545,9 +1555,14 @@ class QAST::TruffleEncoder {
                 QAST::Op.new( :op('istrue'), $op[0] ) ), %e, $want);
         }
         if $name eq 'numify' {
-            # numify(x): x in num context, exactly Compiler.nqp's as_jast(x, :want(NUM)).
+            # numify(x): x in num context, exactly Compiler.nqp's as_jast(x,
+            # :want(NUM)). encode_CHILD, not encode_node: the node road only
+            # passes the want down and answers whatever type the child has,
+            # so numify(~$/) came back a str and dec_number handed
+            # QAST::NVal.new a P6str (2026-09-08, t/nqp/041-flat.t). The
+            # child road inserts the coercion and answers num.
             cbail('numify arity') unless nqp::elems(@($op)) == 1;
-            return self.encode_node($op[0], %e, $T_NUM);
+            return self.encode_child($op[0], %e, $T_NUM);
         }
         if $name eq 'stringify' || $name eq 'intify' {
             # Coerce the child to the wanted native type via encode_child (not

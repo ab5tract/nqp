@@ -1667,9 +1667,17 @@ object Ops {
     }
 
     /* Dynamic lexicals. */
+    /* The walk starts at the CURRENT frame, as MoarVM's MVM_frame_getdynlex
+     * does (interp.c hands it tc->cur_frame). It used to start at the
+     * caller, which is one frame too far for a frame-free engine block:
+     * such a block runs on its caller's frame, so tc.frame IS its caller,
+     * and the declaring frame right above it was skipped ("Dynamic variable
+     * '$*NEXT_QBID' not found", 2026-09-08). A framed block never has the
+     * contextual in its own frame -- a statically visible one takes the
+     * lexical road -- so including it costs one miss. */
     @JvmStatic
     fun bindlexdyn(name: String, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        var curFrame = tc.frame.caller
+        var curFrame: CallFrame? = tc.frame
         while (curFrame != null) {
             val idx = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (idx != -1) {
@@ -1678,11 +1686,23 @@ object Ops {
             }
             curFrame = curFrame.caller
         }
-        throw ExceptionHandling.dieInternal(tc, "Dynamic variable '" + name + "' not found")
+        /* Name the frames walked: a missing dynamic is nearly always a frame
+         * that is not on the caller chain (or has no static lexical table),
+         * and the bare message hides which. */
+        val walked = StringBuilder()
+        var f: CallFrame? = tc.frame
+        var n = 0
+        while (f != null && n < 12) {
+            if (n > 0) walked.append(" <- ")
+            walked.append(f.codeRef?.name ?: "?")
+            f = f.caller
+            n++
+        }
+        throw ExceptionHandling.dieInternal(tc, "Dynamic variable '" + name + "' not found (frames: " + walked + ")")
     }
     @JvmStatic
     fun getlexdyn(name: String, tc: ThreadContext): SixModelObject? {
-        var curFrame = tc.frame.caller
+        var curFrame: CallFrame? = tc.frame   // current frame first: see bindlexdyn
         while (curFrame != null) {
             val idx = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (idx != -1)
