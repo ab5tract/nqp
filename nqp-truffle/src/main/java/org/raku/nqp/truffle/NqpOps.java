@@ -1368,7 +1368,10 @@ final class NqpOps {
         if (!csd.hasFlattening) {
             int positionals = csd.numPositionals;
             if (positionals >= required && (positionals <= accepted || accepted == -1)) {
-                tc.flatArgs = args;
+                /* No tc.flatArgs store: FlatArgs reads the frame's own array
+                 * when the csd comes back unchanged, and a heap store here
+                 * would make every argument array escape. A framed block
+                 * keeps csd/args on its frame for a later bind error. */
                 if (cf != null) { cf.csd = csd; cf.args = args; }
                 return csd;
             }
