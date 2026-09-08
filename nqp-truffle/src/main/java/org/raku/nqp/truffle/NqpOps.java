@@ -976,14 +976,19 @@ final class NqpOps {
         }
     }
 
-    @TruffleBoundary
+    /* Natives inline; an object's truth may run its boolification. */
     static boolean truthy(int type, Object v, ThreadContext tc) {
         switch (type) {
             case NqpWire.T_INT: return lng(v) != 0;
             case NqpWire.T_NUM: return dbl(v) != 0.0;
             case NqpWire.T_STR: return Ops.istrue_s(str(v)) != 0;
-            default: return Ops.istrue(smo(v), tc) != 0;
+            default: return truthyObj(v, tc);
         }
+    }
+
+    @TruffleBoundary
+    private static boolean truthyObj(Object v, ThreadContext tc) {
+        return Ops.istrue(smo(v), tc) != 0;
     }
 
     /*
@@ -1363,7 +1368,10 @@ final class NqpOps {
         if (!csd.hasFlattening) {
             int positionals = csd.numPositionals;
             if (positionals >= required && (positionals <= accepted || accepted == -1)) {
-                tc.flatArgs = args;
+                /* No tc.flatArgs store: FlatArgs reads the frame's own array
+                 * when the csd comes back unchanged, and a heap store here
+                 * would make every argument array escape. A framed block
+                 * keeps csd/args on its frame for a later bind error. */
                 if (cf != null) { cf.csd = csd; cf.args = args; }
                 return csd;
             }
@@ -1401,12 +1409,41 @@ final class NqpOps {
     /* Parameter fetches by the declared type, the bytecode path's
      * posparam_<t>/namedparam_<t> (and their opt_ forms): a native
      * parameter unboxes on the way in and binds into the typed slot. */
-    @TruffleBoundary
+    /* The common road -- a required parameter whose argument already has
+     * the parameter's kind -- is one flag read and one array read, inline
+     * for framed and frame-free blocks alike; optional parameters and every
+     * conversion (decont, box, arity error) keep the runtime bodies behind
+     * a boundary. The argument value is returned as it sits in the array:
+     * a Long/Double/String/SixModelObject, which is what the operation's
+     * Object result carries anyway. */
     static Object posparam(CallFrame cf, ThreadContext tc, CompilationUnit cu, Object csd,
                            Object[] args, int idx, boolean opt, int type) {
-        if (cf == null)
-            return posparamFree(tc, cu, (CallSiteDescriptor) csd, args, idx, opt, type);
         CallSiteDescriptor cs = (CallSiteDescriptor) csd;
+        if (!opt) {
+            byte flag = cs.argFlags[idx];
+            switch (type) {
+                case NqpWire.T_INT: case NqpWire.T_UINT:
+                    if (flag == CallSiteDescriptor.ARG_INT || flag == CallSiteDescriptor.ARG_UINT) return args[idx];
+                    break;
+                case NqpWire.T_NUM:
+                    if (flag == CallSiteDescriptor.ARG_NUM) return args[idx];
+                    break;
+                case NqpWire.T_STR:
+                    if (flag == CallSiteDescriptor.ARG_STR) return args[idx];
+                    break;
+                default:
+                    if (flag == CallSiteDescriptor.ARG_OBJ) return args[idx];
+                    break;
+            }
+        }
+        return posparamSlow(cf, tc, cu, cs, args, idx, opt, type);
+    }
+
+    @TruffleBoundary
+    private static Object posparamSlow(CallFrame cf, ThreadContext tc, CompilationUnit cu, CallSiteDescriptor cs,
+                                       Object[] args, int idx, boolean opt, int type) {
+        if (cf == null)
+            return posparamFree(tc, cu, cs, args, idx, opt, type);
         switch (type) {
             case NqpWire.T_INT:
                 return opt ? Ops.posparam_opt_i(cf, cs, args, idx) : Ops.posparam_i(cf, cs, args, idx);
@@ -1519,7 +1556,8 @@ final class NqpOps {
 
     /* ----- the typed return-register store the program ends with ----- */
 
-    @TruffleBoundary
+    /* Plain code: four field writes on the common road (every framed
+     * block's return); only the caller-less case goes to the runtime. */
     static void storeReturnTyped(int type, Object v, CallFrame cf) {
         /* Ops.return_* write the caller's registers (cf.caller); done here
          * as field writes for the reason lexO gives. */
