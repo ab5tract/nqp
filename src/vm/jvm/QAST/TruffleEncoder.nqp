@@ -50,7 +50,8 @@ class QAST::TruffleEncoder {
         control defor dispatch getlexouter handle handlepayload hash if
         ifnull list list_i list_n list_s locallifetime null p6argvmarray p6assign usecapture
         p6decontrv p6decontrv_6c
-        repeat_until repeat_while stmt stmts unless until while';
+        repeat_until repeat_while stmt stmts unless until while
+        numify';
 
     # Node kinds the encoder handles outside the op table.
     my $covered_nodes := 'QAST::ParamTypeCheck';
@@ -1526,6 +1527,19 @@ class QAST::TruffleEncoder {
             cbail('numify arity') unless nqp::elems(@($op)) == 1;
             return self.encode_node($op[0], %e, $T_NUM);
         }
+        # Deferred to a follow-up batch (2026-09-08), each surfaced by the
+        # error-driven build:
+        #   stringify/intify -- unlike numify, their obj->str/int coercion is
+        #     not a plain unbox; an arbitrary object needs the HLL's
+        #     stringification (JAST's :want(STR) path), and encode_node's
+        #     coercion raw-unboxes ("P6opaque cannot unbox to a native string").
+        #   preinc/predec -- a `bind var (add_i/sub_i var 1)` rewrite NPEs the
+        #     encoder inside encode_block (Compiler.nqp:1017 -> :4685), not
+        #     fixed by shallow_cloning the read. Likely cause (2026-09-08): the
+        #     op auto-vivifies a null/undefined value to 0 before incrementing
+        #     (`my $x; --$x == -1`), which a bare var read into add_i skips --
+        #     add_i on the null blows up. The fix wants a defined-or-0 read
+        #     (isnull(var) ?? 0 !! var), not a plain var read.
         if $name eq 'settypefinalize' {
             # A no-op stub on the JVM (Compiler.nqp: as_jast($op[0])); the
             # finalize wiring is not hooked up, so just yield the child.
@@ -1622,6 +1636,14 @@ class QAST::TruffleEncoder {
             self.encode_child($rop, %e, $T_OBJ);
             return rt_of($op.returns);
         }
+        return self.encode_op_tail($op, $name, %e, $want);
+    }
+
+    # The tail of encode_op's op dispatch, split out so neither half crosses
+    # the 64KB JVM method limit -- above it jast2bc's AutosplitMethodWriter
+    # takes a split path it mishandles (a null/unreachable frame -> NPE).
+    # $name is the op name already computed by encode_op.
+    method encode_op_tail($op, str $name, %e, int $want) {
         if $name eq 'dispatch' {
             # The generic dispatch-by-name op several desugars produce;
             # the first child names the dispatcher.
