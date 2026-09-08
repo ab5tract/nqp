@@ -237,13 +237,18 @@ final class NqpOps {
             case OP_SHIFT: return Ops.shift(smo(a[0]), tc);
             case OP_UNSHIFT: return Ops.unshift(smo(a[0]), smo(a[1]), tc);
             case OP_ATPOS: return Ops.atpos(smo(a[0]), lng(a[1]), tc);
-            case OP_BINDPOS: return Ops.bindpos(smo(a[0]), lng(a[1]), smo(a[2]), tc);
+            case OP_BINDPOS: {
+                if (a[0] == null)
+                    throw ExceptionHandling.dieInternal(tc, "bindpos on a null array in block '"
+                        + (cf.codeRef == null ? "" : cf.codeRef.name) + "' (index " + lng(a[1]) + ")");
+                return Ops.bindpos(smo(a[0]), lng(a[1]), smo(a[2]), tc);
+            }
             case OP_ATKEY: return Ops.atkey(smo(a[0]), str(a[1]), tc);
             case OP_BINDKEY: return Ops.bindkey(smo(a[0]), str(a[1]), smo(a[2]), tc);
             case OP_EXISTSKEY: return Ops.existskey(smo(a[0]), str(a[1]), tc);
             case OP_DELETEKEY: return Ops.deletekey(smo(a[0]), str(a[1]), tc);
             case OP_ISCONT: return Ops.iscont(smo(a[0]));
-            case OP_HLLIZE: return Ops.hllize(smo(a[0]), tc);
+            case OP_HLLIZE: return Ops.hllizeIn(smo(a[0]), NqpRaw.hll(cu), tc);   // the block's language, not the frame's
             case OP_ISLIST: return Ops.islist(smo(a[0]), tc);
             case OP_ISHASH: return Ops.ishash(smo(a[0]), tc);
             case OP_UNBOX_I: return Ops.unbox_i(smo(a[0]), tc);
@@ -668,8 +673,16 @@ final class NqpOps {
     static long loopBodyUnwind(Object ex, int target, int outer, Object where,
                                CompilationUnit cu, ThreadContext tc) {
         UnwindException u = checkedUnwind(ex, target, outer, where, cu, tc);
-        return (u.category & ExceptionHandling.EX_CAT_REDO) != 0 ? 1L : 0L;
+        long redo = (u.category & ExceptionHandling.EX_CAT_REDO) != 0 ? 1L : 0L;
+        if (UNWIND_TRACE) System.err.println("loopBodyUnwind cat=" + u.category
+            + " target=" + target + " outer=" + outer + " -> redo=" + redo);
+        return redo;
     }
+
+    /** NQP_UNWIND_TRACE=1: trace the loop unwind arms (category, target). */
+    private static final boolean UNWIND_TRACE = System.getenv("NQP_UNWIND_TRACE") != null;
+    /** NQP_ATTR_TRACE=1: trace slow-road reads of @/% attributes (value, auto-viv slots). */
+    private static final boolean ATTR_TRACE = System.getenv("NQP_ATTR_TRACE") != null;
 
     @TruffleBoundary
     static void loopLastUnwind(Object ex, int target, int outer, Object where,
@@ -1306,7 +1319,20 @@ final class NqpOps {
         @CompilationFinal java.lang.invoke.MethodHandle getter;
         @CompilationFinal java.lang.invoke.MethodHandle setter;
         @CompilationFinal boolean resolved;
+        /* The (class handle, name) the handles were resolved for. A site is
+         * usually a literal access, so both are the same objects every time
+         * and the guard is two reference compares; a computed name or class
+         * handle at one site -- BUILDALL's bindattr over every attribute of
+         * an object -- must not reuse handles resolved for another attribute
+         * of the same storage class (2026-09-08: it bound @!spill_locals's
+         * list into the @!stack field). */
+        @CompilationFinal Object ch;
+        @CompilationFinal String name;
         AttrSite() { ATTR_SITES.add(this); }
+
+        boolean sameKey(Object ch, String name) {
+            return ch == this.ch && (name == this.name || name.equals(this.name));
+        }
     }
 
     static Object getattr(AttrSite site, Object o, Object ch, String name, ThreadContext tc, CompilationUnit cu) {
@@ -1315,7 +1341,7 @@ final class NqpOps {
             resolveAttr(site, o, ch, name, tc);
         }
         java.lang.invoke.MethodHandle getter = site.getter;
-        if (getter != null && o != null && o.getClass() == site.storage
+        if (getter != null && o != null && o.getClass() == site.storage && site.sameKey(ch, name)
                 && ((org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance) o).delegate == null) {
             SixModelObject v;
             try {
@@ -1336,7 +1362,7 @@ final class NqpOps {
             resolveAttr(site, o, ch, name, tc);
         }
         java.lang.invoke.MethodHandle setter = site.setter;
-        if (setter != null && o != null && o.getClass() == site.storage
+        if (setter != null && o != null && o.getClass() == site.storage && site.sameKey(ch, name)
                 && ((org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance) o).delegate == null) {
             SixModelObject obj = (SixModelObject) o;
             SixModelObject v = smo(value);
@@ -1353,6 +1379,8 @@ final class NqpOps {
 
     @TruffleBoundary
     private static void resolveAttr(AttrSite site, Object o, Object ch, String name, ThreadContext tc) {
+        site.ch = ch;
+        site.name = name;
         if (o instanceof SixModelObject obj && obj.st != null
                 && obj.st.REPRData instanceof org.raku.nqp.sixmodel.reprs.P6OpaqueREPRData rd
                 && rd.jvmClass != null) {
@@ -1375,7 +1403,24 @@ final class NqpOps {
      * (cu), never the current frame's: a frame-free callee entered across
      * languages has its caller's frame on tc. */
     private static Object getattrSlow(Object o, Object ch, String name, ThreadContext tc, CompilationUnit cu) {
-        return Ops.getattrIn(smo(o), smo(ch), name, tc, NqpRaw.hll(cu));
+        Object r = Ops.getattrIn(smo(o), smo(ch), name, tc, NqpRaw.hll(cu));
+        if (ATTR_TRACE && name != null && (name.startsWith("@") || name.startsWith("%"))) {
+            SixModelObject so = smo(o);
+            String cls = so == null ? "null" : so.getClass().getName();
+            String av = "?";
+            if (so != null && so.st != null
+                    && so.st.REPRData instanceof org.raku.nqp.sixmodel.reprs.P6OpaqueREPRData rd
+                    && rd.autoVivContainers != null) {
+                StringBuilder sb = new StringBuilder();
+                for (SixModelObject c : rd.autoVivContainers)
+                    sb.append(c == null ? 'J' : Ops.isnull(c) == 1L ? '0' : c instanceof org.raku.nqp.sixmodel.TypeObject ? 'T' : 'C');
+                av = sb.toString();
+            }
+            System.err.println("getattr " + name + " -> " + (r == null ? "null" : r.getClass().getSimpleName())
+                + " on " + cls + " autoViv=" + av
+                + " in " + (tc.curFrame != null && tc.curFrame.codeRef != null ? tc.curFrame.codeRef.name : "?"));
+        }
+        return r;
     }
 
     @TruffleBoundary
@@ -1705,6 +1750,11 @@ final class NqpOps {
     @TruffleBoundary
     static Object usecapture(ThreadContext tc, CallFrame cf) {
         return Ops.usecapture(tc, cf.csd, cf.args);
+    }
+
+    /** savecapture: the frame's own csd+args saved into a capture. */
+    static Object savecapture(ThreadContext tc, CallFrame cf) {
+        return Ops.savecapture(tc, cf.csd, cf.args);
     }
 
     /** rakudo's p6argvmarray: the frame's raw arguments as a BOOTArray. */
