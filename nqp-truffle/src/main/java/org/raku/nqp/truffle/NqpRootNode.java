@@ -617,13 +617,21 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         }
     }
 
-    /** The flattened argument array checkarity left on the thread context. */
+    /** The argument array the parameter fetches read. When the arity check
+     *  answered the callsite it was given, nothing flattened and the array
+     *  is the frame's own argument -- read from the frame, never parked on
+     *  the thread context: a heap store is what kept every argument array
+     *  alive through escape analysis after the callee was inlined (jesp:
+     *  spesh keeps arguments in registers). Only an exploded callsite has
+     *  a new array, left on the thread context by the slow road. */
     @Operation
     public static final class FlatArgs {
         @Specialization
-        static Object doGet(VirtualFrame f) {
+        static Object doGet(VirtualFrame f, Object csd) {
+            Object[] fa = f.getArguments();
+            if (csd == fa[ARG_CSD]) return fa[ARG_ARGS];
             try {
-                return NqpOps.flatArgs(tc(f));
+                return NqpOps.flatArgs((ThreadContext) fa[ARG_TC]);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }

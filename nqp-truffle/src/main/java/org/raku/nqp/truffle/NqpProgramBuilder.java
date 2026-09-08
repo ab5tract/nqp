@@ -639,7 +639,9 @@ final class NqpProgramBuilder {
             b.emitCheckArity(required, accepted);
             b.endStoreLocal();
             b.beginStoreLocal(argsL);
-            b.emitFlatArgs();
+            b.beginFlatArgs();
+            b.emitLoadLocal(csdL);
+            b.endFlatArgs();
             b.endStoreLocal();
         }
         int posIdx = 0;
