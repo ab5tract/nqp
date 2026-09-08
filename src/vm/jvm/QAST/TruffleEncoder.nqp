@@ -1224,9 +1224,14 @@ class QAST::TruffleEncoder {
     # mapped back to its op name through the classlib table; 2026-09-07).
     # getattr is NOT here: the engine boxes a native slot with the block's
     # own unit (NqpOps.getattrSlow -> Ops.getattrIn). Ops naming their
-    # language (hllizefor, hllboolfor) read no frame either.
+    # language (hllizefor, hllboolfor) read no frame either. hllize is NOT
+    # here either (2026-09-08): its site resolves the wanted config from the
+    # block's own comp unit (NqpTypeOps.hllize -> NqpRaw.hll(cu)), which
+    # travels as ARG_CU and is invariant to the caller -- a frame-free entry
+    # across languages still hllizes into the block's own HLL. MoarVM marks
+    # it :useshll only because spesh merges an inlined frame; we never do.
     my %hll_ops := nqp::hash(
-        'hllize', 1, 'hllbool', 1, 'hllboxtype_i', 1, 'hllboxtype_n', 1, 'hllboxtype_s', 1,
+        'hllbool', 1, 'hllboxtype_i', 1, 'hllboxtype_n', 1, 'hllboxtype_s', 1,
         'hlllist', 1, 'hllhash', 1, 'getcurhllsym', 1, 'bindcurhllsym', 1,
         'usecompileehllconfig', 1, 'usecompilerhllconfig', 1,
         'die', 1, 'die_s', 1, 'newexception', 1,
