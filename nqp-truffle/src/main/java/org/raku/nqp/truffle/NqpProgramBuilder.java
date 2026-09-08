@@ -135,6 +135,17 @@ final class NqpProgramBuilder {
                 if (emit) b.endLexBind();
                 return at;
             }
+            case NqpWire.LEXGET_OUTER:
+                if (emit) b.emitLexGetOuter(code[at + 1], pool[code[at + 2]], new NqpOps.LexSite());
+                return at + 3;
+            case NqpWire.LEXBIND_OUTER: {
+                int type = code[at + 1];
+                String name = pool[code[at + 2]];
+                if (emit) b.beginLexBindOuter(type, name, new NqpOps.LexSite());
+                at = walk(at + 3, emit);
+                if (emit) b.endLexBindOuter();
+                return at;
+            }
             case NqpWire.LEXREF:
                 if (emit) b.emitLexRef(code[at + 1], pool[code[at + 2]], code[at + 3],
                     new NqpOps.LexSite());
@@ -533,7 +544,7 @@ final class NqpProgramBuilder {
 
     /* ----- table ops with a dedicated operation ----- */
 
-    private enum Op { RUN, GETATTR, BINDATTR, DECONT, ISNULL, ISCONCRETE, ISTYPE, HLLIZE, ASSERTPARAMCHECK, P6TYPECHECKRV, CREATE,
+    private enum Op { RUN, GETATTR, BINDATTR, DECONT, ISNULL, ISCONCRETE, ISTYPE, HLLIZE, P6SINK, ASSERTPARAMCHECK, P6TYPECHECKRV, CREATE,
                       INT_BIN, INT_UN, NUM_BIN, NUM_CMP, NUM_NEG, BIGINT_ARITH }
 
     /** Which operation a classlib op becomes; null is the method-handle road. */
@@ -559,6 +570,7 @@ final class NqpProgramBuilder {
         if (id == NqpOps.OP_ISCONCRETE && nargs == 1) return Op.ISCONCRETE;
         if (id == NqpOps.OP_ISTYPE && nargs == 2) return Op.ISTYPE;
         if (id == NqpOps.OP_HLLIZE && nargs == 1) return Op.HLLIZE;
+        if (id == NqpOps.OP_P6SINK && nargs == 1) return Op.P6SINK;
         if (id == NqpOps.OP_ASSERTPARAMCHECK && nargs == 1) return Op.ASSERTPARAMCHECK;
         if (id == NqpOps.OP_P6TYPECHECKRV && nargs == 3) return Op.P6TYPECHECKRV;
         if (id == NqpOps.OP_CREATE && nargs == 1) return Op.CREATE;
@@ -577,6 +589,7 @@ final class NqpProgramBuilder {
             case ISCONCRETE -> b.beginIsConcreteOp(new NqpTypeOps.IsConcreteSite());
             case ISTYPE -> b.beginIsTypeOp(new NqpTypeOps.IsTypeSite());
             case HLLIZE -> b.beginHllizeOp(new NqpTypeOps.HllizeSite());
+            case P6SINK -> b.beginP6SinkOp(new NqpTypeOps.SinkSite());
             case ASSERTPARAMCHECK -> b.beginAssertParamCheckOp();
             case P6TYPECHECKRV -> b.beginP6TypeCheckRvOp(new NqpTypeOps.RvCheckSite());
             case CREATE -> b.beginCreateOp(new NqpTypeOps.CreateSite());
@@ -599,6 +612,7 @@ final class NqpProgramBuilder {
             case ISCONCRETE -> b.endIsConcreteOp();
             case ISTYPE -> b.endIsTypeOp();
             case HLLIZE -> b.endHllizeOp();
+            case P6SINK -> b.endP6SinkOp();
             case ASSERTPARAMCHECK -> b.endAssertParamCheckOp();
             case P6TYPECHECKRV -> b.endP6TypeCheckRvOp();
             case CREATE -> b.endCreateOp();
