@@ -171,7 +171,7 @@ object NqpTypeOps {
                 miss(site)
             }
         }
-        return hllizeSlow(o, tc)
+        return hllizeSlow(o, cu, tc)
     }
 
     @TruffleBoundary
@@ -198,8 +198,14 @@ object NqpTypeOps {
         }
     }
 
+    /* The transform road, in the BLOCK's language: Ops.hllize reads the
+     * frame's, which for a frame-free callee entered across languages is
+     * the caller's -- a Raku method's nqp::hllize of an NQP array then
+     * answered the array (2026-09-09). The fast path above was always
+     * cu-based; only this slow road read the frame. */
     @TruffleBoundary
-    private fun hllizeSlow(o: Any?, tc: ThreadContext): Any? = Ops.hllize(o as SixModelObject?, tc)
+    private fun hllizeSlow(o: Any?, cu: org.raku.nqp.runtime.CompilationUnit, tc: ThreadContext): Any? =
+        Ops.hllizeIn(o as SixModelObject?, NqpRaw.hll(cu), tc)
 
     /* ----- decont ----- */
 
