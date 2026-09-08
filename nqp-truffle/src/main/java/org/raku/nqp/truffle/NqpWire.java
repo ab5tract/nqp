@@ -131,6 +131,16 @@ public final class NqpWire {
      *  than its frame, so the block needs no frame for it. */
     public static final int LEXGET_OUTER = 29;
     public static final int LEXBIND_OUTER = 30;
+    /** savecapture: the frame's own args saved into a capture (like usecapture). */
+    public static final int SAVECAPTURE = 31;
+    /** 32 FORLOOP condType lastId nrId outerIdx cond pre body: nqp::for's
+     *  handled loop. LOOPH's regions (lastId around cond+loop, nrId around
+     *  each iteration), but the iteration is [pre; body] with only `body`
+     *  inside the redo loop: `redo` re-runs the call with the values `pre`
+     *  fetched, `next` falls through to the cond re-test and re-fetches
+     *  (Compiler.nqp's redo label sits between the fetch and the call).
+     *  Unlabeled; value null, like LOOP. Additive (stage0 programs predate it). */
+    public static final int FORLOOP = 32;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;
