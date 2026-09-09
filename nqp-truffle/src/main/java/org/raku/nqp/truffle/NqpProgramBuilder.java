@@ -349,7 +349,7 @@ final class NqpProgramBuilder {
                     b.emitSetCurHandler(lastId);
                     b.beginWhile();
                     walkCond(condAt, condType, 0, true);
-                    emitForBody(redoL, preAt, bodyAt, nrId, lastId);
+                    emitForBody(redoL, preAt, bodyAt, nrId, lastId, null);
                     b.endWhile();
                     b.emitSetCurHandler(outerIdx);
                     b.endBlock();
@@ -359,6 +359,53 @@ final class NqpProgramBuilder {
                     b.emitSetCurHandler(outerIdx);
                     b.beginLoopLastUnwind(lastId, outerIdx);
                     b.emitLoadNull();
+                    b.emitLoadException();
+                    b.endLoopLastUnwind();
+                    b.endBlock();
+                }
+                b.endTryCatch();
+                b.emitLoadNull();
+                b.endBlock();
+                return endAt;
+            }
+            case NqpWire.FORLOOPL: {
+                // FORLOOP with a label: the label expression is bound into a
+                // block local at entry and both unwind arms read it (LOOPH's
+                // hasLabel form over the for-loop's fetch/call split).
+                int condType = code[at + 1];
+                int lastId = code[at + 2];
+                int nrId = code[at + 3];
+                int outerIdx = code[at + 4];
+                int labelLocalIdx = code[at + 5];
+                int labelAt = at + 6;
+                int condAt = walk(labelAt, false);
+                int preAt = walk(condAt, false);
+                int bodyAt = walk(preAt, false);
+                int endAt = walk(bodyAt, false);
+                if (!emit) return endAt;
+
+                BytecodeLocal labelLocal = locals[labelLocalIdx];
+                BytecodeLocal redoL = b.createLocal();
+                b.beginBlock();
+                b.beginStoreLocal(labelLocal);
+                walk(labelAt, true);
+                b.endStoreLocal();
+                b.beginTryCatch();
+                {   // try: the loop itself, cond and all, under lastId.
+                    b.beginBlock();
+                    b.emitSetCurHandler(lastId);
+                    b.beginWhile();
+                    walkCond(condAt, condType, 0, true);
+                    emitForBody(redoL, preAt, bodyAt, nrId, lastId, labelLocal);
+                    b.endWhile();
+                    b.emitSetCurHandler(outerIdx);
+                    b.endBlock();
+                }
+                {   // catch: a LAST aimed at this label (or unlabeled) ends the loop.
+                    b.beginBlock();
+                    b.emitSetCurHandler(outerIdx);
+                    b.beginLoopLastUnwind(lastId, outerIdx);
+                    b.emitLoadLocal(labelLocal);
                     b.emitLoadException();
                     b.endLoopLastUnwind();
                     b.endBlock();
@@ -941,12 +988,13 @@ final class NqpProgramBuilder {
      * redo loop; `body` is walked twice, once per emission site, as the
      * repeat_ loops duplicate theirs.
      */
-    private void emitForBody(BytecodeLocal redoL, int preAt, int bodyAt, int nrId, int lastId) {
+    private void emitForBody(BytecodeLocal redoL, int preAt, int bodyAt, int nrId, int lastId,
+                             BytecodeLocal labelLocal) {
         b.beginBlock();
         b.beginStoreLocal(redoL);
         b.emitLoadConstant(0L);
         b.endStoreLocal();
-        emitForPass(redoL, preAt, bodyAt, nrId, lastId);
+        emitForPass(redoL, preAt, bodyAt, nrId, lastId, labelLocal);
         b.beginWhile();
         b.beginNonZero();
         b.emitLoadLocal(redoL);
@@ -956,7 +1004,7 @@ final class NqpProgramBuilder {
             b.beginStoreLocal(redoL);
             b.emitLoadConstant(0L);
             b.endStoreLocal();
-            emitForPass(redoL, -1, bodyAt, nrId, lastId);
+            emitForPass(redoL, -1, bodyAt, nrId, lastId, labelLocal);
             b.endBlock();
         }
         b.endWhile();
@@ -964,7 +1012,8 @@ final class NqpProgramBuilder {
     }
 
     /** A guarded [pre;] body run under nrId; the catch arm routes NEXT/REDO into redoL. */
-    private void emitForPass(BytecodeLocal redoL, int preAt, int bodyAt, int nrId, int lastId) {
+    private void emitForPass(BytecodeLocal redoL, int preAt, int bodyAt, int nrId, int lastId,
+                             BytecodeLocal labelLocal) {
         b.beginTryCatch();
         {
             b.beginBlock();
@@ -985,7 +1034,7 @@ final class NqpProgramBuilder {
             b.emitSetCurHandler(lastId);
             b.beginStoreLocal(redoL);
             b.beginLoopBodyUnwind(nrId, lastId);
-            b.emitLoadNull();
+            if (labelLocal != null) b.emitLoadLocal(labelLocal); else b.emitLoadNull();
             b.emitLoadException();
             b.endLoopBodyUnwind();
             b.endStoreLocal();

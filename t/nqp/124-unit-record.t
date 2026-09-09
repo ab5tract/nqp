@@ -84,9 +84,9 @@ else {
     ok(nqp::index(@why[2], '.class') < 0 && nqp::index(@why[2], 'defineClass') < 0,
         'nothing on stderr mentions a class');
 
-    my @knob := sh("env -u NQP_CODE_RUN NQP_CODE_PRECOMP=1 NQP_UNIT=1 $runner -e 'say(1)'");
-    ok(nqp::index(@knob[2], 'needs NQP_CODE_RUN=1') >= 0,
-        'the road refuses to run without the encoder switches, once');
+    my @knob := sh("NQP_CODE_RUN=0 NQP_CODE_PRECOMP=1 NQP_UNIT=1 $runner -e 'say(1)'");
+    ok(nqp::index(@knob[2], 'needs the encoder on') >= 0,
+        'the road refuses to run with the encoder switched off, once');
     ok(nqp::index(@knob[1], '1') < 0, 'and runs nothing');
 
     nqp::unlink($script) if nqp::stat($script, nqp::const::STAT_EXISTS);
