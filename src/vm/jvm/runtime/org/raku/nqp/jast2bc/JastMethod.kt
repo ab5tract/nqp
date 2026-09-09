@@ -34,6 +34,11 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
     @JvmField var crSectionRaw: IntArray? = null
     @JvmField var crSectionLine: IntArray? = null
     @JvmField var crSectionFile: Array<String?>? = null
+    /* The unit artifact's per-block record: this block's qbid and the
+     * index of its engine program in the unit's program list. -1 when the
+     * unit was not compiled on the artifact road. */
+    @JvmField var crQbid = -1
+    @JvmField var crProgram = -1
 
     /* Package-private in the Java original; JASTCompiler reads them. */
     @JvmField val beginAll = Label()
@@ -129,6 +134,12 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
         } catch (t: Throwable) {
             /* Most likely a version of the node without the fields. */
         }
+        try {
+            crQbid = Ops.getattr_i(jast, jastMethod, "$!cr_qbid", crQbidHint, tc).toInt()
+            crProgram = Ops.getattr_i(jast, jastMethod, "$!cr_program", crProgramHint, tc).toInt()
+        } catch (t: Throwable) {
+            /* A version of the node without the fields. */
+        }
     }
 
     private fun fillList(list: MutableList<String?>, smoList: SixModelObject, tc: ThreadContext) {
@@ -161,6 +172,8 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
         private var crLineHint = 0L
         private var crRawLineHint = 0L
         private var crSectionsHint = 0L
+        private var crQbidHint = 0L
+        private var crProgramHint = 0L
 
         @JvmStatic
         fun setup(jastMethod: SixModelObject, tc: ThreadContext) {
@@ -185,6 +198,8 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
             crLineHint          = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!cr_line")
             crRawLineHint       = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!cr_rawline")
             crSectionsHint      = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "@!cr_sections")
+            crQbidHint          = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!cr_qbid")
+            crProgramHint       = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!cr_program")
         }
     }
 }
