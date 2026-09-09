@@ -712,6 +712,16 @@ final class NqpProgramBuilder {
         int accepted = code[at + 2];
         int n = code[at + 3];
         at += 4;
+        // A custom_args block's header: no parameters at all, and yet any
+        // arity accepted. Its body binds every argument -- names included --
+        // through the runtime Binder (P6BINDSIG), so this header is here only
+        // to put csd/args on the frame for it. Re-making the invoker's
+        // extra-named rejection below would refuse the very named arguments
+        // the Binder exists to bind ("Unexpected named argument 'g'" out of
+        // Str.subst, 2026-09-09). Nothing else encodes this shape: a block
+        // that declares no parameters accepts 0, and -1 (a slurpy) always
+        // comes with at least the slurpy's own record.
+        boolean customArgs = n == 0 && accepted == -1;
         BytecodeLocal csdL = null;
         BytecodeLocal argsL = null;
         if (emit) {
@@ -787,7 +797,7 @@ final class NqpProgramBuilder {
                 if (emit) endSink();
             }
         }
-        if (emit && !namedSlurpy) {
+        if (emit && !namedSlurpy && !customArgs) {
             // The invoker's expectation check would have rejected extra
             // named arguments before the call; re-make it here.
             beginSink();
