@@ -77,7 +77,20 @@ class HLL::Backend::JVM {
         %jastnodes<JAST::TryCatch> := JAST::TryCatch;
         %jastnodes<JAST::Annotation> := JAST::Annotation;
         if (%adverbs<target> eq 'classfile' || %adverbs<target> eq 'jar') && %adverbs<output> {
-            nqp::compilejasttofile($jast, %jastnodes, %adverbs<output>);
+            # The artifact road (NQP_UNIT): a jar-bound unit whose every
+            # block encoded is written as programs + serialized context +
+            # block table, no class file; any fallback body keeps the
+            # class road. Compiler.nqp made the decision ($jast.unit_road,
+            # $jast.fallbacks); this only acts on it.
+            if %adverbs<target> eq 'jar' && $jast.unit_road && !$jast.fallbacks {
+                # The syscall's argument kinds are checked at the call
+                # site; %adverbs<output> arrives boxed.
+                my str $unit_output := %adverbs<output>;
+                nqp::syscall('jvm-write-unit', $jast, %jastnodes, $unit_output);
+            }
+            else {
+                nqp::compilejasttofile($jast, %jastnodes, %adverbs<output>);
+            }
             nqp::null()
         }
         else {
