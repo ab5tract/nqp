@@ -182,7 +182,7 @@ abstract class CompilationUnit {
         initializeCompilationUnit(tc, true)
     }
 
-    fun runDeserializeIfAvailable(tc: ThreadContext) {
+    open fun runDeserializeIfAvailable(tc: ThreadContext) {
         var desCodeRef: CodeRef? = null
         if (deserializeQbid() >= 0)
             desCodeRef = lookupCodeRef(deserializeQbid())
@@ -379,6 +379,35 @@ abstract class CompilationUnit {
 
     open fun serializedCodeRefCount(): Int = -1
 
+    /** The unit's identity string: the class's simple name on the class
+     *  road, the artifact's unit id on the artifact road. Replaces the
+     *  Class object wherever a unit was named. */
+    open fun unitId(): String = javaClass.simpleName
+
+    /** The serialized context, decompressed, or null when the unit has
+     *  none. The class road reads it as a class resource; the artifact
+     *  road holds it. */
+    open fun serializedBlob(): java.nio.ByteBuffer? {
+        val cuName = javaClass.simpleName
+        var stream = javaClass.getResourceAsStream("$cuName.serialized.lz4")
+        if (stream != null)
+            return stream.use { LibraryLoader.readToHeapBufferLz4(it) }
+        stream = javaClass.getResourceAsStream("$cuName.serialized") ?: return null
+        return stream.use { LibraryLoader.readToHeapBuffer(it) }
+    }
+
+    /** Instantiates and initializes (without deserializing) the nested
+     *  unit of the given name that rides in this unit. The class road
+     *  loads it by class name through this unit's class loader. */
+    open fun claimNested(tc: ThreadContext, name: String): CompilationUnit {
+        val klass = Class.forName(name, true, javaClass.classLoader)
+        @Suppress("DEPRECATION")
+        val nested = klass.getDeclaredConstructor().newInstance() as CompilationUnit
+        nested.shared = tc.gc.sharingHint
+        nested.initializeCompilationUnit(tc, false)
+        return nested
+    }
+
     /**
      * The unit's engine programs, loaded from the jar's .codeprograms.lz4
      * sidecar on first use. Emitted bodies reference them by index
@@ -389,7 +418,7 @@ abstract class CompilationUnit {
     @Volatile
     private var enginePrograms: Array<String>? = null
 
-    fun engineProgram(idx: Int): String {
+    open fun engineProgram(idx: Int): String {
         var progs = enginePrograms
         if (progs == null) {
             synchronized(this) {
