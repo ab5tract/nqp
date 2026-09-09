@@ -47,6 +47,12 @@ package org.raku.nqp.truffle;
  *    kind 0 pos, 1 pos-slurpy, 2 named, 3 named-slurpy; scope 0 lex (target
  *    is a pool name), 1 local (target is a local index); optionality is
  *    hasDefault. Emitted only as the first child of the root STMTS.
+ *    A header with n == 0 and accepted == -1 is the custom_args shape:
+ *    the block binds its own arguments through the runtime Binder
+ *    (P6BINDSIG/P6TRYBINDSIG) rather than declared params, so the reader
+ *    skips the arity and extra-named checks on it. No other block shape
+ *    produces this header, since accepted == -1 otherwise requires a
+ *    positional slurpy, which is itself a param record (n &gt;= 1).
  * 18 GETLEXOUTER pName
  * 19 CODEREF qbid               cu.lookupCodeRef, the BVal road
  * 20 LOOPH until repeat hasNext hasLabel labelLocal condType lastId nrId
