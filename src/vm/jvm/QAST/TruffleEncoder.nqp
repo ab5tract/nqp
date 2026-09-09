@@ -646,22 +646,38 @@ class QAST::TruffleEncoder {
 
     sub cbail(str $why) { nqp::die('code-bail ' ~ $why) }
 
-    # Does $node's tree contain a block with this cuid? A QAST::BVal names
-    # a block of the same compilation, and the block may sit anywhere in
-    # the tree, BEFORE or AFTER the reference (t/qast/01-qast.t's 'BVal
-    # node preceding its block'). Either order resolves on the deferred
-    # nested-block road -- whichever slot the loop reaches first compiles
-    # the block, and every slot patches from the same cuid_to_qbid -- so
-    # $*CODEREFS.know_cuid alone is too strict a test at encode time. Only
-    # a block the tree never declares is a genuine refusal.
+    # Is a block with this cuid one of the blocks THIS block's own deferred
+    # loop will compile? A QAST::BVal names a block of the same
+    # compilation, and the block may sit on either side of the reference
+    # (t/qast/01-qast.t's 'BVal node preceding its block'). Either order
+    # resolves on the deferred nested-block road -- whichever slot the loop
+    # reaches first compiles the block, and every slot patches from the
+    # same cuid_to_qbid -- so $*CODEREFS.know_cuid alone is too strict a
+    # test at encode time.
     #
-    # A BVal's value is a REFERENCE, not containment: descending into it
-    # would walk in circles (the very shape the tests build), so the walk
-    # stops there.
-    sub block_in_tree($node, str $cuid) {
+    # The walk STOPS at a nested QAST::Block, and that boundary is the
+    # whole point: the deferred loop compiles a block through
+    # $comp.as_jast($blk), which takes its outer from $*BLOCK -- the block
+    # being encoded here. A block declared one level deeper (inside a
+    # nested block B) belongs to B's deferral, not this one; admitting it
+    # would let this block's deferral reach it first and compile it with
+    # the WRONG outer, silently, on a road that has no fallback. So the
+    # answer is exactly the set of blocks this block declares itself, and
+    # the deeper shape refuses loudly, as it did before.
+    #
+    # A BVal's value is likewise a REFERENCE, not containment: descending
+    # into it would walk in circles (the very shape the tests build).
+    #
+    # $root marks the block being encoded, whose OWN children are the walk
+    # (it is a QAST::Block itself, so the boundary above would otherwise
+    # stop the walk before it began).
+    sub block_in_tree($node, str $cuid, int $root = 0) {
         return 0 unless nqp::istype($node, QAST::Node);
-        return 1 if nqp::istype($node, QAST::Block) && $node.cuid eq $cuid;
-        return 0 if nqp::istype($node, QAST::BVal);
+        unless $root {
+            return ($node.cuid eq $cuid ?? 1 !! 0)
+                if nqp::istype($node, QAST::Block);
+            return 0 if nqp::istype($node, QAST::BVal);
+        }
         for $node.list {
             return 1 if block_in_tree($_, $cuid);
         }
@@ -1233,7 +1249,7 @@ class QAST::TruffleEncoder {
         if nqp::istype($n, QAST::BVal) {
             cbail('bval to a block the unit never compiles')
                 unless $*CODEREFS.know_cuid($n.value.cuid)
-                    || block_in_tree(%e<qast>, $n.value.cuid);
+                    || block_in_tree(%e<qast>, $n.value.cuid, 1);
             epush(%e, $W_CODEREF);
             nqp::push(%e<nested>, [nqp::elems(%e<code>), $n.value]);
             epush(%e, 0);
@@ -2437,7 +2453,7 @@ class QAST::TruffleEncoder {
     # itself keeps its own type: the __IM_ local the class road hands to a
     # cond-passing block is typed from the condition, and so is the value
     # the two-child form yields when the test fails.
-    method emit_defined_test(%e, int $tmp, int $condt = 0) {
+    method emit_defined_test(%e, int $tmp, int $condt = $T_OBJ) {
         my int $mtmp := new_elocal(%e, $T_OBJ);
         epush(%e, $W_DISPATCH);
         %e<dispatches> := %e<dispatches> + 1;
