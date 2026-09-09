@@ -383,6 +383,33 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         }
     }
 
+    /** rakudo's p6bindsig over the program's own frame: true when the
+     *  binder auto-threaded and the program must return now. */
+    @Operation
+    public static final class P6BindSig {
+        @Specialization
+        static boolean doBind(VirtualFrame f) {
+            try {
+                return NqpOps.p6bindsig(tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    /** rakudo's p6trybindsig over the program's own frame: 1 bound, 0 not. */
+    @Operation
+    public static final class P6TryBindSig {
+        @Specialization
+        static long doTry(VirtualFrame f) {
+            try {
+                return NqpOps.p6trybindsig(tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
     @Operation
     @ConstantOperand(type = String.class, name = "name")
     public static final class LexOuterGet {
