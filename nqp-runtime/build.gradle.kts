@@ -40,6 +40,8 @@ dependencies {
     // runner always puts nqp-runtime + the truffle modules on the path together, so
     // TruffleString resolves at runtime from the engine module already present.
     compileOnly("org.graalvm.truffle:truffle-api:${property("truffleVersion")}")
+
+    testImplementation(kotlin("test"))
 }
 
 // The monomorphized VMArrayInstance_* REPR classes are generated from one
@@ -84,4 +86,8 @@ tasks.jar {
     // Mirrors `jar cf0` (store, no compression).
     entryCompression = ZipEntryCompression.STORED
     from(generateJarJvmConfig)
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
