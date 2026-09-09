@@ -6511,25 +6511,8 @@ object Ops {
 
         val binaryBlob: ByteBuffer
         if (blob == null)
-            try {
-                val cuKlass: Class<*> = cu.javaClass
-                val cuName = cuKlass.simpleName
-                var cuStream = cuKlass.getResourceAsStream(cuName + ".serialized.lz4")
-                try {
-                    if (cuStream != null)
-                        binaryBlob = LibraryLoader.readToHeapBufferLz4(cuStream)
-                    else {
-                        cuStream = cuKlass.getResourceAsStream(cuName + ".serialized")
-                        binaryBlob = LibraryLoader.readToHeapBuffer(cuStream)
-                    }
-                }
-                finally {
-                    cuStream!!.close()
-                }
-            }
-            catch (e: IOException) {
-                throw ExceptionHandling.dieInternal(tc, e)
-            }
+            binaryBlob = cu.serializedBlob()
+                ?: throw ExceptionHandling.dieInternal(tc, "unit ${cu.unitId()} has no serialized context to deserialize")
         else
             try {
                 binaryBlob = Base64.decode(blob)
@@ -8959,43 +8942,40 @@ object Ops {
     @JvmStatic
     fun jvmclaimnested(className: String?, idxs: SixModelObject?, cuids: SixModelObject?, tc: ThreadContext): SixModelObject? {
         val cu = tc.frame.codeRef.staticInfo.compUnit
-        try {
-            val klass = Class.forName(className, true, cu.javaClass.classLoader)
-            val nested = klass.getDeclaredConstructor().newInstance() as CompilationUnit
-            nested.shared = tc.gc.sharingHint
-            /* The enclosing SC is still empty at this point; the nested
-             * unit's own deserialization code (static block lexical values
-             * and the like) runs via jvm-finish-nested afterwards. */
-            nested.initializeCompilationUnit(tc, false)
-            tc.gc.claimedNestedUnits[className!!] = nested
-            val byCuid = HashMap<String, CodeRef>()
-            nested.codeRefs?.let { crs ->
-                for (cr in crs) {
-                    val cuid = cr.staticInfo.uniqueId
-                    if (!cuid.isNullOrEmpty())
-                        byCuid[cuid] = cr
-                }
-            }
-            val n = idxs!!.elems(tc).toInt()
-            var table = cu.qbidToCodeRef!!
-            for (k in 0 until n) {
-                idxs.at_pos_native(tc, k.toLong())
-                val idx = tc.nativeI.toInt()
-                cuids!!.at_pos_native(tc, k.toLong())
-                val cuid = tc.nativeS!!
-                val cr = byCuid[cuid]
-                    ?: throw ExceptionHandling.dieInternal(tc,
-                        "Nested unit $className carries no block with cuid '$cuid'")
-                if (idx >= table.size) {
-                    table = table.copyOf(idx + 1)
-                    cu.qbidToCodeRef = table
-                }
-                table[idx] = cr
+        /* The enclosing SC is still empty at this point; the nested
+         * unit's own deserialization code (static block lexical values
+         * and the like) runs via jvm-finish-nested afterwards. */
+        val nested = try {
+            cu.claimNested(tc, className!!)
+        } catch (e: ControlException) {
+            throw e
+        } catch (e: Exception) {
+            throw ExceptionHandling.dieInternal(tc, "Could not load nested compilation unit $className: $e")
+        }
+        tc.gc.claimedNestedUnits[className!!] = nested
+        val byCuid = HashMap<String, CodeRef>()
+        nested.codeRefs?.let { crs ->
+            for (cr in crs) {
+                val cuid = cr.staticInfo.uniqueId
+                if (!cuid.isNullOrEmpty())
+                    byCuid[cuid] = cr
             }
         }
-        catch (e: ReflectiveOperationException) {
-            throw ExceptionHandling.dieInternal(tc,
-                "Could not load nested compilation unit $className: $e")
+        val n = idxs!!.elems(tc).toInt()
+        var table = cu.qbidToCodeRef!!
+        for (k in 0 until n) {
+            idxs.at_pos_native(tc, k.toLong())
+            val idx = tc.nativeI.toInt()
+            cuids!!.at_pos_native(tc, k.toLong())
+            val cuid = tc.nativeS!!
+            val cr = byCuid[cuid]
+                ?: throw ExceptionHandling.dieInternal(tc,
+                    "Nested unit $className carries no block with cuid '$cuid'")
+            if (idx >= table.size) {
+                table = table.copyOf(idx + 1)
+                cu.qbidToCodeRef = table
+            }
+            table[idx] = cr
         }
         return null
     }
