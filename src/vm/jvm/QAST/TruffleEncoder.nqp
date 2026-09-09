@@ -926,8 +926,19 @@ class QAST::TruffleEncoder {
             # puts csd/args on the frame for the binder to read. A lowered
             # parameter alongside would be bound twice; nothing emits one.
             cbail('custom_args block with lowered params') if nqp::elems(@params);
-            my @hdr := nqp::list($W_PARAMS, 0, -1, 0);
-            nqp::splice(%e<code>, @hdr, $params_at, 1);
+            # Written exactly as the full prologue below is: the $W_PARAMS
+            # placeholder stays where it was and the three header words go in
+            # after it, so the nested-block slots the walk recorded by
+            # position all move right by three. Splicing over the placeholder
+            # instead and leaving those positions alone wrote every deferred
+            # qbid three cells early, over the tag of whatever node preceded
+            # its CODEREF ("unknown tag 11142", 2026-09-09: a qbid landed on
+            # the STMTS tag of the last statement of a custom_args body).
+            my @hdr := nqp::list(0, -1, 0);
+            nqp::splice(%e<code>, @hdr, $params_at + 1, 0);
+            for %e<nested> -> $nb {
+                nqp::bindpos($nb, 0, $nb[0] + nqp::elems(@hdr)) if $nb[0] > $params_at;
+            }
             return 0;
         }
         my int $pos_required := 0;
