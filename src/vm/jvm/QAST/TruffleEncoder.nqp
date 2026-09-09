@@ -1201,6 +1201,14 @@ class QAST::TruffleEncoder {
             self.encode_child($n[0], %e, $T_INT);
             return $T_OBJ;
         }
+        if nqp::istype($n, QAST::VM) {
+            # Exactly what as_jast(QAST::VM) does: the backend picks its
+            # own alternative and the rest of the node is not ours. A node
+            # with no 'jvm' alternative would not compile on the class
+            # road either, so it bails rather than dying here.
+            cbail('QAST::VM without a jvm alternative') unless $n.supports('jvm');
+            return self.encode_node($n.alternative('jvm'), %e, $want);
+        }
         cbail('node ' ~ $n.HOW.name($n));
     }
 

@@ -260,7 +260,10 @@ abstract class SyncHandle : IIOClosable, IIOEncodable,
 
     protected fun write(tc: ThreadContext, buffer: ByteBuffer): Long {
         try {
-            val toWrite = buffer.limit()
+            /* remaining(), not limit(): a CharsetEncoder's buffer is
+             * allocated at maxBytesPerChar and its limit is the encoded
+             * length, but a caller may also hand one with a position. */
+            val toWrite = buffer.remaining()
             if (useWriteBuffer && writeBufferSize > 0) {
                 /* Ensure we have a buffer available. */
                 var wb = writeBuffer
@@ -274,7 +277,10 @@ abstract class SyncHandle : IIOClosable, IIOEncodable,
                 /* If we can fit it in the buffer now, copy it there, and we're
                  * done. */
                 if (toWrite < writeBufferSize) {
-                    wb.put(buffer.array())
+                    /* put(buffer), never put(buffer.array()): the backing
+                     * array is longer than the encoded content, and the
+                     * slack went into the file as NUL padding. */
+                    wb.put(buffer)
                     return toWrite.toLong()
                 }
             }
