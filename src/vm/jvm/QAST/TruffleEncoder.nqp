@@ -680,7 +680,7 @@ class QAST::TruffleEncoder {
         1
     }
 
-    method encode_block($node, $block, $comp, :$comp_mode, :$sidecar) {
+    method encode_block($node, $block, $comp, :$comp_mode, :$sidecar, :$unit_road) {
         run_init();
         sub trace(str $verdict) { self.why($node, $comp_mode, $verdict) }
         if !$code_run { trace('no: code_run off'); return '' }
@@ -692,7 +692,10 @@ class QAST::TruffleEncoder {
             trace('no: not in only'); return ''
         }
         if $node.has_exit_handler { trace('no: exit handler'); return '' }
-        if $node.blocktype eq 'raw' { trace('no: raw blocktype'); return '' }
+        # A raw block (Compiler.nqp's own deserialize/load/main wrappers)
+        # is a parameterless declaration to the engine; on the class road
+        # its body stays bytecode, on the artifact road it must encode.
+        if $node.blocktype eq 'raw' && !$unit_road { trace('no: raw blocktype'); return '' }
         # An immediate block is compiled AND called by its enclosing block,
         # which is why encode_node already refuses one as a child
         # ('block immediate'). Encoding one as a target is the same

@@ -34,12 +34,14 @@ import org.raku.nqp.dispatch.ValueSource
 import org.raku.nqp.runtime.ArgsExpectation
 import org.raku.nqp.runtime.CallFrame
 import org.raku.nqp.runtime.CallSiteDescriptor
+import org.raku.nqp.runtime.CodeEngines
 import org.raku.nqp.runtime.CodeRef
 import org.raku.nqp.runtime.ControlException
 import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.HLLConfig
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.SaveStackException
+import org.raku.nqp.runtime.StaticCodeInfo
 import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
@@ -680,7 +682,7 @@ object NqpDispatch {
              * cycle. Re-adopt when the instruction's node changed, a few
              * times at most. */
             if (cn == null) {
-                if (NqpRaw.staticInfo(lit).engineTarget != null) {
+                if (hasTarget(NqpRaw.staticInfo(lit))) {
                     CompilerDirectives.transferToInterpreterAndInvalidate()
                     cn = adoptCallNode(p, lit, node)
                 }
@@ -770,7 +772,7 @@ object NqpDispatch {
                        descriptor: CallSiteDescriptor?, out: Array<Any?>) {
         if (STATS) count(invokes)
         if (callee is CodeRef) {
-            val target = callee.staticInfo.engineTarget
+            val target = CodeEngines.materialize(callee.staticInfo)
             if (target != null && callee.staticInfo.argsExpectation == ArgsExpectation.USE_BINDER) {
                 if (STATS) count(directs)
                 enterEngine(tc, callee, target as CallTarget, descriptor, out)
@@ -1086,11 +1088,19 @@ object NqpDispatch {
         }
     }
 
+    /** A target exists or can be made from the unit (artifact road): the
+     *  volatile read stays PE-visible, the compile goes behind a boundary. */
+    private fun hasTarget(sci: StaticCodeInfo): Boolean =
+        sci.engineTarget != null || (sci.programIndex >= 0 && materializeBoundary(sci) != null)
+
+    @TruffleBoundary
+    private fun materializeBoundary(sci: StaticCodeInfo): Any? = CodeEngines.materialize(sci)
+
     /** Adopts a call node for the callee's engine target, or null if the
      *  callee has no registered target yet (it has not run once). */
     @TruffleBoundary
     private fun adoptCallNode(p: Program, cr: CodeRef, node: Node): DirectCallNode? {
-        val target = cr.staticInfo.engineTarget
+        val target = CodeEngines.materialize(cr.staticInfo)
         if (target !is CallTarget || cr.staticInfo.argsExpectation != ArgsExpectation.USE_BINDER)
             return null
         val cn = node.insert(DirectCallNode.create(target))

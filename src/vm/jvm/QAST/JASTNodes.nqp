@@ -10,6 +10,19 @@ class JAST::Class is JAST::Node {
     has @!methods;
     has @!fields;
     has @!nested_classes;
+    has str $!hll;
+    has int $!mainline_qbid;
+    has int $!entry_qbid;
+    has int $!deserialize_qbid;
+    has int $!load_qbid;
+    has int $!serialized_count;
+    has str $!sc_handle;
+    has str $!sc_desc;
+    has int $!fallbacks;
+    has int $!unit_road;
+    has @!programs;
+    has @!callsites;
+    has @!blockvalues;
     
     method BUILD(:$name!, :$super!, :$filename) {
         $!name    := $name;
@@ -18,6 +31,19 @@ class JAST::Class is JAST::Node {
         @!methods := [];
         @!fields  := [];
         @!nested_classes := [];
+        $!hll := '';
+        $!mainline_qbid := -1;
+        $!entry_qbid := -1;
+        $!deserialize_qbid := -1;
+        $!load_qbid := -1;
+        $!serialized_count := -1;
+        $!sc_handle := '';
+        $!sc_desc := '';
+        $!fallbacks := 0;
+        $!unit_road := 0;
+        @!programs := [];
+        @!callsites := [];
+        @!blockvalues := [];
     }
     
     method add_method($method) {
@@ -37,6 +63,22 @@ class JAST::Class is JAST::Node {
     # entries the first time the programs went in as constants.
     method codeprograms(*@value) { @value ?? ($!codeprograms := @value[0]) !! $!codeprograms }
     method nested_classes(*@value) { @value ?? (@!nested_classes := @value[0]) !! @!nested_classes }
+    # The unit artifact's record (docs/superpowers/specs/2026-09-09-jvm-unit-artifact-design.md):
+    # what the writer reads off this class instead of assembling bytecode.
+    method hll(*@value) { @value ?? ($!hll := @value[0]) !! $!hll }
+    method mainline_qbid(*@value) { @value ?? ($!mainline_qbid := @value[0]) !! $!mainline_qbid }
+    method entry_qbid(*@value) { @value ?? ($!entry_qbid := @value[0]) !! $!entry_qbid }
+    method deserialize_qbid(*@value) { @value ?? ($!deserialize_qbid := @value[0]) !! $!deserialize_qbid }
+    method load_qbid(*@value) { @value ?? ($!load_qbid := @value[0]) !! $!load_qbid }
+    method serialized_count(*@value) { @value ?? ($!serialized_count := @value[0]) !! $!serialized_count }
+    method sc_handle(*@value) { @value ?? ($!sc_handle := @value[0]) !! $!sc_handle }
+    method sc_desc(*@value) { @value ?? ($!sc_desc := @value[0]) !! $!sc_desc }
+    method fallbacks(*@value) { @value ?? ($!fallbacks := @value[0]) !! $!fallbacks }
+    # 1 = compiled on the NQP_UNIT road (every block encoded, or the compile died); the writer's input
+    method unit_road(*@value) { @value ?? ($!unit_road := @value[0]) !! $!unit_road }
+    method programs(*@value) { @value ?? (@!programs := @value[0]) !! @!programs }
+    method callsites(*@value) { @value ?? (@!callsites := @value[0]) !! @!callsites }
+    method blockvalues(*@value) { @value ?? (@!blockvalues := @value[0]) !! @!blockvalues }
     method methods() { @!methods }
     
     method dump() {
@@ -132,6 +174,8 @@ class JAST::Method is JAST::Node {
     has int $!cr_line;
     has int $!cr_rawline;
     has @!cr_sections;
+    has int $!cr_qbid;
+    has int $!cr_program;
 
     method BUILD(:$name!, :$returns!, :$static = 1) {
         $!name := $name;
@@ -152,6 +196,8 @@ class JAST::Method is JAST::Node {
         $!cr_line := 0;
         $!cr_rawline := 0;
         @!cr_sections := [];
+        $!cr_qbid := -1;
+        $!cr_program := -1;
     }
 
     method add_argument($name, $type) {
@@ -213,6 +259,8 @@ class JAST::Method is JAST::Node {
         1
     }
     method cr_rawline(*@value) { @value ?? ($!cr_rawline := @value[0]) !! $!cr_rawline }
+    method cr_qbid(*@value) { @value ?? ($!cr_qbid := @value[0]) !! $!cr_qbid }
+    method cr_program(*@value) { @value ?? ($!cr_program := @value[0]) !! $!cr_program }
 
     method dump(@dumped) {
         nqp::push(@dumped, "+ method");

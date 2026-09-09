@@ -3565,6 +3565,10 @@ class QAST::CompilerJAST {
             }
         }
 
+        # The artifact road reads the descriptors as data instead of the
+        # getCallSites bytecode: [@arg_types, @arg_names] per site.
+        method callsite_data() { @!callsites }
+
         method jastify() {
             self.callsites();
         }
@@ -4095,6 +4099,18 @@ class QAST::CompilerJAST {
         # written as one jar sidecar (see JAST::Class.codeprograms); the
         # emitted bodies reference them by index.
         my @*ENGINE_PROGRAMS := nqp::list_s();
+        # The artifact road (rakudo docs/superpowers/specs/2026-09-09-jvm-
+        # unit-artifact-design.md): under NQP_UNIT a jar-bound comp-mode
+        # unit is written as programs + serialized context + block table,
+        # no class file. The knob is all-or-nothing: the road is chosen
+        # before any block compiles, so a block that cannot encode is a
+        # compile error, not a quiet fallback to a class file that this
+        # road no longer emits the pieces for. $*UNIT_FALLBACKS therefore
+        # stays 0 and travels as the writer's defense.
+        my $*UNIT_ROAD := nqp::existskey(nqp::getenvhash(), 'NQP_UNIT')
+            && $cu.compilation_mode
+            && %*COMPILING<%?OPTIONS><target> eq 'jar' ?? 1 !! 0;
+        my $*UNIT_FALLBACKS := 0;
         # Pre-seed to make sure that qbids correspond to serialization IDs
         my $*COMP_MODE := $cu.compilation_mode;
         # Comp-mode units pair code refs with methods by block id, so the
@@ -4123,7 +4139,10 @@ class QAST::CompilerJAST {
         # is to desugar this into simpler QAST nodes, then compile those.
         my @pre_des   := $cu.pre_deserialize;
         my @post_des  := $cu.post_deserialize;
-        if %*BLOCK_LEX_VALUES {
+        # On the artifact road the values are recorded as data instead --
+        # but only after the deserialize wrapper has compiled, where the
+        # objects have their SC and the hash has stopped growing.
+        if %*BLOCK_LEX_VALUES && !$*UNIT_ROAD {
             nqp::push(@post_des, QAST::Block.new(
                 :blocktype('immediate'),
                 QAST::Op.new( :op('setup_blv'), %*BLOCK_LEX_VALUES )
@@ -4210,8 +4229,27 @@ class QAST::CompilerJAST {
             # Compile to JAST and register this block as the deserialization
             # handler.
             self.as_jast($block);
+            # The artifact's meta carries the static lexical values; the
+            # loader installs them after the deserialize program, exactly
+            # where the class road's setup_blv ran. Built here, not at the
+            # push site: serialization is what first gives an object its
+            # SC, and %*BLOCK_LEX_VALUES keeps growing until every block
+            # -- this wrapper included -- has compiled.
+            if $*UNIT_ROAD && %*BLOCK_LEX_VALUES {
+                my @rows;
+                for %*BLOCK_LEX_VALUES {
+                    my int $qbid := self.cuid_to_qbid($_.key);
+                    for $_.value -> @lex {
+                        my $sc := nqp::getobjsc(@lex[1]);
+                        nqp::push(@rows, [$qbid, @lex[0], nqp::scgethandle($sc),
+                            nqp::scgetobjidx($sc, @lex[1]), @lex[2]]);
+                    }
+                }
+                $*JCLASS.blockvalues(@rows);
+            }
             my $des_meth := JAST::Method.new( :name('deserializeQbid'), :returns('I'), :static(0) );
             $des_meth.append(JAST::PushIndex.new( :value(self.cuid_to_qbid($block.cuid)) ));
+            $*JCLASS.deserialize_qbid(self.cuid_to_qbid($block.cuid));
             $des_meth.append($IRETURN);
             $*JCLASS.add_method($des_meth);
         }
@@ -4226,6 +4264,7 @@ class QAST::CompilerJAST {
             self.as_jast($load_block);
             my $load_meth := JAST::Method.new( :name('loadQbid'), :returns('I'), :static(0) );
             $load_meth.append(JAST::PushIndex.new( :value(self.cuid_to_qbid($load_block.cuid)) ));
+            $*JCLASS.load_qbid(self.cuid_to_qbid($load_block.cuid));
             $load_meth.append($IRETURN);
             $*JCLASS.add_method($load_meth);
         }
@@ -4251,6 +4290,7 @@ class QAST::CompilerJAST {
             $*JCLASS.add_method($main_meth);
             my $entry_cuid_meth := JAST::Method.new( :name('entryQbid'), :returns('I'), :static(0) );
             $entry_cuid_meth.append(JAST::PushIndex.new( :value(self.cuid_to_qbid($main_block.cuid)) ));
+            $*JCLASS.entry_qbid(self.cuid_to_qbid($main_block.cuid));
             $entry_cuid_meth.append($IRETURN);
             $*JCLASS.add_method($entry_cuid_meth);
         }
@@ -4258,19 +4298,35 @@ class QAST::CompilerJAST {
         # Add method that returns HLL name.
         my $hll_meth := JAST::Method.new( :name('hllName'), :returns($TYPE_STR), :static(0) );
         $hll_meth.append(JAST::PushSVal.new( :value($*HLL) ));
+        $*JCLASS.hll($*HLL);
         $hll_meth.append($ARETURN);
         $*JCLASS.add_method($hll_meth);
 
         # Add method that returns the mainline block.
         my $mainline_meth := JAST::Method.new( :name('mainlineQbid'), :returns('I'), :static(0) );
         $mainline_meth.append(JAST::PushIndex.new( :value(self.cuid_to_qbid($cu[0].cuid)) ));
+        $*JCLASS.mainline_qbid(self.cuid_to_qbid($cu[0].cuid));
         $mainline_meth.append($IRETURN);
         $*JCLASS.add_method($mainline_meth);
 
-        # Engine programs collected from jar-bound blocks travel as one
-        # sidecar entry; joined here, last, so every block -- the
-        # deserialize and load methods included -- has had its say.
-        if nqp::elems(@*ENGINE_PROGRAMS) {
+        # Engine programs collected from jar-bound blocks. On the artifact
+        # road they go to the writer as a list (byte-framed by it); on the
+        # class road they travel as one sidecar entry, joined here, last,
+        # so every block -- the deserialize and load methods included --
+        # has had its say.
+        if $*UNIT_ROAD {
+            # A boxed list: @*ENGINE_PROGRAMS is a native str list, and
+            # the writer reads its record through at_pos_boxed.
+            my @progs;
+            for @*ENGINE_PROGRAMS -> str $p { nqp::push(@progs, $p) }
+            $*JCLASS.programs(@progs);
+            $*JCLASS.callsites($*CODEREFS.callsite_data);
+            $*JCLASS.fallbacks($*UNIT_FALLBACKS);
+            $*JCLASS.unit_road(1);
+            nqp::say('code unit ' ~ $*JCLASS.name ~ ' -> artifact')
+                if nqp::existskey(nqp::getenvhash(), 'NQP_CODE_WHY');
+        }
+        elsif nqp::elems(@*ENGINE_PROGRAMS) {
             my @joined := [~nqp::elems(@*ENGINE_PROGRAMS)];
             for @*ENGINE_PROGRAMS -> str $p {
                 nqp::push(@joined, ' ' ~ nqp::chars($p) ~ ':' ~ $p);
@@ -4380,6 +4436,9 @@ class QAST::CompilerJAST {
         # Which of our methods need to be serialized?
         my $count_meth := JAST::Method.new( :name('serializedCodeRefCount'), :returns('I'), :static(0) );
         $count_meth.append(JAST::PushIndex.new( :value(+@code_ref_blocks) ));
+        $*JCLASS.serialized_count(+@code_ref_blocks);
+        $*JCLASS.sc_handle(nqp::scgethandle($sc));
+        $*JCLASS.sc_desc(nqp::scgetdesc($sc));
         $count_meth.append($IRETURN);
         $*JCLASS.add_method($count_meth);
 
@@ -4574,6 +4633,7 @@ class QAST::CompilerJAST {
             # unique ID and name. (Note, always void return here as return values
             # are handled out of band).
             my $*JMETH := JAST::Method.new( :name('qb_'~self.cuid_to_qbid($node.cuid)), :returns('Void'), :static(1) );
+            $*JMETH.cr_qbid(self.cuid_to_qbid($node.cuid));
             $*JMETH.cr_name($node.name);
             $*JMETH.cr_cuid($node.cuid) unless $*COMP_MODE && !$*EMIT_CUIDS;
 
@@ -4660,13 +4720,14 @@ class QAST::CompilerJAST {
                 # prologue in its body); the encoder reads the flag and
                 # emits no parameter prologue of its own for it.
                 $engine_prog := QAST::TruffleEncoder.encode_block($node, $block, self,
-                    :comp_mode($*COMP_MODE), :sidecar($as_index));
+                    :comp_mode($*COMP_MODE), :sidecar($as_index), :unit_road($*UNIT_ROAD));
                 if $engine_prog ne '' {
                     $engine_body := 1;
                     my $il := JAST::InstructionList.new();
                     if $as_index {
                         my int $pidx := nqp::elems(@*ENGINE_PROGRAMS);
                         nqp::push_s(@*ENGINE_PROGRAMS, $engine_prog);
+                        $*JMETH.cr_program($pidx);
                         $il.append(JAST::PushIndex.new( :value($pidx) ));
                     }
                     else {
@@ -4686,6 +4747,10 @@ class QAST::CompilerJAST {
                     $*STACK.obtain(NQPMu, $body);
                 }
                 else {
+                    nqp::die('unit artifact (NQP_UNIT): block '
+                        ~ ($node.name eq '' ?? '<anon ' ~ $node.cuid ~ '>' !! $node.name)
+                        ~ ' (cuid ' ~ $node.cuid ~ ') has no engine program and would need bytecode;'
+                        ~ ' run with NQP_CODE_BAIL=1 or NQP_CODE_WHY=1 for the reason') if $*UNIT_ROAD;
                     $body := self.compile_all_the_stmts($node.list, :node($node.node));
                     $*STACK.obtain(NQPMu, $body);
                 }
