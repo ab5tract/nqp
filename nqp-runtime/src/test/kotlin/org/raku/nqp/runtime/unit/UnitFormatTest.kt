@@ -2,6 +2,8 @@ package org.raku.nqp.runtime.unit
 
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -93,5 +95,58 @@ class UnitFormatTest {
     @Test
     fun nonUnitBytesAreNotAUnit() {
         assertFalse(UnitZip.isUnit(byteArrayOf(0xCA.toByte(), 0xFE.toByte(), 0xBA.toByte(), 0xBE.toByte())))
+    }
+
+    @Test
+    fun writtenUnitSniffsTrue() {
+        val out = ByteArrayOutputStream()
+        UnitZip.write(sample(), out)
+        assertTrue(UnitZip.isUnit(out.toByteArray()))
+    }
+
+    @Test
+    fun unitMetaNotFirstIsNotSniffed() {
+        // UnitZip.write always puts unit.meta first (the rule isUnit's
+        // sniff depends on), so a first-entry-only zip that puts
+        // something else first cannot come out of write() -- build one
+        // by hand instead, to document that the sniff never looks past
+        // the first local file header.
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out).use { z ->
+            z.putNextEntry(ZipEntry("other.txt")); z.write(byteArrayOf(1, 2, 3)); z.closeEntry()
+            z.putNextEntry(ZipEntry(UnitZip.META)); z.write(byteArrayOf(4, 5, 6)); z.closeEntry()
+        }
+        assertFalse(UnitZip.isUnit(out.toByteArray()))
+    }
+
+    @Test
+    fun classFileShapedBytesAreNotAUnit() {
+        // A real class file header shape: magic, minor/major version,
+        // constant pool count, and a few pool entries -- not just the
+        // bare 4-byte magic.
+        val bytes = byteArrayOf(
+            0xCA.toByte(), 0xFE.toByte(), 0xBA.toByte(), 0xBE.toByte(),
+            0, 0, 0, 61,
+            0, 20,
+            10, 0, 4, 0, 16, 9, 0, 3, 0, 17, 7, 0, 18, 7, 0, 19,
+        )
+        assertFalse(UnitZip.isUnit(bytes))
+    }
+
+    @Test
+    fun shortBytesAreNotAUnit() {
+        assertFalse(UnitZip.isUnit(ByteArray(10) { it.toByte() }))
+    }
+
+    @Test
+    fun byteBufferSniffAgreesWithByteArraySniff() {
+        val out = ByteArrayOutputStream()
+        UnitZip.write(sample(), out)
+        val bytes = out.toByteArray()
+        val buf = ByteBuffer.wrap(bytes)
+        assertEquals(UnitZip.isUnit(bytes), UnitZip.isUnit(buf))
+        assertTrue(UnitZip.isUnit(buf))
+        // the sniff reads a duplicate: the original buffer's position is untouched
+        assertEquals(0, buf.position())
     }
 }

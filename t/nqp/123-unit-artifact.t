@@ -41,6 +41,10 @@ else {
         '}',
     ]);
 
+    # A stale jar from a previous run must not let this test pass on old
+    # output: the compile below must be the thing that produces it.
+    nqp::unlink($jar) if nqp::stat($jar, nqp::const::STAT_EXISTS);
+
     spew($driver, [
         'use UnitMod;',
         'say(UnitMod::twice(21));',

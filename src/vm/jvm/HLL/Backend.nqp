@@ -80,9 +80,16 @@ class HLL::Backend::JVM {
             # The artifact road (NQP_UNIT): a jar-bound unit whose every
             # block encoded is written as programs + serialized context +
             # block table, no class file; any fallback body keeps the
-            # class road. Compiler.nqp made the decision ($jast.unit_road,
-            # $jast.fallbacks); this only acts on it.
-            if %adverbs<target> eq 'jar' && $jast.unit_road && !$jast.fallbacks {
+            # class road. Compiler.nqp already dies at the fallback
+            # junction when a unit-road unit has fallbacks, so that case
+            # should never reach here -- but this must not be the place
+            # that silently routes it to compilejasttofile anyway (that
+            # class file would carry no program sidecar and no static
+            # lexical values: a silently broken jar). Route every
+            # unit-road unit to the writer regardless of fallbacks; the
+            # writer's own fallbacks check is the refusal point, this is
+            # defense.
+            if %adverbs<target> eq 'jar' && $jast.unit_road {
                 # The syscall's argument kinds are checked at the call
                 # site; %adverbs<output> arrives boxed.
                 my str $unit_output := %adverbs<output>;
