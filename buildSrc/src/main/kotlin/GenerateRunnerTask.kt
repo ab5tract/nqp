@@ -137,7 +137,7 @@ abstract class GenerateRunnerTask : DefaultTask() {
             |# what the JIT has gotten to. Rakudo's runners have carried the
             |# same flag since its VarLowering overflowed the same way.
             |$truffleSetup
-            |exec java -Dnqp.execname="${'$'}EXEC" --enable-native-access=ALL-UNNAMED${'$'}{TRUFFLE_NATIVE} --sun-misc-unsafe-memory-access=allow -Xmx"${'$'}{NQP_JVM_MAXHEAP:-4g}" -Xss64m -XX:+AllowParallelDefineClass ${'$'}TRUFFLE -Xbootclasspath/a:"${bootEntries.joinToString(":")}" -cp "${'$'}CP" nqp "${'$'}@"
+            |exec java -Dnqp.execname="${'$'}EXEC" --enable-native-access=ALL-UNNAMED${'$'}{TRUFFLE_NATIVE} --sun-misc-unsafe-memory-access=allow -Xmx"${'$'}{NQP_JVM_MAXHEAP:-4g}" -Xss64m -XX:+AllowParallelDefineClass ${'$'}TRUFFLE -Xbootclasspath/a:"${bootEntries.joinToString(":")}" -cp "${'$'}CP" org.raku.nqp.runtime.unit.UnitMain "$lib/nqp.jar" "${'$'}@"
             |""".trimMargin()
         val file = output.get().asFile
         file.writeText(script)
