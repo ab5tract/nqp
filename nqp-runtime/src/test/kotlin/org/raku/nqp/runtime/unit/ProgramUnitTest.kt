@@ -9,8 +9,8 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class ProgramUnitTest {
-    private fun block(name: String, prog: Int, outer: Int, handlers: LongArray = longArrayOf(0)) = BlockRec(
-        name, null, outer, arrayOf("\$a", "\$b"), arrayOf(), arrayOf(), arrayOf(),
+    private fun block(name: String, prog: Int, outer: Int, handlers: LongArray = longArrayOf(0), cuid: String? = null) = BlockRec(
+        name, cuid, outer, arrayOf("\$a", "\$b"), arrayOf(), arrayOf(), arrayOf(),
         handlers, false, false, "u.nqp", 1, 0, null, null, null, prog)
 
     private fun unit(): ProgramUnit {
@@ -66,5 +66,20 @@ class ProgramUnitTest {
         assertEquals("U1", u.unitId())
         assertEquals("p2", u.engineProgram(2))
         assertEquals(1, u.getCallSites().size)
+    }
+
+    @Test
+    fun cuidLookupFollowsTheBlockTable() {
+        val meta = UnitMeta("U2", "nqp", null, null, -1, 0, -1, -1, -1, listOf(),
+            arrayOf(block("<mainline>", 0, -1, cuid = "cuid_1"), block("inner", 1, 0, cuid = "cuid_2"), block("nocuid", 2, 0)),
+            listOf(), listOf())
+        val u = ProgramUnit(UnitRecord(meta, arrayOf("p0", "p1", "p2"), null, mapOf()))
+        u.buildTable(null)
+        val t = u.qbidToCodeRef!!
+        assertSame(t[1], u.lookupCodeRef("cuid_2"))
+        assertSame(t[0], u.lookupCodeRef("cuid_1"))
+        assertEquals("cuid_2", t[1]!!.staticInfo.uniqueId)
+        assertNull(u.lookupCodeRef("cuid_9"))
+        assertNull(u.lookupCodeRef(""))
     }
 }

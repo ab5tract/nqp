@@ -17,6 +17,12 @@ import org.raku.nqp.sixmodel.STable
 class ProgramUnit(@JvmField val record: UnitRecord) : CompilationUnit() {
     private val meta get() = record.meta
 
+    /** cuid -> code ref, for the blocks that carry one: a nested unit's
+     *  (claimed by cuid) and a runtime-compiled unit's (re-pointed by cuid
+     *  through jvm-repoint-dynamic-code, looked up by nqp::getcodecuid
+     *  users). Jar-bound comp-mode units write no cuids and leave it empty. */
+    private val byCuid = HashMap<String, CodeRef>()
+
     /** The pure part of initialization: code refs, outers, call sites. */
     fun buildTable(bootSt: STable?) {
         val blocks = meta.blocks
@@ -33,6 +39,7 @@ class ProgramUnit(@JvmField val record: UnitRecord) : CompilationUnit() {
             val sci = cr.staticInfo
             sci.programIndex = b.programIndex
             sci.methodName = "qb_$qbid"
+            b.cuid?.let { if (it.isNotEmpty()) byCuid[it] = cr }
             sci.hasExitHandler = b.hasExitHandler
             sci.isThunk = b.isThunk
             if (b.sourceFile != null) {
@@ -96,9 +103,14 @@ class ProgramUnit(@JvmField val record: UnitRecord) : CompilationUnit() {
     override fun entryQbid(): Int = meta.entryQbid
     override fun serializedCodeRefCount(): Int = meta.serializedCodeRefCount
     override fun unitId(): String = meta.unitId
+    override fun lookupCodeRef(uniqueId: String): CodeRef? = byCuid[uniqueId]
     override fun engineProgram(idx: Int): String = record.programs[idx]
     override fun serializedBlob(): ByteBuffer? = record.serialized?.let { ByteBuffer.wrap(it) }
 
+    /** A nested unit rides in the parent's zip (a loaded artifact); a
+     *  parent built in memory had its nested records resolved into the
+     *  record by UnitWriter.record() before this unit existed. A missing
+     *  entry is a hard error, never a lookup elsewhere. */
     override fun claimNested(tc: ThreadContext, name: String): CompilationUnit {
         val rec = record.nested[name]
             ?: throw ExceptionHandling.dieInternal(tc, "unit ${unitId()} carries no nested unit named $name")

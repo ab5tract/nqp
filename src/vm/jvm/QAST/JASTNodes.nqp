@@ -62,6 +62,7 @@ class JAST::Class is JAST::Node {
     # string constant per program: the CORE.c pool overflowed at 71010
     # entries the first time the programs went in as constants.
     method codeprograms(*@value) { @value ?? ($!codeprograms := @value[0]) !! $!codeprograms }
+    # Unit ids (class names on the class road) of nested in-memory units this unit's serialization points into.
     method nested_classes(*@value) { @value ?? (@!nested_classes := @value[0]) !! @!nested_classes }
     # The unit artifact's record (docs/superpowers/specs/2026-09-09-jvm-unit-artifact-design.md):
     # what the writer reads off this class instead of assembling bytecode.
