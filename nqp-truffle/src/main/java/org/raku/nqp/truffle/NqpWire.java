@@ -147,6 +147,11 @@ public final class NqpWire {
      *  (Compiler.nqp's redo label sits between the fetch and the call).
      *  Unlabeled; value null, like LOOP. Additive (stage0 programs predate it). */
     public static final int FORLOOP = 32;
+    /** 35 FORLOOPL condType lastId nrId outerIdx labelLocal labelExpr cond pre body:
+     *  FORLOOP with a label (nqp::for :label). labelExpr's value is bound into
+     *  block local labelLocal at loop entry and read by both unwind arms as the
+     *  `where` for _is_same_label, exactly as LOOPH's hasLabel form. Additive. */
+    public static final int FORLOOPL = 35;
     /** 33 P6BINDSIG: rakudo's p6bindsig, the full-binder prologue of a
      *  custom_args block. Binds the frame's own csd/args through the runtime
      *  Binder (which leaves the flattened pair back on the frame); when the

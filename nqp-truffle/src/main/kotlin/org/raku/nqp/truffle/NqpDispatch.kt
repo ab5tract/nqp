@@ -959,6 +959,9 @@ object NqpDispatch {
      *  a caller whose language is unknown) only for a block the encoder
      *  marked as reading no current language (jesp diamond 7). */
     private fun frameFreeEntryOk(root: NqpRootNode, cr: CodeRef, callerHll: HLLConfig?): Boolean {
+        /* A block with an exit handler must leave through CallFrame.leave();
+         * the wire says framed already, this keeps it so whatever road asks. */
+        if (NqpRaw.staticInfo(cr).hasExitHandler) return false
         if (sameHll(cr, callerHll)) return true
         /* Only a DIFFERENT language crosses. Two cases that are not one:
          * an unknown caller language (the caller's unit has no config yet:
