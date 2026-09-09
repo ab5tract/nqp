@@ -285,17 +285,21 @@ class QAST::TruffleEncoder {
     # leave the block half-described.
     #
     # Compile-time knobs, mirroring the rx set:
-    #   NQP_CODE_RUN=1        master switch: attempt encoding at all
+    #   NQP_CODE_RUN          master switch: attempt encoding at all.
+    #                        ON by default since milestone 3 (2026-09-09);
+    #                        NQP_CODE_RUN=0 turns the encoder off.
     #   NQP_CODE_ENCODED=1    print each block the engine takes over
     #   NQP_CODE_BAIL=1       print why a block was refused
     #   NQP_CODE_SKIP=a,b     refuse these blocks by name
     #   NQP_CODE_SKIP_ANON=1  refuse blocks with no name
     #   NQP_CODE_ONLY=a,b     refuse everything else
-    #   NQP_CODE_PRECOMP=1   precompiled (comp_mode) units encode too: the
+    #   NQP_CODE_PRECOMP     precompiled (comp_mode) units encode too: the
     #                        program bakes into the emitted class as a
     #                        string constant, exactly as an rx descriptor
     #                        does, and runs from the jar with no knob set
-    #                        at run time (Phase 4 of the migration)
+    #                        at run time (Phase 4 of the migration).
+    #                        ON by default since milestone 3 (2026-09-09);
+    #                        NQP_CODE_PRECOMP=0 turns it off.
 
     # Wire tags; NqpWire.java numbers them identically.
     my int $W_STMTS := 1;
@@ -330,9 +334,9 @@ class QAST::TruffleEncoder {
     my int $W_LEXBIND_OUTER := 30;
     my int $W_SAVECAPTURE := 31;
     my int $W_FORLOOP := 32;
-    my int $W_FORLOOPL := 35;
     my int $W_P6BINDSIG := 33;
     my int $W_P6TRYBINDSIG := 34;
+    my int $W_FORLOOPL := 35;
 
     # Handler categories, matching ExceptionHandling on the runtime side
     # (and the Compiler's own copies).
@@ -398,7 +402,12 @@ class QAST::TruffleEncoder {
         return 0 if $run_init_done;
         $run_init_done := 1;
         my %env := nqp::getenvhash();
-        $code_run := nqp::existskey(%env, 'NQP_CODE_RUN') ?? 1 !! 0;
+        # ON by default since milestone 3 (2026-09-09): the engine build is
+        # the build. NQP_CODE_RUN=0 turns the encoder off (class road only;
+        # meaningless on the unit road, where Compiler.nqp dies on it).
+        $code_run := nqp::existskey(%env, 'NQP_CODE_RUN')
+            ?? (nqp::atkey(%env, 'NQP_CODE_RUN') ne '0' ?? 1 !! 0)
+            !! 1;
         return 0 unless $code_run;
         $code_encoded  := nqp::existskey(%env, 'NQP_CODE_ENCODED') ?? 1 !! 0;
         $code_bail_p   := nqp::existskey(%env, 'NQP_CODE_BAIL') ?? 1 !! 0;
@@ -422,7 +431,9 @@ class QAST::TruffleEncoder {
         $code_noframe  := nqp::existskey(%env, 'NQP_CODE_NOFRAME')
             ?? (nqp::atkey(%env, 'NQP_CODE_NOFRAME') ne '0' ?? 1 !! 0)
             !! 1;
-        $code_precomp  := nqp::existskey(%env, 'NQP_CODE_PRECOMP') ?? 1 !! 0;
+        $code_precomp  := nqp::existskey(%env, 'NQP_CODE_PRECOMP')
+            ?? (nqp::atkey(%env, 'NQP_CODE_PRECOMP') ne '0' ?? 1 !! 0)
+            !! 1;
         # Desugars are ON BY DEFAULT (every register_op_desugar entry builds
         # a fresh tree, so applying one and bailing leaves the original tree
         # for the bytecode path). NQP_CODE_NO_DESUGAR=a,b names ops to
@@ -634,6 +645,28 @@ class QAST::TruffleEncoder {
     }
 
     sub cbail(str $why) { nqp::die('code-bail ' ~ $why) }
+
+    # Does $node's tree contain a block with this cuid? A QAST::BVal names
+    # a block of the same compilation, and the block may sit anywhere in
+    # the tree, BEFORE or AFTER the reference (t/qast/01-qast.t's 'BVal
+    # node preceding its block'). Either order resolves on the deferred
+    # nested-block road -- whichever slot the loop reaches first compiles
+    # the block, and every slot patches from the same cuid_to_qbid -- so
+    # $*CODEREFS.know_cuid alone is too strict a test at encode time. Only
+    # a block the tree never declares is a genuine refusal.
+    #
+    # A BVal's value is a REFERENCE, not containment: descending into it
+    # would walk in circles (the very shape the tests build), so the walk
+    # stops there.
+    sub block_in_tree($node, str $cuid) {
+        return 0 unless nqp::istype($node, QAST::Node);
+        return 1 if nqp::istype($node, QAST::Block) && $node.cuid eq $cuid;
+        return 0 if nqp::istype($node, QAST::BVal);
+        for $node.list {
+            return 1 if block_in_tree($_, $cuid);
+        }
+        0
+    }
 
     # A classlib registry RT type (Compiler.nqp: obj 0, int 1, num 2, str 3,
     # uint 10) as an encoder type; a uint RESULT is T_UINT so it boxes
@@ -1198,8 +1231,9 @@ class QAST::TruffleEncoder {
             cbail('block ' ~ $bt);
         }
         if nqp::istype($n, QAST::BVal) {
-            cbail('bval to an uncompiled block')
-                unless $*CODEREFS.know_cuid($n.value.cuid);
+            cbail('bval to a block the unit never compiles')
+                unless $*CODEREFS.know_cuid($n.value.cuid)
+                    || block_in_tree(%e<qast>, $n.value.cuid);
             epush(%e, $W_CODEREF);
             nqp::push(%e<nested>, [nqp::elems(%e<code>), $n.value]);
             epush(%e, 0);
@@ -2396,7 +2430,14 @@ class QAST::TruffleEncoder {
     # in $tmp (block topic and fail-value); only the test consults
     # .defined. Mirrors encode_callmethod's lang-meth-call wire with the
     # invocant read from $tmp and no further arguments.
-    method emit_defined_test(%e, int $tmp) {
+    # $condt is the type the condition local actually holds. `with`/`without`
+    # tests it by CALLING `.defined` on it, so a native has to be boxed
+    # first -- exactly the `$qastcomp.coercion($cond, $RT_OBJ)` the class
+    # road applies to its dup'd copy (Compiler.nqp's withy arm). The local
+    # itself keeps its own type: the __IM_ local the class road hands to a
+    # cond-passing block is typed from the condition, and so is the value
+    # the two-child form yields when the test fails.
+    method emit_defined_test(%e, int $tmp, int $condt = 0) {
         my int $mtmp := new_elocal(%e, $T_OBJ);
         epush(%e, $W_DISPATCH);
         %e<dispatches> := %e<dispatches> + 1;
@@ -2406,7 +2447,12 @@ class QAST::TruffleEncoder {
         epush(%e, $T_OBJ); epush(%e, $T_STR); epush(%e, $T_OBJ);
         epush(%e, $W_OPCALL); epush(%e, 51); epush(%e, 1);   # decont
         epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $mtmp);
-        epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+        if $condt != $T_OBJ {
+            my int $kind := coerce_kind($condt, $T_OBJ);
+            cbail('withy cond coercion') if $kind < 0;
+            epush(%e, $W_COERCE); epush(%e, $kind);
+        }
+        epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
         epush(%e, $W_SVAL); epush(%e, epool(%e, 'defined'));
         epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $mtmp);
     }
@@ -2504,8 +2550,7 @@ class QAST::TruffleEncoder {
             epush(%e, $negate);
             epush(%e, $has_else ?? 1 !! 0);
             if $withy {
-                cbail('withy cond not obj') if $condt != $T_OBJ;
-                self.emit_defined_test(%e, $tmp);
+                self.emit_defined_test(%e, $tmp, $condt);
             }
             else {
                 epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
@@ -2564,8 +2609,7 @@ class QAST::TruffleEncoder {
             epush(%e, $negate);
             epush(%e, 1);
             if $withy {
-                cbail('withy cond not obj') if $condt != $T_OBJ;
-                self.emit_defined_test(%e, $tmp);
+                self.emit_defined_test(%e, $tmp, $condt);
             }
             else {
                 epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);

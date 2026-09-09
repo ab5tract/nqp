@@ -378,8 +378,14 @@ object ExceptionHandling {
                         return line -
                             (si.sourceSectionRaw!![section] - si.sourceSectionLine!![section])
                 }
+                // No native frame correlated (line < 0): a record-road block
+                // has no Java class to take a LineNumberTable row from, so
+                // answer the block's own declared start line when it has one
+                // (milestone 3, 2026-09-09).
                 return if (si.sourceFile != null && line >= 0)
                     line - si.sourceLineDelta
+                else if (line < 0 && si.sourceFile != null && si.sourceLine > 0)
+                    si.sourceLine
                 else line
             }
     }
