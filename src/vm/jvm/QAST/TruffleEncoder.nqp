@@ -657,21 +657,29 @@ class QAST::TruffleEncoder {
         $idx
     }
 
-    method encode_block($node, $block, $comp, :$comp_mode) {
-        run_init();
-        # NQP_CODE_WHY traces the encode/refuse decision per block, with the
-        # inputs that decide it. A block that encodes once and refuses the
-        # next time commits its lexicals and then lets the bytecode path
-        # declare them again; this is how that is caught.
-        my int $why := nqp::existskey(nqp::getenvhash(), 'NQP_CODE_WHY') ?? 1 !! 0;
+    # NQP_CODE_WHY traces the encode/refuse decision per block, with the
+    # inputs that decide it. A block that encodes once and refuses the
+    # next time commits its lexicals and then lets the bytecode path
+    # declare them again; this is how that is caught. Compiler.nqp calls
+    # this for the blocks it never hands the encoder (custom_args), so a
+    # census of the verdicts sees every block the unit compiles.
+    my int $code_why := -1;
+    method why($node, $comp_mode, str $verdict) {
+        $code_why := nqp::existskey(nqp::getenvhash(), 'NQP_CODE_WHY') ?? 1 !! 0
+            if $code_why < 0;
+        return 0 unless $code_why;
         my str $who := $node.name eq '' ?? '<anon ' ~ $node.cuid ~ '>' !! $node.name;
-        sub trace(str $verdict) {
-            nqp::say('code why ' ~ $who ~ ' cuid ' ~ $node.cuid
-                ~ ' blocktype ' ~ $node.blocktype
-                ~ ' comp_mode ' ~ ($comp_mode ?? 1 !! 0)
-                ~ ' exith ' ~ ($node.has_exit_handler ?? 1 !! 0)
-                ~ ' -> ' ~ $verdict) if $why;
-        }
+        nqp::say('code why ' ~ $who ~ ' cuid ' ~ $node.cuid
+            ~ ' blocktype ' ~ $node.blocktype
+            ~ ' comp_mode ' ~ ($comp_mode ?? 1 !! 0)
+            ~ ' exith ' ~ ($node.has_exit_handler ?? 1 !! 0)
+            ~ ' -> ' ~ $verdict);
+        1
+    }
+
+    method encode_block($node, $block, $comp, :$comp_mode, :$sidecar) {
+        run_init();
+        sub trace(str $verdict) { self.why($node, $comp_mode, $verdict) }
         if !$code_run { trace('no: code_run off'); return '' }
         if $comp_mode && !$code_precomp { trace('no: comp_mode'); return '' }
         my str $name := $node.name;
@@ -796,9 +804,13 @@ class QAST::TruffleEncoder {
                 ~ ' uses_hll=' ~ %e<uses_hll>);
         }
         nqp::splice(@code, @ltypes, 4, 0);
-        # The size gate, BEFORE the commit: the program travels as one
-        # string constant, which the class file caps at 65535 UTF-8
-        # bytes (the rx descriptor's cliff). A refusal after the commit
+        # The size gate, BEFORE the commit: on the string road the program
+        # travels as one string constant, which the class file caps at
+        # 65535 UTF-8 bytes (the rx descriptor's cliff). A jar-bound unit
+        # (:sidecar) ships its programs in the LZ4 sidecar by index, where
+        # no such cap exists, so the gate is the string road's alone: the
+        # BOOTSTRAP BEGIN bodies (67k-134k, six of them) were the whole
+        # residue of it (2026-09-09). A refusal after the commit
         # would hand the bytecode path a block whose lexicals are already
         # registered ("Lexical '&parent' already declared", found
         # 2026-09-04 when the BOOTSTRAP BEGIN body, 4 decls and thousands
@@ -809,13 +821,15 @@ class QAST::TruffleEncoder {
         my int $est := 32 + 6 * nqp::elems(%e<nested>);
         for @code { $est := $est + nqp::chars(~$_) + 1 }
         for %e<pool> { $est := $est + nqp::chars($_) + 8 }
-        if $est > 60000 { trace('no: program too large (' ~ $est ~ ')'); return '' }
+        if $est > 60000 && !$sidecar {
+            trace('no: program too large (' ~ $est ~ ')'); return ''
+        }
         trace('YES: committing ' ~ nqp::elems(%e<decls>) ~ ' decls');
         for %e<decls> -> $d {
             my str $kind := $d[0];
             my $var := $d[1];
             nqp::say('code decl ' ~ $node.cuid ~ ' ' ~ $kind ~ ' ' ~ $var.name)
-                if $why;
+                if $code_why > 0;
             if $kind eq 'lex' { $block.add_lexical($var) }
             elsif $kind eq 'lexref' { $block.add_lexicalref($var) }
             elsif $kind eq 'static' { $block.add_lexical($var, :is_static) }
@@ -857,7 +871,7 @@ class QAST::TruffleEncoder {
         # The gate above bounded this; refusing here would be the bug it
         # exists to prevent, so a miss is an invariant failure, not a bail.
         nqp::die('code engine: program of ' ~ $node.cuid ~ ' grew past the size gate after commit ('
-            ~ nqp::chars($out) ~ ' chars)') if nqp::chars($out) > 65000;
+            ~ nqp::chars($out) ~ ' chars)') if nqp::chars($out) > 65000 && !$sidecar;
         if $code_encoded {
             nqp::say('code engine: ' ~ ($name eq '' ?? '<anon ' ~ $node.cuid ~ '>' !! $name));
         }

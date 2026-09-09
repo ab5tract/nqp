@@ -4646,20 +4646,28 @@ class QAST::CompilerJAST {
                 my $*BLOCK := $block;
                 my $*WANT;
                 my str $engine_prog := '';
-                unless $node.custom_args {
+                # A jar-bound unit's programs travel in one sidecar,
+                # referenced by index -- one string constant per
+                # program overflowed CORE.c's constant pool (71010
+                # entries against the 65535 limit). Everything else
+                # keeps the string road. The encoder is told which, so
+                # its per-program size gate (the string constant's own
+                # 65535-byte cap) applies only where that cap exists.
+                my int $as_index := $*COMP_MODE
+                    && %*COMPILING<%?OPTIONS><target> eq 'jar';
+                if $node.custom_args {
+                    # A custom_args block binds its own arguments from the
+                    # raw capture (Raku's runtime binder); the encoder never
+                    # sees it. Still a verdict, so NQP_CODE_WHY counts it.
+                    QAST::TruffleEncoder.why($node, $*COMP_MODE, 'no: custom_args');
+                }
+                else {
                     $engine_prog := QAST::TruffleEncoder.encode_block($node, $block, self,
-                        :comp_mode($*COMP_MODE));
+                        :comp_mode($*COMP_MODE), :sidecar($as_index));
                 }
                 if $engine_prog ne '' {
                     $engine_body := 1;
                     my $il := JAST::InstructionList.new();
-                    # A jar-bound unit's programs travel in one sidecar,
-                    # referenced by index -- one string constant per
-                    # program overflowed CORE.c's constant pool (71010
-                    # entries against the 65535 limit). Everything else
-                    # keeps the string road.
-                    my int $as_index := $*COMP_MODE
-                        && %*COMPILING<%?OPTIONS><target> eq 'jar';
                     if $as_index {
                         my int $pidx := nqp::elems(@*ENGINE_PROGRAMS);
                         nqp::push_s(@*ENGINE_PROGRAMS, $engine_prog);
