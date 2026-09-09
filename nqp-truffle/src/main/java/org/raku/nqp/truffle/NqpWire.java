@@ -159,6 +159,11 @@ public final class NqpWire {
      *  on, through assertparamcheck). Leaves the flattened pair on the frame.
      *  Additive. */
     public static final int P6TRYBINDSIG = 34;
+    /** 35 FORLOOPL condType lastId nrId outerIdx labelLocal labelExpr cond pre body:
+     *  FORLOOP with a label (nqp::for :label). labelExpr's value is bound into
+     *  block local labelLocal at loop entry and read by both unwind arms as the
+     *  `where` for _is_same_label, exactly as LOOPH's hasLabel form. Additive. */
+    public static final int FORLOOPL = 35;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;

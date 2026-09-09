@@ -4111,15 +4111,20 @@ class QAST::CompilerJAST {
         # a quiet fallback to a class file that this road no longer emits
         # the pieces for. $*UNIT_FALLBACKS therefore stays 0 and travels
         # as the writer's defense. Off, the class road runs as before.
-        my $*UNIT_ROAD := nqp::existskey(nqp::getenvhash(), 'NQP_UNIT') ?? 1 !! 0;
+        # The unit road is the default since milestone 3; NQP_UNIT=0 is the
+        # transitional opt-out and goes with the deletions.
+        my %env := nqp::getenvhash();
+        my $*UNIT_ROAD := nqp::existskey(%env, 'NQP_UNIT')
+            ?? (nqp::atkey(%env, 'NQP_UNIT') ne '0' ?? 1 !! 0)
+            !! 1;
         my $*UNIT_FALLBACKS := 0;
         if $*UNIT_ROAD {
             # Every block must encode, so the encoder's own switches must
             # be on; said once here rather than once per block at the
             # fallback junction.
-            my %env := nqp::getenvhash();
-            nqp::die('unit artifact (NQP_UNIT): the road needs NQP_CODE_RUN=1 and NQP_CODE_PRECOMP=1 set, every block must encode')
-                unless nqp::existskey(%env, 'NQP_CODE_RUN') && nqp::existskey(%env, 'NQP_CODE_PRECOMP');
+            nqp::die('unit artifact (NQP_UNIT): the road needs the encoder on; NQP_CODE_RUN=0 or NQP_CODE_PRECOMP=0 is set, every block must encode')
+                if (nqp::existskey(%env, 'NQP_CODE_RUN') && nqp::atkey(%env, 'NQP_CODE_RUN') eq '0')
+                || (nqp::existskey(%env, 'NQP_CODE_PRECOMP') && nqp::atkey(%env, 'NQP_CODE_PRECOMP') eq '0');
             # A class file is the one output the road does not have.
             nqp::die('unit artifact (NQP_UNIT): --target=classfile has no artifact form; use --target=jar')
                 if %*COMPILING<%?OPTIONS><target> eq 'classfile';
@@ -4686,6 +4691,16 @@ class QAST::CompilerJAST {
                     $*JMETH.cr_rawline(HLL::Compiler.lineof(
                         $node.node.orig(), $node.node.from(), :cache(1), :directives(0)));
                 }
+            }
+            # The mainline (built from the comp_unit cursor before it
+            # matched) and the compiler's own raw wrappers have no node to
+            # take a file from. The class road backfilled them from the
+            # class-level SourceFile attribute through the Java stack; a
+            # ProgramUnit has no such class, so the block record carries
+            # the unit's file itself (milestone 3, 2026-09-09).
+            unless $*JMETH.cr_file {
+                my $unit-file := nqp::ifnull(nqp::getlexdyn('$?FILES'), '');
+                $*JMETH.cr_file(~$unit-file) if $unit-file;
             }
             $*CODEREFS.register_method($*JMETH, $node.cuid);
 
