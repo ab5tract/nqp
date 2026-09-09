@@ -39,6 +39,8 @@ class JAST::Class is JAST::Node {
         $!serialized_count := -1;
         $!sc_handle := '';
         $!sc_desc := '';
+        $!fallbacks := 0;
+        $!unit_road := 0;
         @!programs := [];
         @!callsites := [];
         @!blockvalues := [];
@@ -72,6 +74,7 @@ class JAST::Class is JAST::Node {
     method sc_handle(*@value) { @value ?? ($!sc_handle := @value[0]) !! $!sc_handle }
     method sc_desc(*@value) { @value ?? ($!sc_desc := @value[0]) !! $!sc_desc }
     method fallbacks(*@value) { @value ?? ($!fallbacks := @value[0]) !! $!fallbacks }
+    # 1 = compiled on the NQP_UNIT road (every block encoded, or the compile died); the writer's input
     method unit_road(*@value) { @value ?? ($!unit_road := @value[0]) !! $!unit_road }
     method programs(*@value) { @value ?? (@!programs := @value[0]) !! @!programs }
     method callsites(*@value) { @value ?? (@!callsites := @value[0]) !! @!callsites }

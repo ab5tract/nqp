@@ -4102,12 +4102,14 @@ class QAST::CompilerJAST {
         # The artifact road (rakudo docs/superpowers/specs/2026-09-09-jvm-
         # unit-artifact-design.md): under NQP_UNIT a jar-bound comp-mode
         # unit is written as programs + serialized context + block table,
-        # no class file, PROVIDED every block encoded. $*UNIT_FALLBACKS
-        # counts the blocks that did not; the backend takes the class road
-        # for a unit with any.
+        # no class file. The knob is all-or-nothing: the road is chosen
+        # before any block compiles, so a block that cannot encode is a
+        # compile error, not a quiet fallback to a class file that this
+        # road no longer emits the pieces for. $*UNIT_FALLBACKS therefore
+        # stays 0 and travels as the writer's defense.
         my $*UNIT_ROAD := nqp::existskey(nqp::getenvhash(), 'NQP_UNIT')
-            && %*COMPILING<%?OPTIONS><target> eq 'jar'
-            && $cu.compilation_mode ?? 1 !! 0;
+            && $cu.compilation_mode
+            && %*COMPILING<%?OPTIONS><target> eq 'jar' ?? 1 !! 0;
         my $*UNIT_FALLBACKS := 0;
         # Pre-seed to make sure that qbids correspond to serialization IDs
         my $*COMP_MODE := $cu.compilation_mode;
@@ -4137,27 +4139,14 @@ class QAST::CompilerJAST {
         # is to desugar this into simpler QAST nodes, then compile those.
         my @pre_des   := $cu.pre_deserialize;
         my @post_des  := $cu.post_deserialize;
-        if %*BLOCK_LEX_VALUES {
-            if $*UNIT_ROAD {
-                # The artifact's meta carries them; the loader installs them
-                # after the deserialize program, where setup_blv ran.
-                my @rows;
-                for %*BLOCK_LEX_VALUES {
-                    my int $qbid := self.cuid_to_qbid($_.key);
-                    for $_.value -> @lex {
-                        my $sc := nqp::getobjsc(@lex[1]);
-                        nqp::push(@rows, [$qbid, @lex[0], nqp::scgethandle($sc),
-                            nqp::scgetobjidx($sc, @lex[1]), @lex[2]]);
-                    }
-                }
-                $*JCLASS.blockvalues(@rows);
-            }
-            else {
-                nqp::push(@post_des, QAST::Block.new(
-                    :blocktype('immediate'),
-                    QAST::Op.new( :op('setup_blv'), %*BLOCK_LEX_VALUES )
-                ));
-            }
+        # On the artifact road the values are recorded as data instead --
+        # but only after the deserialize wrapper has compiled, where the
+        # objects have their SC and the hash has stopped growing.
+        if %*BLOCK_LEX_VALUES && !$*UNIT_ROAD {
+            nqp::push(@post_des, QAST::Block.new(
+                :blocktype('immediate'),
+                QAST::Op.new( :op('setup_blv'), %*BLOCK_LEX_VALUES )
+            ));
         }
         if $*COMP_MODE || @pre_des || @post_des || need_set_code_object($cu) {
             # Create a block into which we'll install all of the other
@@ -4240,6 +4229,24 @@ class QAST::CompilerJAST {
             # Compile to JAST and register this block as the deserialization
             # handler.
             self.as_jast($block);
+            # The artifact's meta carries the static lexical values; the
+            # loader installs them after the deserialize program, exactly
+            # where the class road's setup_blv ran. Built here, not at the
+            # push site: serialization is what first gives an object its
+            # SC, and %*BLOCK_LEX_VALUES keeps growing until every block
+            # -- this wrapper included -- has compiled.
+            if $*UNIT_ROAD && %*BLOCK_LEX_VALUES {
+                my @rows;
+                for %*BLOCK_LEX_VALUES {
+                    my int $qbid := self.cuid_to_qbid($_.key);
+                    for $_.value -> @lex {
+                        my $sc := nqp::getobjsc(@lex[1]);
+                        nqp::push(@rows, [$qbid, @lex[0], nqp::scgethandle($sc),
+                            nqp::scgetobjidx($sc, @lex[1]), @lex[2]]);
+                    }
+                }
+                $*JCLASS.blockvalues(@rows);
+            }
             my $des_meth := JAST::Method.new( :name('deserializeQbid'), :returns('I'), :static(0) );
             $des_meth.append(JAST::PushIndex.new( :value(self.cuid_to_qbid($block.cuid)) ));
             $*JCLASS.deserialize_qbid(self.cuid_to_qbid($block.cuid));
@@ -4316,8 +4323,7 @@ class QAST::CompilerJAST {
             $*JCLASS.callsites($*CODEREFS.callsite_data);
             $*JCLASS.fallbacks($*UNIT_FALLBACKS);
             $*JCLASS.unit_road(1);
-            nqp::say('code unit ' ~ $*JCLASS.name ~ ' -> '
-                ~ ($*UNIT_FALLBACKS ?? 'class fallbacks=' ~ $*UNIT_FALLBACKS !! 'artifact'))
+            nqp::say('code unit ' ~ $*JCLASS.name ~ ' -> artifact')
                 if nqp::existskey(nqp::getenvhash(), 'NQP_CODE_WHY');
         }
         elsif nqp::elems(@*ENGINE_PROGRAMS) {
@@ -4741,7 +4747,10 @@ class QAST::CompilerJAST {
                     $*STACK.obtain(NQPMu, $body);
                 }
                 else {
-                    $*UNIT_FALLBACKS := $*UNIT_FALLBACKS + 1 if $*UNIT_ROAD;
+                    nqp::die('unit artifact (NQP_UNIT): block '
+                        ~ ($node.name eq '' ?? '<anon ' ~ $node.cuid ~ '>' !! $node.name)
+                        ~ ' (cuid ' ~ $node.cuid ~ ') has no engine program and would need bytecode;'
+                        ~ ' run with NQP_CODE_BAIL=1 or NQP_CODE_WHY=1 for the reason') if $*UNIT_ROAD;
                     $body := self.compile_all_the_stmts($node.list, :node($node.node));
                     $*STACK.obtain(NQPMu, $body);
                 }
