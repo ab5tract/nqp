@@ -152,6 +152,13 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
             }
         }
 
+        /* The writer needs the JAST node hints too, and comes in without
+         * going through compileClass. */
+        @JvmStatic
+        fun ensureSetup(jastNodes: SixModelObject, tc: ThreadContext) {
+            if (!setup) setup(jastNodes, tc)
+        }
+
         private var setup = false
         private fun setup(jastNodes: SixModelObject, tc: ThreadContext) {
             setup = true

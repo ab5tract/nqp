@@ -85,9 +85,19 @@ public class LibraryLoader {
 
     public static void load(ThreadContext tc, ByteBuffer buffer) {
         try {
-            byte[] bytes = new byte[buffer.remaining()];
-            buffer.duplicate().get(bytes);
-            if (org.raku.nqp.runtime.unit.UnitZip.isUnit(bytes)) {
+            // The sniff reads the buffer directly (no copy): it is only the
+            // first local file header's worth of bytes either way. Only the
+            // artifact road needs a byte[] -- for loadJar (the class road)
+            // the JarInputStream reads the buffer itself.
+            if (org.raku.nqp.runtime.unit.UnitZip.isUnit(buffer)) {
+                byte[] bytes;
+                if (buffer.hasArray() && buffer.arrayOffset() == 0 && buffer.position() == 0
+                        && buffer.array().length == buffer.remaining())
+                    bytes = buffer.array();
+                else {
+                    bytes = new byte[buffer.remaining()];
+                    buffer.duplicate().get(bytes);
+                }
                 try {
                     org.raku.nqp.runtime.unit.UnitLoader.loadAndRun(tc, bytes);
                 }
