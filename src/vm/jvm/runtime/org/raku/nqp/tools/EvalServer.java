@@ -50,7 +50,6 @@ public class EvalServer {
     private static final Object RUN_LOCK = new Object();
 
     private GlobalContext gc;
-    private Class<?> cuType;
     private String cookie;
     private ServerSocketChannel serv;
     private WritableByteChannel tokenCh;
@@ -65,25 +64,19 @@ public class EvalServer {
 
     public String run(String appPath, String[] argv) throws Exception {
         gc = new GlobalContext();
-        try {
-            cuType = LibraryLoader.loadFile(appPath, gc.byteClassLoader, true);
-        } catch (ThreadDeath td) {
-            throw new RuntimeException("Couldn't loadFile. Your CLASSPATH might not be set up correctly.");
-        }
-
         gc.in = new ByteArrayInputStream(new byte[0]);
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         gc.out = gc.err = new PrintStream( baos, true, "UTF-8" );
         gc.interceptExit = true;
         gc.sharingHint = true;
 
-        CompilationUnit cu = CompilationUnit.setupCompilationUnit(gc.mainThread, cuType, true);
+        CompilationUnit cu = LibraryLoader.loadApp(gc.mainThread, appPath, true);
         CodeRef entryRef = null;
         if (cu.entryQbid() >= 0) entryRef = cu.lookupCodeRef(cu.entryQbid());
         if (entryRef == null)
-            throw new RuntimeException("This class is not an entry point");
+            throw new RuntimeException("This unit is not an entry point");
         try {
-            Ops.invokeMain(gc.mainThread, entryRef, cuType.getName(), argv);
+            Ops.invokeMain(gc.mainThread, entryRef, cu.unitId(), argv);
         } catch (ThreadDeath td) {
             baos.flush();
         }
@@ -125,7 +118,7 @@ public class EvalServer {
          * request still gets a fresh GlobalContext (see ServiceThread) so that
          * evals do not share state. */
         gc = new GlobalContext();
-        cuType = LibraryLoader.loadFile(mainPath, gc.byteClassLoader, true);
+        LibraryLoader.prime(mainPath, gc.byteClassLoader);
 
         SecureRandom rng = new SecureRandom();
         byte[] raw = new byte[16];
@@ -237,12 +230,12 @@ public class EvalServer {
                 gc.interceptExit = true;
                 gc.sharingHint = true;
 
-                CompilationUnit cu = CompilationUnit.setupCompilationUnit(gc.mainThread, cuType, true);
+                CompilationUnit cu = LibraryLoader.loadApp(gc.mainThread, mainPath, true);
                 CodeRef entryRef = null;
                 if (cu.entryQbid() >= 0) entryRef = cu.lookupCodeRef(cu.entryQbid());
                 if (entryRef == null)
                     throw new RuntimeException("This class is not an entry point");
-                Ops.invokeMain(gc.mainThread, entryRef, cuType.getName(), argv);
+                Ops.invokeMain(gc.mainThread, entryRef, cu.unitId(), argv);
                 gc.exit(0);
             }
         }
