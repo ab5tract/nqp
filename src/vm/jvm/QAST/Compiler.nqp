@@ -4100,17 +4100,30 @@ class QAST::CompilerJAST {
         # emitted bodies reference them by index.
         my @*ENGINE_PROGRAMS := nqp::list_s();
         # The artifact road (rakudo docs/superpowers/specs/2026-09-09-jvm-
-        # unit-artifact-design.md): under NQP_UNIT a jar-bound comp-mode
-        # unit is written as programs + serialized context + block table,
-        # no class file. The knob is all-or-nothing: the road is chosen
-        # before any block compiles, so a block that cannot encode is a
-        # compile error, not a quiet fallback to a class file that this
-        # road no longer emits the pieces for. $*UNIT_FALLBACKS therefore
-        # stays 0 and travels as the writer's defense.
-        my $*UNIT_ROAD := nqp::existskey(nqp::getenvhash(), 'NQP_UNIT')
-            && $cu.compilation_mode
-            && %*COMPILING<%?OPTIONS><target> eq 'jar' ?? 1 !! 0;
+        # unit-artifact-design.md): under NQP_UNIT every unit is a record --
+        # programs + block table (+ serialized context for a comp-mode
+        # unit), no class file. A jar-bound unit with an output file is
+        # written as a zip (milestone 1); any other unit -- a script, an
+        # EVAL, a BEGIN-time unit, a --target=jar with no --output -- is
+        # built in memory and loaded as a ProgramUnit (milestone 2). The
+        # knob is all-or-nothing: the road is chosen before any block
+        # compiles, so a block that cannot encode is a compile error, not
+        # a quiet fallback to a class file that this road no longer emits
+        # the pieces for. $*UNIT_FALLBACKS therefore stays 0 and travels
+        # as the writer's defense. Off, the class road runs as before.
+        my $*UNIT_ROAD := nqp::existskey(nqp::getenvhash(), 'NQP_UNIT') ?? 1 !! 0;
         my $*UNIT_FALLBACKS := 0;
+        if $*UNIT_ROAD {
+            # Every block must encode, so the encoder's own switches must
+            # be on; said once here rather than once per block at the
+            # fallback junction.
+            my %env := nqp::getenvhash();
+            nqp::die('unit artifact (NQP_UNIT): the road needs NQP_CODE_RUN=1 and NQP_CODE_PRECOMP=1 set, every block must encode')
+                unless nqp::existskey(%env, 'NQP_CODE_RUN') && nqp::existskey(%env, 'NQP_CODE_PRECOMP');
+            # A class file is the one output the road does not have.
+            nqp::die('unit artifact (NQP_UNIT): --target=classfile has no artifact form; use --target=jar')
+                if %*COMPILING<%?OPTIONS><target> eq 'classfile';
+        }
         # Pre-seed to make sure that qbids correspond to serialization IDs
         my $*COMP_MODE := $cu.compilation_mode;
         # Comp-mode units pair code refs with methods by block id, so the
@@ -4148,7 +4161,11 @@ class QAST::CompilerJAST {
                 QAST::Op.new( :op('setup_blv'), %*BLOCK_LEX_VALUES )
             ));
         }
-        if $*COMP_MODE || @pre_des || @post_des || need_set_code_object($cu) {
+        # On the class road setup_blv sat in @post_des and made this true
+        # by itself; the record road builds its static-lexical-value rows
+        # inside this wrapper, so the wrapper must exist for them.
+        if $*COMP_MODE || @pre_des || @post_des || need_set_code_object($cu)
+            || ($*UNIT_ROAD && %*BLOCK_LEX_VALUES) {
             # Create a block into which we'll install all of the other
             # pieces.
             my $block := QAST::Block.new( :blocktype('raw') );
@@ -4323,7 +4340,7 @@ class QAST::CompilerJAST {
             $*JCLASS.callsites($*CODEREFS.callsite_data);
             $*JCLASS.fallbacks($*UNIT_FALLBACKS);
             $*JCLASS.unit_road(1);
-            nqp::say('code unit ' ~ $*JCLASS.name ~ ' -> artifact')
+            nqp::say('code unit ' ~ $*JCLASS.name ~ ' -> unit road')
                 if nqp::existskey(nqp::getenvhash(), 'NQP_CODE_WHY');
         }
         elsif nqp::elems(@*ENGINE_PROGRAMS) {
@@ -4349,7 +4366,8 @@ class QAST::CompilerJAST {
     method deserialization_code($sc, @code_ref_blocks, $repo_conf_res) {
         # Some code-ref slots may belong to nested units (EVALs run at
         # BEGIN time) rather than to blocks compiled into this unit. Their
-        # classfiles ride along in the jar, and the deserialization code
+        # units ride along in the jar (as class entries on the class road,
+        # under nested/ in an artifact), and the deserialization code
         # loads them back and installs their code refs into the slots
         # before deserializing, matched by cuid. The slot index is the
         # block's position: the code ref table is keyed that way.
@@ -4709,12 +4727,15 @@ class QAST::CompilerJAST {
                 # A jar-bound unit's programs travel in one sidecar,
                 # referenced by index -- one string constant per
                 # program overflowed CORE.c's constant pool (71010
-                # entries against the 65535 limit). Everything else
-                # keeps the string road. The encoder is told which, so
-                # its per-program size gate (the string constant's own
-                # 65535-byte cap) applies only where that cap exists.
-                my int $as_index := $*COMP_MODE
-                    && %*COMPILING<%?OPTIONS><target> eq 'jar';
+                # entries against the 65535 limit) -- and on the unit
+                # road every program is a byte-framed entry of the
+                # record, on either output, with no constant and no cap.
+                # Everything else keeps the string road. The encoder is
+                # told which, so its per-program size gate (the string
+                # constant's own 65535-byte cap) applies only where that
+                # cap exists.
+                my int $as_index := $*UNIT_ROAD
+                    || ($*COMP_MODE && %*COMPILING<%?OPTIONS><target> eq 'jar');
                 # A custom_args block binds its own arguments from the raw
                 # capture (Raku's runtime Binder, through the p6bindsig
                 # prologue in its body); the encoder reads the flag and

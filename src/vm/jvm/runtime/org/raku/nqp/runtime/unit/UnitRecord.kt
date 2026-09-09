@@ -4,7 +4,7 @@ package org.raku.nqp.runtime.unit
  *  method name used to carry, plus the index of the block's program. */
 class BlockRec(
     @JvmField val name: String,
-    @JvmField val cuid: String?,          // written only for a nested unit
+    @JvmField val cuid: String?,          // written for a nested or a runtime-compiled unit; null on a jar-bound comp-mode block
     @JvmField val outerQbid: Int,         // -1 = no outer
     @JvmField val oLex: Array<String>,
     @JvmField val iLex: Array<String>,

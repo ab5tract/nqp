@@ -8926,7 +8926,8 @@ object Ops {
         res.jc = JASTCompiler.buildClass(jast!!, jastNodes!!, false, tc)
         return res
     }
-    /** The class an in-memory compiled block belongs to, when one was
+    /** The unit an in-memory compiled block belongs to (a class name on
+     * the class road, a unit id on the record road), when one was
      * retained for nested-unit persistence; empty string otherwise. */
     @JvmStatic
     fun jvmclassofcuid(cuid: String?, tc: ThreadContext): String =
@@ -8996,12 +8997,31 @@ object Ops {
         JASTCompiler.writeClass(jast!!, jastNodes!!, filename!!, tc)
         return jast
     }
+    /** Turns a runtime compile's output into a live unit: on the class
+     *  road by defining the class and instantiating it, on the record
+     *  road (NQP_UNIT) by building a ProgramUnit from the record. Either
+     *  way the unit is initialized under the compilee's HLL config when
+     *  asked, and retained for nested embedding while a compilation is
+     *  under way. */
     @JvmStatic
     fun loadcompunit(obj: SixModelObject?, compileeHLL: Long, tc: ThreadContext): SixModelObject? {
         try {
             val res = obj as EvalResult
-            val cuClass = tc.gc.byteClassLoader.defineClass(res.jc!!.name, res.jc!!.bytes!!)
-            res.cu = cuClass.newInstance() as CompilationUnit
+            val rec = res.record
+            val unitName: String
+            if (rec != null) {
+                val u = org.raku.nqp.runtime.unit.ProgramUnit(rec)
+                u.shared = false
+                res.cu = u
+                unitName = rec.meta.unitId
+                if (System.getenv("NQP_CODE_WHY") != null)
+                    System.err.println("unit record $unitName (${rec.programs.size} programs, ${rec.meta.blocks.size} qbids)")
+            }
+            else {
+                val cuClass = tc.gc.byteClassLoader.defineClass(res.jc!!.name, res.jc!!.bytes!!)
+                res.cu = cuClass.newInstance() as CompilationUnit
+                unitName = res.jc!!.name!!
+            }
             if (compileeHLL != 0L)
                 usecompileehllconfig(tc)
             res.cu!!.initializeCompilationUnit(tc)
@@ -9009,10 +9029,13 @@ object Ops {
                 usecompilerhllconfig(tc)
             /* A unit compiled while a compilation is under way may be a
              * nested unit whose code refs the enclosing serialization
-             * points into; retain what embedding it later needs. */
+             * points into; retain what embedding it later needs, on the
+             * road it was compiled on. */
             if (!tc.compilingSCs.isNullOrEmpty()) {
-                val unitName = res.jc!!.name!!
-                tc.gc.inMemoryUnitBytes[unitName] = res.jc!!.bytes!!
+                if (rec != null)
+                    tc.gc.inMemoryUnitRecords[unitName] = rec
+                else
+                    tc.gc.inMemoryUnitBytes[unitName] = res.jc!!.bytes!!
                 res.cu!!.codeRefs?.let { crs ->
                     for (cr in crs) {
                         val cuid = cr.staticInfo.uniqueId
@@ -9022,6 +9045,7 @@ object Ops {
                 }
             }
             res.jc = null
+            res.record = null
             return obj
         }
         catch (e: ControlException) {
