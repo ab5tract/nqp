@@ -71,6 +71,11 @@ class StaticCodeInfo(
      */
     @JvmField @Volatile var engineTarget: Any? = null
 
+    /** On the artifact road: the block's program index in its unit, so
+     *  the target can be materialized on demand (see CodeEngines.materialize)
+     *  instead of waiting for a first run through a stub. -1 on the class road. */
+    @JvmField var programIndex: Int = -1
+
     /**
      * Method name for correlation with stack traces.
      */
