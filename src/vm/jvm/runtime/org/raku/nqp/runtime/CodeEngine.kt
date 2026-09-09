@@ -105,6 +105,45 @@ object CodeEngines {
         engine.run(program, cu, tc, cf, csd, args ?: emptyArray())
     }
 
+    /**
+     * The block's engine target, compiling its program from the unit on
+     * first need. Null for a class-road block that has not run yet (no
+     * program index) or when there is no engine. Synchronized on the
+     * static info so two threads racing on the first call agree on one
+     * target.
+     */
+    @JvmStatic
+    fun materialize(sci: StaticCodeInfo): Any? {
+        sci.engineTarget?.let { return it }
+        if (sci.programIndex < 0) return null
+        val engine = engine ?: return null
+        synchronized(sci) {
+            sci.engineTarget?.let { return it }
+            val program = engine.compile(sci.compUnit.engineProgram(sci.programIndex))
+            sci.engineTarget = program
+            return program
+        }
+    }
+
+    /** The artifact road's block body: what codeRunIdx is for a stub. */
+    @JvmStatic
+    fun codeRunUnit(
+        sci: StaticCodeInfo,
+        cu: CompilationUnit,
+        tc: ThreadContext,
+        cf: CallFrame,
+        csd: CallSiteDescriptor,
+        args: Array<Any?>?,
+    ) {
+        val engine = engine ?: throw IllegalStateException(
+            "this unit was compiled with the code engine, which is not available at run time:" +
+            " the truffle module is missing from the class path.")
+        val program = materialize(sci) ?: throw IllegalStateException(
+            "block ${cf.codeRef?.name ?: "<anon>"} of unit ${cu.unitId()} has no program")
+        if (trace) System.err.println("code> " + (cf.codeRef?.name ?: "<anon>"))
+        engine.run(program, cu, tc, cf, csd, args ?: emptyArray())
+    }
+
     private fun load(): CodeEngine? {
         try {
             val cls = Class.forName(IMPL, true, ClassLoader.getSystemClassLoader())
