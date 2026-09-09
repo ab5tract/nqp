@@ -70,7 +70,12 @@ public class EvalServer {
         gc.interceptExit = true;
         gc.sharingHint = true;
 
-        CompilationUnit cu = LibraryLoader.loadApp(gc.mainThread, appPath, true);
+        CompilationUnit cu;
+        try {
+            cu = LibraryLoader.loadApp(gc.mainThread, appPath, true);
+        } catch (ThreadDeath td) {
+            throw new RuntimeException("Couldn't load the app unit. Your CLASSPATH might not be set up correctly.");
+        }
         CodeRef entryRef = null;
         if (cu.entryQbid() >= 0) entryRef = cu.lookupCodeRef(cu.entryQbid());
         if (entryRef == null)
@@ -234,7 +239,7 @@ public class EvalServer {
                 CodeRef entryRef = null;
                 if (cu.entryQbid() >= 0) entryRef = cu.lookupCodeRef(cu.entryQbid());
                 if (entryRef == null)
-                    throw new RuntimeException("This class is not an entry point");
+                    throw new RuntimeException("This unit is not an entry point");
                 Ops.invokeMain(gc.mainThread, entryRef, cu.unitId(), argv);
                 gc.exit(0);
             }

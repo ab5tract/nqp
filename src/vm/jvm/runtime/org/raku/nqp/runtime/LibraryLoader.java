@@ -53,8 +53,15 @@ public class LibraryLoader {
                 }
             }
 
-            if (org.raku.nqp.runtime.unit.UnitLoader.isUnitFile(filename))
-                org.raku.nqp.runtime.unit.UnitLoader.loadAndRun(tc, filename, tc.gc.sharingHint);
+            if (org.raku.nqp.runtime.unit.UnitLoader.isUnitFile(filename)) {
+                try {
+                    org.raku.nqp.runtime.unit.UnitLoader.loadAndRun(tc, filename, tc.gc.sharingHint);
+                }
+                catch (ControlException e) { throw e; }
+                catch (IOException | IllegalStateException | IllegalArgumentException e) {
+                    throw ExceptionHandling.dieInternal(tc, e);
+                }
+            }
             else
                 resolveClass(tc, loadFile(filename, tc.gc.byteClassLoader, tc.gc.sharingHint));
         }
@@ -80,8 +87,15 @@ public class LibraryLoader {
         try {
             byte[] bytes = new byte[buffer.remaining()];
             buffer.duplicate().get(bytes);
-            if (org.raku.nqp.runtime.unit.UnitZip.isUnit(bytes))
-                org.raku.nqp.runtime.unit.UnitLoader.loadAndRun(tc, bytes);
+            if (org.raku.nqp.runtime.unit.UnitZip.isUnit(bytes)) {
+                try {
+                    org.raku.nqp.runtime.unit.UnitLoader.loadAndRun(tc, bytes);
+                }
+                catch (ControlException e) { throw e; }
+                catch (IllegalStateException | IllegalArgumentException e) {
+                    throw ExceptionHandling.dieInternal(tc, e);
+                }
+            }
             else
                 resolveClass(tc, loadJar(buffer, tc.gc.byteClassLoader));
         }
@@ -183,8 +197,15 @@ public class LibraryLoader {
      * the unit is initialized (deserialized) but its load block is not run;
      * an entry block does that itself. */
     public static CompilationUnit loadApp(ThreadContext tc, String path, boolean shared) {
-        if (org.raku.nqp.runtime.unit.UnitLoader.isUnitFile(path))
-            return org.raku.nqp.runtime.unit.UnitLoader.loadUnit(tc, path, shared);
+        if (org.raku.nqp.runtime.unit.UnitLoader.isUnitFile(path, shared)) {
+            try {
+                return org.raku.nqp.runtime.unit.UnitLoader.loadUnit(tc, path, shared);
+            }
+            catch (ControlException e) { throw e; }
+            catch (IOException | IllegalStateException | IllegalArgumentException e) {
+                throw ExceptionHandling.dieInternal(tc, e);
+            }
+        }
         try {
             return CompilationUnit.setupCompilationUnit(tc, loadFile(path, tc.gc.byteClassLoader, shared), shared);
         }
@@ -195,7 +216,7 @@ public class LibraryLoader {
 
     /* Warms whichever road the path takes, so a server pays for parsing once. */
     public static void prime(String path, ByteClassLoader loader) throws IOException, ClassNotFoundException {
-        if (org.raku.nqp.runtime.unit.UnitLoader.isUnitFile(path))
+        if (org.raku.nqp.runtime.unit.UnitLoader.isUnitFile(path, true))
             org.raku.nqp.runtime.unit.UnitLoader.record(path, true);
         else
             loadFile(path, loader, true);
