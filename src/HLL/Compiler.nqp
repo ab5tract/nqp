@@ -617,6 +617,12 @@ class HLL::Compiler does HLL::Backend::Default {
     }
 
     method dumper($obj, $name, *%options) {
+        # A compilation unit (the jar/classfile targets without --output)
+        # has no textual dump; say so instead of dying inside nqp::can on
+        # a carrier object that has no STable.
+        if $!backend.is_compunit($obj) {
+            nqp::die("--target=$name produces no dumpable output; use --output=<file>");
+        }
         if nqp::can($obj, 'dump') {
             my $out := stdout();
             $out.print($obj.dump());
