@@ -483,6 +483,16 @@ object Syscalls {
             void
         }
 
+        /* Builds the compiling unit's record in memory -- the record road
+         * for a script, an EVAL, a BEGIN-time unit, or a --target=jar with
+         * no --output under NQP_UNIT -- for nqp::loadcompunit to turn into
+         * a ProgramUnit: no zip, no class. */
+        define("jvm-build-unit", OBJ, OBJ) { args ->
+            val res = org.raku.nqp.runtime.EvalResult()
+            res.record = org.raku.nqp.runtime.unit.UnitWriter.record(args.obj(0), args.obj(1), args.tc)
+            obj(res)
+        }
+
         /* Loads a nested unit embedded in the current unit's jar and
          * installs its code refs into the current unit's qbid table. */
         define("jvm-claim-nested", STR, OBJ, OBJ) { args ->
