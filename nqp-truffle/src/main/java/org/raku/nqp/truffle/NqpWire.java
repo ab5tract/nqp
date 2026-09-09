@@ -141,6 +141,18 @@ public final class NqpWire {
      *  (Compiler.nqp's redo label sits between the fetch and the call).
      *  Unlabeled; value null, like LOOP. Additive (stage0 programs predate it). */
     public static final int FORLOOP = 32;
+    /** 33 P6BINDSIG: rakudo's p6bindsig, the full-binder prologue of a
+     *  custom_args block. Binds the frame's own csd/args through the runtime
+     *  Binder (which leaves the flattened pair back on the frame); when the
+     *  binder auto-threaded a Junction instead, the call's result is already
+     *  on the caller and the program returns at once. Value null (a statement,
+     *  like LOOP). Additive. */
+    public static final int P6BINDSIG = 33;
+    /** 34 P6TRYBINDSIG: rakudo's p6trybindsig over the frame's own csd/args;
+     *  answers int 1 bound / 0 failed (a bind the invoking dispatch resumes
+     *  on, through assertparamcheck). Leaves the flattened pair on the frame.
+     *  Additive. */
+    public static final int P6TRYBINDSIG = 34;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;
