@@ -110,7 +110,9 @@ object CodeEngines {
      * first need. Null for a class-road block that has not run yet (no
      * program index) or when there is no engine. Synchronized on the
      * static info so two threads racing on the first call agree on one
-     * target.
+     * target. Compiles through the same per-string cache as codeRun, so a
+     * program reached first by a stub and later by the direct road (or the
+     * reverse) compiles once.
      */
     @JvmStatic
     fun materialize(sci: StaticCodeInfo): Any? {
@@ -119,7 +121,7 @@ object CodeEngines {
         val engine = engine ?: return null
         synchronized(sci) {
             sci.engineTarget?.let { return it }
-            val program = engine.compile(sci.compUnit.engineProgram(sci.programIndex))
+            val program = programs.computeIfAbsent(sci.compUnit.engineProgram(sci.programIndex)) { engine.compile(it) }
             sci.engineTarget = program
             return program
         }

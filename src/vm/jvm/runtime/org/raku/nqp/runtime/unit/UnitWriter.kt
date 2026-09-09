@@ -14,23 +14,35 @@ import org.raku.nqp.sixmodel.SixModelObject
  * fields Compiler.nqp already collects per method, the programs list,
  * the serialized blob, the call-site data) and writes the zip.
  * Instruction lists are never looked at. Replaces JASTCompiler.writeClass
- * on the artifact road.
+ * on the artifact road. `record` is the record road's entry: the same
+ * reading, no file.
  */
 object UnitWriter {
+    /** Reads the JAST tree as a unit record. Refuses (a hard error naming
+     *  the unit) a tree not compiled on the unit road, one with bytecode
+     *  fallbacks, a block without a qbid or a program, two blocks sharing
+     *  a qbid, and a nested unit id with no retained record. */
     @JvmStatic
-    fun write(jast: SixModelObject?, jastNodes: SixModelObject?, filename: String?, tc: ThreadContext) {
-        if (jast == null || jastNodes == null || filename == null)
-            throw ExceptionHandling.dieInternal(tc, "jvm-write-unit: needs a JAST tree, the node types and a filename")
+    fun record(jast: SixModelObject?, jastNodes: SixModelObject?, tc: ThreadContext): UnitRecord {
+        if (jast == null || jastNodes == null)
+            throw ExceptionHandling.dieInternal(tc, "unit record: needs a JAST tree and the node types")
         JASTCompiler.ensureSetup(jastNodes, tc)
         val classType = jastNodes.at_key_boxed(tc, "JAST::Class")!!
         val methodType = jastNodes.at_key_boxed(tc, "JAST::Method")!!
         val jc = JastClass(jast, classType, tc)
         if (!jc.unitRoad)
-            throw ExceptionHandling.dieInternal(tc, "jvm-write-unit: ${jc.className} was not compiled on the artifact road")
+            throw ExceptionHandling.dieInternal(tc, "unit record: ${jc.className} was not compiled on the artifact road")
         if (jc.fallbacks != 0)
-            throw ExceptionHandling.dieInternal(tc, "jvm-write-unit: ${jc.className} has ${jc.fallbacks} bytecode fallback bodies")
-        if (jc.nestedClasses.isNotEmpty())
-            throw ExceptionHandling.dieInternal(tc, "jvm-write-unit: ${jc.className} carries nested units (${jc.nestedClasses}); runtime-compiled units are milestone 2")
+            throw ExceptionHandling.dieInternal(tc, "unit record: ${jc.className} has ${jc.fallbacks} bytecode fallback bodies")
+
+        /* Nested units (BEGIN-time compiles whose code refs this unit's
+         * serialization points into) were retained as records by
+         * loadcompunit; a missing one is a road mix-up, never a fallback. */
+        val nested = LinkedHashMap<String, UnitRecord>()
+        for (id in jc.nestedClasses) {
+            nested[id] = tc.gc.inMemoryUnitRecords[id]
+                ?: throw ExceptionHandling.dieInternal(tc, "unit record: ${jc.className} names nested unit $id, of which no record was retained")
+        }
 
         /* Blocks, keyed by qbid; the table is sized by the highest qbid. */
         val blocks = ArrayList<Pair<Int, BlockRec>>()
@@ -40,9 +52,9 @@ object UnitWriter {
             val m = JastMethod(iter.shift_boxed(tc)!!, methodType, tc)
             if (m.crOuter == -2) continue                     // not a code ref (hllName, getCallSites, main...)
             if (m.crQbid < 0)
-                throw ExceptionHandling.dieInternal(tc, "jvm-write-unit: block ${m.name} has no qbid")
+                throw ExceptionHandling.dieInternal(tc, "unit record: block ${m.name} has no qbid")
             if (m.crProgram < 0)
-                throw ExceptionHandling.dieInternal(tc, "jvm-write-unit: block ${m.crName} (${m.name}) has no program")
+                throw ExceptionHandling.dieInternal(tc, "unit record: block ${m.crName} (${m.name}) has no program")
             val cuid = if (m.crCuid.isNullOrEmpty()) null else m.crCuid
             blocks.add(m.crQbid to BlockRec(
                 m.crName ?: "", cuid, m.crOuter,
@@ -57,11 +69,14 @@ object UnitWriter {
         val table = arrayOfNulls<BlockRec>(maxQbid + 1)
         for ((q, b) in blocks) {
             if (table[q] != null)
-                throw ExceptionHandling.dieInternal(tc, "jvm-write-unit: two blocks with qbid $q")
+                throw ExceptionHandling.dieInternal(tc, "unit record: two blocks with qbid $q")
             table[q] = b
         }
 
         val programs = strList(jc.programs, tc)
+        for ((q, b) in blocks)
+            if (b.programIndex >= programs.size)
+                throw ExceptionHandling.dieInternal(tc, "unit record: block qbid $q names program ${b.programIndex} of ${programs.size}")
         val callSites = ArrayList<CallSiteRec>()
         jc.callsites?.let { cs ->
             val csIter = Ops.iter(cs, tc)
@@ -92,16 +107,25 @@ object UnitWriter {
             jc.className!!, jc.hll?.ifEmpty { null } ?: "nqp",
             jc.scHandle?.ifEmpty { null }, jc.scDesc?.ifEmpty { null },
             jc.serializedCount, jc.mainlineQbid, jc.entryQbid, jc.deserializeQbid, jc.loadQbid,
-            callSites, table, lexValues, listOf())
-        val record = UnitRecord(meta, programs, jc.serialized, mapOf())
+            callSites, table, lexValues, nested.keys.toList())
+        return UnitRecord(meta, programs, jc.serialized, nested)
+    }
+
+    /** The artifact writer: the record, zipped to a file. */
+    @JvmStatic
+    fun write(jast: SixModelObject?, jastNodes: SixModelObject?, filename: String?, tc: ThreadContext) {
+        if (filename == null)
+            throw ExceptionHandling.dieInternal(tc, "jvm-write-unit: needs a filename")
+        val record = record(jast, jastNodes, tc)
         try {
             FileOutputStream(filename).use { UnitZip.write(record, it) }
         } catch (e: java.io.IOException) {
             throw ExceptionHandling.dieInternal(tc, e)
         }
         if (System.getenv("NQP_CODE_WHY") != null)
-            System.err.println("unit artifact ${jc.className} -> $filename " +
-                "(${programs.size} programs, ${table.size} qbids, ${callSites.size} call sites)")
+            System.err.println("unit artifact ${record.meta.unitId} -> $filename " +
+                "(${record.programs.size} programs, ${record.meta.blocks.size} qbids, " +
+                "${record.meta.callSites.size} call sites, ${record.nested.size} nested)")
     }
 
     private fun strs(l: List<String?>): Array<String> = Array(l.size) { l[it] ?: "" }
