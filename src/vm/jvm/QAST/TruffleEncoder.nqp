@@ -49,6 +49,7 @@ class QAST::TruffleEncoder {
         callmethod callstatic chain chainstatic const curlexpad
         control defor dispatch getlexouter handle handlepayload hash if
         ifnull list list_i list_n list_s locallifetime null p6argvmarray p6assign usecapture
+        p6bindsig p6trybindsig
         p6decontrv p6decontrv_6c
         repeat_until repeat_while stmt stmts unless until while
         numify preinc predec falsey stringify intify
@@ -329,6 +330,8 @@ class QAST::TruffleEncoder {
     my int $W_LEXBIND_OUTER := 30;
     my int $W_SAVECAPTURE := 31;
     my int $W_FORLOOP := 32;
+    my int $W_P6BINDSIG := 33;
+    my int $W_P6TRYBINDSIG := 34;
 
     # Handler categories, matching ExceptionHandling on the runtime side
     # (and the Compiler's own copies).
@@ -657,21 +660,29 @@ class QAST::TruffleEncoder {
         $idx
     }
 
-    method encode_block($node, $block, $comp, :$comp_mode) {
-        run_init();
-        # NQP_CODE_WHY traces the encode/refuse decision per block, with the
-        # inputs that decide it. A block that encodes once and refuses the
-        # next time commits its lexicals and then lets the bytecode path
-        # declare them again; this is how that is caught.
-        my int $why := nqp::existskey(nqp::getenvhash(), 'NQP_CODE_WHY') ?? 1 !! 0;
+    # NQP_CODE_WHY traces the encode/refuse decision per block, with the
+    # inputs that decide it. A block that encodes once and refuses the
+    # next time commits its lexicals and then lets the bytecode path
+    # declare them again; this is how that is caught. Compiler.nqp calls
+    # this for the blocks it never hands the encoder (custom_args), so a
+    # census of the verdicts sees every block the unit compiles.
+    my int $code_why := -1;
+    method why($node, $comp_mode, str $verdict) {
+        $code_why := nqp::existskey(nqp::getenvhash(), 'NQP_CODE_WHY') ?? 1 !! 0
+            if $code_why < 0;
+        return 0 unless $code_why;
         my str $who := $node.name eq '' ?? '<anon ' ~ $node.cuid ~ '>' !! $node.name;
-        sub trace(str $verdict) {
-            nqp::say('code why ' ~ $who ~ ' cuid ' ~ $node.cuid
-                ~ ' blocktype ' ~ $node.blocktype
-                ~ ' comp_mode ' ~ ($comp_mode ?? 1 !! 0)
-                ~ ' exith ' ~ ($node.has_exit_handler ?? 1 !! 0)
-                ~ ' -> ' ~ $verdict) if $why;
-        }
+        nqp::say('code why ' ~ $who ~ ' cuid ' ~ $node.cuid
+            ~ ' blocktype ' ~ $node.blocktype
+            ~ ' comp_mode ' ~ ($comp_mode ?? 1 !! 0)
+            ~ ' exith ' ~ ($node.has_exit_handler ?? 1 !! 0)
+            ~ ' -> ' ~ $verdict);
+        1
+    }
+
+    method encode_block($node, $block, $comp, :$comp_mode, :$sidecar) {
+        run_init();
+        sub trace(str $verdict) { self.why($node, $comp_mode, $verdict) }
         if !$code_run { trace('no: code_run off'); return '' }
         if $comp_mode && !$code_precomp { trace('no: comp_mode'); return '' }
         my str $name := $node.name;
@@ -702,7 +713,12 @@ class QAST::TruffleEncoder {
             'params', nqp::list(), 'decls', nqp::list(),
             'nested', nqp::list(),
             'block', $block, 'qast', $node, 'comp', $comp, 'dispatches', 0,
-            'frame_op', 0, 'uses_hll', 0, 'hidx', 0);
+            'frame_op', 0, 'uses_hll', 0, 'hidx', 0,
+            # A custom_args block (Raku's full-binder signatures: sub-
+            # signatures, generic/coercive types, capture slurpies) binds
+            # its arguments itself, through the p6bindsig prologue in its
+            # body; patch_params emits an empty header for it.
+            'custom_args', ($node.custom_args ?? 1 !! 0));
         epush(%e, 2);   # wire version
         epush(%e, 0);   # result type, patched below
         epush(%e, 0);   # local count, patched below
@@ -796,9 +812,13 @@ class QAST::TruffleEncoder {
                 ~ ' uses_hll=' ~ %e<uses_hll>);
         }
         nqp::splice(@code, @ltypes, 4, 0);
-        # The size gate, BEFORE the commit: the program travels as one
-        # string constant, which the class file caps at 65535 UTF-8
-        # bytes (the rx descriptor's cliff). A refusal after the commit
+        # The size gate, BEFORE the commit: on the string road the program
+        # travels as one string constant, which the class file caps at
+        # 65535 UTF-8 bytes (the rx descriptor's cliff). A jar-bound unit
+        # (:sidecar) ships its programs in the LZ4 sidecar by index, where
+        # no such cap exists, so the gate is the string road's alone: the
+        # BOOTSTRAP BEGIN bodies (67k-134k, six of them) were the whole
+        # residue of it (2026-09-09). A refusal after the commit
         # would hand the bytecode path a block whose lexicals are already
         # registered ("Lexical '&parent' already declared", found
         # 2026-09-04 when the BOOTSTRAP BEGIN body, 4 decls and thousands
@@ -809,13 +829,15 @@ class QAST::TruffleEncoder {
         my int $est := 32 + 6 * nqp::elems(%e<nested>);
         for @code { $est := $est + nqp::chars(~$_) + 1 }
         for %e<pool> { $est := $est + nqp::chars($_) + 8 }
-        if $est > 60000 { trace('no: program too large (' ~ $est ~ ')'); return '' }
+        if $est > 60000 && !$sidecar {
+            trace('no: program too large (' ~ $est ~ ')'); return ''
+        }
         trace('YES: committing ' ~ nqp::elems(%e<decls>) ~ ' decls');
         for %e<decls> -> $d {
             my str $kind := $d[0];
             my $var := $d[1];
             nqp::say('code decl ' ~ $node.cuid ~ ' ' ~ $kind ~ ' ' ~ $var.name)
-                if $why;
+                if $code_why > 0;
             if $kind eq 'lex' { $block.add_lexical($var) }
             elsif $kind eq 'lexref' { $block.add_lexicalref($var) }
             elsif $kind eq 'static' { $block.add_lexical($var, :is_static) }
@@ -857,7 +879,7 @@ class QAST::TruffleEncoder {
         # The gate above bounded this; refusing here would be the bug it
         # exists to prevent, so a miss is an invariant failure, not a bail.
         nqp::die('code engine: program of ' ~ $node.cuid ~ ' grew past the size gate after commit ('
-            ~ nqp::chars($out) ~ ' chars)') if nqp::chars($out) > 65000;
+            ~ nqp::chars($out) ~ ' chars)') if nqp::chars($out) > 65000 && !$sidecar;
         if $code_encoded {
             nqp::say('code engine: ' ~ ($name eq '' ?? '<anon ' ~ $node.cuid ~ '>' !! $name));
         }
@@ -893,6 +915,18 @@ class QAST::TruffleEncoder {
     # expressions are encoded here, into a scratch list.
     method patch_params($params_at, %e) {
         my @params := %e<params>;
+        if %e<custom_args> {
+            # The runtime Binder binds every parameter from the body's
+            # p6bindsig, by name into the frame's lexicals, so the header
+            # declares none and accepts any arity: the arity check still
+            # runs (required 0, accepted -1 never fails) because it is what
+            # puts csd/args on the frame for the binder to read. A lowered
+            # parameter alongside would be bound twice; nothing emits one.
+            cbail('custom_args block with lowered params') if nqp::elems(@params);
+            my @hdr := nqp::list($W_PARAMS, 0, -1, 0);
+            nqp::splice(%e<code>, @hdr, $params_at, 1);
+            return 0;
+        }
         my int $pos_required := 0;
         my int $pos_optional := 0;
         my int $pos_slurpy := 0;
@@ -1964,6 +1998,22 @@ class QAST::TruffleEncoder {
             %e<frame_op> := 1;
             epush(%e, $W_P6ARGVMARRAY);
             return $T_OBJ;
+        }
+        if $name eq 'p6bindsig' || $name eq 'p6trybindsig' {
+            # The full-binder prologue of a custom_args block (Raku's
+            # runtime Binder over the frame's own csd/args). p6bindsig is a
+            # statement whose builder shape returns from the program when the
+            # binder auto-threaded (value null, LOOP's shape); p6trybindsig
+            # answers 1/0 for the assertparamcheck around it. Both read and
+            # rewrite cf.csd/cf.args, so they are frame-forcing.
+            cbail($name ~ ' arity') if nqp::elems(@($op));
+            %e<frame_op> := 1;
+            if $name eq 'p6bindsig' {
+                epush(%e, $W_P6BINDSIG);
+                return $T_OBJ;
+            }
+            epush(%e, $W_P6TRYBINDSIG);
+            return $T_INT;
         }
         if $name eq 'usecapture' {
             # The current frame's arguments captured for a re-dispatch,
