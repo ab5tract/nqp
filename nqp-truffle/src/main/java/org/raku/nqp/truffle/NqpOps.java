@@ -1703,6 +1703,8 @@ final class NqpOps {
         static final java.lang.invoke.MethodHandle P6TYPECHECKRV;
         static final java.lang.invoke.MethodHandle P6DECONTRV_RT;
         static final java.lang.invoke.MethodHandle P6ARGVMARRAY;
+        static final java.lang.invoke.MethodHandle P6BINDSIG;
+        static final java.lang.invoke.MethodHandle P6TRYBINDSIG;
         static {
             try {
                 Class<?> c = Class.forName("org.raku.rakudo.RakOps");
@@ -1733,6 +1735,12 @@ final class NqpOps {
                 P6ARGVMARRAY = l.findStatic(c, "p6argvmarray",
                     java.lang.invoke.MethodType.methodType(SMO, TC, CallSiteDescriptor.class,
                         Object[].class));
+                P6BINDSIG = l.findStatic(c, "p6bindsig",
+                    java.lang.invoke.MethodType.methodType(CallSiteDescriptor.class, TC,
+                        CallSiteDescriptor.class, Object[].class));
+                P6TRYBINDSIG = l.findStatic(c, "p6trybindsig",
+                    java.lang.invoke.MethodType.methodType(long.class, TC,
+                        CallSiteDescriptor.class, Object[].class));
             } catch (ReflectiveOperationException e) {
                 throw new ExceptionInInitializerError(e);
             }
@@ -1761,6 +1769,39 @@ final class NqpOps {
     @TruffleBoundary
     static Object p6argvmarray(ThreadContext tc, CallFrame cf) {
         try { return Rak.P6ARGVMARRAY.invoke(tc, cf.csd, cf.args); }
+        catch (Throwable t) { throw sneaky(t); }
+    }
+
+    /** rakudo's p6bindsig, the full-binder prologue of a custom_args block,
+     *  over the frame's own csd/args (the header's arity check put them
+     *  there). Answers true when the binder auto-threaded a Junction: the
+     *  autothreader's result is already stored on the caller and the program
+     *  must return at once. Otherwise the arguments are bound into the frame's
+     *  lexicals and the (possibly flattened) csd/args are back on the frame,
+     *  exactly what the emitted prologue reloads its locals from. */
+    @TruffleBoundary
+    static boolean p6bindsig(ThreadContext tc, CallFrame cf) {
+        try {
+            Object r = Rak.P6BINDSIG.invoke(tc, cf.csd, cf.args);
+            if (r == null) return true;
+            cf.csd = (CallSiteDescriptor) r;
+            cf.args = tc.flatArgs;
+            return false;
+        }
+        catch (Throwable t) { throw sneaky(t); }
+    }
+
+    /** rakudo's p6trybindsig over the frame's own csd/args: 1 bound, 0 not
+     *  (assertparamcheck turns the 0 into the bind failure the invoking
+     *  dispatch resumes on). The runtime leaves the flattened csd on the
+     *  frame; the matching args are in tc.flatArgs. */
+    @TruffleBoundary
+    static long p6trybindsig(ThreadContext tc, CallFrame cf) {
+        try {
+            long ok = (long) Rak.P6TRYBINDSIG.invoke(tc, cf.csd, cf.args);
+            cf.args = tc.flatArgs;
+            return ok;
+        }
         catch (Throwable t) { throw sneaky(t); }
     }
 

@@ -4655,16 +4655,12 @@ class QAST::CompilerJAST {
                 # 65535-byte cap) applies only where that cap exists.
                 my int $as_index := $*COMP_MODE
                     && %*COMPILING<%?OPTIONS><target> eq 'jar';
-                if $node.custom_args {
-                    # A custom_args block binds its own arguments from the
-                    # raw capture (Raku's runtime binder); the encoder never
-                    # sees it. Still a verdict, so NQP_CODE_WHY counts it.
-                    QAST::TruffleEncoder.why($node, $*COMP_MODE, 'no: custom_args');
-                }
-                else {
-                    $engine_prog := QAST::TruffleEncoder.encode_block($node, $block, self,
-                        :comp_mode($*COMP_MODE), :sidecar($as_index));
-                }
+                # A custom_args block binds its own arguments from the raw
+                # capture (Raku's runtime Binder, through the p6bindsig
+                # prologue in its body); the encoder reads the flag and
+                # emits no parameter prologue of its own for it.
+                $engine_prog := QAST::TruffleEncoder.encode_block($node, $block, self,
+                    :comp_mode($*COMP_MODE), :sidecar($as_index));
                 if $engine_prog ne '' {
                     $engine_body := 1;
                     my $il := JAST::InstructionList.new();

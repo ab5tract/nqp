@@ -115,6 +115,26 @@ final class NqpProgramBuilder {
             case NqpWire.USECAPTURE:
                 if (emit) b.emitUseCapture();
                 return at + 1;
+            case NqpWire.P6BINDSIG:
+                // The full-binder prologue: bind, or -- when the binder
+                // auto-threaded a Junction and already stored the result on
+                // the caller -- return from the program at once. A Block whose
+                // value is null, LOOP's shape, so a sinking parent is happy.
+                if (emit) {
+                    b.beginBlock();
+                    b.beginIfThen();
+                    b.emitP6BindSig();
+                    b.beginReturn();
+                    b.emitLoadNull();
+                    b.endReturn();
+                    b.endIfThen();
+                    b.emitLoadNull();
+                    b.endBlock();
+                }
+                return at + 1;
+            case NqpWire.P6TRYBINDSIG:
+                if (emit) b.emitP6TryBindSig();
+                return at + 1;
             case NqpWire.IVAL:
                 if (emit) b.emitLoadConstant(Long.parseLong(pool[code[at + 1]]));
                 return at + 2;
