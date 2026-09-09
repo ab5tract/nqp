@@ -107,11 +107,12 @@ class ProgramUnit(@JvmField val record: UnitRecord) : CompilationUnit() {
     override fun engineProgram(idx: Int): String = record.programs[idx]
     override fun serializedBlob(): ByteBuffer? = record.serialized?.let { ByteBuffer.wrap(it) }
 
-    /** A nested unit rides in the parent's zip (a loaded artifact) or, for
-     *  a parent that is itself a record in memory, in the process's
-     *  retention map -- the same map the writer embeds from. */
+    /** A nested unit rides in the parent's zip (a loaded artifact); a
+     *  parent built in memory had its nested records resolved into the
+     *  record by UnitWriter.record() before this unit existed. A missing
+     *  entry is a hard error, never a lookup elsewhere. */
     override fun claimNested(tc: ThreadContext, name: String): CompilationUnit {
-        val rec = record.nested[name] ?: tc.gc.inMemoryUnitRecords[name]
+        val rec = record.nested[name]
             ?: throw ExceptionHandling.dieInternal(tc, "unit ${unitId()} carries no nested unit named $name")
         val nested = ProgramUnit(rec)
         nested.shared = tc.gc.sharingHint
