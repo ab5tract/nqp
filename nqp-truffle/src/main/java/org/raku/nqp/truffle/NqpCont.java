@@ -20,9 +20,29 @@ final class NqpCont {
     static final class Suspend {
         final SaveStackException sse;
         final int rtype;
+        /**
+         * The suspended op's tail, applied on resume to the inner call's
+         * (object) value; null when the inner value IS the op's result.
+         *
+         * A FUSED op (isconcrete = decont + concreteness; istype = decont
+         * + type check; p6typecheckrv = a where call + the pass/fail
+         * decision) computes from a value user code produced, and the
+         * Java frames between the op and that call cannot be saved -- so
+         * without this the op's result WOULD be the inner value ("say
+         * f()" of a routine whose return subset takes answered the where
+         * block's True instead of 5). The finisher is the part of the op
+         * after the inner call, as a function of that call's value; see
+         * NqpTypeOps.SuspendedIn for where the finishers are made.
+         */
+        final java.util.function.Function<Object, Object> finish;
         Suspend(SaveStackException sse, int rtype) {
+            this(sse, rtype, null);
+        }
+        Suspend(SaveStackException sse, int rtype,
+                java.util.function.Function<Object, Object> finish) {
             this.sse = sse;
             this.rtype = rtype;
+            this.finish = finish;
         }
     }
 
