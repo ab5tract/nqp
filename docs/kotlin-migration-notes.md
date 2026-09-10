@@ -1,5 +1,14 @@
 # Kotlin migration prototype — findings
 
+**History (2026-08/09).** Kept for the per-class findings and the
+keep-as-Java reasoning. Several classes it discusses no longer exist:
+`jast2bc` in full (`JASTCompiler`, `JastClass`, `JavaClass`,
+`AutosplitMethodWriter`) and `LibraryLoader.java` were deleted by
+unit-artifact milestone 4 on 2026-09-10, which took the JVM class road
+with them, so the "LibraryLoader — keep as Java" ruling and the
+"Remaining Java" tally below are both settled by deletion rather than by
+conversion.
+
 Branch `kotlin-prototype`. Prototype scope: a representative slice of the
 JVM runtime converted from Java to Kotlin under mixed compilation, with
 full bootstrap + test-suite verification after each step. This document is
