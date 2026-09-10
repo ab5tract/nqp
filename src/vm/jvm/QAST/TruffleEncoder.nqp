@@ -754,7 +754,7 @@ class QAST::TruffleEncoder {
         1
     }
 
-    method encode_block($node, $block, $comp, :$comp_mode, :$sidecar, :$unit_road) {
+    method encode_block($node, $block, $comp, :$comp_mode) {
         run_init();
         sub trace(str $verdict) { self.why($node, $comp_mode, $verdict) }
         if !$code_run { trace('no: code_run off'); return '' }
@@ -765,10 +765,6 @@ class QAST::TruffleEncoder {
         if $code_only_set && !nqp::existskey(%code_only, $name) {
             trace('no: not in only'); return ''
         }
-        # A raw block (Compiler.nqp's own deserialize/load/main wrappers)
-        # is a parameterless declaration to the engine; on the class road
-        # its body stays bytecode, on the artifact road it must encode.
-        if $node.blocktype eq 'raw' && !$unit_road { trace('no: raw blocktype'); return '' }
         # An immediate block is compiled AND called by its enclosing block,
         # which is why encode_node already refuses one as a child
         # ('block immediate'). Encoding one as a target is the same
@@ -902,26 +898,6 @@ class QAST::TruffleEncoder {
                 ~ ' uses_hll=' ~ %e<uses_hll>);
         }
         nqp::splice(@code, @ltypes, 4, 0);
-        # The size gate, BEFORE the commit: on the string road the program
-        # travels as one string constant, which the class file caps at
-        # 65535 UTF-8 bytes (the rx descriptor's cliff). A jar-bound unit
-        # (:sidecar) ships its programs in the LZ4 sidecar by index, where
-        # no such cap exists, so the gate is the string road's alone: the
-        # BOOTSTRAP BEGIN bodies (67k-134k, six of them) were the whole
-        # residue of it (2026-09-09). A refusal after the commit
-        # would hand the bytecode path a block whose lexicals are already
-        # registered ("Lexical '&parent' already declared", found
-        # 2026-09-04 when the BOOTSTRAP BEGIN body, 4 decls and thousands
-        # of statements, first reached here as an immediate block). The
-        # estimate is an upper bound: every code word as decimal plus its
-        # separator, every pool entry with its length prefix, and room
-        # for the nested qbids patched in below.
-        my int $est := 32 + 6 * nqp::elems(%e<nested>);
-        for @code { $est := $est + nqp::chars(~$_) + 1 }
-        for %e<pool> { $est := $est + nqp::chars($_) + 8 }
-        if $est > 60000 && !$sidecar {
-            trace('no: program too large (' ~ $est ~ ')'); return ''
-        }
         trace('YES: committing ' ~ nqp::elems(%e<decls>) ~ ' decls');
         for %e<decls> -> $d {
             my str $kind := $d[0];
@@ -966,10 +942,6 @@ class QAST::TruffleEncoder {
         nqp::push(@out, ' ' ~ nqp::elems(%e<pool>));
         for %e<pool> { nqp::push(@out, ' ' ~ nqp::chars($_) ~ ':' ~ $_) }
         $out := nqp::join('', @out);
-        # The gate above bounded this; refusing here would be the bug it
-        # exists to prevent, so a miss is an invariant failure, not a bail.
-        nqp::die('code engine: program of ' ~ $node.cuid ~ ' grew past the size gate after commit ('
-            ~ nqp::chars($out) ~ ' chars)') if nqp::chars($out) > 65000 && !$sidecar;
         if $code_encoded {
             nqp::say('code engine: ' ~ ($name eq '' ?? '<anon ' ~ $node.cuid ~ '>' !! $name));
         }
