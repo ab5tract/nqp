@@ -209,16 +209,19 @@ object ExceptionHandling {
     }
 
     /**
-     * Before the unwinder is thrown to [handlerFrame], give back the
-     * live-invocation count of every frame it is about to tear past. Those
-     * frames never run leave() (the exception flies straight to the handler),
-     * so without this their StaticCodeInfo.liveInvocations stays over-counted
-     * -- which is what kept CallFrame.<init>'s outer-resolution search hunting
-     * the caller chain for module mainlines that exited long ago. Only frames
-     * strictly between the current frame and the handler are given back, and
-     * only once the handler is confirmed on the caller chain (so a lexical
-     * handler that is not a dynamic ancestor never makes us decrement past
-     * it). Idempotent via CallFrame.left.
+     * Before the unwinder is thrown to [handlerFrame], leave every frame it
+     * is about to tear past: run its exit handler with the result absent
+     * (Raku's LEAVE/UNDO/POST fire on an exceptional exit) and give back its
+     * live-invocation count. Those frames never run their own postlude (the
+     * exception flies straight to the handler), so without the count they
+     * stay over-counted in StaticCodeInfo.liveInvocations -- which is what
+     * kept CallFrame.<init>'s outer-resolution search hunting the caller
+     * chain for module mainlines that exited long ago. Innermost first, as
+     * the phasers must run. Only frames strictly between the current frame
+     * and the handler are torn, and only once the handler is confirmed on
+     * the caller chain (so a lexical handler that is not a dynamic ancestor
+     * never makes us decrement past it). One-shot with CallFrame.leave()
+     * via CallFrame.left.
      */
     private fun giveBackTornFrames(tc: ThreadContext, handlerFrame: CallFrame?) {
         if (handlerFrame == null) return
@@ -227,7 +230,7 @@ object ExceptionHandling {
         if (f !== handlerFrame) return   // handler not on the caller chain
         f = tc.curFrame
         while (f != null && f !== handlerFrame) {
-            f.countLeft()
+            f.leaveTorn()
             f = f.caller
         }
     }
