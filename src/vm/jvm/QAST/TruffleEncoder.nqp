@@ -650,6 +650,17 @@ class QAST::TruffleEncoder {
 
     sub cbail(str $why) { nqp::die('code-bail ' ~ $why) }
 
+    # Every BlockInfo walk in Compiler.nqp is guarded with
+    # `nqp::istype($cur_block, BlockInfo)`, and that guard is load-bearing:
+    # the outer of the outermost BlockInfo is not always another BlockInfo.
+    # A block compiled during a BEGIN-time EVAL reaches one whose outer is
+    # a RakuAST::Block, and an unguarded walk then calls .qast on it ("No
+    # such method 'qast' for invocant of type 'RakuAST::Block'", which the
+    # null-message bug above used to turn into a bare NullPointerException).
+    # BlockInfo is `my`-scoped to Compiler.nqp, so the test is a duck-typed
+    # one: only a BlockInfo answers to `qast`.
+    sub block_info($cur) { nqp::can($cur, 'qast') ?? 1 !! 0 }
+
     # Is a block with this cuid one of the blocks THIS block's own deferred
     # loop will compile? A QAST::BVal names a block of the same
     # compilation, and the block may sit on either side of the reference
@@ -2925,7 +2936,7 @@ class QAST::TruffleEncoder {
                 return nqp::existskey(%e<ownref>, $name) ?? '' !! 'lexical';
             }
             my $cur := %e<block>.outer;
-            while $cur {
+            while $cur && block_info($cur) {
                 if $cur.qast.ann('DYN_COMP_WRAPPER') {
                     $cur := 0;
                 }
@@ -3084,10 +3095,14 @@ class QAST::TruffleEncoder {
             # The typed accessors by the declared type, as the bytecode
             # path picks getattr_<t>/bindattr_<t>: 81/82 object, 117-119
             # and 121-123 for int/num/str.
+            # The declared WIDTH plays no part here, as it does not on the
+            # bytecode path: Compiler.nqp picks getattr_<char>/bindattr_<char>
+            # off the primspec alone (typechar) and emits no truncation for an
+            # attribute -- the P6opaque slot is the declared width, so the
+            # REPR truncates the store itself. Sized and full-width emit the
+            # same thing.
             my int $aspec := nqp::isnull($var.returns) ?? 0 !! nqp::objprimspec($var.returns);
             my int $auint := $aspec == 10 ?? 1 !! 0;
-            cbail('sized uint attribute')
-                if $auint && nqp::objprimbits($var.returns) > 0 && nqp::objprimbits($var.returns) < 64;
             my int $t := $auint ?? $T_UINT !! rt_of($var.returns);
             cbail('attribute type') if $t < 0 || $t > 4;
             # A uint attribute (objprimspec 10) uses getattr_u/bindattr_u,
@@ -3339,7 +3354,7 @@ class QAST::TruffleEncoder {
             return %e<own>{$name};
         }
         my $cur := %e<block>.outer;
-        while $cur {
+        while $cur && block_info($cur) {
             if $cur.qast.ann('DYN_COMP_WRAPPER') {
                 $cur := 0;
             }
@@ -3375,7 +3390,7 @@ class QAST::TruffleEncoder {
                 nqp::existskey(%e<ownret>, $name) ?? %e<ownret>{$name} !! nqp::null()];
         }
         my $cur := %e<block>.outer;
-        while $cur {
+        while $cur && block_info($cur) {
             if $cur.qast.ann('DYN_COMP_WRAPPER') {
                 $cur := 0;
             }
@@ -3396,7 +3411,7 @@ class QAST::TruffleEncoder {
     method lexical_in_scope(str $name, %e) {
         return 1 if nqp::existskey(%e<own>, $name);
         my $cur := %e<block>.outer;
-        while $cur {
+        while $cur && block_info($cur) {
             if $cur.qast.ann('DYN_COMP_WRAPPER') {
                 $cur := 0;
             }
