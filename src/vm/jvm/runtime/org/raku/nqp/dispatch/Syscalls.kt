@@ -520,9 +520,20 @@ object Syscalls {
             val codeType = args.obj(1)
             val tc = args.tc
             val cu = tc.curFrame!!.codeRef.staticInfo.compUnit
+            val trace = Ops.REPOINT_TRACE
+            if (trace)
+                System.err.println("nqp repoint: unit=" + cu.unitId()
+                    + " from frame '" + tc.curFrame!!.codeRef.name
+                    + "' cuid=" + tc.curFrame!!.codeRef.staticInfo.uniqueId)
             if (registry is org.raku.nqp.sixmodel.reprs.VMHashInstance) {
                 for ((cuid, entries) in registry.storage) {
-                    val target = cu.lookupCodeRef(cuid) ?: continue
+                    val target = cu.lookupCodeRef(cuid)
+                    if (trace)
+                        System.err.println("nqp repoint:   cuid=" + cuid + " -> " +
+                            (if (target == null) "MISS (left alone)"
+                             else "'" + target.name + "' cuid=" +
+                                  target.staticInfo.uniqueId))
+                    if (target == null) continue
                     if (entries == null) continue
                     val n = entries.elems(tc)
                     var i = 0L

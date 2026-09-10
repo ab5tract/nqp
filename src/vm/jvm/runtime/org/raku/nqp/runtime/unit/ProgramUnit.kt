@@ -6,6 +6,7 @@ import org.raku.nqp.runtime.CallSiteDescriptor
 import org.raku.nqp.runtime.CodeRef
 import org.raku.nqp.runtime.CompilationUnit
 import org.raku.nqp.runtime.ExceptionHandling
+import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.STable
 
@@ -64,6 +65,18 @@ class ProgramUnit(@JvmField val record: UnitRecord) : CompilationUnit() {
         qbidToCodeRef = table
         codeRefs = list.toTypedArray()
         callSites = getCallSites()
+        if (Ops.REPOINT_TRACE) {
+            val sb = StringBuilder("nqp buildTable: unit ${meta.unitId}" +
+                " blocks=${blocks.size} live=${list.size}" +
+                " serializedCodeRefCount=${meta.serializedCodeRefCount}" +
+                " mainlineQbid=${meta.mainlineQbid}")
+            for (q in blocks.indices)
+                sb.append("\n  qbid ").append(q).append(" -> ")
+                  .append(if (table[q] == null) "GAP"
+                          else "cuid=" + table[q]!!.staticInfo.uniqueId +
+                               " '" + table[q]!!.name + "'")
+            System.err.println(sb)
+        }
     }
 
     override fun initializeCompilationUnit(tc: ThreadContext, runDeserialize: Boolean) {
