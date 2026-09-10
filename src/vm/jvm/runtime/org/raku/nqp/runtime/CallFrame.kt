@@ -417,43 +417,75 @@ class CallFrame : Cloneable {
         wanted.priorInvocation = closed
     }
 
-    /** Set by leave(): the live-invocation count is given back once. */
+    /** Set by leave() or leaveTorn(): the count is given back once, and the
+     *  exit handler runs once (whichever of the two gets there first). */
     @JvmField var left = false
 
     /**
-     * Give back this frame's live-invocation count when the unwinder tears
-     * it past without running leave() (an exception's target is a handler
-     * further out, so the frames between never reach their postlude). Kept
-     * idempotent with leave() via `left`, and deliberately does NOT run an
-     * exit handler or touch tc.curFrame -- a torn frame's exit handler does
-     * not run here, and only the count needs correcting so CallFrame.<init>'s
-     * outer-resolution search does not keep hunting for outers that have
-     * already exited (the search was ~40% of a dispatch's cost, spent walking
-     * the whole caller chain for over-counted, long-gone module mainlines).
+     * The unwinder tears this frame past without running its postlude (an
+     * exception's target is a handler further out). Raku runs LEAVE, UNDO
+     * and POST on an exceptional exit, so the exit handler runs here with
+     * the result ABSENT -- the HLL's null value, which is what MoarVM's
+     * unwind hands it (VMNull, hllized) -- and then the live-invocation
+     * count is given back (so CallFrame.<init>'s outer-resolution search
+     * does not keep hunting for outers that have already exited). `left`
+     * makes this one-shot with leave(): a frame the engine road also
+     * leaves as the unwind passes through it runs its handler once, here,
+     * with the absent result, rather than twice or with the caller's
+     * stale return register. tc.curFrame is restored after the handler:
+     * the unwind continues to its target. An exception the handler throws
+     * replaces the in-flight one (the phaser's exception wins, as on
+     * MoarVM).
      */
-    fun countLeft() {
-        if (!left) {
-            left = true
-            codeRef.staticInfo.liveInvocations.decrementAndGet()
+    fun leaveTorn() {
+        if (left) return
+        left = true
+        val sci = codeRef.staticInfo
+        sci.liveInvocations.decrementAndGet()
+        if (sci.hasExitHandler) {
+            /* The unwind is still in flight and continues to its target
+             * once the handler has run, so this frame is put back. */
+            val origCur = tc.curFrame
+            tc.curFrame = this
+            try {
+                runExitHandler(sci, sci.compUnit.hllConfig.nullValue)
+            } finally {
+                tc.curFrame = origCur
+            }
         }
     }
 
     fun leave() {
         val sci = this.codeRef.staticInfo
         sci.priorInvocation = this
+        /* Read before the block below mutates it: true means the torn walk
+         * already ran this frame's exit handler, with the absent result. */
+        val alreadyLeft = left
         if (!left) {
             left = true
             sci.liveInvocations.decrementAndGet()
         }
-        if (sci.hasExitHandler) {
-            val origUnwinder = tc.unwinder
+        if (sci.hasExitHandler && !alreadyLeft)
+            runExitHandler(sci, Ops.result_o(this.caller!!))
+        this.tc.curFrame = this.caller
+    }
+
+    /**
+     * Run this frame's HLL exit handler (Raku's LEAVE/KEEP/UNDO/POST) with
+     * [result] as the frame's resultish -- the real return value on a normal
+     * exit, the HLL's null value when the unwinder tore the frame past. A
+     * fresh unwinder for the handler's own control flow, and the in-flight
+     * one back afterwards even if the handler throws.
+     */
+    private fun runExitHandler(sci: StaticCodeInfo, result: SixModelObject?) {
+        val origUnwinder = tc.unwinder
+        try {
             tc.unwinder = UnwindException()
-            val hll = sci.compUnit.hllConfig
-            Ops.invokeDirect(tc, hll.exitHandler, exitHandlerCallSite,
-                arrayOf<Any?>(this.codeRef, Ops.result_o(this.caller!!)))
+            Ops.invokeDirect(tc, sci.compUnit.hllConfig.exitHandler, exitHandlerCallSite,
+                arrayOf<Any?>(this.codeRef, result))
+        } finally {
             tc.unwinder = origUnwinder
         }
-        this.tc.curFrame = this.caller
     }
 
     /* Package-private in Java; Kotlin has no package visibility, and
