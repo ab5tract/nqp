@@ -35,6 +35,31 @@ class ProgramUnitTest {
         assertEquals(3, u.codeRefs!!.size)
     }
 
+    /**
+     * A qbid gap (a block that registered static lexical values but was
+     * never compiled into the unit) must stay a GAP in the qbid-indexed
+     * table and must not shift the blocks after it -- that table is what
+     * the serializer's code-ref slots and every BVal/CODEREF resolve
+     * through (`CompilationUnit.lookupCodeRef(Int)`), so a shift there is
+     * a code-ref identity fault. `codeRefs` is the DENSE list, as it is on
+     * the class road, where it is the reflection-ordered method list; the
+     * two are deliberately different shapes.
+     */
+    @Test
+    fun aQbidGapStaysAGapAndShiftsNothingAfterIt() {
+        val u = unit()
+        u.buildTable(null)
+        val t = u.qbidToCodeRef!!
+        assertNull(t[2])
+        assertEquals("orphan", t[3]!!.name)
+        assertEquals(2, t[3]!!.staticInfo.programIndex)
+        assertNull(u.lookupCodeRef(2))
+        assertSame(t[3], u.lookupCodeRef(3))
+        assertSame(t[0], u.lookupCodeRef(0))
+        // The dense list holds the live blocks only, in qbid order.
+        assertEquals(listOf("<mainline>", "deser", "orphan"), u.codeRefs!!.map { it.name })
+    }
+
     @Test
     fun blocksAreRawArgsEngineBlocksWithDistinctHandles() {
         val u = unit()
