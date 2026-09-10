@@ -947,7 +947,15 @@ final class NqpOps {
         try {
             return site.resolve().invokeExact(full);
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
-            return new NqpCont.Suspend(sse, NqpWire.T_OBJ);
+            /* The token carries THIS site's result type, not T_OBJ: the
+             * resume reads the suspended call's value out of the return
+             * registers by it (resumeEngine -> readResult), so an int-typed
+             * classlib op resumed as T_OBJ handed a Raku object to the next
+             * int-typed argument ("P6OpaqueDelegateInstance cannot be cast
+             * to Number" out of a MethodHandle's unboxLong, 2026-09-10).
+             * A uint site (wire type 4) reads from the int register. */
+            return new NqpCont.Suspend(sse,
+                rtype == NqpWire.T_UINT ? NqpWire.T_INT : rtype);
         } catch (RuntimeException | Error e) {
             throw e;
         } catch (Throwable t) {
@@ -967,37 +975,52 @@ final class NqpOps {
 
     @TruffleBoundary
     static void traceArityRefusal(Object[] fa, int required, int accepted, Throwable t) {
-        org.raku.nqp.runtime.CodeRef cr =
-            (org.raku.nqp.runtime.CodeRef) fa[NqpRootNode.ARG_CR];
-        org.raku.nqp.runtime.StaticCodeInfo si = cr == null ? null : cr.staticInfo;
-        System.err.println("nqp arity: refused in '" + (cr == null ? "<null>" : cr.name)
-            + "' uid=" + (si == null ? "?" : si.uniqueId)
-            + " at " + (si == null ? "?" : si.sourceFile + ":" + si.sourceLine)
-            + " outer=" + (si == null || si.outerStaticInfo == null
-                ? "?" : si.outerStaticInfo.uniqueId)
-            + " required=" + required + " accepted=" + accepted + ": " + t);
-        StringBuilder ab = new StringBuilder();
-        for (Object o : (Object[]) fa[NqpRootNode.ARG_ARGS])
-            ab.append(' ').append(o == null ? "null"
-                : o instanceof SixModelObject smo ? String.valueOf(smo.st.debugName)
-                : o.getClass().getSimpleName() + "=" + o);
-        CallFrame ccf = (CallFrame) fa[NqpRootNode.ARG_CF];
-        CallFrame caller = ccf == null ? null : ccf.caller;
-        System.err.println("nqp arity:   args:" + ab
-            + " csd=" + ((CallSiteDescriptor) fa[NqpRootNode.ARG_CSD]).numPositionals
-            + " caller=" + (caller == null || caller.codeRef == null ? "?"
-                : "'" + caller.codeRef.name + "' uid="
-                  + caller.codeRef.staticInfo.uniqueId + " at "
-                  + caller.codeRef.staticInfo.sourceFile + ":"
-                  + caller.codeRef.staticInfo.sourceLine));
-        CompilationUnit ccu = (CompilationUnit) fa[NqpRootNode.ARG_CU];
-        StringBuilder cb = new StringBuilder();
-        for (org.raku.nqp.runtime.CodeRef c : ccu.codeRefs)
-            cb.append(" [").append(c.staticInfo.uniqueId).append(" '")
-              .append(c.name).append("']");
-        System.err.println("nqp arity:   unit " + ccu.unitId()
-            + " mainlineQbid=" + ccu.mainlineQbid() + " coderefs:" + cb);
-        if (ARITY_TRACE_STACK) new Throwable("the arity refusal's host stack").printStackTrace();
+        /* A continuation capture crossing the prologue is not an arity
+         * refusal, and printing is not worth breaking one over: every
+         * dereference below is guarded and the whole body is wrapped, so
+         * the diagnostic can never replace the error it exists to explain. */
+        if (t instanceof org.raku.nqp.runtime.SaveStackException) return;
+        try {
+            CodeRef cr = (CodeRef) fa[NqpRootNode.ARG_CR];
+            org.raku.nqp.runtime.StaticCodeInfo si = cr == null ? null : cr.staticInfo;
+            System.err.println("nqp arity: refused in '" + (cr == null ? "<null>" : cr.name)
+                + "' uid=" + (si == null ? "?" : si.uniqueId)
+                + " at " + (si == null ? "?" : si.sourceFile + ":" + si.sourceLine)
+                + " outer=" + (si == null || si.outerStaticInfo == null
+                    ? "?" : si.outerStaticInfo.uniqueId)
+                + " required=" + required + " accepted=" + accepted + ": " + t);
+            StringBuilder ab = new StringBuilder();
+            Object[] args = (Object[]) fa[NqpRootNode.ARG_ARGS];
+            if (args == null) ab.append(" <null args>");
+            else for (Object o : args)
+                ab.append(' ').append(o == null ? "null"
+                    : o instanceof SixModelObject smo ? String.valueOf(smo.st.debugName)
+                    : o.getClass().getSimpleName() + "=" + o);
+            CallFrame ccf = (CallFrame) fa[NqpRootNode.ARG_CF];
+            CallFrame caller = ccf == null ? null : ccf.caller;
+            CallSiteDescriptor csd = (CallSiteDescriptor) fa[NqpRootNode.ARG_CSD];
+            System.err.println("nqp arity:   args:" + ab
+                + " csd=" + (csd == null ? "?" : String.valueOf(csd.numPositionals))
+                + " caller=" + (caller == null || caller.codeRef == null ? "?"
+                    : "'" + caller.codeRef.name + "' uid="
+                      + caller.codeRef.staticInfo.uniqueId + " at "
+                      + caller.codeRef.staticInfo.sourceFile + ":"
+                      + caller.codeRef.staticInfo.sourceLine));
+            CompilationUnit ccu = (CompilationUnit) fa[NqpRootNode.ARG_CU];
+            StringBuilder cb = new StringBuilder();
+            if (ccu == null || ccu.codeRefs == null) cb.append(" <none>");
+            else for (CodeRef c : ccu.codeRefs)
+                cb.append(" [").append(c == null ? "?" : c.staticInfo.uniqueId)
+                  .append(" '").append(c == null ? "?" : c.name).append("']");
+            System.err.println("nqp arity:   unit "
+                + (ccu == null ? "?" : ccu.unitId())
+                + " mainlineQbid=" + (ccu == null ? "?" : String.valueOf(ccu.mainlineQbid()))
+                + " coderefs:" + cb);
+            if (ARITY_TRACE_STACK)
+                new Throwable("the arity refusal's host stack").printStackTrace();
+        } catch (Throwable ignored) {
+            System.err.println("nqp arity: (trace itself failed: " + ignored + ")");
+        }
     }
 
     /**
@@ -1013,6 +1036,18 @@ final class NqpOps {
      */
     static Object suspendToken(org.raku.nqp.runtime.SaveStackException sse) {
         return new NqpCont.Suspend(sse, NqpWire.T_OBJ);
+    }
+
+    /**
+     * The same token for a site whose static result type is NOT an object.
+     * The resume reads the suspended call's value out of the return
+     * registers by this type ({@link NqpCodeEngine#resumeEngine} ->
+     * readResult), so an int-typed site must say so: resuming istype as
+     * T_OBJ handed a Raku Bool to code expecting a long
+     * ("P6OpaqueDelegateInstance cannot be cast to Number").
+     */
+    static Object suspendToken(org.raku.nqp.runtime.SaveStackException sse, int rtype) {
+        return new NqpCont.Suspend(sse, rtype);
     }
 
     static RuntimeException carry(Throwable t) {
