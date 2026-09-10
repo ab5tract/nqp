@@ -5,7 +5,7 @@ import org.raku.nqp.runtime.unit.UnitRecord
 import org.raku.nqp.sixmodel.SixModelObject
 
 /** A runtime compile's output before and after loadcompunit: the class
- *  road hands over class bytes, the record road (NQP_UNIT) a unit record;
+ *  road hands over class bytes, the unit road a unit record;
  *  loadcompunit turns either into cu and clears the input it consumed. */
 class EvalResult : SixModelObject() {
     @JvmField var jc: JavaClass? = null

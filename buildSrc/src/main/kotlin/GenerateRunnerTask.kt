@@ -65,7 +65,8 @@ abstract class GenerateRunnerTask : DefaultTask() {
             |#
             |# The engine jar goes on the class path rather than the boot
             |# classpath because the boot loader cannot see the module path.
-            |# Every regex and (with NQP_CODE_RUN) every block runs on it:
+            |# Every regex and every block runs on it (the encoder is always
+            |# on since milestone 3):
             |# there is no bytecode regex path to fall back to.
             |TRUFFLE="--module-path ${truffleModuleDir.get()} --add-modules org.graalvm.truffle,org.graalvm.truffle.runtime"
             |TRUFFLE_NATIVE=",org.graalvm.truffle"

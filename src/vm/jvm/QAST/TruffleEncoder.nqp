@@ -405,9 +405,14 @@ class QAST::TruffleEncoder {
         return 0 if $run_init_done;
         $run_init_done := 1;
         my %env := nqp::getenvhash();
-        # ON by default since milestone 3 (2026-09-09): the engine build is
-        # the build. NQP_CODE_RUN=0 turns the encoder off (class road only;
-        # meaningless on the unit road, where Compiler.nqp dies on it).
+        # Always on since milestone 3 (2026-09-09): the engine build is the
+        # build and the unit road needs every block encoded, so NQP_CODE_RUN
+        # is not a knob -- do not set it at all. Compiler.nqp dies on
+        # NQP_CODE_RUN=0 / NQP_CODE_PRECOMP=0, and stage0's class-road
+        # bootstrap compiler reads the mere PRESENCE of NQP_CODE_RUN (even
+        # '=0') as "encode", so exporting it into a gradle build builds
+        # stage1 differently. The surviving switches are the diagnostics:
+        # NQP_CODE_ENCODED, NQP_CODE_BAIL, NQP_CODE_WHY, NQP_CODE_STRICT.
         $code_run := nqp::existskey(%env, 'NQP_CODE_RUN')
             ?? (nqp::atkey(%env, 'NQP_CODE_RUN') ne '0' ?? 1 !! 0)
             !! 1;
