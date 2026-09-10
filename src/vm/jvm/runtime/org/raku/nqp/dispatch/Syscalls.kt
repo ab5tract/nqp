@@ -493,6 +493,20 @@ object Syscalls {
             obj(res)
         }
 
+        /* The driver's record (QAST::UnitRecord): written as a unit
+         * artifact, or built in memory for nqp::loadcompunit. The two
+         * JAST-tree syscalls above serve stage0's compiler until it is
+         * regenerated. */
+        define("jvm-write-unit-record", OBJ, STR) { args ->
+            org.raku.nqp.runtime.unit.UnitWriter.write(args.obj(0), args.str(1), args.tc)
+            void
+        }
+        define("jvm-build-unit-record", OBJ) { args ->
+            val res = org.raku.nqp.runtime.EvalResult()
+            res.record = org.raku.nqp.runtime.unit.UnitWriter.record(args.obj(0), args.tc)
+            obj(res)
+        }
+
         /* Loads a nested unit embedded in the current unit's jar and
          * installs its code refs into the current unit's qbid table. */
         define("jvm-claim-nested", STR, OBJ, OBJ) { args ->

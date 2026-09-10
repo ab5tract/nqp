@@ -123,6 +123,30 @@ object UnitWriter {
                 "${record.meta.callSites.size} call sites, ${record.nested.size} nested)")
     }
 
+    /** The record road's entry for the driver's QAST::UnitRecord. */
+    @JvmStatic
+    fun record(unit: SixModelObject?, tc: ThreadContext): UnitRecord {
+        if (unit == null)
+            throw ExceptionHandling.dieInternal(tc, "unit record: needs a QAST::UnitRecord")
+        return RecordReader(tc).read(unit)
+    }
+
+    @JvmStatic
+    fun write(unit: SixModelObject?, filename: String?, tc: ThreadContext) {
+        if (filename == null)
+            throw ExceptionHandling.dieInternal(tc, "jvm-write-unit-record: needs a filename")
+        val record = record(unit, tc)
+        try {
+            FileOutputStream(filename).use { UnitZip.write(record, it) }
+        } catch (e: java.io.IOException) {
+            throw ExceptionHandling.dieInternal(tc, e)
+        }
+        if (System.getenv("NQP_CODE_WHY") != null)
+            System.err.println("unit artifact ${record.meta.unitId} -> $filename " +
+                "(${record.programs.size} programs, ${record.meta.blocks.size} qbids, " +
+                "${record.meta.callSites.size} call sites, ${record.nested.size} nested)")
+    }
+
     private fun strs(l: List<String?>): Array<String> = Array(l.size) { l[it] ?: "" }
 
     private fun strList(obj: SixModelObject?, tc: ThreadContext): Array<String> {

@@ -1,4 +1,4 @@
-# Phase 1 of the jast2bc-to-Truffle migration (rakudo's
+# Phase 1 of the Truffle migration (rakudo's
 # docs/jvm-truffle-migration.md): measurement before movement. This walk
 # classifies every code object a compilation unit emits against the op set
 # the Truffle interpreter commits to covering first, and reports what share
@@ -45,14 +45,30 @@ class QAST::TruffleEncoder {
     # op has an encoding, not that every use of it encodes (arity and
     # shape still bail), so the survey stays an upper bound and the honest
     # yield of a tag group still wants an NQP_CODE_ALSO run.
+    #
+    # It is also what supports_op answers from, so every name encode_op
+    # handles in its `$name eq` chain and does NOT have in %emit_ops
+    # belongs here: an op missing from both makes the backend's
+    # supports-op say "no" for an op the encoder compiles, and HLL code
+    # picks a worse implementation for it. The list is derived by
+    # comparing `$name eq '...'` in this file against the op3 table; when
+    # a hand row is added, add its name here.
+    #
+    # Deliberately absent, with no row on either side (no encoding, no
+    # classlib mapping) -- the encoder refuses them and supports-op must
+    # say so: takedispatcher, takenextdispatcher, cleardispatcher,
+    # clearnextdispatcher, wantdecont, setup_blv.
     my $extra_ops := 'assign_i assign_n assign_s assign_u bind call
         callmethod callstatic chain chainstatic const curlexpad
         control defor dispatch getlexouter handle handlepayload hash if
         ifnull list list_i list_n list_s locallifetime null p6argvmarray p6assign usecapture
         p6bindsig p6trybindsig
-        p6decontrv p6decontrv_6c
+        p6decontrv p6decontrv_6c p6invokeflat p6return
         repeat_until repeat_while stmt stmts unless until while
-        numify preinc predec falsey stringify intify
+        with without xor syscall
+        numify preinc predec postinc postdec falsey stringify intify
+        index indexingoptimized rindex ord settypefinalize
+        sprintf sprintfdirectives sprintfaddargumenthandler
         register delegate track guard savecapture for';
 
     # Node kinds the encoder handles outside the op table.
@@ -182,8 +198,8 @@ class QAST::TruffleEncoder {
             # Constants all encode.
         }
         elsif nqp::istype($node, QAST::VM) {
-            # Backend-specific payloads (inline JAST); never encodable,
-            # and the alternates inside are not QAST to walk.
+            # Backend-specific payloads; never encodable, and the
+            # alternates inside are not QAST to walk.
             self.tag(%blk, 'node:VM');
         }
         else {
@@ -498,6 +514,35 @@ class QAST::TruffleEncoder {
         }
         1
     }
+
+    my %op_table_covered;
+    my int $op_table_built := 0;
+    # Does the encoder have a row for this op (a table row, a hand row in
+    # encode_op's `$name eq` chain, a registered desugar)? Knob-independent
+    # -- init() and %covered only exist under the report/survey knobs -- so
+    # the table half is built once on demand. The classlib registry is the
+    # caller's other half (QAST::OperationsJVM.core_op_supported).
+    #
+    # The desugar registry is consulted per call, never cached with the
+    # rest: Rakudo publishes CODE_OP_DESUGARS and then keeps GROWING it
+    # (register_op_desugar, src/vm/jvm/Raku/Ops.nqp), so a probe that ran
+    # before a later registration would otherwise cache a "no" forever.
+    method supports_op(str $name) {
+        unless $op_table_built {
+            $op_table_built := 1;
+            emit_init();
+            for %emit_ops {
+                my str $k := $_.key;
+                my int $slash := nqp::index($k, '/');
+                %op_table_covered{$slash >= 0 ?? nqp::substr($k, 0, $slash) !! $k} := 1;
+            }
+            for nqp::split(' ', subst_ws($extra_ops)) { %op_table_covered{$_} := 1 }
+        }
+        return 1 if nqp::existskey(%op_table_covered, $name);
+        my $dreg := nqp::gethllsym('nqp', 'CODE_OP_DESUGARS');
+        nqp::isnull($dreg) ?? 0 !! (nqp::existskey($dreg, $name) ?? 1 !! 0)
+    }
+
     sub emit_init() {
         return 0 if $emit_init_done;
         $emit_init_done := 1;
@@ -686,8 +731,8 @@ class QAST::TruffleEncoder {
     #
     # The walk STOPS at a nested QAST::Block, and that boundary is the
     # whole point: the deferred loop compiles a block through
-    # $comp.as_jast($blk), which takes its outer from $*BLOCK -- the block
-    # being encoded here. A block declared one level deeper (inside a
+    # $comp.compile_block($blk), which takes its outer from $*BLOCK -- the
+    # block being encoded here. A block declared one level deeper (inside a
     # nested block B) belongs to B's deferral, not this one; admitting it
     # would let this block's deferral reach it first and compile it with
     # the WRONG outer, silently, on a road that has no fallback. So the
@@ -922,19 +967,15 @@ class QAST::TruffleEncoder {
         for %e<nested> -> $nb {
             my $blk := $nb[1];
             unless $*CODEREFS.know_cuid($blk.cuid) {
-                # An immediate block is compiled as a declaration, the way
-                # the bytecode path's own if/for roads flip it: compiled
-                # as immediate, as_jast would also emit its direct call
-                # into the enclosing method -- registering a reentry
-                # label there that the discarded emission never defines
-                # ("reenter_N used but not defined").
+                # An immediate block is compiled as a declaration: compiled
+                # as immediate, the deferred compile would also register a
+                # call into the enclosing block that nothing emits.
                 my str $bt := $blk.blocktype;
                 my int $imm := $bt eq 'immediate' || $bt eq 'immediate_static';
                 $blk.blocktype($bt eq 'immediate' ?? 'declaration' !! 'declaration_static')
                     if $imm;
-                my $r := $comp.as_jast($blk);
+                $comp.compile_block($blk);
                 $blk.blocktype($bt) if $imm;
-                $*STACK.obtain(NQPMu, $r);
             }
             # Positions were recorded before the local types were spliced
             # into the header; account for the shift.
@@ -1298,7 +1339,7 @@ class QAST::TruffleEncoder {
             return $T_OBJ;
         }
         if nqp::istype($n, QAST::VM) {
-            # Exactly what as_jast(QAST::VM) does: the backend picks its
+            # Exactly what a QAST::VM means on this backend: it picks its
             # own alternative and the rest of the node is not ours. A node
             # with no 'jvm' alternative would not compile on the class
             # road either, so it bails rather than dying here.
@@ -1690,14 +1731,14 @@ class QAST::TruffleEncoder {
             # falsey(x): the logical negation of truthiness, an int. not_i and
             # istrue are both covered (istrue is classlib [RT_OBJ]->RT_INT), so
             # not_i(istrue(x)); a native operand coerces to obj for istrue,
-            # matching the JAST handler's boxed result. Non-committing.
+            # matching the classlib handler's boxed result. Non-committing.
             cbail('falsey arity') unless nqp::elems(@($op)) == 1;
             return self.encode_op(QAST::Op.new( :op('not_i'),
                 QAST::Op.new( :op('istrue'), $op[0] ) ), %e, $want);
         }
         if $name eq 'numify' {
-            # numify(x): x in num context, exactly Compiler.nqp's as_jast(x,
-            # :want(NUM)). encode_CHILD, not encode_node: the node road only
+            # numify(x): x in num context, exactly the backend's own
+            # num coercion. encode_CHILD, not encode_node: the node road only
             # passes the want down and answers whatever type the child has,
             # so numify(~$/) came back a str and dec_number handed
             # QAST::NVal.new a P6str (2026-09-08, t/nqp/041-flat.t). The
@@ -1709,8 +1750,8 @@ class QAST::TruffleEncoder {
             # Coerce the child to the wanted native type via encode_child (not
             # encode_node): that inserts $W_COERCE, whose obj->str/int road is
             # Ops.smart_stringify/smart_intify -- the proper stringification,
-            # not a raw unbox (which failed on a P6opaque). Mirrors the JAST
-            # as_jast(x, :want(STR/INT)) path.
+            # not a raw unbox (which failed on a P6opaque). Mirrors the
+            # backend's own str/int coercion.
             cbail($name ~ ' arity') unless nqp::elems(@($op)) == 1;
             return self.encode_child($op[0], %e, $name eq 'stringify' ?? $T_STR !! $T_INT);
         }
@@ -1719,7 +1760,7 @@ class QAST::TruffleEncoder {
         # native spec (nqp::objprimspec, as native_assign_bind_scope uses):
         #   object var (spec 0) -- the value may be null (an uninitialized
         #     `my $x`), which the op auto-vivifies to 0 before ++/-- (so
-        #     `my $x; --$x == -1`). The JAST add_i unboxes null as 0; the
+        #     `my $x; --$x == -1`). The classlib add_i unboxes null as 0; the
         #     engine's native add_i would blow up on it, so read defined-or-0.
         #   native var (spec 1/2/3) -- never null (0-initialised), read direct.
         # Reads are shallow_clones so no node is encoded twice.
@@ -1749,10 +1790,10 @@ class QAST::TruffleEncoder {
         }
         # stringify/intify still deferred: unlike numify, their obj->str/int
         # coercion is not a plain unbox -- an arbitrary object needs the HLL's
-        # stringification (JAST's :want(STR) path), and encode_node's coercion
+        # stringification, and encode_node's own coercion
         # raw-unboxes ("P6opaque cannot unbox to a native string", 2026-09-08).
         if $name eq 'settypefinalize' {
-            # A no-op stub on the JVM (Compiler.nqp: as_jast($op[0])); the
+            # A no-op stub on the JVM (it just yields its child); the
             # finalize wiring is not hooked up, so just yield the child.
             cbail('settypefinalize arity') unless nqp::elems(@($op)) >= 1;
             return self.encode_node($op[0], %e, $want);
@@ -1868,9 +1909,8 @@ class QAST::TruffleEncoder {
         return self.encode_op_tail($op, $name, %e, $want);
     }
 
-    # The tail of encode_op's op dispatch, split out so neither half crosses
-    # the 64KB JVM method limit -- above it jast2bc's AutosplitMethodWriter
-    # takes a split path it mishandles (a null/unreachable frame -> NPE).
+    # The tail of encode_op's op dispatch, split out so neither half grows
+    # past what one block can hold comfortably.
     # $name is the op name already computed by encode_op.
     # nqp::for(list, block): the iterator loop Compiler.nqp's add_core_op('for')
     # builds. The list, its iterator and the block ride scratch locals; each
@@ -2011,7 +2051,7 @@ class QAST::TruffleEncoder {
         }
         if $name eq 'indexingoptimized' {
             # A string-indexing hint on the JVM: the operand wanted as a str
-            # (Compiler.nqp: as_jast($op[0], :want($RT_STR))).
+            # (the operand in str context).
             cbail('indexingoptimized arity') unless nqp::elems(@($op)) == 1;
             return self.encode_child($op[0], %e, $T_STR);
         }
@@ -2021,8 +2061,8 @@ class QAST::TruffleEncoder {
             # dispatch to the 'boot-syscall' dispatcher, the operation named by
             # a 'dispatcher-<kind>' string. register/delegate pass their
             # children through; track/guard fold their first (constant-string)
-            # operand into the dispatcher name (the trailing '-' is the JAST
-            # spelling). Reduces to the covered 'dispatch' op.
+            # operand into the dispatcher name (the trailing '-' is part of
+            # the spelling). Reduces to the covered 'dispatch' op.
             my $disp := QAST::Op.new( :op('dispatch'),
                 QAST::SVal.new( :value('boot-syscall') ) );
             if $name eq 'register' || $name eq 'delegate' {
@@ -2116,8 +2156,8 @@ class QAST::TruffleEncoder {
             return self.encode_op(QAST::Op.new( :op('indexfrom'), |@args ), %e, $want);
         }
         if $name eq 'const' {
-            # Compiler.nqp's %const_map, published as an HLL symbol: the
-            # same integer the bytecode path folds this to.
+            # Compiler.nqp's %const_map, published as an HLL symbol: one
+            # table of nqp::const names, read here rather than duplicated.
             my $map := nqp::gethllsym('nqp', 'CODE_CONST_MAP');
             cbail('const map unpublished') if nqp::isnull($map);
             cbail('const ' ~ $op.name) unless nqp::existskey($map, $op.name);
@@ -3286,17 +3326,15 @@ class QAST::TruffleEncoder {
         && ($n.blocktype eq 'immediate' || $n.blocktype eq 'immediate_static')
     }
 
-    # A rule the grammar engine covers, handed to it whole -- exactly what
-    # Compiler.nqp's engine_jast does, built here as a QAST tree the general
-    # encoder consumes. The bytecode path is untouched; a rule the engine
-    # does NOT cover (rx_descriptor is null) bails, so its full matcher
-    # stays bytecode. The prologue is engine_jast's: !cursor_start_all
+    # A rule the grammar engine covers, handed to it whole, built here as a
+    # QAST tree the general encoder consumes. A rule the engine does NOT
+    # cover (rx_descriptor is null) bails, and with no other regex road that
+    # is a compile error naming the rule. The prologue: !cursor_start_all
     # answers the cursor, target and start position (the cursor's own $!pos
     # is -3 until the rule finishes), the invocant's $!from decides
     # scanning, and rxmatch runs the rule. The callback block -- the pieces
-    # the engine cannot express -- rides the CODEREF road (compiled to
-    # bytecode as any nested block), so nothing about the rule body needs
-    # to encode; only this prologue does.
+    # the engine cannot express -- is a nested block like any other, so
+    # nothing about the rule body needs to encode; only this prologue does.
     method encode_regex($node, %e) {
         my $comp := %e<comp>;
         my $desc := $comp.rx_descriptor($node);
