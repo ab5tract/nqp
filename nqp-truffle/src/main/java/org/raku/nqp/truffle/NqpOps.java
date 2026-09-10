@@ -955,6 +955,51 @@ final class NqpOps {
         }
     }
 
+    /* ----- NQP_ARITY_TRACE: an arity refusal names no block, and the
+     * frame-free road has no CallFrame to name one from, so a refusal in
+     * generated or dynamically compiled code is otherwise unlocatable.
+     * The flag is static and the printing is behind a boundary: the
+     * compiled catch arm carries neither. =2 adds the host stack. ----- */
+
+    static final boolean ARITY_TRACE = System.getenv("NQP_ARITY_TRACE") != null;
+    private static final boolean ARITY_TRACE_STACK =
+        "2".equals(System.getenv("NQP_ARITY_TRACE"));
+
+    @TruffleBoundary
+    static void traceArityRefusal(Object[] fa, int required, int accepted, Throwable t) {
+        org.raku.nqp.runtime.CodeRef cr =
+            (org.raku.nqp.runtime.CodeRef) fa[NqpRootNode.ARG_CR];
+        org.raku.nqp.runtime.StaticCodeInfo si = cr == null ? null : cr.staticInfo;
+        System.err.println("nqp arity: refused in '" + (cr == null ? "<null>" : cr.name)
+            + "' uid=" + (si == null ? "?" : si.uniqueId)
+            + " at " + (si == null ? "?" : si.sourceFile + ":" + si.sourceLine)
+            + " outer=" + (si == null || si.outerStaticInfo == null
+                ? "?" : si.outerStaticInfo.uniqueId)
+            + " required=" + required + " accepted=" + accepted + ": " + t);
+        StringBuilder ab = new StringBuilder();
+        for (Object o : (Object[]) fa[NqpRootNode.ARG_ARGS])
+            ab.append(' ').append(o == null ? "null"
+                : o instanceof SixModelObject smo ? String.valueOf(smo.st.debugName)
+                : o.getClass().getSimpleName() + "=" + o);
+        CallFrame ccf = (CallFrame) fa[NqpRootNode.ARG_CF];
+        CallFrame caller = ccf == null ? null : ccf.caller;
+        System.err.println("nqp arity:   args:" + ab
+            + " csd=" + ((CallSiteDescriptor) fa[NqpRootNode.ARG_CSD]).numPositionals
+            + " caller=" + (caller == null || caller.codeRef == null ? "?"
+                : "'" + caller.codeRef.name + "' uid="
+                  + caller.codeRef.staticInfo.uniqueId + " at "
+                  + caller.codeRef.staticInfo.sourceFile + ":"
+                  + caller.codeRef.staticInfo.sourceLine));
+        CompilationUnit ccu = (CompilationUnit) fa[NqpRootNode.ARG_CU];
+        StringBuilder cb = new StringBuilder();
+        for (org.raku.nqp.runtime.CodeRef c : ccu.codeRefs)
+            cb.append(" [").append(c.staticInfo.uniqueId).append(" '")
+              .append(c.name).append("']");
+        System.err.println("nqp arity:   unit " + ccu.unitId()
+            + " mainlineQbid=" + ccu.mainlineQbid() + " coderefs:" + cb);
+        if (ARITY_TRACE_STACK) new Throwable("the arity refusal's host stack").printStackTrace();
+    }
+
     /**
      * The suspension token a DEDICATED operation answers when a
      * continuation capture crosses it -- the same value {@link #run} and

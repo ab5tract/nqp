@@ -45,6 +45,21 @@ object ExceptionHandling {
         val exObj: VMExceptionInstance
         if (tc.gc.noisyExceptions) {
             (t ?: Throwable(msg)).printStackTrace()
+            /* The host stack alone names Truffle nodes, not blocks: on the
+             * unit road every engine frame looks the same in it. The frame
+             * chain is the Raku-level "where", and it is what locates a
+             * failure inside CORE. */
+            val names = StringBuilder("nqp frames:")
+            var f = tc.curFrame
+            var n = 0
+            while (f != null && n < 40) {
+                val si = f.codeRef?.staticInfo
+                names.append("\n  '").append(f.codeRef?.name ?: "?").append("' ")
+                    .append(si?.sourceFile).append(':').append(si?.sourceLine)
+                f = f.caller
+                n++
+            }
+            System.err.println(names)
         }
         try {
             val exType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.exceptionType!!
