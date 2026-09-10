@@ -164,6 +164,16 @@ public final class NqpWire {
      *  block local labelLocal at loop entry and read by both unwind arms as the
      *  `where` for _is_same_label, exactly as LOOPH's hasLabel form. Additive. */
     public static final int FORLOOPL = 35;
+    /** 36 OPCALLT rtype opId nargs child*: OPCALL that also carries the op's
+     *  static RESULT type. OPCALL has no room for one (its layout is fixed),
+     *  and the builder cannot infer it -- yet a suspension token must say
+     *  which return register the resume reads (resumeEngine -> readResult),
+     *  so an int/num/str-typed table op that suspends resumed with an object
+     *  and handed it to the next native argument. The encoder emits this tag
+     *  in place of OPCALL for every table op whose result is not an object;
+     *  OPCALL stays for object-typed ops and for the hand-written emissions,
+     *  which are object-typed. Additive: stage0 programs predate it. */
+    public static final int OPCALLT = 36;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;

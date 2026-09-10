@@ -197,11 +197,15 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     /** One op from the {@link NqpOps} table, all operands boxed. */
     @Operation
     @ConstantOperand(type = int.class, name = "id")
+    @ConstantOperand(type = int.class, name = "rtype")
     public static final class RunOp {
+        /* rtype is the op's static result type, from the wire's OPCALLT tag
+         * (T_OBJ for the untyped OPCALL). It is used for one thing: a
+         * suspension token has to name the return register the resume reads. */
         @Specialization
-        static Object doOp(VirtualFrame f, int id, @Variadic Object[] a) {
+        static Object doOp(VirtualFrame f, int id, int rtype, @Variadic Object[] a) {
             try {
-                return NqpOps.run(id, a, cu(f), tc(f), cf(f));
+                return NqpOps.run(id, rtype, a, cu(f), tc(f), cf(f));
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }

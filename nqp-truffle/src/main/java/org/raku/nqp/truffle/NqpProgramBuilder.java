@@ -564,7 +564,15 @@ final class NqpProgramBuilder {
                 }
                 return at;
             }
-            case NqpWire.OPCALL: {
+            case NqpWire.OPCALL:
+            case NqpWire.OPCALLT: {
+                /* OPCALLT carries the op's static result type ahead of the
+                 * id; OPCALL has none and its ops are object-typed. The type
+                 * only reaches the suspension token, which the resume reads
+                 * the return register by. */
+                boolean typed = tag == NqpWire.OPCALLT;
+                int rtype = typed ? code[at + 1] : NqpWire.T_OBJ;
+                if (typed) at++;
                 int id = code[at + 1];
                 int nargs = code[at + 2];
                 if (id < 0 || id >= NqpOps.OP_COUNT)
@@ -584,7 +592,7 @@ final class NqpProgramBuilder {
                 // setting recompile is involved. Same suspension wrapper as
                 // any table op.
                 Op op = dedicatedOp(id, nargs);
-                if (emit) beginOp(op, id);
+                if (emit) beginOp(op, id, rtype);
                 at += 3;
                 for (int i = 0; i < nargs; i++) at = walk(at, emit);
                 if (emit) endOp(op);
@@ -695,9 +703,11 @@ final class NqpProgramBuilder {
         return Op.RUN;
     }
 
-    private void beginOp(Op op, int id) {
+    private void beginOp(Op op, int id) { beginOp(op, id, NqpWire.T_OBJ); }
+
+    private void beginOp(Op op, int id, int rtype) {
         switch (op) {
-            case RUN -> b.beginRunOp(id);
+            case RUN -> b.beginRunOp(id, rtype);
             case GETATTR -> b.beginGetAttrOp(new NqpOps.AttrSite());
             case BINDATTR -> b.beginBindAttrOp(new NqpOps.AttrSite());
             case DECONT -> b.beginDecontOp(new NqpTypeOps.DecontSite());

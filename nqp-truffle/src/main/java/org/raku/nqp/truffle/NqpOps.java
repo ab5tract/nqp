@@ -161,14 +161,20 @@ final class NqpOps {
         C_S2I = 13, C_N2S = 14, C_S2N = 15;
 
     @TruffleBoundary
-    static Object run(int id, Object[] a, CompilationUnit cu, ThreadContext tc, CallFrame cf) {
+    static Object run(int id, int rtype, Object[] a, CompilationUnit cu, ThreadContext tc,
+                      CallFrame cf) {
         try {
             return run0(id, a, cu, tc, cf);
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
             // Any op that reaches user code (a sink, a decont through a
             // Proxy, a handler-running control) is a suspension point;
-            // every OPCALL site is wrapped, so answer a token uniformly.
-            return new NqpCont.Suspend(sse, NqpWire.T_OBJ);
+            // every OPCALL site is wrapped, so answer a token. The token
+            // carries THIS op's result type -- the resume reads the value
+            // out of the return registers by it -- which is what the
+            // OPCALLT wire tag exists to supply; a uint op (wire type 4)
+            // reads from the int register.
+            return new NqpCont.Suspend(sse,
+                rtype == NqpWire.T_UINT ? NqpWire.T_INT : rtype);
         } catch (IllegalStateException e) {
             throw new IllegalStateException(e.getMessage() + " (op id " + id + ")", e);
         }

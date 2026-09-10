@@ -337,6 +337,9 @@ class QAST::TruffleEncoder {
     my int $W_P6BINDSIG := 33;
     my int $W_P6TRYBINDSIG := 34;
     my int $W_FORLOOPL := 35;
+    # OPCALL that carries the op's static result type ahead of the id, so a
+    # suspension token can name the return register the resume reads.
+    my int $W_OPCALLT := 36;
 
     # Handler categories, matching ExceptionHandling on the runtime side
     # (and the Compiler's own copies).
@@ -2495,7 +2498,19 @@ class QAST::TruffleEncoder {
         cbail('op ' ~ $name) if nqp::isnull($entry);
         my str $args := $entry[2];
         cbail('op ' ~ $name ~ ' arity ' ~ $nargs) unless $nargs == nqp::chars($args);
-        epush(%e, $W_OPCALL);
+        # A NON-object result goes out as W_OPCALLT, which carries the type:
+        # an op that suspends has to tell the resume which return register
+        # the value is in, and plain W_OPCALL has no room for it (an int op
+        # resumed as an object then fed the next native argument a
+        # SixModelObject). Object-typed ops keep the shorter tag, as do the
+        # hand-written emissions above -- all of those are object-typed.
+        if $entry[1] == $T_OBJ {
+            epush(%e, $W_OPCALL);
+        }
+        else {
+            epush(%e, $W_OPCALLT);
+            epush(%e, $entry[1]);
+        }
         epush(%e, $entry[0]);
         epush(%e, $nargs);
         my int $i := 0;
