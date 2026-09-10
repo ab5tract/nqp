@@ -1082,7 +1082,9 @@ class QAST::TruffleEncoder {
         # native parameter's type) would bump every recorded qbid slot by
         # two, and the deferred patch would land on a tag ("unknown tag
         # 17041 at 92", 2026-09-04, once typed parameters encoded). A
-        # nested block inside the prologue bails anyway.
+        # nested block inside the prologue bails anyway; a BVal does not,
+        # and the tail of this method puts the scratch list's own entries
+        # back, at their final positions.
         my @nested_save := %e<nested>;
         %e<nested> := nqp::list();
         nqp::bindkey(%e, 'inparams', 1);
@@ -1175,9 +1177,26 @@ class QAST::TruffleEncoder {
             }
         }
         %e<code> := @save;
+        my @nested_params := %e<nested>;
         %e<nested> := @nested_save;
         nqp::bindkey(%e, 'inparams', 0);
         splice_code(%e, @p, $params_at + 1);
+        # The prologue can record deferred slots of its own: a QAST::BVal
+        # in a parameter default or in a param task (a `where`
+        # constraint's ParamTypeCheck carries one whenever the constrained
+        # code was compiled dynamically, which is every BEGIN-time
+        # routine). They were recorded against the scratch array, so they
+        # move to where that array has just landed. Appending them AFTER
+        # the splice is what keeps them right: splice_code shifts the
+        # slots it finds at or past its mark, and these already sit at
+        # their final positions. Dropping them left the placeholder qbid
+        # 0 in the CODEREF cell -- the unit's MAINLINE -- so a BEGIN-time
+        # `where` bound its WhateverCode's $!do to the dynamic unit's
+        # mainline and calling the constraint ran the whole unit.
+        for @nested_params -> $nb {
+            nqp::bindpos($nb, 0, $nb[0] + $params_at + 1);
+            nqp::push(%e<nested>, $nb);
+        }
     }
 
     # Encodes one node, coercing its value to $want when the types allow
