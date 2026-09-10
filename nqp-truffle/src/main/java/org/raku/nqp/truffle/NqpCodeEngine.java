@@ -91,6 +91,19 @@ public final class NqpCodeEngine implements CodeEngine {
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static RuntimeException nonSuspendable(CallFrame cf,
                                                    org.raku.nqp.runtime.SaveStackException sse) {
+        /* NQP_CONT_TRACE: who escaped, and what had already saved below it.
+         * SaveStackException.toString lists the frames the capture has
+         * joined so far, so the topmost name there is the frame under the
+         * one that failed to yield -- the pair locates the unwrapped site. */
+        if (System.getenv("NQP_CONT_TRACE") != null) {
+            org.raku.nqp.runtime.StaticCodeInfo sci =
+                cf.codeRef == null ? null : cf.codeRef.staticInfo;
+            System.err.println("nqp cont: non-suspendable escape in '"
+                + (cf.codeRef == null ? "<null>" : cf.codeRef.name) + "' uid="
+                + (sci == null ? "?" : sci.uniqueId) + " at "
+                + (sci == null ? "?" : sci.sourceFile + ":" + sci.sourceLine)
+                + "; saved so far: " + sse);
+        }
         return new IllegalStateException(
             "continuation captured at a non-suspendable site in an engine-run block ("
             + (cf.codeRef == null ? "<anon>" : cf.codeRef.name) + ")", sse);

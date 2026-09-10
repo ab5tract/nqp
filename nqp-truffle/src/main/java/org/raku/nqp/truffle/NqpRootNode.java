@@ -512,6 +512,9 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static Object doDecont(VirtualFrame f, Object site, Object o) {
             try {
                 return NqpTypeOps.decont((NqpTypeOps.DecontSite) site, o, tc(f));
+            } catch (org.raku.nqp.runtime.SaveStackException sse) {
+                /* A Proxy FETCH is user code; see NqpOps.suspendToken. */
+                return NqpOps.suspendToken(sse);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -559,6 +562,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static Object doSink(VirtualFrame f, Object site, Object o) {
             try {
                 return NqpTypeOps.p6sink((NqpTypeOps.SinkSite) site, o, tc(f));
+            } catch (org.raku.nqp.runtime.SaveStackException sse) {
+                /* .sink is user code and may take/gather: answer the token
+                 * the table road answers, so this frame joins the resume
+                 * chain instead of letting the capture escape raw. */
+                return NqpOps.suspendToken(sse);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -605,6 +613,9 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static Object doCheck(VirtualFrame f, Object site, Object rv, Object routine, Object bypass) {
             try {
                 return NqpTypeOps.p6typecheckrv((NqpTypeOps.RvCheckSite) site, rv, routine, bypass, tc(f));
+            } catch (org.raku.nqp.runtime.SaveStackException sse) {
+                /* A subset's where block is user code; see NqpOps.suspendToken. */
+                return NqpOps.suspendToken(sse);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
