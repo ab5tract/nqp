@@ -54,6 +54,11 @@ public final class NqpCodeEngine implements CodeEngine {
         if (program instanceof com.oracle.truffle.api.RootCallTarget rct
                 && rct.getRootNode() instanceof NqpRootNode root && root.blockName == null) {
             root.blockName = cf.codeRef == null ? "" : cf.codeRef.name;
+            /* The one point a CodeRef meets its program root: the wire's
+             * exit-handler invariant is checked here, once, rather than on
+             * every frame-free entry. Before the overrides, so forcing a
+             * block framed cannot mask an encoder disagreement. */
+            NqpFrameFree.checkExitHandler(root, cf.codeRef);
             // The frame-free overrides (NQP_FRAMEFREE*), now that the name is known.
             NqpFrameFree.apply(root, root.blockName);
         }

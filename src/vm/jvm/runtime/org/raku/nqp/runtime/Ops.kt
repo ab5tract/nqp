@@ -9043,7 +9043,7 @@ object Ops {
     }
     /** Turns a runtime compile's output into a live unit: on the class
      *  road by defining the class and instantiating it, on the record
-     *  road (NQP_UNIT) by building a ProgramUnit from the record. Either
+     *  unit road by building a ProgramUnit from the record. Either
      *  way the unit is initialized under the compilee's HLL config when
      *  asked, and retained for nested embedding while a compilation is
      *  under way. */

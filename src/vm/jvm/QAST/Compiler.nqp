@@ -4105,6 +4105,13 @@ class QAST::CompilerJAST {
         # output file is written as a zip; any other unit is built in memory
         # and loaded as a ProgramUnit. A block that cannot encode is a
         # compile error at the junction below, never a fallback.
+        #
+        # So NQP_CODE_RUN and NQP_CODE_PRECOMP are not knobs: do not set
+        # them at all. '=0' dies here, and stage0's class-road bootstrap
+        # compiler reads their mere PRESENCE as "encode", so a gradle build
+        # that exports them builds stage1 differently. The surviving
+        # switches are the diagnostics NQP_CODE_ENCODED, NQP_CODE_BAIL,
+        # NQP_CODE_WHY and NQP_CODE_STRICT.
         my %env := nqp::getenvhash();
         nqp::die('unit artifact: the road needs the encoder on; NQP_CODE_RUN=0 or NQP_CODE_PRECOMP=0 is set, every block must encode')
             if (nqp::existskey(%env, 'NQP_CODE_RUN') && nqp::atkey(%env, 'NQP_CODE_RUN') eq '0')
