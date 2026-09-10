@@ -225,19 +225,15 @@ class GlobalContext {
     @JvmField var hllGlobalAll: HashMap<ContextKey<*, *>, Any>
     @JvmField var hllGlobalAllLock: Any
 
-    /* In-memory compiled units retained for nested-unit persistence: an
-     * EVAL compiled during a precompilation may need its classfile embedded
-     * in the enclosing unit's output, so a precompiled module can restore
-     * the code refs its serialized graph points into. Keyed by class name,
-     * with a cuid-to-class index alongside. Only populated while a
-     * compiling SC is on the stack, so ordinary runtime EVALs cost nothing. */
-    @JvmField val inMemoryUnitBytes: java.util.concurrent.ConcurrentHashMap<String, ByteArray> = java.util.concurrent.ConcurrentHashMap()
+    /* cuid -> unit id, for the in-memory units retained below. */
     @JvmField val inMemoryUnitOfCuid: java.util.concurrent.ConcurrentHashMap<String, String> = java.util.concurrent.ConcurrentHashMap()
-    /* The unit road's twin of inMemoryUnitBytes: a unit compiled in
-     * memory while a compilation is under way, kept as its
-     * record so the enclosing unit's writer can embed it under nested/
-     * and a record parent can claim it. Keyed by unit id (the JAST class
-     * name); inMemoryUnitOfCuid indexes into it on either road. */
+    /* In-memory compiled units retained for nested-unit persistence: an
+     * EVAL compiled during a precompilation may need its record embedded
+     * in the enclosing unit's output, so a precompiled module can restore
+     * the code refs its serialized graph points into. Keyed by unit id,
+     * with inMemoryUnitOfCuid indexing into it. Only populated while a
+     * compiling SC is on the stack, so ordinary runtime EVALs cost
+     * nothing. */
     @JvmField val inMemoryUnitRecords: java.util.concurrent.ConcurrentHashMap<String, org.raku.nqp.runtime.unit.UnitRecord> = java.util.concurrent.ConcurrentHashMap()
     /* Nested units claimed mid-deserialization, awaiting their own
      * deserialization code run (jvm-finish-nested). */
