@@ -1769,21 +1769,33 @@ class QAST::TruffleEncoder {
             # into binds + ifs (a fresh tree over the same children, so a
             # later bail hands the bytecode path the untouched op) and let
             # the simple-chain road below encode each individual link.
-            if nqp::istype($op[0], QAST::Op)
-                && ($op[0].op eq 'chain' || $op[0].op eq 'chainstatic') {
+            # Which child holds the left operand: Compiler.nqp's
+            # get_arg_idx. A named link is `chain :name(&infix) $a, $b`; an
+            # UNNAMED one (a metaop, or an operator that is a code object)
+            # is `chain $callee, $a, $b`, so both its operands and the walk
+            # into a nested link sit one child further along -- reading
+            # $op[0] for the nest test would have taken the CALLEE for the
+            # left operand.
+            my int $op_ai := $op.name eq '' ?? 1 !! 0;
+            if nqp::elems(@($op)) > $op_ai
+                && nqp::istype($op[$op_ai], QAST::Op)
+                && ($op[$op_ai].op eq 'chain' || $op[$op_ai].op eq 'chainstatic') {
+                my @callee_names;
                 my @callees;
                 my @operands;
                 my $cur := $op;
                 while nqp::istype($cur, QAST::Op)
                     && ($cur.op eq 'chain' || $cur.op eq 'chainstatic') {
-                    cbail('unnamed chain link') if $cur.name eq '';
-                    cbail('chain link arity') unless nqp::elems(@($cur)) == 2;
-                    nqp::unshift(@callees, $cur.name);
-                    nqp::unshift(@operands, $cur[1]);
-                    $cur := $cur[0];
+                    my int $ai := $cur.name eq '' ?? 1 !! 0;
+                    cbail('chain link arity')
+                        unless nqp::elems(@($cur)) == ($ai ?? 3 !! 2);
+                    nqp::unshift(@callee_names, $cur.name);
+                    nqp::unshift(@callees, $ai ?? $cur[0] !! nqp::null());
+                    nqp::unshift(@operands, $cur[$ai + 1]);
+                    $cur := $cur[$ai];
                 }
                 nqp::unshift(@operands, $cur);
-                my int $nlinks := nqp::elems(@callees);
+                my int $nlinks := nqp::elems(@callee_names);
                 my @v;
                 my int $k := 0;
                 while $k <= $nlinks { nqp::push(@v, $op.unique('chain_o')); $k++ }
@@ -1793,9 +1805,15 @@ class QAST::TruffleEncoder {
                 # link($i): result of links $i..end, with @v[$i] and @v[$i+1] bound.
                 my $linkq;
                 $linkq := -> int $i {
-                    my $call := QAST::Op.new( :op('call'), :name(@callees[$i]),
-                        QAST::Var.new( :name(@v[$i]),   :scope('local') ),
-                        QAST::Var.new( :name(@v[$i + 1]), :scope('local') ) );
+                    my $lv := QAST::Var.new( :name(@v[$i]),     :scope('local') );
+                    my $rv := QAST::Var.new( :name(@v[$i + 1]), :scope('local') );
+                    # An unnamed link's callee is a value, so it is
+                    # decont'ed and called, exactly as chain_codegen's
+                    # `decont($c_ast[0])` callee_qast is.
+                    my $call := @callee_names[$i] ne ''
+                        ?? QAST::Op.new( :op('call'), :name(@callee_names[$i]), $lv, $rv )
+                        !! QAST::Op.new( :op('call'),
+                             QAST::Op.new( :op('decont'), @callees[$i] ), $lv, $rv );
                     $i == $nlinks - 1
                         ?? $call
                         !! QAST::Stmts.new(
