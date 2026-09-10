@@ -796,7 +796,15 @@ class QAST::TruffleEncoder {
             # exception is a real compile error that must stay loud -- a
             # swallowed one lets a block that should refuse to compile
             # compile.
+            # A message is not guaranteed: an exception thrown with a
+            # payload and no message (Raku's control and X:: throws) reads
+            # back as a null string, and nqp::index over one is a host NPE
+            # -- which then REPLACES the real exception, so the compile
+            # dies with a bare NullPointerException naming nothing
+            # (BEGIN-time EVAL inside a class, 2026-09-10). No message is
+            # not a refusal, so it rethrows like any other exception.
             my str $msg := nqp::getmessage($err);
+            $msg := '' if nqp::isnull_s($msg);
             nqp::rethrow($err) if nqp::index($msg, 'code-bail') < 0;
             trace('no: bail ' ~ $msg);
             if $code_bail_p {
