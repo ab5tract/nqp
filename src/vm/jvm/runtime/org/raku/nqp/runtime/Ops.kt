@@ -151,6 +151,33 @@ object Ops {
      *  runs per code ref at every unit load. */
     @JvmField val REPOINT_TRACE = System.getenv("NQP_REPOINT_TRACE") != null
 
+    /** NQP_DO_TRACE: every bind of Code.$!do -- which code object takes
+     *  which code ref, and the nqp frames that did it. */
+    @JvmField val DO_TRACE = System.getenv("NQP_DO_TRACE") != null
+
+    @JvmStatic
+    fun traceDoBind(obj: SixModelObject?, name: String?, value: SixModelObject?, tc: ThreadContext) {
+        if (name != "\$!do") return
+        val sb = StringBuilder("nqp \$!do: obj "
+            + (if (obj == null) "null" else obj.st?.debugName.toString() + "@"
+                + Integer.toHexString(System.identityHashCode(obj)))
+            + " <- " + (if (value is CodeRef) "coderef cuid="
+                + value.staticInfo.uniqueId + " name='" + value.name
+                + "' unit=" + value.staticInfo.compUnit.unitId()
+                + "@" + Integer.toHexString(System.identityHashCode(value))
+              else value.toString()))
+        var fr = tc.curFrame
+        var n = 0
+        while (fr != null && n < 8) {
+            val s = fr.codeRef?.staticInfo
+            sb.append("\n    '").append(fr.codeRef?.name ?: "?").append("' ")
+                .append(s?.sourceFile).append(':').append(s?.sourceLine)
+            fr = fr.caller
+            n++
+        }
+        System.err.println(sb)
+    }
+
     /* I/O opcodes */
     @JvmStatic
     fun print(v: String?, tc: ThreadContext): String? {
@@ -3630,6 +3657,7 @@ object Ops {
     }
     @JvmStatic
     fun bindattr(obj: SixModelObject?, ch: SixModelObject?, name: String?, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
+        if (DO_TRACE) traceDoBind(obj, name, value, tc)
         obj!!.bind_attribute_boxed(tc, decont(ch, tc), name, STable.NO_HINT, value)
         if (obj.sc != null)
             scwbObject(tc, obj)
@@ -3677,6 +3705,7 @@ object Ops {
     }
     @JvmStatic
     fun bindattr(obj: SixModelObject?, ch: SixModelObject?, name: String?, value: SixModelObject?, hint: Long, tc: ThreadContext): SixModelObject? {
+        if (DO_TRACE) traceDoBind(obj, name, value, tc)
         obj!!.bind_attribute_boxed(tc, decont(ch, tc), name, hint, value)
         if (obj.sc != null)
             scwbObject(tc, obj)

@@ -1482,6 +1482,7 @@ final class NqpOps {
 
     static Object bindattr(AttrSite site, Object o, Object ch, String name, Object value,
                            ThreadContext tc) {
+        if (Ops.DO_TRACE) Ops.traceDoBind(smo(o), name, smo(value), tc);
         if (!site.resolved) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             resolveAttr(site, o, ch, name, tc);
