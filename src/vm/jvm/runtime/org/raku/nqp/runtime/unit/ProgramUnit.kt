@@ -86,8 +86,7 @@ class ProgramUnit(@JvmField val record: UnitRecord) : CompilationUnit() {
     }
 
     /** The deserialize program installs the SC; the static lexical values
-     *  point into it, so they follow (setup_blv was the last post-deserialize
-     *  task on the class road, exactly this position). */
+     *  point into it, so they follow. */
     override fun runDeserializeIfAvailable(tc: ThreadContext) {
         super.runDeserializeIfAvailable(tc)
         applyStaticLexValues(tc)

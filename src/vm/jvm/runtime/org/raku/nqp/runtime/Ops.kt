@@ -73,7 +73,6 @@ import org.raku.nqp.io.ServerSocketHandle
 import org.raku.nqp.io.SocketHandle
 import org.raku.nqp.io.StandardReadHandle
 import org.raku.nqp.io.StandardWriteHandle
-import org.raku.nqp.jast2bc.JASTCompiler
 import org.raku.nqp.dispatch.BindFailure
 import org.raku.nqp.sixmodel.BoolificationSpec
 import org.raku.nqp.sixmodel.Boxable
@@ -3265,8 +3264,7 @@ object Ops {
     /* Will a bind failure in the current frame become a resumption of the
      * dispatch that invoked it? The same answer as the
      * bind-will-resume-on-failure syscall, callable without a dispatch
-     * instruction: this is asked in every full-binder frame's prologue, and
-     * an invokedynamic per prologue eats into the per-class indy budget. */
+     * instruction: this is asked in every full-binder frame's prologue. */
     @JvmStatic
     fun bindWillResumeOnFailure(tc: ThreadContext): Long {
         val frame = tc.frame
@@ -8964,14 +8962,7 @@ object Ops {
     }
 
     /* Evaluation of code; JVM-specific ops. */
-    @JvmStatic
-    fun compilejast(jast: SixModelObject?, jastNodes: SixModelObject?, tc: ThreadContext): SixModelObject {
-        val res = EvalResult()
-        res.jc = JASTCompiler.buildClass(jast!!, jastNodes!!, false, tc)
-        return res
-    }
-    /** The unit an in-memory compiled block belongs to (a class name on
-     * the class road, a unit id on the record road), when one was
+    /** The unit id an in-memory compiled block belongs to, when one was
      * retained for nested-unit persistence; empty string otherwise. */
     @JvmStatic
     fun jvmclassofcuid(cuid: String?, tc: ThreadContext): String =
@@ -9036,51 +9027,33 @@ object Ops {
         return null
     }
 
-    @JvmStatic
-    fun compilejasttofile(jast: SixModelObject?, jastNodes: SixModelObject?, filename: String?, tc: ThreadContext): SixModelObject? {
-        JASTCompiler.writeClass(jast!!, jastNodes!!, filename!!, tc)
-        return jast
-    }
-    /** Turns a runtime compile's output into a live unit: on the class
-     *  road by defining the class and instantiating it, on the record
-     *  unit road by building a ProgramUnit from the record. Either
-     *  way the unit is initialized under the compilee's HLL config when
-     *  asked, and retained for nested embedding while a compilation is
-     *  under way. */
+    /** Turns a runtime compile's record into a live unit: a ProgramUnit
+     *  built from the record, initialized under the compilee's HLL config
+     *  when asked, and retained for nested embedding while a compilation
+     *  is under way. */
     @JvmStatic
     fun loadcompunit(obj: SixModelObject?, compileeHLL: Long, tc: ThreadContext): SixModelObject? {
         try {
             val res = obj as EvalResult
             val rec = res.record
-            val unitName: String
-            if (rec != null) {
-                val u = org.raku.nqp.runtime.unit.ProgramUnit(rec)
-                u.shared = false
-                res.cu = u
-                unitName = rec.meta.unitId
-                if (System.getenv("NQP_CODE_WHY") != null)
-                    System.err.println("unit record $unitName (${rec.programs.size} programs, ${rec.meta.blocks.size} qbids)")
-            }
-            else {
-                val cuClass = tc.gc.byteClassLoader.defineClass(res.jc!!.name, res.jc!!.bytes!!)
-                res.cu = cuClass.newInstance() as CompilationUnit
-                unitName = res.jc!!.name!!
-            }
+                ?: throw ExceptionHandling.dieInternal(tc, "loadcompunit: no unit record to load")
+            val u = org.raku.nqp.runtime.unit.ProgramUnit(rec)
+            u.shared = false
+            res.cu = u
+            val unitName = rec.meta.unitId
+            if (System.getenv("NQP_CODE_WHY") != null)
+                System.err.println("unit record $unitName (${rec.programs.size} programs, ${rec.meta.blocks.size} qbids)")
             if (compileeHLL != 0L)
                 usecompileehllconfig(tc)
-            res.cu!!.initializeCompilationUnit(tc)
+            u.initializeCompilationUnit(tc)
             if (compileeHLL != 0L)
                 usecompilerhllconfig(tc)
             /* A unit compiled while a compilation is under way may be a
              * nested unit whose code refs the enclosing serialization
-             * points into; retain what embedding it later needs, on the
-             * road it was compiled on. */
+             * points into; retain what embedding it later needs. */
             if (!tc.compilingSCs.isNullOrEmpty()) {
-                if (rec != null)
-                    tc.gc.inMemoryUnitRecords[unitName] = rec
-                else
-                    tc.gc.inMemoryUnitBytes[unitName] = res.jc!!.bytes!!
-                res.cu!!.codeRefs?.let { crs ->
+                tc.gc.inMemoryUnitRecords[unitName] = rec
+                u.codeRefs?.let { crs ->
                     for (cr in crs) {
                         val cuid = cr.staticInfo.uniqueId
                         if (!cuid.isNullOrEmpty())
@@ -9088,7 +9061,6 @@ object Ops {
                     }
                 }
             }
-            res.jc = null
             res.record = null
             return obj
         }
