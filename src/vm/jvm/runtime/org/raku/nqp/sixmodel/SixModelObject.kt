@@ -14,10 +14,10 @@ import org.raku.nqp.runtime.ThreadContext
 abstract class SixModelObject : Cloneable {
     /**
      * The STable of the object. lateinit rather than nullable: every
-     * allocation path assigns it immediately, but IndyBootstrap-created
-     * stubs can leave it null on the Java side (Java reads the backing
-     * field raw and does its own null checks; only Kotlin-side reads go
-     * through the initialization check).
+     * allocation path assigns it immediately, but a stub object can leave
+     * it null on the Java side (Java reads the backing field raw and does
+     * its own null checks; only Kotlin-side reads go through the
+     * initialization check).
      */
     lateinit var st: STable
 
@@ -26,7 +26,7 @@ abstract class SixModelObject : Cloneable {
      * backing field directly and see null on not-yet-filled stubs; a
      * Kotlin-side read of the property would throw
      * UninitializedPropertyAccessException instead, so code that must
-     * tolerate stubs (IndyBootstrap's dispatch resolvers) checks this.
+     * tolerate stubs checks this.
      */
     val stInitialized: Boolean
         get() = ::st.isInitialized

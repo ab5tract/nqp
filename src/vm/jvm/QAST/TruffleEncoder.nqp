@@ -57,7 +57,7 @@ class QAST::TruffleEncoder {
     # Deliberately absent, with no row on either side (no encoding, no
     # classlib mapping) -- the encoder refuses them and supports-op must
     # say so: takedispatcher, takenextdispatcher, cleardispatcher,
-    # clearnextdispatcher, wantdecont, setup_blv.
+    # clearnextdispatcher, wantdecont.
     my $extra_ops := 'assign_i assign_n assign_s assign_u bind call
         callmethod callstatic chain chainstatic const curlexpad
         control defor dispatch getlexouter handle handlepayload hash if

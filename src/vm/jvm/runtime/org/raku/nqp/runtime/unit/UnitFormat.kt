@@ -10,7 +10,7 @@ import net.jpountz.lz4.LZ4DecompressorWithLength
 /**
  * The unit artifact's binary sections. Little-endian, fixed-width ints,
  * strings as a byte length (-1 for null) plus UTF-8 bytes: framing is by
- * BYTE, never by grapheme (the .codeprograms.lz4 sidecar framed by
+ * BYTE, never by grapheme (the class road's program sidecar framed by
  * nqp::chars and paid for it with a reader bug and an O(n^2) fix).
  */
 object UnitFormat {
