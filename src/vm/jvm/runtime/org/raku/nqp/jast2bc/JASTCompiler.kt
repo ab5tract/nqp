@@ -235,9 +235,11 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
 
         c.name = jastClass.className
         c.serialized = jastClass.serialized
-        /* No compiler emits a sidecar since milestone 3; the reader stays
-         * for stage0's jars. */
-        c.codePrograms = null
+        /* The NEW compiler (milestone 3) has no `$!codeprograms` and emits no
+         * sidecar, so this reads null for it; stage0's class-road compiler
+         * still fills it and its jars need the sidecar until milestone 4
+         * regenerates stage0. */
+        c.codePrograms = jastClass.codePrograms?.toByteArray(Charsets.UTF_8)
         c.nestedClassNames = jastClass.nestedClasses
 
         val className = jastClass.className!!.replace('.', '/')

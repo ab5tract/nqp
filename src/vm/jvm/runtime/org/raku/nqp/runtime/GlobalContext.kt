@@ -233,8 +233,8 @@ class GlobalContext {
      * compiling SC is on the stack, so ordinary runtime EVALs cost nothing. */
     @JvmField val inMemoryUnitBytes: java.util.concurrent.ConcurrentHashMap<String, ByteArray> = java.util.concurrent.ConcurrentHashMap()
     @JvmField val inMemoryUnitOfCuid: java.util.concurrent.ConcurrentHashMap<String, String> = java.util.concurrent.ConcurrentHashMap()
-    /* The record road's twin of inMemoryUnitBytes: a unit compiled in
-     * memory under NQP_UNIT while a compilation is under way, kept as its
+    /* The unit road's twin of inMemoryUnitBytes: a unit compiled in
+     * memory while a compilation is under way, kept as its
      * record so the enclosing unit's writer can embed it under nested/
      * and a record parent can claim it. Keyed by unit id (the JAST class
      * name); inMemoryUnitOfCuid indexes into it on either road. */

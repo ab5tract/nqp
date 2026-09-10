@@ -1,8 +1,8 @@
-# Runs a script on the record road (NQP_UNIT=1, no --output): the unit is
-# built in memory as a ProgramUnit, no class defined. A sub, a closure
-# over the mainline, a handler, a regex, and two runtime EVALs (records
-# themselves) must run; NQP_CODE_WHY must show the road was taken; the
-# knob must refuse to run without the encoder switches. Two separate runs
+# Runs a script on the record road (the unit road with no --output): the
+# unit is built in memory as a ProgramUnit, no class defined. A sub, a
+# closure over the mainline, a handler, a regex, and two runtime EVALs
+# (records themselves) must run; NQP_CODE_WHY must show the road was
+# taken; NQP_CODE_RUN=0 must be refused. Two separate runs
 # do the output and marker checks: NQP_CODE_WHY also prints the encoder's
 # per-block trace on stdout, so the marker run cannot double as the
 # output run.
@@ -57,7 +57,7 @@ else {
         run-command(nqp::list('/bin/sh', '-c', $command), :stdout, :stderr)
     }
 
-    my @ran := sh("NQP_UNIT=1 NQP_CODE_RUN=1 NQP_CODE_PRECOMP=1 $runner $script");
+    my @ran := sh("$runner $script");
     my @out := nqp::split("\n", @ran[1]);
     unless nqp::elems(@out) >= 7 {
         say('# ' ~ @ran[1]);
@@ -75,7 +75,7 @@ else {
     # builds it -- the script and its two EVALs. A separate run: NQP_CODE_WHY
     # also prints the encoder's per-block trace on stdout, which would
     # clobber the positional @out checks above.
-    my @why := sh("NQP_UNIT=1 NQP_CODE_RUN=1 NQP_CODE_PRECOMP=1 NQP_CODE_WHY=1 $runner $script");
+    my @why := sh("NQP_CODE_WHY=1 $runner $script");
     my int $records := 0;
     for nqp::split("\n", @why[2]) {
         $records := $records + 1 if nqp::index($_, 'unit record ') == 0;
@@ -84,7 +84,7 @@ else {
     ok(nqp::index(@why[2], '.class') < 0 && nqp::index(@why[2], 'defineClass') < 0,
         'nothing on stderr mentions a class');
 
-    my @knob := sh("NQP_CODE_RUN=0 NQP_CODE_PRECOMP=1 NQP_UNIT=1 $runner -e 'say(1)'");
+    my @knob := sh("NQP_CODE_RUN=0 $runner -e 'say(1)'");
     ok(nqp::index(@knob[2], 'needs the encoder on') >= 0,
         'the road refuses to run with the encoder switched off, once');
     ok(nqp::index(@knob[1], '1') < 0, 'and runs nothing');
