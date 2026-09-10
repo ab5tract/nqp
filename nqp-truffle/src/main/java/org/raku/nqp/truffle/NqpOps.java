@@ -955,6 +955,21 @@ final class NqpOps {
         }
     }
 
+    /**
+     * The suspension token a DEDICATED operation answers when a
+     * continuation capture crosses it -- the same value {@link #run} and
+     * {@link #classlib} return for the table and registry roads, so the
+     * OPCALL site's IsSuspend tail yields it and the frame joins the
+     * resume chain. Without it {@link #carry} rethrows the capture raw
+     * (a ControlException) and it escapes the whole program, which
+     * NqpCodeEngine reports as a non-suspendable site. Only the ops that
+     * can reach user code need it: p6sink (the sink method), decont (a
+     * Proxy FETCH), p6typecheckrv (a subset's where block).
+     */
+    static Object suspendToken(org.raku.nqp.runtime.SaveStackException sse) {
+        return new NqpCont.Suspend(sse, NqpWire.T_OBJ);
+    }
+
     static RuntimeException carry(Throwable t) {
         if (t instanceof com.oracle.truffle.api.exception.AbstractTruffleException ate) return ate;
         if (t instanceof UnwindException u) return new NqpUnwind(u);
