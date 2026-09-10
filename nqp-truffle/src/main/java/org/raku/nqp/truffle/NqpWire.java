@@ -169,9 +169,14 @@ public final class NqpWire {
     public static final int T_INT = 1;
     public static final int T_NUM = 2;
     public static final int T_STR = 3;
-    // A uint parameter: fetched unsigned (posparam_u) so a value at or
-    // above 2^63 unboxes without overflow, then bound into an int slot --
-    // the unsignedness lives in the ops that read it, not the storage.
+    // A uint: fetched unsigned (posparam_u) so a value at or above 2^63
+    // unboxes without overflow, then bound into an int slot -- the
+    // unsignedness lives in the ops that read it, not the storage. Three
+    // wire positions take it, all additive uses of an existing field:
+    // a PARAMS record's type, LEXREF's type (the reference is the HLL's
+    // unsigned one, the bytecode path's getlexref_u), and the program
+    // header's result type (the value rides the int return register,
+    // exactly as Ops.return_u writes it).
     public static final int T_UINT = 4;
 
     public record Program(int[] code, String[] pool, int nlocals, int needsFrameWord) {
