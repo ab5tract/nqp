@@ -17,7 +17,6 @@ import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.reprs.JavaObjectWrapper
 
-import org.raku.nqp.jast2bc.BytecodeVersion
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
