@@ -225,6 +225,11 @@ class GlobalContext {
     @JvmField var hllGlobalAll: HashMap<ContextKey<*, *>, Any>
     @JvmField var hllGlobalAllLock: Any
 
+    /* The units nqp::loadbytecode has already loaded into this context,
+     * by path: loading the same artifact twice would install its code
+     * refs twice. */
+    @JvmField val loadedUnits: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
     /* cuid -> unit id, for the in-memory units retained below. */
     @JvmField val inMemoryUnitOfCuid: java.util.concurrent.ConcurrentHashMap<String, String> = java.util.concurrent.ConcurrentHashMap()
     /* In-memory compiled units retained for nested-unit persistence: an
