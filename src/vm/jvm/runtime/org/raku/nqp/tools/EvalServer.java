@@ -30,8 +30,8 @@ import org.raku.nqp.runtime.Base64;
 import org.raku.nqp.runtime.CodeRef;
 import org.raku.nqp.runtime.CompilationUnit;
 import org.raku.nqp.runtime.GlobalContext;
-import org.raku.nqp.runtime.LibraryLoader;
 import org.raku.nqp.runtime.Ops;
+import org.raku.nqp.runtime.unit.UnitLoader;
 
 public class EvalServer {
     private boolean bindStdin;
@@ -72,7 +72,7 @@ public class EvalServer {
 
         CompilationUnit cu;
         try {
-            cu = LibraryLoader.loadApp(gc.mainThread, appPath, true);
+            cu = UnitLoader.loadApp(gc.mainThread, appPath, true);
         } catch (ThreadDeath td) {
             throw new RuntimeException("Couldn't load the app unit. Your CLASSPATH might not be set up correctly.");
         }
@@ -116,14 +116,13 @@ public class EvalServer {
             e.printStackTrace();
         });
 
-        /* The app class is loaded once here and reused by every request, which
-         * is the whole point of the server: a request pays for neither JVM
-         * startup nor class loading. Loading needs a class loader, and that
-         * lives on a GlobalContext, so the server holds one of its own; each
-         * request still gets a fresh GlobalContext (see ServiceThread) so that
-         * evals do not share state. */
+        /* The app unit is parsed once here and its record reused by every
+         * request, which is the whole point of the server: a request pays
+         * for neither JVM startup nor artifact parsing. The server holds a
+         * GlobalContext of its own; each request still gets a fresh one
+         * (see ServiceThread) so that evals do not share state. */
         gc = new GlobalContext();
-        LibraryLoader.prime(mainPath, gc.byteClassLoader);
+        UnitLoader.prime(mainPath);
 
         SecureRandom rng = new SecureRandom();
         byte[] raw = new byte[16];
@@ -235,7 +234,7 @@ public class EvalServer {
                 gc.interceptExit = true;
                 gc.sharingHint = true;
 
-                CompilationUnit cu = LibraryLoader.loadApp(gc.mainThread, mainPath, true);
+                CompilationUnit cu = UnitLoader.loadApp(gc.mainThread, mainPath, true);
                 CodeRef entryRef = null;
                 if (cu.entryQbid() >= 0) entryRef = cu.lookupCodeRef(cu.entryQbid());
                 if (entryRef == null)
