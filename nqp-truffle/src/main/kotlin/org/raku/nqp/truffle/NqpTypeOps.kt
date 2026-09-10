@@ -10,7 +10,9 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import org.raku.nqp.dispatch.BindFailure
 import org.raku.nqp.dispatch.DispatchBootstrap
 import org.raku.nqp.runtime.CallFrame
+import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.Ops
+import org.raku.nqp.runtime.SaveStackException
 import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.REPR
 import org.raku.nqp.sixmodel.STable
@@ -315,6 +317,36 @@ object NqpTypeOps {
     @TruffleBoundary
     private fun debug(msg: String) { System.err.println("jesp: $msg") }
 
+    /* ----- suspension inside a FUSED op (the resume value; spec 5b) ----- */
+
+    /**
+     * Thrown by a fused op at the user-code call that captured a
+     * continuation: the capture, plus the op's tail as a function of that
+     * call's value.
+     *
+     * The ops here are fused -- isconcrete is a decont AND a concreteness
+     * test, istype a decont AND a type check, p6typecheckrv a where call
+     * AND a pass/fail decision -- and the Java frames between the op and
+     * the user code it called cannot be saved into the continuation. So
+     * the tail after the inner call is lost, and the engine's resume,
+     * which injects whatever the resumed call answered, would make the
+     * INNER value the op's result: `sub f(--> S)` with a taking `where`
+     * answered the where block's True instead of 5. Carrying the tail
+     * lets NqpCodeEngine.resumeEngine run it on the inner value instead.
+     *
+     * No stack trace and no message: it is a control carrier, caught by
+     * the op that raised it (NqpRootNode) one frame up.
+     */
+    class SuspendedIn(@JvmField val sse: SaveStackException,
+                      @JvmField val finish: java.util.function.Function<Any?, Any?>)
+        : RuntimeException(null, null, false, false)
+
+    /** Allocation of the carrier, off the compiled path. */
+    @TruffleBoundary
+    private fun suspendedIn(sse: SaveStackException,
+                            finish: java.util.function.Function<Any?, Any?>): SuspendedIn =
+        SuspendedIn(sse, finish)
+
     /* ----- isnull ----- */
 
     /** nqp::isnull: a pointer compare against the VM null; no site, no boundary. */
@@ -334,9 +366,20 @@ object NqpTypeOps {
     fun isconcrete(site: IsConcreteSite, o: Any?, tc: ThreadContext): Long {
         if (o !is SixModelObject) return 0L
         if (Ops.isnull(o) == 1L) return 0L
-        val v = decont(site.decont, o, tc)
-        return if (v == null || v is TypeObject) 0L else 1L
+        val v = try {
+            decont(site.decont, o, tc)
+        } catch (sse: SaveStackException) {
+            /* A Proxy FETCH captured a continuation. The tail below is
+             * what makes this op's answer, and no Java frame of it can be
+             * saved -- so hand it to the token as the finisher. */
+            throw suspendedIn(sse, java.util.function.Function { fetched -> concreteness(fetched) })
+        }
+        return concreteness(v)
     }
+
+    /** isconcrete's tail: the answer for an already-deconted value. */
+    private fun concreteness(v: Any?): Long =
+        if (v == null || v is TypeObject) 0L else 1L
 
     /* ----- istype ----- */
 
@@ -358,7 +401,15 @@ object NqpTypeOps {
 
     @JvmStatic
     fun istype(site: IsTypeSite, o: Any?, type: Any?, tc: ThreadContext): Long {
-        val v = decont(site.objDecont, o, tc)
+        val v = try {
+            decont(site.objDecont, o, tc)
+        } catch (sse: SaveStackException) {
+            /* A Proxy FETCH captured a continuation: finish by re-running
+             * the whole op on the FETCHED value, which is no longer a
+             * container -- so this decont cannot suspend a second time. */
+            throw suspendedIn(sse,
+                java.util.function.Function { fetched -> istype(site, fetched, type, tc) })
+        }
         val t = decont(site.typeDecont, type, tc)
         if (v is SixModelObject && t is SixModelObject) {
             var objSt = site.objSt
@@ -372,8 +423,18 @@ object NqpTypeOps {
                 miss(site)
             }
         }
-        return istypeSlow(v, t, tc)
+        return try {
+            istypeSlow(v, t, tc)
+        } catch (sse: SaveStackException) {
+            /* accepts_type ran a subset's where block, which captured.
+             * istype's tail is the truth of what the check answered. */
+            throw suspendedIn(sse, java.util.function.Function { checked -> truthy(checked, tc) })
+        }
     }
+
+    /** istype's tail past accepts_type: the check's value as 1 or 0. */
+    private fun truthy(v: Any?, tc: ThreadContext): Long =
+        if (v is SixModelObject && Ops.istrue(v, tc) != 0L) 1L else 0L
 
     @TruffleBoundary
     private fun resolveIsType(site: IsTypeSite, v: SixModelObject, t: SixModelObject) {
@@ -460,7 +521,39 @@ object NqpTypeOps {
                 miss(site)
             }
         }
-        return rvCheckSlow(rv, routine, bypass, tc)
+        return rvCheckRun(rv, routine, bypass, tc)
+    }
+
+    /**
+     * The check, with its tail carried across a capture. A return type
+     * that is a subset runs the subset's `where` block: if that block
+     * takes, the op's own tail -- answer rv, or raise the return-type
+     * failure -- is what has to run on the block's value, not the block's
+     * value itself.
+     */
+    private fun rvCheckRun(rv: Any?, routine: Any?, bypass: Any?, tc: ThreadContext): Any? =
+        try {
+            rvCheckSlow(rv, routine, bypass, tc)
+        } catch (sse: SaveStackException) {
+            throw suspendedIn(sse, java.util.function.Function { checked -> rvFinish(checked, rv, tc) })
+        }
+
+    /**
+     * p6typecheckrv's tail on the where block's value: the op answers its
+     * own value when the check passed.
+     *
+     * A FAILED check raises the plain internal failure rather than
+     * RakOps' X::TypeCheck::Return: the typed thrower needs the check's
+     * instantiated return type and the deconted value, both of them local
+     * to RakOps.p6typecheckrv and gone with the lost Java frames. Before
+     * this, the same case answered the where block's value as the
+     * routine's return value, so a wrongly typed failure is strictly
+     * closer to the truth; a faithful one wants the tail factored out in
+     * RakOps (rakudo-runtime, a separate jar).
+     */
+    private fun rvFinish(checked: Any?, rv: Any?, tc: ThreadContext): Any? {
+        if (checked is SixModelObject && Ops.istrue(checked, tc) != 0L) return rv
+        throw ExceptionHandling.dieInternal(tc, "Type check failed for return value")
     }
 
     /** Runs the check; if it accepted and may be cached, remembers it. */
@@ -468,7 +561,7 @@ object NqpTypeOps {
     private fun resolveRvCheck(site: RvCheckSite, rv: Any?, v: SixModelObject, routine: Any?,
                                bypass: Any?, tc: ThreadContext): Any? {
         val vst = v.st
-        val r = rvCheckSlow(rv, routine, bypass, tc)
+        val r = rvCheckRun(rv, routine, bypass, tc)
         if (vst != null && routine is SixModelObject && rvCacheable(routine, tc)) {
             site.rvSt = vst
             site.rvTypeObject = v is TypeObject
