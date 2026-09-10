@@ -650,6 +650,23 @@ class QAST::TruffleEncoder {
 
     sub cbail(str $why) { nqp::die('code-bail ' ~ $why) }
 
+    # Every BlockInfo walk in Compiler.nqp is guarded with
+    # `nqp::istype($cur_block, BlockInfo)`, and that guard is load-bearing:
+    # the outer of the outermost BlockInfo is not always another BlockInfo.
+    # A block compiled during a BEGIN-time EVAL reaches one whose outer is
+    # a RakuAST::Block, and an unguarded walk then calls .qast on it ("No
+    # such method 'qast' for invocant of type 'RakuAST::Block'", which the
+    # null-message bug above used to turn into a bare NullPointerException).
+    # BlockInfo is `my`-scoped to Compiler.nqp, so the test is a duck-typed
+    # one: only a BlockInfo answers to `qast`.
+    #
+    # FIVE walks need it, not four: the four lexical resolvers
+    # (lexical_type_of, resolve_lexref, lexical_in_scope, the lexicalref
+    # scope resolver) and the scope-from-symbol-table walk in encode_var,
+    # whose twin is Compiler.nqp:5470. Without the guard there the walk
+    # dies on .qast instead of reaching `cbail('scopeless var')`.
+    sub block_info($cur) { nqp::can($cur, 'qast') ?? 1 !! 0 }
+
     # Is a block with this cuid one of the blocks THIS block's own deferred
     # loop will compile? A QAST::BVal names a block of the same
     # compilation, and the block may sit on either side of the reference
@@ -796,7 +813,15 @@ class QAST::TruffleEncoder {
             # exception is a real compile error that must stay loud -- a
             # swallowed one lets a block that should refuse to compile
             # compile.
+            # A message is not guaranteed: an exception thrown with a
+            # payload and no message (Raku's control and X:: throws) reads
+            # back as a null string, and nqp::index over one is a host NPE
+            # -- which then REPLACES the real exception, so the compile
+            # dies with a bare NullPointerException naming nothing
+            # (BEGIN-time EVAL inside a class, 2026-09-10). No message is
+            # not a refusal, so it rethrows like any other exception.
             my str $msg := nqp::getmessage($err);
+            $msg := '' if nqp::isnull_s($msg);
             nqp::rethrow($err) if nqp::index($msg, 'code-bail') < 0;
             trace('no: bail ' ~ $msg);
             if $code_bail_p {
@@ -2917,7 +2942,7 @@ class QAST::TruffleEncoder {
                 return nqp::existskey(%e<ownref>, $name) ?? '' !! 'lexical';
             }
             my $cur := %e<block>.outer;
-            while $cur {
+            while $cur && block_info($cur) {
                 if $cur.qast.ann('DYN_COMP_WRAPPER') {
                     $cur := 0;
                 }
@@ -2993,7 +3018,7 @@ class QAST::TruffleEncoder {
         # the compiler does.
         if $scope eq '' {
             my $cur := %e<block>;
-            while $cur {
+            while $cur && block_info($cur) {
                 my %sym := $cur.qast.symbol($name);
                 if %sym {
                     $scope := %sym<scope>;
@@ -3049,10 +3074,14 @@ class QAST::TruffleEncoder {
                 }
             }
             else {
+                # The declaration this bind targets, resolved ONCE: both
+                # the lexicalref check and the sized-store width want it,
+                # and this is the encoder's hottest walk (every lexical
+                # bind in the whole compilation, up the BlockInfo chain).
+                my @rl := self.resolve_lexref($name, %e);
                 # "Cannot bind to QAST::Var resolving to a lexicalref" on
                 # the bytecode path; a bail keeps that error its own.
-                cbail('bind to a lexicalref through lexical scope')
-                    if self.resolve_lexref($name, %e)[0] == 2;
+                cbail('bind to a lexicalref through lexical scope') if @rl[0] == 2;
                 if $outer {
                     epush(%e, $W_LEXBIND_OUTER); epush(%e, $type); epush(%e, epool(%e, $name));
                 }
@@ -3066,8 +3095,7 @@ class QAST::TruffleEncoder {
                 # int8/16/32 sign-wrap, uint8/16/32 mask, num32 rounds to
                 # single precision. A full-width type wraps to nothing.
                 self.encode_child(
-                    self.sized_trunc($bindval, self.sized_ret($var, $name, %e)),
-                    %e, $type);
+                    self.sized_trunc($bindval, sized_ret_of(@rl, $var)), %e, $type);
             }
             return $type;
         }
@@ -3076,10 +3104,14 @@ class QAST::TruffleEncoder {
             # The typed accessors by the declared type, as the bytecode
             # path picks getattr_<t>/bindattr_<t>: 81/82 object, 117-119
             # and 121-123 for int/num/str.
+            # The declared WIDTH plays no part here, as it does not on the
+            # bytecode path: Compiler.nqp picks getattr_<char>/bindattr_<char>
+            # off the primspec alone (typechar) and emits no truncation for an
+            # attribute -- the P6opaque slot is the declared width, so the
+            # REPR truncates the store itself. Sized and full-width emit the
+            # same thing.
             my int $aspec := nqp::isnull($var.returns) ?? 0 !! nqp::objprimspec($var.returns);
             my int $auint := $aspec == 10 ?? 1 !! 0;
-            cbail('sized uint attribute')
-                if $auint && nqp::objprimbits($var.returns) > 0 && nqp::objprimbits($var.returns) < 64;
             my int $t := $auint ?? $T_UINT !! rt_of($var.returns);
             cbail('attribute type') if $t < 0 || $t > 4;
             # A uint attribute (objprimspec 10) uses getattr_u/bindattr_u,
@@ -3331,7 +3363,7 @@ class QAST::TruffleEncoder {
             return %e<own>{$name};
         }
         my $cur := %e<block>.outer;
-        while $cur {
+        while $cur && block_info($cur) {
             if $cur.qast.ann('DYN_COMP_WRAPPER') {
                 $cur := 0;
             }
@@ -3367,7 +3399,7 @@ class QAST::TruffleEncoder {
                 nqp::existskey(%e<ownret>, $name) ?? %e<ownret>{$name} !! nqp::null()];
         }
         my $cur := %e<block>.outer;
-        while $cur {
+        while $cur && block_info($cur) {
             if $cur.qast.ann('DYN_COMP_WRAPPER') {
                 $cur := 0;
             }
@@ -3388,7 +3420,7 @@ class QAST::TruffleEncoder {
     method lexical_in_scope(str $name, %e) {
         return 1 if nqp::existskey(%e<own>, $name);
         my $cur := %e<block>.outer;
-        while $cur {
+        while $cur && block_info($cur) {
             if $cur.qast.ann('DYN_COMP_WRAPPER') {
                 $cur := 0;
             }
@@ -3505,8 +3537,9 @@ class QAST::TruffleEncoder {
     # lexical truncates to the outer declaration's width too. The bind
     # node's own :returns is the fallback for a decl-with-init
     # (`my uint8 $x = v`), whose declaration is the node itself.
-    method sized_ret($var, str $name, %e) {
-        my @r := self.resolve_lexref($name, %e);
+    # Takes the ALREADY-resolved declaration, so the caller's single
+    # resolve_lexref walk serves both it and the lexicalref check.
+    sub sized_ret_of(@r, $var) {
         return @r[2] if @r[0] == 1 && !nqp::isnull(@r[2]);
         $var.returns
     }
