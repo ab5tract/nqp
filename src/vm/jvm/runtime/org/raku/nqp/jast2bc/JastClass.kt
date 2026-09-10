@@ -10,6 +10,7 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
     @JvmField var superName: String?
     @JvmField var filename: String?
     @JvmField var serialized: ByteArray? = null
+    @JvmField var codePrograms: String? = null
     @JvmField var methods: SixModelObject?
     @JvmField var fields: SixModelObject?
     /* Names of nested in-memory units whose classfiles ride along in this
@@ -46,6 +47,13 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
             val bytes = ByteArray(sbuf.remaining())
             sbuf.get(bytes)
             serialized = bytes
+        }
+
+        try {
+            codePrograms = Ops.getattr_s(jast, jastClass, "$!codeprograms", codeProgramsHint, tc)
+        }
+        catch (t: Throwable) {
+            /* A version of the node without the field. */
         }
 
         try {
@@ -88,6 +96,7 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
         private var superHint = 0L
         private var filenameHint = 0L
         private var serializedHint = 0L
+        private var codeProgramsHint = 0L
         private var methodsHint = 0L
         private var fieldsHint = 0L
         private var nestedClassesHint = 0L
@@ -109,6 +118,7 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
             superHint      = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "$!super")
             filenameHint   = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "$!filename")
             serializedHint = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "$!serialized")
+            codeProgramsHint = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "$!codeprograms")
             methodsHint    = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "@!methods")
             fieldsHint     = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "@!fields")
             nestedClassesHint = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "@!nested_classes")

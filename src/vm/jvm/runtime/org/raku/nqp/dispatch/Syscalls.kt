@@ -483,10 +483,10 @@ object Syscalls {
             void
         }
 
-        /* Builds the compiling unit's record in memory -- the record road
+        /* Builds the compiling unit's record in memory -- the unit road
          * for a script, an EVAL, a BEGIN-time unit, or a --target=jar with
-         * no --output under NQP_UNIT -- for nqp::loadcompunit to turn into
-         * a ProgramUnit: no zip, no class. */
+         * no --output -- for nqp::loadcompunit to turn into a ProgramUnit:
+         * no zip, no class. */
         define("jvm-build-unit", OBJ, OBJ) { args ->
             val res = org.raku.nqp.runtime.EvalResult()
             res.record = org.raku.nqp.runtime.unit.UnitWriter.record(args.obj(0), args.obj(1), args.tc)
