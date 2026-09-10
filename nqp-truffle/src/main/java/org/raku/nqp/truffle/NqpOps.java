@@ -1056,6 +1056,20 @@ final class NqpOps {
         return new NqpCont.Suspend(sse, rtype);
     }
 
+    /**
+     * The token for a FUSED op that has work left after the call the
+     * capture crossed: the finisher is that work as a function of the
+     * inner call's value. The resume reads that value as an OBJECT (the
+     * inner call is user code -- a Proxy FETCH, a where block -- whose
+     * result register is an object) and answers the finisher's value as
+     * the op's own, which for the int-typed ops is a boxed Long, exactly
+     * what their non-suspending road already answers.
+     */
+    static Object suspendToken(org.raku.nqp.runtime.SaveStackException sse,
+                               java.util.function.Function<Object, Object> finish) {
+        return new NqpCont.Suspend(sse, NqpWire.T_OBJ, finish);
+    }
+
     static RuntimeException carry(Throwable t) {
         if (t instanceof com.oracle.truffle.api.exception.AbstractTruffleException ate) return ate;
         if (t instanceof UnwindException u) return new NqpUnwind(u);
