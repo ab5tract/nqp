@@ -69,8 +69,7 @@ object CodeEngines {
 
     /**
      * The entry point for jar-bound bodies: the program travels in the
-     * unit's .codeprograms.lz4 sidecar and is referenced by index --
-     * string constants per program overflowed CORE.c's constant pool.
+     * unit artifact's program table and is referenced by index.
      */
     @JvmStatic
     fun codeRunIdx(

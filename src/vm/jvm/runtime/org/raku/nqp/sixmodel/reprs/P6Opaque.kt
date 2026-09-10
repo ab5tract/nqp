@@ -12,7 +12,7 @@ import java.io.IOException
 
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap
 
-import org.raku.nqp.jast2bc.BytecodeVersion
+import org.raku.nqp.runtime.BytecodeVersion
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
