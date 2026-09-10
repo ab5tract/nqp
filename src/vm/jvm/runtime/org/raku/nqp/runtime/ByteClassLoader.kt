@@ -2,14 +2,11 @@ package org.raku.nqp.runtime
 
 import java.lang.ref.SoftReference
 import java.util.Hashtable
-import java.util.WeakHashMap
-import java.util.concurrent.CopyOnWriteArraySet
 
+/** The loader for the plain classes generated at runtime (P6Opaque's
+ *  attribute classes, the interop adaptors). Units are artifacts and do
+ *  not come through here. */
 class ByteClassLoader : ClassLoader {
-    private val refs = CopyOnWriteArraySet<String>()
-
-    private val read: MutableMap<ClassLoader, String> = WeakHashMap()
-
     private val made: MutableMap<String, SoftReference<Class<*>>> = Hashtable()
 
     constructor() : super()
@@ -20,8 +17,6 @@ class ByteClassLoader : ClassLoader {
      * bootstrap loader". */
     constructor(parent: ClassLoader?) : super(parent)
 
-    fun addRef(name: String): Boolean = refs.add(name)
-
     fun getMade(name: String?): Class<*>? {
         if (name != null && made.containsKey(name))
             return made[name]!!.get()
@@ -30,25 +25,6 @@ class ByteClassLoader : ClassLoader {
 
     fun setMade(name: String?, klass: Class<*>): Class<*> {
         made[name ?: klass.name] = SoftReference(klass)
-        return klass
-    }
-
-    fun getRead(child: ClassLoader?, name: String?): Class<*>? {
-        if (name != null && made.containsKey(name))
-            return made[name]!!.get()
-        if (child != null && read.containsKey(child)) {
-            val readName = read[child]
-            if (made.containsKey(readName))
-                return made[readName]!!.get()
-        }
-        return null
-    }
-
-    fun setRead(child: ClassLoader?, name: String?, klass: Class<*>): Class<*> {
-        val actualName = name ?: klass.name
-        if (child != null)
-            read[child] = actualName
-        made[actualName] = SoftReference(klass)
         return klass
     }
 

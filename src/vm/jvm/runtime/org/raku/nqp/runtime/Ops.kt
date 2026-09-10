@@ -7939,15 +7939,15 @@ object Ops {
     }
     @JvmStatic
     fun loadbytecode(filename: String?, tc: ThreadContext): String? {
-        LibraryLoader.load(tc, filename)
+        org.raku.nqp.runtime.unit.UnitLoader.load(tc, filename!!)
         return filename
     }
     @JvmStatic
     fun loadbytecodebuffer(buffer: SixModelObject?, tc: ThreadContext): SixModelObject? {
         if (buffer is VMArrayInstance_i8)
-            LibraryLoader.load(tc, buffer.slots)
+            org.raku.nqp.runtime.unit.UnitLoader.load(tc, buffer.slots!!)
         else if (buffer is VMArrayInstance_u8)
-            LibraryLoader.load(tc, buffer.slots)
+            org.raku.nqp.runtime.unit.UnitLoader.load(tc, buffer.slots!!)
         else
             throw ExceptionHandling.dieInternal(tc, "loadbytecodebuffer expects a uint8 or int8 VMArray")
         return buffer
