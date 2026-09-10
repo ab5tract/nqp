@@ -144,9 +144,14 @@ final class NqpOps {
         // SaveStackException that the save-stack machinery captures across
         // engine frames, and the resumed value waits in the return register.
         OP_CONTINUATIONRESET = 379, OP_CONTINUATIONCONTROL = 380,
-        OP_CONTINUATIONINVOKE = 381;
+        OP_CONTINUATIONINVOKE = 381,
+        // Encoder-internal, no QAST op of this name: the num32 half of
+        // Compiler.nqp's emit_sized_native_trunc (its d2f/f2d pair), so a
+        // store into a num32 lexical or parameter rounds to single
+        // precision the way MoarVM's sized register does.
+        OP_SIZED_NUM32 = 382;
 
-    static final int OP_COUNT = 382;
+    static final int OP_COUNT = 383;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -572,6 +577,7 @@ final class NqpOps {
                 } catch (Throwable t) { throw sneaky(t); }
                 return Ops.result_o(cf);
             }
+            case OP_SIZED_NUM32: return (double) (float) dbl(a[0]);
             case OP_ISTYPE_ND: return Ops.istype_nd(smo(a[0]), smo(a[1]), tc);
             case OP_WHO: return Ops.who(smo(a[0]), tc);
             case OP_GETPAYLOAD: return Ops.getpayload(smo(a[0]), tc);
@@ -1115,7 +1121,9 @@ final class NqpOps {
         for (CallFrame f = cf; f != null; f = f.outer) {
             org.raku.nqp.runtime.StaticCodeInfo sci = f.codeRef.staticInfo;
             int i = switch (type) {
-                case NqpWire.T_INT -> sci.iTryGetLexicalIdx(name);
+                // A uint lexical lives in the int slots; only the reference
+                // type it is wrapped in differs (Ops.lexref_at case 4).
+                case NqpWire.T_INT, NqpWire.T_UINT -> sci.iTryGetLexicalIdx(name);
                 case NqpWire.T_NUM -> sci.nTryGetLexicalIdx(name);
                 case NqpWire.T_STR -> sci.sTryGetLexicalIdx(name);
                 default -> -1;
@@ -1188,7 +1196,9 @@ final class NqpOps {
         for (CallFrame f = cf; f != null; f = f.outer, depth++) {
             org.raku.nqp.runtime.StaticCodeInfo sci = f.codeRef.staticInfo;
             int i = switch (type) {
-                case NqpWire.T_INT -> sci.iTryGetLexicalIdx(name);
+                // T_UINT reaches here only from a lexicalref site: uint
+                // lexicals share the int slot table.
+                case NqpWire.T_INT, NqpWire.T_UINT -> sci.iTryGetLexicalIdx(name);
                 case NqpWire.T_NUM -> sci.nTryGetLexicalIdx(name);
                 case NqpWire.T_STR -> sci.sTryGetLexicalIdx(name);
                 default -> sci.oTryGetLexicalIdx(name);
@@ -1650,7 +1660,13 @@ final class NqpOps {
      */
     static void storeReturnInto(int type, Object v, CallFrame target) {
         switch (type) {
-            case NqpWire.T_INT -> { target.iRet = lng(v); target.retType = (byte) CallFrame.RET_INT; }
+            // A uint result rides the int register, exactly as Ops.return_u
+            // writes it (iRet + RET_INT); the unsignedness lived in the ops
+            // that produced it, not in the register. Without this a block
+            // whose value is a uint (a `has uint $.x` accessor) reached the
+            // object case and threw Long-cannot-be-cast-to-SixModelObject.
+            case NqpWire.T_INT, NqpWire.T_UINT ->
+                { target.iRet = lng(v); target.retType = (byte) CallFrame.RET_INT; }
             case NqpWire.T_NUM -> { target.nRet = dbl(v); target.retType = (byte) CallFrame.RET_NUM; }
             case NqpWire.T_STR -> { target.sRet = (String) v; target.retType = (byte) CallFrame.RET_STR; }
             default -> { target.oRet = (SixModelObject) v; target.retType = (byte) CallFrame.RET_OBJ; }
@@ -1660,6 +1676,7 @@ final class NqpOps {
     @TruffleBoundary
     private static void returnSlow(int type, Object v, CallFrame cf) {
         switch (type) {
+            case NqpWire.T_UINT -> Ops.return_u(lng(v), cf);
             case NqpWire.T_INT -> Ops.return_i(lng(v), cf);
             case NqpWire.T_NUM -> Ops.return_n(dbl(v), cf);
             case NqpWire.T_STR -> Ops.return_s((String) v, cf);

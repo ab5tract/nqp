@@ -1574,6 +1574,21 @@ object Ops {
                 ref.sizeSpec = spec
                 return ref
             }
+            // The engine's wire type 4 (T_UINT): a uint lexical lives in the
+            // int slots (BlockInfo remaps 10 -> 1), but the reference is the
+            // HLL's UNSIGNED one, so it boxes as a magnitude -- exactly what
+            // the bytecode path's getlexref_u does.
+            4 -> {
+                val refType = hll.uintLexRef
+                if (refType == null || isnull(refType) == 1L)
+                    throw ExceptionHandling.dieInternal(tc,
+                        "No uint lexical reference type registered for current HLL")
+                val ref = refType.st.REPR.allocate(tc, refType.st) as NativeRefInstanceIntLex
+                ref.lexicals = target.iLex
+                ref.idx = idx
+                ref.sizeSpec = spec
+                return ref
+            }
             3 -> {
                 val refType = hll.strLexRef
                 if (refType == null || isnull(refType) == 1L)
