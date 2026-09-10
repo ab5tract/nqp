@@ -1,5 +1,4 @@
 # Backend class for the JVM.
-use JASTNodes;
 
 class HLL::Backend::JVM {
     our %jvm_config   := nqp::backendconfig();
@@ -36,11 +35,11 @@ class HLL::Backend::JVM {
     }
     
     method stages() {
-        'jast classfile jar jvm'
+        'unit jar jvm'
     }
-    
+
     method is_precomp_stage($stage) {
-        $stage eq 'classfile' || $stage eq 'jar'
+        $stage eq 'unit' || $stage eq 'jar'
     }
     
     method is_textual_stage($stage) {
@@ -54,48 +53,25 @@ class HLL::Backend::JVM {
         $source
     }
     
-    method jast($qast, *%adverbs) {
-        my $classname := %*COMPILING<%?OPTIONS><javaclass> || nqp::sha1('eval-at-' ~ nqp::time() ~ $compile_count++);
-        nqp::getcomp('QAST').jast($qast, :$classname);
-    }
-
-    method classfile($jast, *%adverbs) {
-        # TODO: Direct compile ops have to take a hash of name-to-typeobj
-        my %jastnodes := hash();
-        %jastnodes<JAST::Class>  := JAST::Class;
-        %jastnodes<JAST::Field>  := JAST::Field;
-        %jastnodes<JAST::Method> := JAST::Method;
-        %jastnodes<JAST::Label> := JAST::Label;
-        %jastnodes<JAST::Instruction> := JAST::Instruction;
-        %jastnodes<JAST::InvokeDynamic> := JAST::InvokeDynamic;
-        %jastnodes<JAST::InstructionList> := JAST::InstructionList;
-        %jastnodes<JAST::PushIVal> := JAST::PushIVal;
-        %jastnodes<JAST::PushNVal> := JAST::PushNVal;
-        %jastnodes<JAST::PushSVal> := JAST::PushSVal;
-        %jastnodes<JAST::PushCVal> := JAST::PushCVal;
-        %jastnodes<JAST::PushIndex> := JAST::PushIndex;
-        %jastnodes<JAST::TryCatch> := JAST::TryCatch;
-        %jastnodes<JAST::Annotation> := JAST::Annotation;
-        # The unit road: a jar-bound unit with an output file is written as
-        # a zip; every other unit -- a script, an EVAL, a BEGIN-time unit,
-        # a --target=jar with no --output -- is built in memory as a
-        # record, which the jvm stage (nqp::loadcompunit) turns into a
-        # ProgramUnit. No class file either way; Compiler.nqp refuses
-        # --target=classfile.
+    method unit($qast, *%adverbs) {
+        my $unit_id := %*COMPILING<%?OPTIONS><javaclass> || nqp::sha1('eval-at-' ~ nqp::time() ~ $compile_count++);
+        my $unit := nqp::getcomp('QAST').unit($qast, :$unit_id);
+        # A jar-bound unit with an output file is written as a zip; every
+        # other unit -- a script, an EVAL, a BEGIN-time unit, a
+        # --target=jar with no --output -- is built in memory as a record,
+        # which the jvm stage (nqp::loadcompunit) turns into a ProgramUnit.
         if %adverbs<target> eq 'jar' && %adverbs<output> {
-            # The syscall's argument kinds are checked at the call
-            # site; %adverbs<output> arrives boxed.
             my str $unit_output := %adverbs<output>;
-            nqp::syscall('jvm-write-unit', $jast, %jastnodes, $unit_output);
+            nqp::syscall('jvm-write-unit-record', $unit, $unit_output);
             nqp::null()
         }
         else {
-            nqp::syscall('jvm-build-unit', $jast, %jastnodes)
+            nqp::syscall('jvm-build-unit-record', $unit)
         }
     }
 
     method jar($cu, *%adverbs) {
-        $cu; # the actual work is done in classfile and compilejast...
+        $cu   # the unit stage wrote or built it; this stage names the target
     }
     
     method jvm($cu, *%adverbs) {
@@ -127,7 +103,7 @@ class HLL::Backend::JVM {
             !! $opname;
         # This unit compiles before the QAST compiler's, so its classes are
         # only reachable through the compiler registry at runtime, the same
-        # way the jast stage reaches it above.
+        # way the unit stage reaches it above.
         my $qastcomp := nqp::getcomp('QAST');
         nqp::isnull($qastcomp) || !nqp::can($qastcomp, 'operations')
             ?? 0
