@@ -19,8 +19,7 @@ import org.raku.nqp.sixmodel.SixModelObject
  */
 object UnitWriter {
     /** Reads the JAST tree as a unit record. Refuses (a hard error naming
-     *  the unit) a tree not compiled on the unit road, one with bytecode
-     *  fallbacks, a block without a qbid or a program, two blocks sharing
+     *  the unit) a block without a qbid or a program, two blocks sharing
      *  a qbid, and a nested unit id with no retained record. */
     @JvmStatic
     fun record(jast: SixModelObject?, jastNodes: SixModelObject?, tc: ThreadContext): UnitRecord {
@@ -30,10 +29,6 @@ object UnitWriter {
         val classType = jastNodes.at_key_boxed(tc, "JAST::Class")!!
         val methodType = jastNodes.at_key_boxed(tc, "JAST::Method")!!
         val jc = JastClass(jast, classType, tc)
-        if (!jc.unitRoad)
-            throw ExceptionHandling.dieInternal(tc, "unit record: ${jc.className} was not compiled on the artifact road")
-        if (jc.fallbacks != 0)
-            throw ExceptionHandling.dieInternal(tc, "unit record: ${jc.className} has ${jc.fallbacks} bytecode fallback bodies")
 
         /* Nested units (BEGIN-time compiles whose code refs this unit's
          * serialization points into) were retained as records by
