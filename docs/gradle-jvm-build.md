@@ -59,12 +59,15 @@ systemd-run --user --scope -p MemoryHigh=18G -p MemoryMax=20G ./gradlew testNqp
 
 Each stage registers, per target, a `GenCatTask` (concatenation +
 `#?if jvm` / `#?if stageN` preprocessing) and a `JavaExec` running the
-previous stage's compiler (`-cp <stageDir>` +
-`-Xbootclasspath/a:<stageDir>:<runtime>:<3rdparty>:<stageDir>/nqp.jar nqp
---bootstrap ...`). Stage 1 uses the committed `src/vm/jvm/stage0` jars and
-passes `--stable-sc=stage1`; stage 2 uses the stage 1 output.
-`NQPP5QRegex.jar` is compiled afterwards with the finished runner, matching
-`make`. The exact flags were captured from a `make -n j-all` transcript.
+previous stage's compiler through the unit loader (`-cp <stageDir>:<engine
+jar>` + `-Xbootclasspath/a:<stageDir>:<runtime>:<3rdparty>
+org.raku.nqp.runtime.unit.UnitMain <stageDir>/nqp.jar --bootstrap ...`).
+Stage 1 uses the committed `src/vm/jvm/stage0` jars — themselves unit
+artifacts, not class files — and passes `--stable-sc=stage1`; stage 2 uses
+the stage 1 output. `NQPP5QRegex.jar` is compiled afterwards with the
+finished runner, matching `make`. The exact flags were captured from a
+`make -n j-all` transcript (the entry point changed from `nqp` to
+`UnitMain` once the compiler stopped emitting class files).
 
 `jvmconfig.properties` exists in two variants, as in the Makefile build: an
 install-prefix variant baked into `nqp-runtime.jar`, and a build-tree
@@ -111,6 +114,13 @@ The JVM backend was modernized off its 2012-era pins:
   `ThreadDeath` (deprecated-for-removal) is still used for exit unwinding —
   replacing it needs a designed exit protocol across generated mainlines and
   EvalServer; deferred.
-- **stage0 regenerated** (`./gradlew jBootstrapFiles`): the committed
-  bootstrap jars are now Java 25 class files, so building or running the
-  JVM backend requires JDK 25+.
+- **stage0 regenerated (2026-08)** as Java 25 class files (`./gradlew
+  jBootstrapFiles`), which set the JDK 25+ floor for building or running the
+  JVM backend; superseded 2026-09 by the unit-artifact regeneration below —
+  the JDK 25+ floor stands, but stage0 is no longer class files.
+- **stage0 regenerated 2026-09 as unit artifacts** (`./gradlew
+  jBootstrapFiles` after the JAST-free driver landed). Rule: a change that
+  an OLD stage0 could not read (an incompatible wire change, a meta format
+  bump, a syscall shape change) is preceded by a regeneration from the LAST
+  compiler that still speaks the old shape; additive wire changes need
+  none.
