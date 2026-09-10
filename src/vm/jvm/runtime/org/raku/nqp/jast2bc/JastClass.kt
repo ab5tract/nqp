@@ -10,7 +10,6 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
     @JvmField var superName: String?
     @JvmField var filename: String?
     @JvmField var serialized: ByteArray? = null
-    @JvmField var codePrograms: String? = null
     @JvmField var methods: SixModelObject?
     @JvmField var fields: SixModelObject?
     /* Names of nested in-memory units whose classfiles ride along in this
@@ -27,8 +26,6 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
     @JvmField var serializedCount = -1
     @JvmField var scHandle: String? = null
     @JvmField var scDesc: String? = null
-    @JvmField var fallbacks = 0
-    @JvmField var unitRoad = false
     @JvmField var programs: SixModelObject? = null
     @JvmField var callsites: SixModelObject? = null
     @JvmField var blockvalues: SixModelObject? = null
@@ -52,13 +49,6 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
         }
 
         try {
-            codePrograms = Ops.getattr_s(jast, jastClass, "$!codeprograms", codeProgramsHint, tc)
-        }
-        catch (t: Throwable) {
-            /* A version of the node without the field. */
-        }
-
-        try {
             val nested = jast.get_attribute_boxed(tc, jastClass, "@!nested_classes", nestedClassesHint)
             if (nested != null) {
                 val iter = Ops.iter(nested, tc)
@@ -79,8 +69,6 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
             serializedCount = Ops.getattr_i(jast, jastClass, "$!serialized_count", serializedCountHint, tc).toInt()
             scHandle = Ops.getattr_s(jast, jastClass, "$!sc_handle", scHandleHint, tc)
             scDesc = Ops.getattr_s(jast, jastClass, "$!sc_desc", scDescHint, tc)
-            fallbacks = Ops.getattr_i(jast, jastClass, "$!fallbacks", fallbacksHint, tc).toInt()
-            unitRoad = Ops.getattr_i(jast, jastClass, "$!unit_road", unitRoadHint, tc) != 0L
             programs = jast.get_attribute_boxed(tc, jastClass, "@!programs", programsHint)
             callsites = jast.get_attribute_boxed(tc, jastClass, "@!callsites", callsitesHint)
             blockvalues = jast.get_attribute_boxed(tc, jastClass, "@!blockvalues", blockvaluesHint)
@@ -100,7 +88,6 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
         private var superHint = 0L
         private var filenameHint = 0L
         private var serializedHint = 0L
-        private var codeProgramsHint = 0L
         private var methodsHint = 0L
         private var fieldsHint = 0L
         private var nestedClassesHint = 0L
@@ -112,8 +99,6 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
         private var serializedCountHint = 0L
         private var scHandleHint = 0L
         private var scDescHint = 0L
-        private var fallbacksHint = 0L
-        private var unitRoadHint = 0L
         private var programsHint = 0L
         private var callsitesHint = 0L
         private var blockvaluesHint = 0L
@@ -124,7 +109,6 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
             superHint      = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "$!super")
             filenameHint   = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "$!filename")
             serializedHint = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "$!serialized")
-            codeProgramsHint = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "$!codeprograms")
             methodsHint    = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "@!methods")
             fieldsHint     = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "@!fields")
             nestedClassesHint = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "@!nested_classes")
@@ -136,8 +120,6 @@ class JastClass @Throws(Exception::class) constructor(jast: SixModelObject, jast
             serializedCountHint = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "$!serialized_count")
             scHandleHint        = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "$!sc_handle")
             scDescHint          = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "$!sc_desc")
-            fallbacksHint       = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "$!fallbacks")
-            unitRoadHint        = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "$!unit_road")
             programsHint        = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "@!programs")
             callsitesHint       = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "@!callsites")
             blockvaluesHint     = jastClass.st.REPR.hint_for(tc, jastClass.st, jastClass, "@!blockvalues")
