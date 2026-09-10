@@ -712,6 +712,12 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
                 return NqpOps.checkarity((CallFrame) fa[ARG_CF], (ThreadContext) fa[ARG_TC],
                 (CallSiteDescriptor) fa[ARG_CSD], (Object[]) fa[ARG_ARGS], required, accepted);
             } catch (Throwable t) {
+                /* NQP_ARITY_TRACE: which block's header refused, since the
+                 * arity message itself names no block (and the frame-free
+                 * road has no CallFrame to name one from). Behind a
+                 * boundary, off a static flag: nothing of it is partially
+                 * evaluated into the compiled catch arm. */
+                if (NqpOps.ARITY_TRACE) NqpOps.traceArityRefusal(fa, required, accepted, t);
                 throw NqpOps.carry(t);
             }
         }
