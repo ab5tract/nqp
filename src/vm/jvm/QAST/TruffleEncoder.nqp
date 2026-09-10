@@ -659,6 +659,12 @@ class QAST::TruffleEncoder {
     # null-message bug above used to turn into a bare NullPointerException).
     # BlockInfo is `my`-scoped to Compiler.nqp, so the test is a duck-typed
     # one: only a BlockInfo answers to `qast`.
+    #
+    # FIVE walks need it, not four: the four lexical resolvers
+    # (lexical_type_of, resolve_lexref, lexical_in_scope, the lexicalref
+    # scope resolver) and the scope-from-symbol-table walk in encode_var,
+    # whose twin is Compiler.nqp:5470. Without the guard there the walk
+    # dies on .qast instead of reaching `cbail('scopeless var')`.
     sub block_info($cur) { nqp::can($cur, 'qast') ?? 1 !! 0 }
 
     # Is a block with this cuid one of the blocks THIS block's own deferred
@@ -3012,7 +3018,7 @@ class QAST::TruffleEncoder {
         # the compiler does.
         if $scope eq '' {
             my $cur := %e<block>;
-            while $cur {
+            while $cur && block_info($cur) {
                 my %sym := $cur.qast.symbol($name);
                 if %sym {
                     $scope := %sym<scope>;
@@ -3068,10 +3074,14 @@ class QAST::TruffleEncoder {
                 }
             }
             else {
+                # The declaration this bind targets, resolved ONCE: both
+                # the lexicalref check and the sized-store width want it,
+                # and this is the encoder's hottest walk (every lexical
+                # bind in the whole compilation, up the BlockInfo chain).
+                my @rl := self.resolve_lexref($name, %e);
                 # "Cannot bind to QAST::Var resolving to a lexicalref" on
                 # the bytecode path; a bail keeps that error its own.
-                cbail('bind to a lexicalref through lexical scope')
-                    if self.resolve_lexref($name, %e)[0] == 2;
+                cbail('bind to a lexicalref through lexical scope') if @rl[0] == 2;
                 if $outer {
                     epush(%e, $W_LEXBIND_OUTER); epush(%e, $type); epush(%e, epool(%e, $name));
                 }
@@ -3085,8 +3095,7 @@ class QAST::TruffleEncoder {
                 # int8/16/32 sign-wrap, uint8/16/32 mask, num32 rounds to
                 # single precision. A full-width type wraps to nothing.
                 self.encode_child(
-                    self.sized_trunc($bindval, self.sized_ret($var, $name, %e)),
-                    %e, $type);
+                    self.sized_trunc($bindval, sized_ret_of(@rl, $var)), %e, $type);
             }
             return $type;
         }
@@ -3528,8 +3537,9 @@ class QAST::TruffleEncoder {
     # lexical truncates to the outer declaration's width too. The bind
     # node's own :returns is the fallback for a decl-with-init
     # (`my uint8 $x = v`), whose declaration is the node itself.
-    method sized_ret($var, str $name, %e) {
-        my @r := self.resolve_lexref($name, %e);
+    # Takes the ALREADY-resolved declaration, so the caller's single
+    # resolve_lexref walk serves both it and the lexicalref check.
+    sub sized_ret_of(@r, $var) {
         return @r[2] if @r[0] == 1 && !nqp::isnull(@r[2]);
         $var.returns
     }
