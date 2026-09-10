@@ -227,27 +227,31 @@ fun registerStage(
                 languageVersion = JavaLanguageVersion.of(toolchainVersion)
             }
             workingDir = projectDir
-            mainClass = "nqp"
+            mainClass = "org.raku.nqp.runtime.unit.UnitMain"
             classpath = files(compilerDir, engineJarFile)
 
             doFirst {
+                // The compiler's own units resolve against the module
+                // search path the classpath yields (compilerDir); the
+                // runtime and its third-party jars ride on the boot
+                // classpath as the runner's do (GenerateRunnerTask).
                 val bootcp = (
                     listOf(compilerDir.absolutePath, runtimeJarFile.absolutePath) +
-                        thirdPartySorted().map { it.absolutePath } +
-                        "${compilerDir.absolutePath}/nqp.jar"
+                        thirdPartySorted().map { it.absolutePath }
                     ).joinToString(File.pathSeparator)
                 jvmArgs("--enable-native-access=ALL-UNNAMED", "-Xmx$nqpStageMaxHeap", "-XX:+AllowParallelDefineClass", "-Xbootclasspath/a:$bootcp")
                 jvmArgs("--module-path", shareTruffleDir.asFile.absolutePath,
                     "--add-modules", "org.graalvm.truffle,org.graalvm.truffle.runtime")
             }
 
+            val compilerUnit = listOf("${compilerDir.absolutePath}/nqp.jar")
             val stableSc = if (stage == 1) listOf("--stable-sc=stage1") else emptyList()
             args = if (t.isNqp) {
-                listOf("--bootstrap", "--module-path=$stageDirPath", "--setting-path=$stageDirPath",
+                compilerUnit + listOf("--bootstrap", "--module-path=$stageDirPath", "--setting-path=$stageDirPath",
                     "--setting=${t.setting}", "--target=jar", "--no-regex-lib") +
                     stableSc + listOf("--javaclass=nqp", "--output=$outputJar", inputFile.absolutePath)
             } else {
-                listOf("--bootstrap") +
+                compilerUnit + listOf("--bootstrap") +
                     (if (t.settingPath) listOf("--setting-path=$stageDirPath") else emptyList()) +
                     (if (t.modulePath) listOf("--module-path=$stageDirPath") else emptyList()) +
                     listOf("--no-regex-lib", "--target=jar", "--setting=${t.setting}") +
