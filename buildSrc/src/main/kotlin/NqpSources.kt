@@ -81,8 +81,6 @@ object NqpSources {
         "src/HLL/sprintf.nqp",
     )
 
-    val JASTNODES = listOf("src/vm/jvm/QAST/JASTNodes.nqp")
-
     /** tools/templates/jvm/qast_sources */
     val QAST = listOf(
         // Before the compiler, which asks it to flatten each regex.
@@ -105,9 +103,9 @@ object NqpSources {
         "src/QRegex/P5Regex/Compiler.nqp",
     )
 
-    /** NQP_SOURCES_EXTRA (src/vm/jvm/NQP/Ops.nqp) + COMMON_NQP_SOURCES. */
+    /** COMMON_NQP_SOURCES (src/vm/jvm/NQP/Ops.nqp is gone: Task 1 emptied it
+     *  of everything but comments, Task 2 deleted it). */
     val NQP = listOf(
-        "src/vm/jvm/NQP/Ops.nqp",
         "src/NQP/World.nqp",
         "src/NQP/Grammar.nqp",
         "src/NQP/Optimizer.nqp",
@@ -127,6 +125,6 @@ object NqpSources {
         "COMMON_HLL_SOURCES" to HLL.drop(1),
         "P6QREGEX_SOURCES" to P6QREGEX,
         "P5QREGEX_SOURCES" to P5QREGEX,
-        "COMMON_NQP_SOURCES" to NQP.drop(1),
+        "COMMON_NQP_SOURCES" to NQP,
     )
 }

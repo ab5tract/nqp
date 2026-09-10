@@ -37,11 +37,6 @@ THIRDPARTY_JARS = $(ASM)@cpsep@$(ASMTREE)@cpsep@$(FASTUTIL)@cpsep@$(JLINE)@cpsep
 @bpv(NQP_@ucstage@_FLAGS)@ = --javaclass=nqp
 )@
 
-# 
-@bpv(ASTNODES_SOURCES)@	= @nfp(src/vm/jvm/QAST/JASTNodes.nqp)@
-
-@bpv(NQP_SOURCES_EXTRA)@ = @nfp(src/vm/@backend@/NQP/Ops.nqp)@
-
 @bpv(CLEANUPS_EXTRA)@ = \
 	*.class \
 	bin \
