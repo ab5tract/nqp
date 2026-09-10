@@ -1,7 +1,8 @@
 package org.raku.nqp.runtime.unit
 
-/** One code-ref block of a unit, everything CodeRefAnnotation + the qb_<n>
- *  method name used to carry, plus the index of the block's program. */
+/** One code-ref block of a unit: everything the old per-method code-ref
+ *  annotation and the qb_<n> method name used to carry, plus the index of
+ *  the block's program. */
 class BlockRec(
     @JvmField val name: String,
     @JvmField val cuid: String?,          // written for a nested or a runtime-compiled unit; null on a jar-bound comp-mode block
