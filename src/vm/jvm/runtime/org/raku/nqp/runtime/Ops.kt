@@ -6832,6 +6832,21 @@ object Ops {
         if (code is CodeRef) {
             /* NQP_REPOINT_TRACE: the RakuAST code-ref fixup's own pairing --
              * which code ref each code object is being tied to. */
+            if (REPOINT_TRACE && code.staticInfo.uniqueId != null
+                    && System.getenv("NQP_REPOINT_STACK") == code.staticInfo.uniqueId) {
+                val names = StringBuilder("nqp setcodeobj: who ties cuid "
+                    + code.staticInfo.uniqueId + ":")
+                var fr = tc.curFrame
+                var n = 0
+                while (fr != null && n < 12) {
+                    val s = fr.codeRef?.staticInfo
+                    names.append("\n    '").append(fr.codeRef?.name ?: "?").append("' ")
+                        .append(s?.sourceFile).append(':').append(s?.sourceLine)
+                    fr = fr.caller
+                    n++
+                }
+                System.err.println(names)
+            }
             if (REPOINT_TRACE && code.staticInfo.uniqueId != null)
                 System.err.println("nqp setcodeobj: coderef cuid="
                     + code.staticInfo.uniqueId + " name='" + code.name
