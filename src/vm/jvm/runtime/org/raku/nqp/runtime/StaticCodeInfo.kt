@@ -55,9 +55,11 @@ class StaticCodeInfo(
      * frame construction; when that block has no live invocation the search
      * can only fail, and this count lets it be skipped -- a JFR profile of
      * the CORE.c compile put the always-failing search at 14% of all
-     * samples. Only ever an overestimate: a frame that leaves without
-     * leave() (the dieInternal-in-the-catch-arm road) stays counted and
-     * keeps the search, which is the old behaviour, never a wrong skip.
+     * samples. Only ever an overestimate: a frame that leaves through
+     * neither leave() nor leaveTorn() (the dieInternal-in-the-catch-arm
+     * road) stays counted and keeps the search -- never a wrong skip. A
+     * frame the unwinder tears past does give its count back, through
+     * leaveTorn(), which also runs its exit handler.
      */
     @JvmField val liveInvocations = java.util.concurrent.atomic.AtomicInteger()
 
