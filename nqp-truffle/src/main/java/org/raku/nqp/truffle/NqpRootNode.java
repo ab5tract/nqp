@@ -712,6 +712,46 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
                 return NqpOps.checkarity((CallFrame) fa[ARG_CF], (ThreadContext) fa[ARG_TC],
                 (CallSiteDescriptor) fa[ARG_CSD], (Object[]) fa[ARG_ARGS], required, accepted);
             } catch (Throwable t) {
+                /* NQP_ARITY_TRACE: which block's header refused, since the
+                 * arity message itself names no block (and the frame-free
+                 * road has no CallFrame to name one from). */
+                if (System.getenv("NQP_ARITY_TRACE") != null) {
+                    org.raku.nqp.runtime.CodeRef cr =
+                        (org.raku.nqp.runtime.CodeRef) fa[ARG_CR];
+                    org.raku.nqp.runtime.StaticCodeInfo si =
+                        cr == null ? null : cr.staticInfo;
+                    System.err.println("nqp arity: refused in '"
+                        + (cr == null ? "<null>" : cr.name) + "' uid="
+                        + (si == null ? "?" : si.uniqueId)
+                        + " at " + (si == null ? "?" : si.sourceFile + ":" + si.sourceLine)
+                        + " outer=" + (si == null || si.outerStaticInfo == null ? "?"
+                            : si.outerStaticInfo.uniqueId)
+                        + " required=" + required + " accepted=" + accepted
+                        + ": " + t);
+                    StringBuilder ab = new StringBuilder();
+                    for (Object o : (Object[]) fa[ARG_ARGS])
+                        ab.append(' ').append(o == null ? "null"
+                            : o instanceof org.raku.nqp.sixmodel.SixModelObject smo
+                                ? smo.st.debugName : o.getClass().getSimpleName() + "=" + o);
+                    CallFrame ccf = (CallFrame) fa[ARG_CF];
+                    CallFrame caller = ccf == null ? null : ccf.caller;
+                    System.err.println("nqp arity:   args:" + ab
+                        + " csd=" + ((CallSiteDescriptor) fa[ARG_CSD]).numPositionals
+                        + " caller=" + (caller == null || caller.codeRef == null ? "?"
+                            : "'" + caller.codeRef.name + "' uid="
+                              + caller.codeRef.staticInfo.uniqueId + " at "
+                              + caller.codeRef.staticInfo.sourceFile + ":"
+                              + caller.codeRef.staticInfo.sourceLine));
+                    CompilationUnit ccu = (CompilationUnit) fa[ARG_CU];
+                    StringBuilder cb = new StringBuilder();
+                    for (org.raku.nqp.runtime.CodeRef c : ccu.codeRefs)
+                        cb.append(" [").append(c.staticInfo.uniqueId).append(" '")
+                          .append(c.name).append("']");
+                    System.err.println("nqp arity:   unit " + ccu.unitId()
+                        + " mainlineQbid=" + ccu.mainlineQbid() + " coderefs:" + cb);
+                    if (System.getenv("NQP_ARITY_TRACE").equals("2"))
+                        new Throwable("the arity refusal's host stack").printStackTrace();
+                }
                 throw NqpOps.carry(t);
             }
         }
