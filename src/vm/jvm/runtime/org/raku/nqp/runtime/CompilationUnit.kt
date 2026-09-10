@@ -1,35 +1,17 @@
 package org.raku.nqp.runtime
 
-import java.lang.invoke.MethodHandle
-import java.lang.invoke.MethodHandles
-import java.lang.reflect.Method
 import java.util.HashMap
 
-import org.raku.nqp.sixmodel.STable
-
 /**
- * All compilation units inherit from this class. A compilation unit contains
- * code generated from a single QAST::CompUnit, with each QAST::Block turning
- * into a method in the compilation unit. (Generated subclasses override the
- * open methods below, so they must stay open.)
+ * All compilation units inherit from this class. A compilation unit holds the
+ * code that came from a single QAST::CompUnit. Every unit is hand-written
+ * Kotlin: ProgramUnit, where a QAST::Block is a unit record plus an engine
+ * program; KnowHOWMethods; and AdaptorUnit, the unit behind a generated
+ * Java-interop adaptor class. The latter two hand their code refs to
+ * initializeCompilationUnit through getCodeRefs(); no generated subclass of
+ * this class exists any more, so nothing here is reflected over.
  */
 abstract class CompilationUnit {
-    companion object {
-        private fun getCodeInfo(cls: Class<*>): Array<ReflectiveCodeInfo> {
-            val ret = ArrayList<ReflectiveCodeInfo>()
-            val l = MethodHandles.lookup()
-            for (m in cls.getDeclaredMethods()) {
-                val cra = m.getAnnotation(CodeRefAnnotation::class.java)
-                if (cra != null) ret.add(ReflectiveCodeInfo(l, m, cra))
-            }
-            return ret.toTypedArray()
-        }
-
-        private val codeInfoStash = object : ClassValue<Array<ReflectiveCodeInfo>>() {
-            override fun computeValue(c: Class<*>): Array<ReflectiveCodeInfo> = getCodeInfo(c)
-        }
-    }
-
     /**
      * Mapping of compilation unit unqiue IDs to matching code reference.
      */
@@ -61,82 +43,20 @@ abstract class CompilationUnit {
     @JvmField var shared = false
 
     /**
-     * Does initialization work for the compilation unit.
+     * Fills the code-ref tables from getCodeRefs(), which a hand-written unit
+     * (KnowHOWMethods, AdaptorUnit) supplies; a ProgramUnit overrides this
+     * with its block table.
      */
     open fun initializeCompilationUnit(tc: ThreadContext, runDeserialize: Boolean) {
-        /* Look through methods for code refs. */
-        val BOOTCodeSTable: STable? = tc.gc.BOOTCode?.st
-        val codeRefList = ArrayList<CodeRef>()
-        val outerCuid = ArrayList<CodeRefAnnotation>()
-        var codeRefsFound = false
-
-        val mlist = if (shared) codeInfoStash.get(javaClass) else getCodeInfo(javaClass)
-        /* Sized by the highest qbid, not by the number of methods: a qbid is
-         * also handed out for a block that registered static lexical values
-         * but was not compiled into this unit, so the ids are sparse and the
-         * highest one can exceed the method count. */
-        var maxQbid = -1
-        for (m in mlist)
-            if (m.qbid > maxQbid) maxQbid = m.qbid
-        val qbidToCodeRef = arrayOfNulls<CodeRef>(
-            if (maxQbid + 1 > mlist.size) maxQbid + 1 else mlist.size)
-        this.qbidToCodeRef = qbidToCodeRef
-
-        for (m in mlist) {
-            val ann = m.annotation
-
-            val cuid = ann.cuid
-            val cr = CodeRef(this, m.mh.bindTo(this), ann.name, cuid,
-                if (ann.oLexicalNames.isEmpty()) null else ann.oLexicalNames,
-                if (ann.iLexicalNames.isEmpty()) null else ann.iLexicalNames,
-                if (ann.nLexicalNames.isEmpty()) null else ann.nLexicalNames,
-                if (ann.sLexicalNames.isEmpty()) null else ann.sLexicalNames,
-                m.handlers, ann.argsExpectation)
-            cr.staticInfo.methodName = m.methodName
-            cr.staticInfo.hasExitHandler = ann.hasExitHandler
-            cr.staticInfo.isThunk = ann.isThunk
-            if (ann.sourceFile.isNotEmpty()) {
-                cr.staticInfo.sourceFile = ann.sourceFile
-                cr.staticInfo.sourceLine = ann.sourceLine
-                cr.staticInfo.sourceLineDelta = ann.sourceLineDelta
-                if (ann.sourceSectionRaw.isNotEmpty()) {
-                    cr.staticInfo.sourceSectionRaw = ann.sourceSectionRaw
-                    cr.staticInfo.sourceSectionLine = ann.sourceSectionLine
-                    cr.staticInfo.sourceSectionFile = ann.sourceSectionFile
-                }
-            }
-            if (BOOTCodeSTable != null)
-                cr.st = BOOTCodeSTable
-            codeRefList.add(cr)
-
-            if (m.qbid >= 0 && m.qbid < qbidToCodeRef.size) qbidToCodeRef[m.qbid] = cr
-
-            /* Stash outer, for later resolution. */
-            outerCuid.add(ann)
-            codeRefsFound = true
+        val bootSt = tc.gc.BOOTCode?.st
+        val refs = getCodeRefs()
+        codeRefs = refs
+        qbidToCodeRef = arrayOfNulls<CodeRef>(refs.size).also { t ->
+            for (i in refs.indices) t[i] = refs[i]
         }
-
-        /* Resolve outers. */
-        var codeRefs = codeRefList.toTypedArray()
-        this.codeRefs = codeRefs
-        for (i in codeRefs.indices) {
-            val cra = outerCuid[i]
-            val qbid = cra.outerQbid
-
-            val outer = if (qbid >= 0) qbidToCodeRef[qbid] else null
-            if (outer != null)
-                codeRefs[i].staticInfo.outerStaticInfo = outer.staticInfo
-        }
-
-        /* If we didn't find any by annotations, this is the fallback. */
-        if (!codeRefsFound) {
-            codeRefs = getCodeRefs()
-            this.codeRefs = codeRefs
-            for (c in codeRefs) {
-                if (BOOTCodeSTable != null)
-                    c.st = BOOTCodeSTable
-                cuidToCodeRef.put(c.staticInfo.uniqueId!!, c)
-            }
+        for (c in refs) {
+            if (bootSt != null) c.st = bootSt
+            c.staticInfo.uniqueId?.let { cuidToCodeRef.put(it, c) }
         }
 
         /* Build callsite descriptors. */
@@ -170,48 +90,6 @@ abstract class CompilationUnit {
             catch (e: Exception) {
                 throw ExceptionHandling.dieInternal(tc, e.toString())
             }
-    }
-
-    private class ReflectiveCodeInfo(l: MethodHandles.Lookup, m: Method, cra: CodeRefAnnotation) {
-        @JvmField val mh: MethodHandle
-        @JvmField val handlers: Array<LongArray>
-        @JvmField val annotation: CodeRefAnnotation = cra
-        @JvmField val methodName: String
-        @JvmField val qbid: Int
-
-        init {
-            /* Got a code ref annotation. Turn to method handle. */
-            mh = try {
-                l.unreflect(m)
-            } catch (e: Exception) {
-                throw RuntimeException(e)
-            }
-
-            /* Munge handlers. */
-            val flatHandlers = cra.handlers
-            var hptr = 0
-            val numHandlers = flatHandlers[hptr++].toInt()
-            handlers = Array(numHandlers) { LongArray(0) }
-            for (i in 0 until numHandlers) {
-                val handlerThings = flatHandlers[hptr++].toInt()
-                val handler = LongArray(handlerThings)
-                handlers[i] = handler
-                for (j in 0 until handlerThings)
-                    handler[j] = flatHandlers[hptr++]
-            }
-
-            methodName = m.getName()
-
-            var acc = 0
-            var foundQbid = -1
-            if (methodName.startsWith("qb_")) {
-                var i = 3
-                val imax = methodName.length
-                while (i < imax) acc = acc * 10 + (methodName[i++].code - '0'.code)
-                if (acc >= 0) foundQbid = acc
-            }
-            qbid = foundQbid
-        }
     }
 
     /**
