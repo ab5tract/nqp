@@ -1,9 +1,5 @@
 package org.raku.nqp.sixmodel.reprs
 
-import org.objectweb.asm.ClassWriter
-import org.objectweb.asm.MethodVisitor
-import org.objectweb.asm.Opcodes
-
 import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.REPR
@@ -26,23 +22,6 @@ class CPointer : REPR() {
         val obj = CPointerInstance()
         obj.st = st
         return obj
-    }
-
-    override fun generateBoxingMethods(tc: ThreadContext, st: STable, cw: ClassWriter, className: String, prefix: String) {
-        val getDesc = "(Lorg/raku/nqp/runtime/ThreadContext;)J"
-        val getMeth: MethodVisitor = cw.visitMethod(Opcodes.ACC_PUBLIC, "get_int", getDesc, null, null)
-        getMeth.visitVarInsn(Opcodes.ALOAD, 0)
-        getMeth.visitFieldInsn(Opcodes.GETFIELD, className, prefix, "J")
-        getMeth.visitInsn(Opcodes.LRETURN)
-        getMeth.visitMaxs(0, 0)
-
-        val setDesc = "(Lorg/raku/nqp/runtime/ThreadContext;J)V"
-        val setMeth: MethodVisitor = cw.visitMethod(Opcodes.ACC_PUBLIC, "set_int", setDesc, null, null)
-        setMeth.visitVarInsn(Opcodes.ALOAD, 0)
-        setMeth.visitVarInsn(Opcodes.LLOAD, 2)
-        setMeth.visitFieldInsn(Opcodes.PUTFIELD, className, prefix, "J")
-        setMeth.visitInsn(Opcodes.RETURN)
-        setMeth.visitMaxs(0, 0)
     }
 
     override fun deserialize_stub(tc: ThreadContext, st: STable): SixModelObject? {

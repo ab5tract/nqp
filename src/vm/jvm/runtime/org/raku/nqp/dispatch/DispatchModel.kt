@@ -8,7 +8,8 @@ import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.TypeObject
-import org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance
+import org.raku.nqp.sixmodel.reprs.RakuObject
+import org.raku.nqp.sixmodel.reprs.SlotKind
 
 /**
  * The kind of a value flowing through a dispatch. These are the callsite
@@ -180,22 +181,20 @@ sealed interface ValueSource {
             }
         }
 
-        /** Works out which kind of value an attribute holds, by reading it. */
+        /** Works out which kind of value an attribute holds, from the layout. */
         fun attributeKind(tc: ThreadContext, obj: SixModelObject,
                           classHandle: SixModelObject?, name: String): ArgKind {
-            try {
+            val l = (obj as? RakuObject)?.layout
+            if (l == null) {
                 obj.get_attribute_boxed(tc, classHandle, name, STable.NO_HINT)
                 return ArgKind.OBJ
             }
-            catch (badRef: P6OpaqueBaseInstance.BadReferenceRuntimeException) {
-                obj.get_attribute_native(tc, classHandle, name, STable.NO_HINT)
-                return when (tc.nativeType) {
-                    ThreadContext.NATIVE_INT -> ArgKind.INT
-                    ThreadContext.NATIVE_NUM -> ArgKind.NUM
-                    ThreadContext.NATIVE_STR -> ArgKind.STR
-                    else -> throw ExceptionHandling.dieInternal(tc,
-                        "Cannot track an attribute of this kind")
-                }
+            return when (l.kinds[l.resolve(classHandle, name)]) {
+                SlotKind.REF -> ArgKind.OBJ
+                SlotKind.INT -> ArgKind.INT
+                SlotKind.NUM -> ArgKind.NUM
+                SlotKind.STR -> ArgKind.STR
+                else -> throw ExceptionHandling.dieInternal(tc, "Cannot track an attribute of this kind")
             }
         }
 

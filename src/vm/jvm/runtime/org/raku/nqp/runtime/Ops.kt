@@ -111,10 +111,14 @@ import org.raku.nqp.sixmodel.reprs.NativeRefInstanceMultidim
 import org.raku.nqp.sixmodel.reprs.NativeRefInstanceNumLex
 import org.raku.nqp.sixmodel.reprs.NativeRefInstancePositional
 import org.raku.nqp.sixmodel.reprs.NativeRefInstanceStrLex
+import org.raku.nqp.sixmodel.reprs.NativeCallBody
+import org.raku.nqp.sixmodel.reprs.NativeCallInstance
 import org.raku.nqp.sixmodel.reprs.NativeRefREPRData
-import org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance
-import org.raku.nqp.sixmodel.reprs.P6OpaqueREPRData
 import org.raku.nqp.sixmodel.reprs.P6bigintInstance
+import org.raku.nqp.sixmodel.reprs.RakuObject
+import org.raku.nqp.sixmodel.reprs.RakuObjectLayout
+import org.raku.nqp.sixmodel.reprs.RakuObjectREPRData
+import org.raku.nqp.sixmodel.reprs.SlotKind
 import org.raku.nqp.sixmodel.reprs.P6int
 import org.raku.nqp.sixmodel.reprs.P6num
 import org.raku.nqp.sixmodel.reprs.P6str
@@ -3479,55 +3483,54 @@ object Ops {
     fun getattr(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext): SixModelObject? =
         getattrIn(obj, ch, name, tc, null)
 
-    /** getattr boxing a native slot with an explicit language: the code
-     *  engine passes the block's own unit's, since a frame-free callee
-     *  entered across languages has its caller's frame on tc. Null means
-     *  the frame's, resolved ONLY on the boxing branch: the current frame
-     *  is a dummy without a code ref while a unit deserializes, and an
-     *  eager read there took the bootstrap down as "Missing or wrong
-     *  version of dependency". */
+    /** A native slot read in object context boxes with the given language,
+     *  or the frame's when null: the code engine passes the block's own
+     *  unit's, since a frame-free callee entered across languages has its
+     *  caller's frame on tc. The frame is resolved ONLY on the boxing
+     *  branch -- the current frame is a dummy without a code ref while a
+     *  unit deserializes, and an eager read there took the bootstrap down
+     *  as "Missing or wrong version of dependency". */
     @JvmStatic
     fun getattrIn(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext, hllIn: HLLConfig?): SixModelObject? {
-        try {
-            return obj!!.get_attribute_boxed(tc, decont(ch, tc), name, STable.NO_HINT)
+        val chd = decont(ch, tc)
+        if (obj is RakuObject) {
+            val l = obj.layout ?: return obj.get_attribute_boxed(tc, chd, name, STable.NO_HINT)
+            return getattrSlot(obj, l, l.resolve(chd, name), name, tc, hllIn)
         }
-        catch (badRef: P6OpaqueBaseInstance.BadReferenceRuntimeException) {
-            var retval: SixModelObject? = createNull(tc)
-            obj!!.get_attribute_native(tc, decont(ch, tc), name, STable.NO_HINT)
-            val hll = hllIn ?: tc.frame.codeRef.staticInfo.compUnit.hllConfig
-            if (tc.nativeType == ThreadContext.NATIVE_INT) {
-                retval = box_i(tc.nativeI, hll.intBoxType, tc)
+        return obj!!.get_attribute_boxed(tc, chd, name, STable.NO_HINT)
+    }
+
+    /** The boxed reading of any slot kind. */
+    private fun getattrSlot(obj: RakuObject, l: RakuObjectLayout, slot: Int, name: String?, tc: ThreadContext, hllIn: HLLConfig?): SixModelObject? {
+        when (l.kinds[slot]) {
+            SlotKind.REF -> return (l.getRef(obj, slot) as SixModelObject?) ?: obj.autoViv(l, slot, tc)
+            SlotKind.INT -> {
+                val hll = hllIn ?: tc.frame.codeRef.staticInfo.compUnit.hllConfig
+                return box_i(l.getLong(obj, slot), hll.intBoxType, tc)
             }
-            else if (tc.nativeType == ThreadContext.NATIVE_NUM) {
-                retval = box_n(tc.nativeN, hll.numBoxType, tc)
+            SlotKind.NUM -> {
+                val hll = hllIn ?: tc.frame.codeRef.staticInfo.compUnit.hllConfig
+                return box_n(java.lang.Double.longBitsToDouble(l.getLong(obj, slot)), hll.numBoxType, tc)
             }
-            else if (tc.nativeType == ThreadContext.NATIVE_STR) {
-                retval = box_s(tc.nativeS, hll.strBoxType, tc)
+            SlotKind.STR -> {
+                val hll = hllIn ?: tc.frame.codeRef.staticInfo.compUnit.hllConfig
+                return box_s(l.getRef(obj, slot) as String?, hll.strBoxType, tc)
             }
-            else if (tc.nativeType == ThreadContext.NATIVE_JVM_OBJ) {
-                /* Resolve through the class handle the access named, not
-                 * the object's current type: after a mixin the two differ,
-                 * and only the handle is a key in the attribute maps. */
-                val slot = (obj as P6OpaqueBaseInstance).resolveAttribute(decont(ch, tc), name)
-                val attrSt = (obj.st.REPRData as P6OpaqueREPRData).flattenedSTables!![slot]
-                if (attrSt != null) {
-                    retval = attrSt.REPR.allocate(tc, attrSt)
-                    for (field in retval.javaClass.declaredFields) {
-                        try {
-                            if (tc.nativeJ == null || field.type.isAssignableFrom(tc.nativeJ!!.javaClass)) {
-                                field.set(retval, tc.nativeJ)
-                                break
-                            }
-                        }
-                        catch (iae: IllegalAccessException) {
-                            throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' couldn't be boxed")
-                        }
-                    }
-                }
+            SlotKind.BIGINT -> {
+                val attrSt = l.slotSTables[slot]!!
+                val res = attrSt.REPR.allocate(tc, attrSt) as P6bigintInstance
+                res.value = l.getRef(obj, slot) as java.math.BigInteger?
+                return res
             }
-            return retval
+            SlotKind.NCBODY -> {
+                val attrSt = l.slotSTables[slot]!!
+                val res = attrSt.REPR.allocate(tc, attrSt) as NativeCallInstance
+                res.body = l.getRef(obj, slot) as NativeCallBody?
+                return res
+            }
         }
     }
+
     @JvmStatic
     fun getattr_i(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext): Long {
         obj!!.get_attribute_native(tc, decont(ch, tc), name, STable.NO_HINT)
@@ -3562,55 +3565,23 @@ object Ops {
     }
     @JvmStatic
     fun getattr(obj: SixModelObject?, ch: SixModelObject?, name: String?, hint: Long, tc: ThreadContext): SixModelObject? {
-        var theHint = hint
-        try {
-            // XXX: as below (getattr_i)
-            if (obj!!.st.REPRData is P6OpaqueREPRData && (obj.st.REPRData as P6OpaqueREPRData).mi)
-                theHint = STable.NO_HINT
-            return obj.get_attribute_boxed(tc, decont(ch, tc), name, theHint)
+        val chd = decont(ch, tc)
+        if (obj is RakuObject) {
+            val l = obj.layout ?: return obj.get_attribute_boxed(tc, chd, name, STable.NO_HINT)
+            /* MI: the hint was computed on the declaring class; resolve by
+             * name. An out-of-range hint does too, as RakuObject.slot does. */
+            val slot = if (hint >= 0L && hint < l.kinds.size && !l.mi) hint.toInt() else l.resolve(chd, name)
+            return getattrSlot(obj, l, slot, name, tc, null)
         }
-        catch (badRef: P6OpaqueBaseInstance.BadReferenceRuntimeException) {
-            var retval: SixModelObject? = createNull(tc)
-            obj!!.get_attribute_native(tc, decont(ch, tc), name, theHint)
-            if (tc.nativeType == ThreadContext.NATIVE_INT) {
-                retval = box_i(tc.nativeI, tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)
-            }
-            else if (tc.nativeType == ThreadContext.NATIVE_NUM) {
-                retval = box_n(tc.nativeN, tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc)
-            }
-            else if (tc.nativeType == ThreadContext.NATIVE_STR) {
-                retval = box_s(tc.nativeS, tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
-            }
-            else if (tc.nativeType == ThreadContext.NATIVE_JVM_OBJ) {
-                /* Resolve through the class handle the access named, not
-                 * the object's current type: after a mixin the two differ,
-                 * and only the handle is a key in the attribute maps. */
-                val slot = (obj as P6OpaqueBaseInstance).resolveAttribute(decont(ch, tc), name)
-                val attrSt = (obj.st.REPRData as P6OpaqueREPRData).flattenedSTables!![slot]
-                if (attrSt != null) {
-                    retval = attrSt.REPR.allocate(tc, attrSt)
-                    for (field in retval.javaClass.declaredFields) {
-                        try {
-                            if (tc.nativeJ == null || field.type.isAssignableFrom(tc.nativeJ!!.javaClass)) {
-                                field.set(retval, tc.nativeJ)
-                                break
-                            }
-                        }
-                        catch (iae: IllegalAccessException) {
-                            throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' couldn't be boxed")
-                        }
-                    }
-                }
-            }
-            return retval
-        }
+        return obj!!.get_attribute_boxed(tc, chd, name, hint)
     }
+
     @JvmStatic
     fun getattr_i(obj: SixModelObject?, ch: SixModelObject?, name: String?, hint: Long, tc: ThreadContext): Long {
         var theHint = hint
         // XXX: when we get other REPRs that do multiple inheritance
         //      this check should probably move into codegen
-        if (obj!!.st.REPRData is P6OpaqueREPRData && (obj.st.REPRData as P6OpaqueREPRData).mi)
+        if (obj!!.st.REPRData is RakuObjectREPRData && (obj.st.REPRData as RakuObjectREPRData).layout?.mi == true)
             theHint = STable.NO_HINT
         obj.get_attribute_native(tc, decont(ch, tc), name, theHint)
         if (tc.nativeType == ThreadContext.NATIVE_INT)
@@ -3623,7 +3594,7 @@ object Ops {
         var theHint = hint
         // XXX: when we get other REPRs that do multiple inheritance
         //      this check should probably move into codegen
-        if (obj!!.st.REPRData is P6OpaqueREPRData && (obj.st.REPRData as P6OpaqueREPRData).mi)
+        if (obj!!.st.REPRData is RakuObjectREPRData && (obj.st.REPRData as RakuObjectREPRData).layout?.mi == true)
             theHint = STable.NO_HINT
         obj.get_attribute_native(tc, decont(ch, tc), name, theHint)
         if (tc.nativeType == ThreadContext.NATIVE_INT)
@@ -3635,7 +3606,7 @@ object Ops {
     fun getattr_n(obj: SixModelObject?, ch: SixModelObject?, name: String?, hint: Long, tc: ThreadContext): Double {
         var theHint = hint
         // XXX: as above
-        if (obj!!.st.REPRData is P6OpaqueREPRData && (obj.st.REPRData as P6OpaqueREPRData).mi)
+        if (obj!!.st.REPRData is RakuObjectREPRData && (obj.st.REPRData as RakuObjectREPRData).layout?.mi == true)
             theHint = STable.NO_HINT
         obj.get_attribute_native(tc, decont(ch, tc), name, theHint)
         if (tc.nativeType == ThreadContext.NATIVE_NUM)
@@ -3647,7 +3618,7 @@ object Ops {
     fun getattr_s(obj: SixModelObject?, ch: SixModelObject?, name: String?, hint: Long, tc: ThreadContext): String? {
         var theHint = hint
         // XXX: as above
-        if (obj!!.st.REPRData is P6OpaqueREPRData && (obj.st.REPRData as P6OpaqueREPRData).mi)
+        if (obj!!.st.REPRData is RakuObjectREPRData && (obj.st.REPRData as RakuObjectREPRData).layout?.mi == true)
             theHint = STable.NO_HINT
         obj.get_attribute_native(tc, decont(ch, tc), name, theHint)
         if (tc.nativeType == ThreadContext.NATIVE_STR)
@@ -8611,53 +8582,35 @@ object Ops {
 
     /* Big integer operations. */
     private fun getBI(tc: ThreadContext, obj: SixModelObject?): BigInteger {
-        if (obj is P6bigintInstance)
-            return obj.value!!
+        if (obj is P6bigintInstance) return obj.value!!
         return getBI(tc, obj, obj!!.st.WHAT)
     }
 
     private fun getBI(tc: ThreadContext, obj: SixModelObject?, type: SixModelObject?): BigInteger {
-        if (obj is P6bigintInstance)
-            return obj.value!!
-
-        var hint = 0
-        if (obj!!.st.REPRData != null) {
-            hint = (obj.st.REPRData as P6OpaqueREPRData).unboxIntSlot
+        if (obj is P6bigintInstance) return obj.value!!
+        val o = obj as? RakuObject
+            ?: throw ExceptionHandling.dieInternal(tc, "Cannot unbox a bigint from a " + obj!!.st.REPR.name + " object")
+        val l = o.layout ?: throw ExceptionHandling.dieInternal(tc, "Cannot unbox a bigint from an uncomposed type")
+        var slot = l.unboxIntSlot
+        if (slot < 0) slot = ((type!!.st.REPRData as? RakuObjectREPRData)?.layout?.unboxIntSlot ?: -1)
+        if (slot < 0) slot = 0
+        return when (l.kinds[slot]) {
+            SlotKind.BIGINT -> (l.getRef(o, slot) as BigInteger?) ?: BigInteger.ZERO
+            SlotKind.INT -> BigInteger.valueOf(l.getLong(o, slot))
+            else -> throw ExceptionHandling.dieInternal(tc, "Attribute slot $slot of " + o.st.debugName + " is not a bigint")
         }
-        if (hint < 0 && type!!.st.REPRData != null) {
-            hint = (type.st.REPRData as P6OpaqueREPRData).unboxIntSlot
-        }
-
-        hint = if (hint < 0) 0 else hint
-
-        try {
-            obj.get_attribute_native(tc, null, null, hint.toLong())
-        } catch (rte: RuntimeException) {
-            // we couldn't get native, let's just getBI for the slot hinted at, with the type for that hint
-            // XXX: type.st.REPRData could theoretically be null here - it shouldn't be, because if it was
-            // we should already have handled a P6bigint successfully in the try above.
-            val innerType = (type!!.st.REPRData as P6OpaqueREPRData).flattenedSTables!![hint]!!.WHAT
-            tc.nativeJ = getBI(tc, obj.get_attribute_boxed(tc, null, null, hint.toLong()), innerType)
-        }
-        return tc.nativeJ as BigInteger
     }
 
     private fun makeBI(tc: ThreadContext, type: SixModelObject?, value: BigInteger): SixModelObject {
         val res = type!!.st.REPR.allocate(tc, type.st)
-        if (res is P6bigintInstance) {
-            res.value = value
-        }
-        else {
-            var hint = (type.st.REPRData as P6OpaqueREPRData).unboxIntSlot
-            hint = if (hint < 0) 0 else hint
-            tc.nativeJ = value
-            try {
-                res.bind_attribute_native(tc, null, null, hint.toLong())
-            } catch (rte: RuntimeException) {
-                // we couldn't bind native, let's just makeBI for the slot hinted at, with the type for that hint
-                val innerType = (type.st.REPRData as P6OpaqueREPRData).flattenedSTables!![hint]!!.WHAT
-                res.bind_attribute_boxed(tc, null, null, hint.toLong(), makeBI(tc, innerType, value))
-            }
+        if (res is P6bigintInstance) { res.value = value; return res }
+        val o = res as RakuObject
+        val l = o.layout!!
+        val slot = if (l.unboxIntSlot < 0) 0 else l.unboxIntSlot
+        when (l.kinds[slot]) {
+            SlotKind.BIGINT -> l.setRef(o, slot, value)
+            SlotKind.INT -> l.setLong(o, slot, P6int.sizedValue(l.specs[slot], value.toLong()))
+            else -> throw ExceptionHandling.dieInternal(tc, "Attribute slot $slot of " + type.st.debugName + " is not a bigint")
         }
         return res
     }

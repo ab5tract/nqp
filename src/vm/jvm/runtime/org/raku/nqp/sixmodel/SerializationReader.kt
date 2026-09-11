@@ -383,7 +383,7 @@ class SerializationReader(
                 stubObj.st = st
             } else {
                 // Concrete object; defer to the REPR.
-                stubObj = st.REPR.deserialize_stub(tc, st)
+                stubObj = st.REPR.deserialize_stub(tc, st, this)
             }
 
             // Place object in SC root set.
@@ -440,6 +440,40 @@ class SerializationReader(
             orig.position(savedPos)
         }
     }
+
+    /** For a RakuObject stub: [references, longs] counted from the STable's
+     *  serialized REPR-data header (attribute count, then per attribute a
+     *  flag and, when flattened, an STable ref whose REPR names the kind).
+     *  Reads no object reference, so it is safe during stubObjects. Null
+     *  when the STable is not this SC's (already whole) or its REPR data is
+     *  already read (the layout is the better answer). Cached per STable. */
+    fun peekAttributeShape(st: STable): IntArray? {
+        val idx = stableIndex[st] ?: return null
+        if (stableState[idx] == ST_READ) return null
+        shapeCache[idx]?.let { return it }
+        val saved = orig.position()
+        try {
+            orig.position(stTableOffset + idx * STABLES_TABLE_ENTRY_SIZE + 8)
+            orig.position(stDataOffset + orig.getInt())
+            val n = orig.getLong().toInt()
+            var refs = 0; var longs = 0
+            for (i in 0 until n) {
+                if (orig.getLong() != 0L) {
+                    val flattened = lookupSTable(orig.getInt(), orig.getInt())
+                    val k = flattened.REPR.inlinedKind()
+                    if (k == org.raku.nqp.sixmodel.reprs.SlotKind.INT || k == org.raku.nqp.sixmodel.reprs.SlotKind.NUM) longs++ else refs++
+                }
+                else refs++
+            }
+            val shape = intArrayOf(refs, longs)
+            shapeCache[idx] = shape
+            return shape
+        }
+        finally {
+            orig.position(saved)
+        }
+    }
+    private val shapeCache = HashMap<Int, IntArray>()
 
     private fun deserializeSTable(i: Int) {
         /* A cycle between two STables' repr data would come back here while

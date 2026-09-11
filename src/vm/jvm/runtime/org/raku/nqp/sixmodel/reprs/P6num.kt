@@ -1,13 +1,7 @@
 package org.raku.nqp.sixmodel.reprs
 
-import org.objectweb.asm.ClassWriter
-import org.objectweb.asm.MethodVisitor
-import org.objectweb.asm.Opcodes
-
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
-import org.raku.nqp.sixmodel.BoxedPrimitive
-import org.raku.nqp.sixmodel.Inlining
 import org.raku.nqp.sixmodel.REPR
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SerializationReader
@@ -22,6 +16,12 @@ class P6num : REPR() {
         const val P6NUM_C_TYPE_FLOAT: Byte = -1
         const val P6NUM_C_TYPE_DOUBLE: Byte = -2
         const val P6NUM_C_TYPE_LONGDOUBLE: Byte = -3
+
+        /** Round a value to a sized-num storage width, the way MoarVM's
+         * num32 registers store. Full-width and unsized specs pass through. */
+        @JvmStatic
+        fun sizedValue(ss: StorageSpec?, value: Double): Double =
+            if (ss?.bits?.toInt() == 32) value.toFloat().toDouble() else value
     }
 
     override fun type_object_for(tc: ThreadContext, HOW: SixModelObject?): SixModelObject {
@@ -61,71 +61,7 @@ class P6num : REPR() {
     override fun get_storage_spec(tc: ThreadContext, st: STable): StorageSpec =
         st.REPRData as StorageSpec
 
-    override fun inlineStorage(tc: ThreadContext, st: STable, cw: ClassWriter, prefix: String) {
-        cw.visitField(Opcodes.ACC_PUBLIC, prefix, "D", null, null)
-    }
-
-    override fun inlineBind(tc: ThreadContext, st: STable, mv: MethodVisitor, className: String, prefix: String) {
-        mv.visitVarInsn(Opcodes.ALOAD, 1)
-        mv.visitInsn(Opcodes.ICONST_0 + ThreadContext.NATIVE_NUM)
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeType", "I")
-        mv.visitVarInsn(Opcodes.ALOAD, 0)
-        mv.visitVarInsn(Opcodes.ALOAD, 1)
-        mv.visitFieldInsn(Opcodes.GETFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeN", "D")
-        /* A num32 stores at float precision, as MoarVM's num32 registers do. */
-        val bits = (st.REPRData as? StorageSpec)?.bits?.toInt() ?: 64
-        if (bits == 32) {
-            mv.visitInsn(Opcodes.D2F)
-            mv.visitInsn(Opcodes.F2D)
-        }
-        mv.visitFieldInsn(Opcodes.PUTFIELD, className, prefix, "D")
-        mv.visitInsn(Opcodes.RETURN)
-    }
-
-    override fun inlineGet(tc: ThreadContext, st: STable, mv: MethodVisitor, className: String, prefix: String) {
-        mv.visitVarInsn(Opcodes.ALOAD, 1)
-        mv.visitInsn(Opcodes.DUP)
-        mv.visitInsn(Opcodes.ICONST_0 + ThreadContext.NATIVE_NUM)
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeType", "I")
-        mv.visitVarInsn(Opcodes.ALOAD, 0)
-        mv.visitFieldInsn(Opcodes.GETFIELD, className, prefix, "D")
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeN", "D")
-        mv.visitInsn(Opcodes.RETURN)
-    }
-
-    override fun inlineDeserialize(tc: ThreadContext, st: STable, mv: MethodVisitor, className: String, prefix: String) {
-        mv.visitVarInsn(Opcodes.ALOAD, 0)
-        mv.visitVarInsn(Opcodes.ALOAD, 3)
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "org/raku/nqp/sixmodel/SerializationReader", "readDouble", "()D")
-        mv.visitFieldInsn(Opcodes.PUTFIELD, className, prefix, "D")
-    }
-
-    override fun generateBoxingMethods(tc: ThreadContext, st: STable, cw: ClassWriter, className: String, prefix: String) {
-        val getMeth = cw.visitMethod(Opcodes.ACC_PUBLIC, "get_num",
-            "(Lorg/raku/nqp/runtime/ThreadContext;)D", null, null)
-        getMeth.visitVarInsn(Opcodes.ALOAD, 0)
-        getMeth.visitFieldInsn(Opcodes.GETFIELD, className, prefix, "D")
-        getMeth.visitInsn(Opcodes.DRETURN)
-        getMeth.visitMaxs(0, 0)
-
-        val setMeth = cw.visitMethod(Opcodes.ACC_PUBLIC, "set_num",
-            "(Lorg/raku/nqp/runtime/ThreadContext;D)V", null, null)
-        setMeth.visitVarInsn(Opcodes.ALOAD, 0)
-        setMeth.visitVarInsn(Opcodes.DLOAD, 2)
-        setMeth.visitFieldInsn(Opcodes.PUTFIELD, className, prefix, "D")
-        setMeth.visitInsn(Opcodes.RETURN)
-        setMeth.visitMaxs(0, 0)
-    }
-
-    // We don't depend on any details of the STable, so no description is needed
-    /* A num32 rounds to float precision on store, so the width is part of
-     * the storage-class cache signature. */
-    override fun inline_description(tc: ThreadContext, st: STable, out: StringBuilder): Boolean {
-        out.append((st.REPRData as? StorageSpec)?.bits ?: 64)
-        return true
-    }
-    override fun box_description(tc: ThreadContext, st: STable, out: StringBuilder): Boolean =
-        inline_description(tc, st, out)
+    override fun inlinedKind(): SlotKind = SlotKind.NUM
 
     override fun deserialize_stub(tc: ThreadContext, st: STable): SixModelObject {
         val obj = P6numInstance()
@@ -140,15 +76,6 @@ class P6num : REPR() {
 
     override fun serialize(tc: ThreadContext, writer: SerializationWriter, obj: SixModelObject) {
         writer.writeNum((obj as P6numInstance).value)
-    }
-
-    override fun serialize_inlined(tc: ThreadContext, st: STable, writer: SerializationWriter,
-                                   prefix: String, obj: SixModelObject) {
-        try {
-            writer.writeNum(obj.javaClass.getField(prefix).get(obj) as Double)
-        } catch (e: Exception) {
-            throw RuntimeException(e)
-        }
     }
 
     override fun serialize_repr_data(tc: ThreadContext, st: STable, writer: SerializationWriter) {

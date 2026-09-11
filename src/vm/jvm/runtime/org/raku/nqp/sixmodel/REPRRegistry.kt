@@ -45,7 +45,7 @@ object REPRRegistry {
     init {
         addREPR("KnowHOWREPR", KnowHOWREPR())
         addREPR("KnowHOWAttribute", KnowHOWAttribute())
-        addREPR("P6opaque", P6Opaque())
+        addREPR("P6opaque", RakuObjectREPR())
         addREPR("VMHash", VMHash())
         addREPR("VMArray", VMArray())
         addREPR("VMArray_i8", VMArray())
