@@ -337,11 +337,21 @@ class QAST::RxDescriptor {
                 if nqp::existskey(nqp::getenvhash(), 'NQP_RX_BAIL');
         }
         if $!survey {
+            # A diagnostic pass (NQP_RX_SURVEY) over a whole compile: collect
+            # every reason a rule cannot encode, without dying, so the gaps can
+            # be read at once rather than one rebuild at a time.
             my int $seen := 0;
             for @!bail_reasons { $seen := 1 if $_ eq $why }
             nqp::push(@!bail_reasons, $why) unless $seen;
+            nqp::null()
         }
-        nqp::null()
+        else {
+            # The per-node bytecode codegen is gone (QAST::Compiler), so a rule
+            # the engine cannot encode cannot be compiled at all -- fail naming
+            # it, rather than the vanished silent fallback.
+            my str $name := $!pass_name eq '' ?? '<anon>' !! $!pass_name;
+            nqp::die("regex engine cannot encode rule '" ~ $name ~ "': " ~ $why)
+        }
     }
 
     method bail_reason() { $!bail_reason }
@@ -512,6 +522,65 @@ class QAST::RxDescriptor {
             }
         }
         ''
+    }
+
+    # A frame-walking op that even the getlexdyn compensation below cannot
+    # save: anything other than a getlexdyn, or a getlexdyn sitting inside a
+    # nested block (a frame of its own, so the fixed two-hop walk would be
+    # wrong for it). Answers its op name, or '' when the only walkers are
+    # top-level getlexdyns -- which compensate_getlexdyn rewrites.
+    method frame_ops_unfixable($node, :$in_block = 0, :%seen) {
+        my str $id := ~nqp::objectid($node);
+        return '' if nqp::existskey(%seen, $id);
+        nqp::bindkey(%seen, $id, 1);
+        my int $child_in_block := $in_block || nqp::istype($node, QAST::Block) ?? 1 !! 0;
+        if nqp::istype($node, QAST::Op) && nqp::existskey(%frame_ops, $node.op) {
+            unless $node.op eq 'getlexdyn' && !$in_block {
+                return $node.op;
+            }
+        }
+        for @($node) {
+            if nqp::istype($_, QAST::Node) {
+                my str $found := self.frame_ops_unfixable($_, :in_block($child_in_block), :%seen);
+                return $found if $found;
+            }
+        }
+        ''
+    }
+
+    # Rewrite each top-level nqp::getlexdyn(X) so it reads what it would read
+    # inline. A callback runs one frame deeper than the code it replaces, and
+    # getlexdyn starts at the caller, so from the callback it would start at the
+    # rule frame rather than the rule's caller. getlexreldyn from the caller's
+    # caller's context is the same walk shifted up by the one extra frame.
+    # Each getlexdyn QAST::Op is mutated in place into that form. The walk uses
+    # @($node) (not nqp::elems / positional indexing, which throw on leaf nodes
+    # such as SVal, exactly as reads_frame_ops does) and the %seen guard against
+    # shared subtrees. A nested QAST::Block is a frame of its own and is not
+    # descended -- frame_ops_unfixable has already refused any getlexdyn there.
+    method compensate_getlexdyn($node, %seen = nqp::hash()) {
+        my str $id := ~nqp::objectid($node);
+        unless nqp::existskey(%seen, $id) {
+            nqp::bindkey(%seen, $id, 1);
+            unless nqp::istype($node, QAST::Block) {
+                if nqp::istype($node, QAST::Op) && $node.op eq 'getlexdyn' {
+                    my $name := $node[0];
+                    $node.op('getlexreldyn');
+                    $node[0] := QAST::Op.new( :op('ctxcaller'),
+                        QAST::Op.new( :op('ctxcaller'),
+                            QAST::Op.new( :op('ctx') ) ) );
+                    $node[1] := $name;
+                }
+                else {
+                    for @($node) {
+                        if nqp::istype($_, QAST::Node) {
+                            self.compensate_getlexdyn($_, %seen);
+                        }
+                    }
+                }
+            }
+        }
+        $node
     }
 
     method reads_outer_local($node, %seen) {
@@ -787,9 +856,14 @@ class QAST::RxDescriptor {
             my str $lowered := self.reads_outer_local($node[0], nqp::hash());
             return self.bail('qastnode over a lowered local ' ~ $lowered)
                 if $lowered;
-            my str $walker := self.reads_frame_ops($node[0], nqp::hash());
+            # A top-level nqp::getlexdyn is fixable (the callback runs one frame
+            # deeper, so compensate_getlexdyn shifts its walk up by one); any
+            # other frame walker, or a getlexdyn buried in a nested block, is
+            # not, and refuses the rule.
+            my str $walker := self.frame_ops_unfixable($node[0]);
             return self.bail('qastnode walks the caller chain (' ~ $walker ~ ')')
                 if $walker;
+            self.compensate_getlexdyn($node[0]);
 
             self.emit($QASTNODE);
             self.emit(nqp::elems(@!callbacks));

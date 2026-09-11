@@ -12,8 +12,8 @@ package org.raku.nqp.truffle;
  *   nqpp &lt;nints&gt; &lt;int&gt;... &lt;npool&gt; (&lt;len&gt;:&lt;chars&gt;)...
  * </pre>
  *
- * The int stream is [version, resultType, nlocals, localType*nlocals,
- * tree...]; the
+ * The int stream is [version, resultType, nlocals, needsFrame,
+ * localType*nlocals, tree...]; the
  * tree is a prefix walk. Local types let the builder default-initialize
  * every engine local (0, 0e0, null) the way JVM method locals are -- a
  * QAST local may legitimately be read before its first bind. All 64-bit
@@ -94,7 +94,7 @@ public final class NqpWire {
     /** Marks a source as an encoded block program. */
     public static final String MAGIC = "nqpp ";
 
-    public static final int VERSION = 1;
+    public static final int VERSION = 2;
 
     public static final int STMTS = 1;
     public static final int NULLC = 2;
@@ -136,11 +136,14 @@ public final class NqpWire {
     // the unsignedness lives in the ops that read it, not the storage.
     public static final int T_UINT = 4;
 
-    public record Program(int[] code, String[] pool, int nlocals) {
-        /** The tree starts after version, result type, nlocals, types. */
-        public int treeStart() { return 3 + nlocals; }
+    public record Program(int[] code, String[] pool, int nlocals, int needsFrameWord) {
+        /** The tree starts after version, result type, nlocals, needsFrame,
+         *  types. */
+        public int treeStart() { return 4 + nlocals; }
         public int resultType() { return code[1]; }
-        public int localType(int i) { return code[3 + i]; }
+        /** false for a frame-free block (runs with cf==null); true otherwise. */
+        public boolean needsFrame() { return needsFrameWord != 0; }
+        public int localType(int i) { return code[4 + i]; }
     }
 
     public static boolean isProgram(String source) {
@@ -155,12 +158,12 @@ public final class NqpWire {
         int nints = parseInt(s, cursor);
         int[] code = new int[nints];
         for (int i = 0; i < nints; i++) code[i] = parseInt(s, cursor);
-        if (code.length < 2 || code[0] != VERSION)
+        if (code.length < 4 || code[0] != VERSION)
             throw new IllegalArgumentException("nqpp version mismatch: " + (code.length > 0 ? code[0] : -1));
         int npool = parseInt(s, cursor);
         String[] pool = new String[npool];
         for (int i = 0; i < npool; i++) pool[i] = parsePooled(s, cursor);
-        return new Program(code, pool, code[2]);
+        return new Program(code, pool, code[2], code[3]);
     }
 
     private static int parseInt(String s, int[] cursor) {
@@ -179,16 +182,33 @@ public final class NqpWire {
         return neg ? -v : v;
     }
 
-    /** {@code <len>:<chars>}, length-prefixed so any character can travel. */
+    /** {@code <len>:<chars>}, length-prefixed so any character can travel.
+     * NFG: len is a grapheme count (the encoder's nqp::chars), so consume that
+     * many graphemes; grapheme count is invariant under NFC. */
     private static String parsePooled(String s, int[] cursor) {
         int len = parseInt(s, cursor);
         int at = cursor[0];
         if (at >= s.length() || s.charAt(at) != ':')
             throw new IllegalArgumentException("nqpp: expected ':' at " + at);
         at++;
-        String out = s.substring(at, at + len);
-        cursor[0] = at + len;
+        int end = graphemeEnd(s, at, len);
+        String out = s.substring(at, end);
+        cursor[0] = end;
         return out;
+    }
+
+    /** The UTF-16 offset {@code count} graphemes past {@code from}. */
+    private static int graphemeEnd(String s, int from, int count) {
+        if (count <= 0) return from;
+        java.text.BreakIterator bi = java.text.BreakIterator.getCharacterInstance();
+        bi.setText(s);
+        int pos = from;
+        for (int n = count; n > 0; n--) {
+            int next = bi.following(pos);
+            if (next == java.text.BreakIterator.DONE) return s.length();
+            pos = next;
+        }
+        return pos;
     }
 
     private NqpWire() { }
