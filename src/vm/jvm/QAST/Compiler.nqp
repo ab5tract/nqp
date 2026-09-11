@@ -160,7 +160,6 @@ my $RT_INT  := 1;
 my $RT_NUM  := 2;
 my $RT_STR  := 3;
 my $RT_UINT := 10;
-my $RT_VOID := -1;
 
 # The classlib op registry, published for the Truffle encoder: every op a
 # map_classlib_*_op call maps to a static method is recorded here as
@@ -174,13 +173,9 @@ nqp::bindhllsym('nqp', 'CODE_CLASSLIB_HLL_OPS', %CODE_CLASSLIB_HLL_OPS);
 
 my @jtypes := [$TYPE_SMO, 'Long', 'Double', $TYPE_STR, $TYPE_SMO, $TYPE_SMO, $TYPE_SMO, $TYPE_SMO, $TYPE_SMO, $TYPE_SMO, 'Long'];
 my @rttypes := [$RT_OBJ, $RT_INT, $RT_NUM, $RT_STR, -1, -1, -1, -1, -1, -1, $RT_UINT];
-my @typeobjs := [NQPMu, int, num, str, NQPMu, NQPMu, NQPMu, NQPMu, NQPMu, NQPMu, uint];
-my @typechars := ['o', 'i', 'n', 's', '', '', '', '', '', '', 'u'];
 
 sub jtype($type_idx) { @jtypes[$type_idx] }
 sub rttype_from_typeobj($typeobj) { @rttypes[nqp::objprimspec($typeobj)] }
-sub typeobj_from_rttype($rttype) { @typeobjs[$rttype] }
-sub typechar($type_idx) { @typechars[$type_idx] }
 
 sub jdesc($jt) { $jt eq 'Long' ?? 'J' !! $jt eq 'Double' ?? 'D' !! $jt eq 'Void' ?? 'V' !! $jt }
 sub classlib_record($class, $method, @stack_in, $stack_out, $tc, $cont) {
@@ -200,6 +195,32 @@ class QAST::OperationsJVM {
     my %core_inlinability;
     my %hll_inlinability;
 
+    # The ops the backend compiles but an HLL must NOT inline -- the
+    # twelve that carried :!inlinable on their deleted add_core_op call.
+    # They are all ops that act on the frame they are compiled into (the
+    # dispatch family reads the current callsite, handle/handlepayload own
+    # a handler region, usecapture/savecapture the current capture, call
+    # and callstatic the caller chain), so an inlined copy would act on
+    # the inliner's frame instead. Everything else the backend can compile
+    # is inlinable by default, which is what add_core_op's `:$inlinable =
+    # 1` used to say for the other 52 hand-mapped ops; is_inlinable below
+    # re-derives that default from the encoder's own rows rather than from
+    # a second hand list that can drift.
+    my %core_noninlinable := nqp::hash(
+        'call',          1,
+        'callstatic',    1,
+        'dispatch',      1,
+        'syscall',       1,
+        'register',      1,
+        'delegate',      1,
+        'track',         1,
+        'guard',         1,
+        'handle',        1,
+        'handlepayload', 1,
+        'usecapture',    1,
+        'savecapture',   1,
+    );
+
     # Sets op inlinability at a core level.
     method set_core_op_inlinability($op, $inlinable) {
         %core_inlinability{$op} := $inlinable;
@@ -212,14 +233,21 @@ class QAST::OperationsJVM {
         %hll_inlinability{$hll}{$op} := $inlinable;
     }
 
-    # Checks if an op is considered inlinable.
+    # Checks if an op is considered inlinable. An HLL's own answer wins;
+    # then anything a map_classlib_*_op call recorded; then the explicit
+    # non-inlinable table above; and otherwise the same rule
+    # core_op_supported uses -- an op the encoder has a row for is one the
+    # backend can compile, and so one an HLL may inline. Unknown ops are
+    # not inlinable.
     method is_inlinable($hll, $op) {
         if nqp::existskey(%hll_inlinability, $hll) {
             if nqp::existskey(%hll_inlinability{$hll}, $op) {
                 return %hll_inlinability{$hll}{$op};
             }
         }
-        return %core_inlinability{$op} // 0;
+        return %core_inlinability{$op} if nqp::existskey(%core_inlinability, $op);
+        return 0 if nqp::existskey(%core_noninlinable, $op);
+        QAST::TruffleEncoder.supports_op($op) ?? 1 !! 0
     }
 
     # Records a core nqp:: op provided by a static method in the class
@@ -1354,7 +1382,7 @@ class QAST::UnitCompiler {
 
     # The entry point: compiles a QAST tree into the unit record the
     # artifact writer reads.
-    method unit($source, :$unit_id!, *%adverbs) {
+    method unit($source, :$unit_id!) {
         # Wrap $source in a QAST::CompUnit if it's not already a viable root node.
         unless nqp::istype($source, QAST::CompUnit) {
             my $unit := $source;
