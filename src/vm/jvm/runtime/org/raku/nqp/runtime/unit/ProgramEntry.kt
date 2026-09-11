@@ -13,9 +13,9 @@ import org.raku.nqp.runtime.ResumeStatus
 import org.raku.nqp.runtime.ThreadContext
 
 /**
- * The one body every artifact block has: what Compiler.nqp's emitted
- * stub did around codeRunIdx (Compiler.nqp as_jast(QAST::Block),
- * prelude and postlude), as a function. Its handle has the shape
+ * The one body every artifact block has: what the per-block stub the
+ * deleted class road emitted did around codeRunIdx (its prelude and
+ * postlude), as a single function. Its handle has the shape
  * StaticCodeInfo's init expects of a bound stub, (tc, cr, csd, resume,
  * args), so the invoke road and the resume surgery are untouched;
  * `resume` is unused because an engine program resumes through its own
@@ -30,7 +30,7 @@ object ProgramEntry {
         try {
             CodeEngines.codeRunUnit(sci, sci.compUnit, tc, cf, csd, args)
         } catch (e: ControlException) {
-            cf.leave()
+            cf.leaveThrough(e)
             throw e
         } catch (e: Throwable) {
             throw ExceptionHandling.dieInternal(tc, e)

@@ -1065,7 +1065,10 @@ object NqpDispatch {
                 NqpCodeEngine.runProgram(target, cr.staticInfo.compUnit, tc, cf, csd, args)
             }
             catch (ce: ControlException) {
-                leave(cf)
+                /* A continuation capture comes through here too (a
+                 * SaveStackException IS a ControlException): that is the
+                 * frame's save, not its exit. */
+                leaveThrough(cf, ce)
                 throw ce
             }
             catch (t: Throwable) {
@@ -1146,7 +1149,8 @@ object NqpDispatch {
             return
         }
         catch (ce: ControlException) {
-            if (cf != null) leave(cf)
+            /* As enterEngine: a capture passing through is a save. */
+            if (cf != null) leaveThrough(cf, ce)
             throw ce
         }
         catch (t: Throwable) {
@@ -1165,6 +1169,9 @@ object NqpDispatch {
 
     @TruffleBoundary
     private fun leave(cf: CallFrame) { cf.leave() }
+
+    @TruffleBoundary
+    private fun leaveThrough(cf: CallFrame, ce: ControlException) { cf.leaveThrough(ce) }
 
     @TruffleBoundary
     private fun dieInternal(tc: ThreadContext, t: Throwable): RuntimeException =
