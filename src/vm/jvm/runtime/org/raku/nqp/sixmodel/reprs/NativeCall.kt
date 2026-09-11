@@ -1,10 +1,5 @@
 package org.raku.nqp.sixmodel.reprs
 
-import org.objectweb.asm.ClassWriter
-import org.objectweb.asm.MethodVisitor
-import org.objectweb.asm.Opcodes
-import org.objectweb.asm.Type
-
 import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.Inlining
 import org.raku.nqp.sixmodel.REPR
@@ -76,68 +71,7 @@ class NativeCall : REPR() {
         return StorageSpec(inlining = Inlining.INLINED, bits = 64)
     }
 
-    override fun inlineStorage(tc: ThreadContext, st: STable, cw: ClassWriter, prefix: String) {
-        cw.visitField(Opcodes.ACC_PUBLIC, prefix, Type.getType(NativeCallBody::class.java).descriptor, null, null)
-    }
-
-    override fun inlineBind(tc: ThreadContext, st: STable, mv: MethodVisitor, className: String, prefix: String) {
-        val nativeCallType = Type.getType(NativeCallBody::class.java).descriptor
-        val nativeCallIN = Type.getType(NativeCallBody::class.java).internalName
-        mv.visitVarInsn(Opcodes.ALOAD, 1)
-        mv.visitInsn(Opcodes.ICONST_0 + ThreadContext.NATIVE_JVM_OBJ)
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeType", "I")
-        mv.visitVarInsn(Opcodes.ALOAD, 0)
-        mv.visitVarInsn(Opcodes.ALOAD, 1)
-        mv.visitFieldInsn(Opcodes.GETFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeJ",
-            Type.getType(Any::class.java).descriptor)
-        mv.visitTypeInsn(Opcodes.CHECKCAST, nativeCallIN)
-        mv.visitFieldInsn(Opcodes.PUTFIELD, className, prefix, nativeCallType)
-        mv.visitInsn(Opcodes.RETURN)
-    }
-
-    override fun inlineGet(tc: ThreadContext, st: STable, mv: MethodVisitor, className: String, prefix: String) {
-        mv.visitVarInsn(Opcodes.ALOAD, 1)
-        mv.visitInsn(Opcodes.DUP)
-        mv.visitInsn(Opcodes.ICONST_0 + ThreadContext.NATIVE_JVM_OBJ)
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeType", "I")
-        mv.visitVarInsn(Opcodes.ALOAD, 0)
-        mv.visitFieldInsn(Opcodes.GETFIELD, className, prefix,
-            Type.getType(NativeCallBody::class.java).descriptor)
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeJ",
-            Type.getType(Any::class.java).descriptor)
-        mv.visitInsn(Opcodes.RETURN)
-    }
-
-    override fun inlineDeserialize(tc: ThreadContext, st: STable, mv: MethodVisitor, className: String, prefix: String) {
-        /* Assume it'll be re-configured each time, so just allow it. */
-    }
-
-    // XXX This is a hack as it fails to check the REPR ID, but the JVM will
-    // catch any screw-ups and keep us safe.
-    override fun generateBoxingMethods(tc: ThreadContext, st: STable, cw: ClassWriter, className: String, prefix: String) {
-        val nativeCallType = Type.getType(NativeCallBody::class.java).descriptor
-        val nativeCallIN = Type.getType(NativeCallBody::class.java).internalName
-
-        val getDesc = "(Lorg/raku/nqp/runtime/ThreadContext;J)Ljava/lang/Object;"
-        val getMeth = cw.visitMethod(Opcodes.ACC_PUBLIC, "get_boxing_of", getDesc, null, null)
-        getMeth.visitVarInsn(Opcodes.ALOAD, 0)
-        getMeth.visitFieldInsn(Opcodes.GETFIELD, className, prefix, nativeCallType)
-        getMeth.visitInsn(Opcodes.ARETURN)
-        getMeth.visitMaxs(0, 0)
-
-        val setDesc = "(Lorg/raku/nqp/runtime/ThreadContext;JLjava/lang/Object;)V"
-        val setMeth = cw.visitMethod(Opcodes.ACC_PUBLIC, "set_boxing_of", setDesc, null, null)
-        setMeth.visitVarInsn(Opcodes.ALOAD, 0)
-        setMeth.visitVarInsn(Opcodes.ALOAD, 4)
-        setMeth.visitTypeInsn(Opcodes.CHECKCAST, nativeCallIN)
-        setMeth.visitFieldInsn(Opcodes.PUTFIELD, className, prefix, nativeCallType)
-        setMeth.visitInsn(Opcodes.RETURN)
-        setMeth.visitMaxs(0, 0)
-    }
-
-    // We don't depend on any details of the STable, so no description is needed
-    override fun inline_description(tc: ThreadContext, st: STable, out: StringBuilder): Boolean = true
-    override fun box_description(tc: ThreadContext, st: STable, out: StringBuilder): Boolean = true
+    override fun inlinedKind(): SlotKind = SlotKind.NCBODY
 
     override fun deserialize_stub(tc: ThreadContext, st: STable): SixModelObject {
         /* Assume it'll be re-configured each time, so just allow it. */
@@ -147,11 +81,6 @@ class NativeCall : REPR() {
     }
 
     override fun deserialize_finish(tc: ThreadContext, st: STable, reader: SerializationReader, obj: SixModelObject) {
-        /* Assume it'll be re-configured each time, so just allow it. */
-    }
-
-    override fun serialize_inlined(tc: ThreadContext, st: STable, writer: SerializationWriter,
-                                   prefix: String, obj: SixModelObject) {
         /* Assume it'll be re-configured each time, so just allow it. */
     }
 }
