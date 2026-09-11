@@ -208,7 +208,7 @@ class QAST::RxDescriptor {
     method pass_name() { $!pass_name }
 
     # The QAST the engine has to come back into the rule's frame to run, one
-    # entry per callback index. QAST::Compiler.engine_jast turns these into a
+    # entry per callback index. The rule's encoder turns these into a
     # single block that switches on the index; the descriptor itself carries
     # only the index, since the code cannot be flattened into an int array.
     method callbacks() { @!callbacks }
@@ -756,8 +756,8 @@ class QAST::RxDescriptor {
             #
             # The constraint a fix has to satisfy, established rather than
             # guessed: lexical access here is DEPTH-INDEXED and resolved at
-            # compile time -- as_jast(QAST::Var) walks BlockInfo.outer()
-            # counting frames and emits an access at that depth. Compile-time
+            # compile time -- a lexical access walks the block's outer chain
+            # counting frames and encodes an access at that depth. Compile-time
             # nesting and run-time frame nesting therefore have to correspond
             # exactly, and a codeblock is not bare code:
             # QRegex::P6Regex::Actions.codeblock wraps every `{ ... }` in a
