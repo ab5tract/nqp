@@ -86,11 +86,23 @@ class NQP::Actions is HLL::Actions {
             ));
         }
 
+#?if moar
         # Push mainline statements into UNIT.
         $unit.push($mainline);
 
         # Load the needed libraries.
         $unit.push($*W.libs());
+#?endif
+#?if !moar
+        # Load the needed libraries. On these backends libs() is a null op,
+        # and it goes before the mainline so that the mainline's value is
+        # the unit's return value — this is what HLL::Compiler.eval hands
+        # back, and with the mainline last the REPL can echo results.
+        $unit.push($*W.libs());
+
+        # Push mainline statements into UNIT.
+        $unit.push($mainline);
+#?endif
 
         # Wrap everything in a QAST::CompUnit.
         my $compunit := QAST::CompUnit.new(

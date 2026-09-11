@@ -2352,6 +2352,10 @@ QAST::OperationsJAST.map_classlib_core_op('lstat', $TYPE_OPS, 'lstat', [$RT_STR,
 QAST::OperationsJAST.map_classlib_core_op('stat_time', $TYPE_OPS, 'stat_time', [$RT_STR, $RT_INT], $RT_NUM);
 QAST::OperationsJAST.map_classlib_core_op('lstat_time', $TYPE_OPS, 'lstat_time', [$RT_STR, $RT_INT], $RT_NUM);
 QAST::OperationsJAST.map_classlib_core_op('open', $TYPE_OPS, 'open', [$RT_STR, $RT_STR], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('openasync', $TYPE_OPS, 'openasync', [$RT_STR, $RT_STR], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('spurtasync', $TYPE_OPS, 'spurtasync', [$RT_OBJ, $RT_OBJ, $RT_OBJ, $RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('slurpasync', $TYPE_OPS, 'slurpasync', [$RT_OBJ, $RT_OBJ, $RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('linesasync', $TYPE_OPS, 'linesasync', [$RT_OBJ, $RT_OBJ, $RT_INT, $RT_OBJ, $RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('readlink', $TYPE_OPS, 'readlink', [$RT_STR], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('filereadable', $TYPE_OPS, 'filereadable', [$RT_STR], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('filewritable', $TYPE_OPS, 'filewritable', [$RT_STR], $RT_INT, :tc);
@@ -2548,6 +2552,9 @@ QAST::OperationsJAST.add_core_op('substr', -> $qastcomp, $op {
 
 QAST::OperationsJAST.map_classlib_core_op('eqat', $TYPE_OPS, 'eqat', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
 QAST::OperationsJAST.map_classlib_core_op('eqatic', $TYPE_OPS, 'eqatic', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
+QAST::OperationsJAST.map_classlib_core_op('eqatim', $TYPE_OPS, 'eqatim', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
+QAST::OperationsJAST.map_classlib_core_op('eqaticim', $TYPE_OPS, 'eqaticim', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
+QAST::OperationsJAST.map_classlib_core_op('eqatic', $TYPE_OPS, 'eqatic', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
 # ord can be on a the first char in a string or at a particular char.
 QAST::OperationsJAST.map_classlib_core_op('ordfirst', $TYPE_OPS, 'ordfirst', [$RT_STR], $RT_INT);
 QAST::OperationsJAST.map_classlib_core_op('ordat',    $TYPE_OPS, 'ordat',    [$RT_STR, $RT_INT], $RT_INT);
@@ -2567,6 +2574,10 @@ QAST::OperationsJAST.add_core_op('index',  -> $qastcomp, $op {
         ?? QAST::Op.new( :op('indexfrom'), |@operands, QAST::IVal.new( :value(0)) )
         !! QAST::Op.new( :op('indexfrom'), |@operands ));
 });
+
+QAST::OperationsJAST.map_classlib_core_op('indexic', $TYPE_OPS, 'indexic', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
+QAST::OperationsJAST.map_classlib_core_op('indexim', $TYPE_OPS, 'indexim', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
+QAST::OperationsJAST.map_classlib_core_op('indexicim', $TYPE_OPS, 'indexicim', [$RT_STR, $RT_STR, $RT_INT], $RT_INT);
 
 # rindex may or may not take a starting position
 QAST::OperationsJAST.map_classlib_core_op('rindexfromend', $TYPE_OPS, 'rindexfromend', [$RT_STR, $RT_STR], $RT_INT);
@@ -3031,6 +3042,29 @@ QAST::OperationsJAST.add_core_op('setup_blv', -> $qastcomp, $op {
     }
 
     my $il := JAST::InstructionList.new();
+
+    # One string constant per block would be two constant-pool entries per
+    # block, and the core setting has tens of thousands of them -- enough on
+    # its own to push the unit past the 65535-entry limit. Batch the blocks
+    # into as few strings as a constant-pool Utf8 entry can hold (its length
+    # is a u2 in bytes, so stay well under 65535 to leave room for non-ASCII
+    # lexical names). Each block contributes a qbid, a lexical count, and
+    # four fields per lexical.
+    my int $CHUNK-CHARS := 20000;
+    my @chunk;
+    my int $chunk-chars;
+    my sub flush() {
+        if nqp::elems(@chunk) {
+            $il.append($ALOAD_0);
+            $il.append($ALOAD_1);
+            $il.append(JAST::PushSVal.new( :value(nqp::join("\0", @chunk)) ));
+            $il.append(JAST::Instruction.new( :op('invokevirtual'),
+                $TYPE_CU, 'setLexValuesBulk', 'Void', $TYPE_TC, $TYPE_STR ));
+            @chunk := [];
+            $chunk-chars := 0;
+        }
+    }
+
     for $op[0] {
         my $cuid := $_.key;
         my @bits;
@@ -3041,13 +3075,16 @@ QAST::OperationsJAST.add_core_op('setup_blv', -> $qastcomp, $op {
             nqp::push(@bits, ~nqp::scgetobjidx($sc, @lex[1]));
             nqp::push(@bits, ~@lex[2]);
         }
-        $il.append($ALOAD_0);
-        $il.append($ALOAD_1);
-        $il.append(JAST::PushIndex.new( :value($qastcomp.cuid_to_qbid($cuid)) ));
-        $il.append(JAST::PushSVal.new( :value(nqp::join("\0", @bits)) ));
-        $il.append(JAST::Instruction.new( :op('invokevirtual'),
-            $TYPE_CU, 'setLexValues', 'Void', $TYPE_TC, 'I', $TYPE_STR ));
+        nqp::push(@chunk, ~$qastcomp.cuid_to_qbid($cuid));
+        nqp::push(@chunk, ~nqp::div_i(nqp::elems(@bits), 4));
+        $chunk-chars := $chunk-chars + 16;
+        for @bits {
+            nqp::push(@chunk, $_);
+            $chunk-chars := $chunk-chars + nqp::chars($_) + 1;
+        }
+        flush() if $chunk-chars >= $CHUNK-CHARS;
     }
+    flush();
 
     $il.append($ACONST_NULL);
     result($il, $RT_OBJ)
@@ -3179,6 +3216,25 @@ QAST::OperationsJAST.map_classlib_core_op('coerce_si', $TYPE_OPS, 'coerce_si', [
 QAST::OperationsJAST.map_classlib_core_op('coerce_is', $TYPE_OPS, 'coerce_is', [$RT_INT], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('coerce_us', $TYPE_OPS, 'coerce_us', [$RT_UINT], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('coerce_ns', $TYPE_OPS, 'coerce_ns', [$RT_NUM], $RT_STR, :tc);
+QAST::OperationsJAST.map_classlib_core_op('coerce_in', $TYPE_OPS, 'coerce_in', [$RT_INT], $RT_NUM, :tc);
+QAST::OperationsJAST.map_classlib_core_op('jvmsyscall', $TYPE_OPS, 'syscall', [$RT_STR, $RT_OBJ], $RT_OBJ, :tc);
+QAST::OperationsJAST.add_core_op('syscall', -> $qastcomp, $op {
+    # The dispatcher-era boot-syscall surface. Desugar
+    # nqp::syscall(name, args...) into a runtime helper taking the
+    # arguments as a list; individual syscalls are implemented (or
+    # rejected by name) in Ops.syscall.
+    my $list := QAST::Op.new( :op('list') );
+    my int $i := 1;
+    my int $n := +@($op);
+    while $i < $n {
+        $list.push($op[$i]);
+        $i++;
+    }
+    $qastcomp.as_jast(QAST::Op.new( :op('jvmsyscall'), $op[0], $list ));
+});
+QAST::OperationsJAST.map_classlib_core_op('coerce_ni', $TYPE_OPS, 'coerce_ni', [$RT_NUM], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('coerce_ui', $TYPE_OPS, 'coerce_ui', [$RT_UINT], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('coerce_iu', $TYPE_OPS, 'coerce_iu', [$RT_INT], $RT_UINT, :tc);
 
 QAST::OperationsJAST.map_classlib_core_op('decodelocaltime', $TYPE_OPS, 'decodelocaltime', [$RT_INT], $RT_OBJ, :tc);
 
@@ -3189,6 +3245,7 @@ class QAST::CompilerJAST {
         has int $!cur_idx;
         has %!cuid_to_idx;
         has @!jastmeth_names;
+        has @!jastmeths;
         has @!cuids;
         has @!callsites;
         has %!callsite_map;
@@ -3197,6 +3254,7 @@ class QAST::CompilerJAST {
             $!cur_idx := 0;
             %!cuid_to_idx := {};
             @!jastmeth_names := [];
+            @!jastmeths := [];
             @!cuids := [];
             @!callsites := [];
             %!callsite_map := {};
@@ -3205,6 +3263,7 @@ class QAST::CompilerJAST {
         method register_method($jastmeth, $cuid) {
             %!cuid_to_idx{$cuid} := $!cur_idx;
             nqp::push(@!jastmeth_names, $jastmeth.name);
+            nqp::push(@!jastmeths, $jastmeth);
             nqp::push(@!cuids, $cuid);
             $!cur_idx := $!cur_idx + 1;
         }
@@ -3221,6 +3280,13 @@ class QAST::CompilerJAST {
 
         method cuid_to_jastmethname($cuid) {
             @!jastmeth_names[self.cuid_to_idx($cuid)]
+        }
+
+        # What the already-emitted method for this cuid actually takes. The
+        # JAST::Method is mutable and its args expectation is only settled
+        # after register_method, so keep the object and ask it.
+        method cuid_to_args_expectation($cuid) {
+            @!jastmeths[self.cuid_to_idx($cuid)].args_expectation
         }
 
         method get_callsite_idx(@arg_types, @arg_names) {
@@ -3781,6 +3847,25 @@ class QAST::CompilerJAST {
                     $cu.repo_conflict_resolver()));
             }
 
+            # Deserialization pairs the serialized code refs with this class's
+            # methods by block id, so every block in the code ref table needs a
+            # method, including one the tree never mentioned: a thunk that only
+            # ever ran at BEGIN time leaves its block registered but unreached.
+            # Compile the leftovers here, which is what the MoarVM backend gets
+            # from hanging the whole code ref table off its list_b.
+            if $cu.code_ref_blocks() {
+                my $orphans := QAST::Block.new( :blocktype('immediate') );
+                for $cu.code_ref_blocks() {
+                    unless $*CODEREFS.know_cuid($_.cuid) {
+                        # Only the method matters; make sure referencing it
+                        # cannot call it or take a closure over it.
+                        $_.blocktype('declaration_static');
+                        $orphans.push($_);
+                    }
+                }
+                $block.push($orphans) if nqp::elems($orphans.list);
+            }
+
             # Add code object fixups.
             if $cu.code_ref_blocks() {
                 my $cur_pd_block := QAST::Block.new( :blocktype('immediate') );
@@ -3972,6 +4057,23 @@ class QAST::CompilerJAST {
     my $ARG_EXP_NO_ARGS    := 1;
     my $ARG_EXP_OBJ        := 2;
     my $ARG_EXP_OBJ_OBJ    := 3;
+    # The children of a param node are the extra work its binding implies: a
+    # type check, or the code that moves the bound value where the body wants
+    # it. MoarVM runs them right after taking the parameter, and a block whose
+    # only use of its argument is one of these tasks - a regex thunk binding
+    # its cursor to `self`, say - never sees the argument at all without them.
+    method emit_param_tasks($il, $block, $var) {
+        for $var.list {
+            if nqp::istype($_, QAST::ParamTypeCheck) {
+                nqp::die('QAST::ParamTypeCheck is not supported on the JVM backend');
+            }
+            my $*BLOCK := $block;
+            my $task := self.as_jast($_, :want($RT_VOID));
+            $il.append($task.jast);
+            $*STACK.obtain($il, $task);
+        }
+    }
+
     method try_setup_args_expectation($jmeth, $block, $il) {
         # Needing an args array forces the binder.
         if $*NEED_ARGS_ARRAY {
@@ -4003,6 +4105,7 @@ class QAST::CompilerJAST {
                             'bindlex_o', $TYPE_SMO, $TYPE_SMO, $TYPE_CF, 'Integer' ));
                         $il.append($POP);
                     }
+                    self.emit_param_tasks($il, $block, $param);
                     $jmeth.args_expectation($ARG_EXP_OBJ);
                     return $ARG_EXP_OBJ;
                 }
@@ -4037,6 +4140,7 @@ class QAST::CompilerJAST {
                             'bindlex_o', $TYPE_SMO, $TYPE_SMO, $TYPE_CF, 'Integer' ));
                         $il.append($POP);
                     }
+                    self.emit_param_tasks($il, $block, $_);
                     $i++;
                 }
                 $jmeth.args_expectation($ARG_EXP_OBJ_OBJ);
@@ -4055,7 +4159,7 @@ class QAST::CompilerJAST {
         # Do block compilation in a nested block, so we can produce a result based on
         # the containing block's stack.
         my int $args_expectation;
-        unless $*CODEREFS.know_cuid($node.cuid) {
+        if !$*CODEREFS.know_cuid($node.cuid) {
             # Block gets fresh BlockInfo.
             my $*BINDVAL  := 0;
             my $outer     := $*BLOCK;
@@ -4237,6 +4341,7 @@ class QAST::CompilerJAST {
                             'bindlex_' ~ typechar($type), $jtype, $jtype, $TYPE_CF, 'Integer' ));
                         $il.append(pop_ins($type));
                     }
+                    self.emit_param_tasks($il, $block, $_);
                     $param_idx++;
                 }
             }
@@ -4473,6 +4578,14 @@ class QAST::CompilerJAST {
             # Finalize method and add it to the class.
             $*JCLASS.add_method($*JMETH);
         }
+        else {
+            # A block already compiled into this unit still has to be called
+            # with the descriptor its method really has: an immediate call
+            # below picks the signature from $args_expectation, and leaving it
+            # at the default would emit a call to an overload that does not
+            # exist.
+            $args_expectation := $*CODEREFS.cuid_to_args_expectation($node.cuid);
+        }
 
         # Now go by block type for producing a result; also need to special-case
         # the top-level, where we need no result.
@@ -4585,9 +4698,14 @@ class QAST::CompilerJAST {
             else {
                 $last_res := self.as_jast($_);
             }
-            # variables with fallback can have side effects and cannot be elided
+            # variables with fallback can have side effects and cannot be elided,
+            # nor can a local contvar declaration: unlike a lexical one, which
+            # the frame sets up from its lex-value table, it is initialized by
+            # the code compiled for the declaration itself
             $il.append($last_res.jast)
-                unless $void && nqp::istype($_, QAST::Var) && !nqp::istype($_, QAST::VarWithFallback);
+                unless $void && nqp::istype($_, QAST::Var)
+                    && !nqp::istype($_, QAST::VarWithFallback)
+                    && !($_.decl eq 'contvar' && $_.scope eq 'local');
             $*STACK.obtain($il, $last_res);
             if !$all_void && $resultchild == $i && $resultchild != $n - 1 {
                 $res_type := $last_res.type;
@@ -4699,8 +4817,26 @@ class QAST::CompilerJAST {
                 $*BLOCK.add_lexical($node, :is_static);
             }
             elsif $decl eq 'contvar' {
-                if $scope ne 'lexical' {
-                    nqp::die("Can only use 'contvar' decl with scope 'lexical'");
+                if $scope eq 'local' {
+                    # A lexical contvar is set up from the block's lex-value
+                    # table when the frame is entered; a local has no such
+                    # table, so clone the prototype container where the
+                    # declaration itself appears. Emitters put these in the
+                    # block's declaration prologue, ahead of any use.
+                    $*BLOCK.add_local($node);
+                    return self.as_jast(QAST::Op.new(
+                        :op('bind'),
+                        QAST::Var.new( :name($node.name), :scope('local') ),
+                        QAST::Op.new(
+                            # clone_nd, not clone: the prototype *is* a
+                            # container, and clone decontainerizes first.
+                            :op('clone_nd'),
+                            QAST::WVal.new( :value($node.value) )
+                        )
+                    ), :want($RT_OBJ));
+                }
+                elsif $scope ne 'lexical' {
+                    nqp::die("Can only use 'contvar' decl with scope 'lexical' or 'local', got scope '$scope'");
                 }
                 $*BLOCK.add_lexical($node, :is_cont);
             }
@@ -5182,12 +5318,19 @@ class QAST::CompilerJAST {
         my $idx    := nqp::scgetobjidx($sc, $val);
         my $il     := JAST::InstructionList.new();
         $il.append(JAST::PushSVal.new( :value($handle) ));
+        # Push the index as an int and widen: an ldc2_w long would cost a
+        # 2-slot constant pool entry per distinct index, which overflows the
+        # 65535-entry pool on CORE.c.setting.
         $il.append(JAST::PushIndex.new( :value($idx) ));
+        $il.append($I2L);
         $il.append($ALOAD_1);
-        $il.append(JAST::InvokeDynamic.new(
-            'wval_noa', $TYPE_SMO, [$TYPE_STR, 'I', $TYPE_TC],
-            'org/raku/nqp/runtime/IndyBootstrap', 'wval_noa'
-        ));
+        # A plain invokestatic, not invokedynamic: WVals are the most common
+        # callsite kind by far, and HotSpot (observed on 25.0.3) silently
+        # corrupts per-class invokedynamic resolution state once a class has
+        # more than 65535 indy instructions — which CORE.c.setting exceeds
+        # nearly 3x with indy wvals included.
+        $il.append(JAST::Instruction.new( :op('invokestatic'),
+            $TYPE_OPS, 'wval', $TYPE_SMO, $TYPE_STR, 'Long', $TYPE_TC ));
         result($il, $RT_OBJ);
     }
 
