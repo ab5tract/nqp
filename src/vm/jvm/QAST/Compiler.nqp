@@ -4095,35 +4095,29 @@ class QAST::CompilerJAST {
 
         my %*CUID_TO_QBID;
         my $*NEXT_QBID := 0;
-        # Engine programs of jar-bound comp-mode blocks, collected here and
-        # written as one jar sidecar (see JAST::Class.codeprograms); the
-        # emitted bodies reference them by index.
+        # Engine programs of the unit's blocks, collected here; the block
+        # table references them by index.
         my @*ENGINE_PROGRAMS := nqp::list_s();
-        # The artifact road (rakudo docs/superpowers/specs/2026-09-09-jvm-
-        # unit-artifact-design.md): under NQP_UNIT every unit is a record --
-        # programs + block table (+ serialized context for a comp-mode
-        # unit), no class file. A jar-bound unit with an output file is
-        # written as a zip (milestone 1); any other unit -- a script, an
-        # EVAL, a BEGIN-time unit, a --target=jar with no --output -- is
-        # built in memory and loaded as a ProgramUnit (milestone 2). The
-        # knob is all-or-nothing: the road is chosen before any block
-        # compiles, so a block that cannot encode is a compile error, not
-        # a quiet fallback to a class file that this road no longer emits
-        # the pieces for. $*UNIT_FALLBACKS therefore stays 0 and travels
-        # as the writer's defense. Off, the class road runs as before.
-        my $*UNIT_ROAD := nqp::existskey(nqp::getenvhash(), 'NQP_UNIT') ?? 1 !! 0;
-        my $*UNIT_FALLBACKS := 0;
-        if $*UNIT_ROAD {
-            # Every block must encode, so the encoder's own switches must
-            # be on; said once here rather than once per block at the
-            # fallback junction.
-            my %env := nqp::getenvhash();
-            nqp::die('unit artifact (NQP_UNIT): the road needs NQP_CODE_RUN=1 and NQP_CODE_PRECOMP=1 set, every block must encode')
-                unless nqp::existskey(%env, 'NQP_CODE_RUN') && nqp::existskey(%env, 'NQP_CODE_PRECOMP');
-            # A class file is the one output the road does not have.
-            nqp::die('unit artifact (NQP_UNIT): --target=classfile has no artifact form; use --target=jar')
-                if %*COMPILING<%?OPTIONS><target> eq 'classfile';
-        }
+        # The unit road (rakudo docs/superpowers/specs/2026-09-09-jvm-
+        # unit-artifact-design.md) is the only road since milestone 3: every
+        # unit is a record -- programs + block table (+ serialized context
+        # for a comp-mode unit), no class file. A jar-bound unit with an
+        # output file is written as a zip; any other unit is built in memory
+        # and loaded as a ProgramUnit. A block that cannot encode is a
+        # compile error at the junction below, never a fallback.
+        #
+        # So NQP_CODE_RUN and NQP_CODE_PRECOMP are not knobs: do not set
+        # them at all. '=0' dies here, and stage0's class-road bootstrap
+        # compiler reads their mere PRESENCE as "encode", so a gradle build
+        # that exports them builds stage1 differently. The surviving
+        # switches are the diagnostics NQP_CODE_ENCODED, NQP_CODE_BAIL,
+        # NQP_CODE_WHY and NQP_CODE_STRICT.
+        my %env := nqp::getenvhash();
+        nqp::die('unit artifact: the road needs the encoder on; NQP_CODE_RUN=0 or NQP_CODE_PRECOMP=0 is set, every block must encode')
+            if (nqp::existskey(%env, 'NQP_CODE_RUN') && nqp::atkey(%env, 'NQP_CODE_RUN') eq '0')
+            || (nqp::existskey(%env, 'NQP_CODE_PRECOMP') && nqp::atkey(%env, 'NQP_CODE_PRECOMP') eq '0');
+        nqp::die('unit artifact: --target=classfile has no artifact form; use --target=jar')
+            if %*COMPILING<%?OPTIONS><target> eq 'classfile';
         # Pre-seed to make sure that qbids correspond to serialization IDs
         my $*COMP_MODE := $cu.compilation_mode;
         # Comp-mode units pair code refs with methods by block id, so the
@@ -4152,20 +4146,10 @@ class QAST::CompilerJAST {
         # is to desugar this into simpler QAST nodes, then compile those.
         my @pre_des   := $cu.pre_deserialize;
         my @post_des  := $cu.post_deserialize;
-        # On the artifact road the values are recorded as data instead --
-        # but only after the deserialize wrapper has compiled, where the
-        # objects have their SC and the hash has stopped growing.
-        if %*BLOCK_LEX_VALUES && !$*UNIT_ROAD {
-            nqp::push(@post_des, QAST::Block.new(
-                :blocktype('immediate'),
-                QAST::Op.new( :op('setup_blv'), %*BLOCK_LEX_VALUES )
-            ));
-        }
-        # On the class road setup_blv sat in @post_des and made this true
-        # by itself; the record road builds its static-lexical-value rows
-        # inside this wrapper, so the wrapper must exist for them.
+        # The record road builds its static-lexical-value rows inside the
+        # deserialize wrapper below, so the wrapper must exist for them.
         if $*COMP_MODE || @pre_des || @post_des || need_set_code_object($cu)
-            || ($*UNIT_ROAD && %*BLOCK_LEX_VALUES) {
+            || %*BLOCK_LEX_VALUES {
             # Create a block into which we'll install all of the other
             # pieces.
             my $block := QAST::Block.new( :blocktype('raw') );
@@ -4247,12 +4231,11 @@ class QAST::CompilerJAST {
             # handler.
             self.as_jast($block);
             # The artifact's meta carries the static lexical values; the
-            # loader installs them after the deserialize program, exactly
-            # where the class road's setup_blv ran. Built here, not at the
-            # push site: serialization is what first gives an object its
-            # SC, and %*BLOCK_LEX_VALUES keeps growing until every block
-            # -- this wrapper included -- has compiled.
-            if $*UNIT_ROAD && %*BLOCK_LEX_VALUES {
+            # loader installs them after the deserialize program. Built
+            # here, not at the push site: serialization is what first gives
+            # an object its SC, and %*BLOCK_LEX_VALUES keeps growing until
+            # every block -- this wrapper included -- has compiled.
+            if %*BLOCK_LEX_VALUES {
                 my @rows;
                 for %*BLOCK_LEX_VALUES {
                     my int $qbid := self.cuid_to_qbid($_.key);
@@ -4326,30 +4309,16 @@ class QAST::CompilerJAST {
         $mainline_meth.append($IRETURN);
         $*JCLASS.add_method($mainline_meth);
 
-        # Engine programs collected from jar-bound blocks. On the artifact
-        # road they go to the writer as a list (byte-framed by it); on the
-        # class road they travel as one sidecar entry, joined here, last,
-        # so every block -- the deserialize and load methods included --
-        # has had its say.
-        if $*UNIT_ROAD {
-            # A boxed list: @*ENGINE_PROGRAMS is a native str list, and
-            # the writer reads its record through at_pos_boxed.
-            my @progs;
-            for @*ENGINE_PROGRAMS -> str $p { nqp::push(@progs, $p) }
-            $*JCLASS.programs(@progs);
-            $*JCLASS.callsites($*CODEREFS.callsite_data);
-            $*JCLASS.fallbacks($*UNIT_FALLBACKS);
-            $*JCLASS.unit_road(1);
-            nqp::say('code unit ' ~ $*JCLASS.name ~ ' -> unit road')
-                if nqp::existskey(nqp::getenvhash(), 'NQP_CODE_WHY');
-        }
-        elsif nqp::elems(@*ENGINE_PROGRAMS) {
-            my @joined := [~nqp::elems(@*ENGINE_PROGRAMS)];
-            for @*ENGINE_PROGRAMS -> str $p {
-                nqp::push(@joined, ' ' ~ nqp::chars($p) ~ ':' ~ $p);
-            }
-            $*JCLASS.codeprograms(nqp::join('', @joined));
-        }
+        # The programs go to the writer as a boxed list (@*ENGINE_PROGRAMS
+        # is a native str list; the writer reads through at_pos_boxed),
+        # byte-framed by it, last, so every block -- the deserialize and
+        # load methods included -- has had its say.
+        my @progs;
+        for @*ENGINE_PROGRAMS -> str $p { nqp::push(@progs, $p) }
+        $*JCLASS.programs(@progs);
+        $*JCLASS.callsites($*CODEREFS.callsite_data);
+        nqp::say('code unit ' ~ $*JCLASS.name ~ ' -> unit road')
+            if nqp::existskey(nqp::getenvhash(), 'NQP_CODE_WHY');
 
         return $*JCLASS;
     }
@@ -4366,8 +4335,8 @@ class QAST::CompilerJAST {
     method deserialization_code($sc, @code_ref_blocks, $repo_conf_res) {
         # Some code-ref slots may belong to nested units (EVALs run at
         # BEGIN time) rather than to blocks compiled into this unit. Their
-        # units ride along in the jar (as class entries on the class road,
-        # under nested/ in an artifact), and the deserialization code
+        # units ride along in the jar (under nested/ in the parent's
+        # artifact), and the deserialization code
         # loads them back and installs their code refs into the slots
         # before deserializing, matched by cuid. The slot index is the
         # block's position: the code ref table is keyed that way.
@@ -4687,6 +4656,16 @@ class QAST::CompilerJAST {
                         $node.node.orig(), $node.node.from(), :cache(1), :directives(0)));
                 }
             }
+            # The mainline (built from the comp_unit cursor before it
+            # matched) and the compiler's own raw wrappers have no node to
+            # take a file from. The class road backfilled them from the
+            # class-level SourceFile attribute through the Java stack; a
+            # ProgramUnit has no such class, so the block record carries
+            # the unit's file itself (milestone 3, 2026-09-09).
+            unless $*JMETH.cr_file {
+                my $unit-file := nqp::ifnull(nqp::getlexdyn('$?FILES'), '');
+                $*JMETH.cr_file(~$unit-file) if $unit-file;
+            }
             $*CODEREFS.register_method($*JMETH, $node.cuid);
 
             # Set outer if we have one.
@@ -4708,14 +4687,11 @@ class QAST::CompilerJAST {
             my $*BLOCK_TA := BlockTempAlloc.new();
             my $*TA := $*BLOCK_TA;
 
-            # Compile method body -- or hand it whole to the code engine.
-            # The choice is made here, at compile time, exactly as it is
-            # for regexes: an encoded block's body is one codeRun call
-            # (parameter binding included), and there is no bytecode body
-            # to fall back to. Precompiled units are eligible when the
-            # encoder's NQP_CODE_PRECOMP knob says so: the program bakes
-            # into the class file as a string constant, exactly as an rx
-            # descriptor does.
+            # Hand the method body whole to the code engine: an encoded
+            # block's body is one codeRunIdx call (parameter binding
+            # included), and there is no bytecode body to fall back to.
+            # The program is a byte-framed entry of the unit record, named
+            # by the block table's program index.
             my $body;
             my int $engine_body := 0;
             my $*STACK := StackState.new();
@@ -4724,36 +4700,19 @@ class QAST::CompilerJAST {
                 my $*BLOCK := $block;
                 my $*WANT;
                 my str $engine_prog := '';
-                # A jar-bound unit's programs travel in one sidecar,
-                # referenced by index -- one string constant per
-                # program overflowed CORE.c's constant pool (71010
-                # entries against the 65535 limit) -- and on the unit
-                # road every program is a byte-framed entry of the
-                # record, on either output, with no constant and no cap.
-                # Everything else keeps the string road. The encoder is
-                # told which, so its per-program size gate (the string
-                # constant's own 65535-byte cap) applies only where that
-                # cap exists.
-                my int $as_index := $*UNIT_ROAD
-                    || ($*COMP_MODE && %*COMPILING<%?OPTIONS><target> eq 'jar');
                 # A custom_args block binds its own arguments from the raw
                 # capture (Raku's runtime Binder, through the p6bindsig
                 # prologue in its body); the encoder reads the flag and
                 # emits no parameter prologue of its own for it.
                 $engine_prog := QAST::TruffleEncoder.encode_block($node, $block, self,
-                    :comp_mode($*COMP_MODE), :sidecar($as_index), :unit_road($*UNIT_ROAD));
+                    :comp_mode($*COMP_MODE));
                 if $engine_prog ne '' {
                     $engine_body := 1;
+                    my int $pidx := nqp::elems(@*ENGINE_PROGRAMS);
+                    nqp::push_s(@*ENGINE_PROGRAMS, $engine_prog);
+                    $*JMETH.cr_program($pidx);
                     my $il := JAST::InstructionList.new();
-                    if $as_index {
-                        my int $pidx := nqp::elems(@*ENGINE_PROGRAMS);
-                        nqp::push_s(@*ENGINE_PROGRAMS, $engine_prog);
-                        $*JMETH.cr_program($pidx);
-                        $il.append(JAST::PushIndex.new( :value($pidx) ));
-                    }
-                    else {
-                        $il.append(JAST::PushSVal.new( :value($engine_prog) ));
-                    }
+                    $il.append(JAST::PushIndex.new( :value($pidx) ));
                     $il.append($ALOAD_0);
                     $il.append($ALOAD_1);
                     $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
@@ -4761,19 +4720,16 @@ class QAST::CompilerJAST {
                     $il.append(JAST::Instruction.new( :op('aload'), '__args' ));
                     $il.append(JAST::Instruction.new( :op('invokestatic'),
                         'Lorg/raku/nqp/runtime/CodeEngines;',
-                        $as_index ?? 'codeRunIdx' !! 'codeRun', 'Void',
-                        ($as_index ?? 'Integer' !! $TYPE_STR),
+                        'codeRunIdx', 'Void', 'Integer',
                         $TYPE_CU, $TYPE_TC, $TYPE_CF, $TYPE_CSD, "[$TYPE_OBJ" ));
                     $body := result($il, $RT_VOID);
                     $*STACK.obtain(NQPMu, $body);
                 }
                 else {
-                    nqp::die('unit artifact (NQP_UNIT): block '
+                    nqp::die('unit artifact: block '
                         ~ ($node.name eq '' ?? '<anon ' ~ $node.cuid ~ '>' !! $node.name)
                         ~ ' (cuid ' ~ $node.cuid ~ ') has no engine program and would need bytecode;'
-                        ~ ' run with NQP_CODE_BAIL=1 or NQP_CODE_WHY=1 for the reason') if $*UNIT_ROAD;
-                    $body := self.compile_all_the_stmts($node.list, :node($node.node));
-                    $*STACK.obtain(NQPMu, $body);
+                        ~ ' run with NQP_CODE_BAIL=1 or NQP_CODE_WHY=1 for the reason');
                 }
             }
 

@@ -45,6 +45,21 @@ object ExceptionHandling {
         val exObj: VMExceptionInstance
         if (tc.gc.noisyExceptions) {
             (t ?: Throwable(msg)).printStackTrace()
+            /* The host stack alone names Truffle nodes, not blocks: on the
+             * unit road every engine frame looks the same in it. The frame
+             * chain is the Raku-level "where", and it is what locates a
+             * failure inside CORE. */
+            val names = StringBuilder("nqp frames:")
+            var f = tc.curFrame
+            var n = 0
+            while (f != null && n < 40) {
+                val si = f.codeRef?.staticInfo
+                names.append("\n  '").append(f.codeRef?.name ?: "?").append("' ")
+                    .append(si?.sourceFile).append(':').append(si?.sourceLine)
+                f = f.caller
+                n++
+            }
+            System.err.println(names)
         }
         try {
             val exType = tc.frame.codeRef.staticInfo.compUnit.hllConfig.exceptionType!!
@@ -378,8 +393,14 @@ object ExceptionHandling {
                         return line -
                             (si.sourceSectionRaw!![section] - si.sourceSectionLine!![section])
                 }
+                // No native frame correlated (line < 0): a record-road block
+                // has no Java class to take a LineNumberTable row from, so
+                // answer the block's own declared start line when it has one
+                // (milestone 3, 2026-09-09).
                 return if (si.sourceFile != null && line >= 0)
                     line - si.sourceLineDelta
+                else if (line < 0 && si.sourceFile != null && si.sourceLine > 0)
+                    si.sourceLine
                 else line
             }
     }

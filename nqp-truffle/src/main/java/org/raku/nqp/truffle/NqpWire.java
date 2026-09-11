@@ -159,14 +159,34 @@ public final class NqpWire {
      *  on, through assertparamcheck). Leaves the flattened pair on the frame.
      *  Additive. */
     public static final int P6TRYBINDSIG = 34;
+    /** 35 FORLOOPL condType lastId nrId outerIdx labelLocal labelExpr cond pre body:
+     *  FORLOOP with a label (nqp::for :label). labelExpr's value is bound into
+     *  block local labelLocal at loop entry and read by both unwind arms as the
+     *  `where` for _is_same_label, exactly as LOOPH's hasLabel form. Additive. */
+    public static final int FORLOOPL = 35;
+    /** 36 OPCALLT rtype opId nargs child*: OPCALL that also carries the op's
+     *  static RESULT type. OPCALL has no room for one (its layout is fixed),
+     *  and the builder cannot infer it -- yet a suspension token must say
+     *  which return register the resume reads (resumeEngine -> readResult),
+     *  so an int/num/str-typed table op that suspends resumed with an object
+     *  and handed it to the next native argument. The encoder emits this tag
+     *  in place of OPCALL for every table op whose result is not an object;
+     *  OPCALL stays for object-typed ops and for the hand-written emissions,
+     *  which are object-typed. Additive: stage0 programs predate it. */
+    public static final int OPCALLT = 36;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;
     public static final int T_NUM = 2;
     public static final int T_STR = 3;
-    // A uint parameter: fetched unsigned (posparam_u) so a value at or
-    // above 2^63 unboxes without overflow, then bound into an int slot --
-    // the unsignedness lives in the ops that read it, not the storage.
+    // A uint: fetched unsigned (posparam_u) so a value at or above 2^63
+    // unboxes without overflow, then bound into an int slot -- the
+    // unsignedness lives in the ops that read it, not the storage. Three
+    // wire positions take it, all additive uses of an existing field:
+    // a PARAMS record's type, LEXREF's type (the reference is the HLL's
+    // unsigned one, the bytecode path's getlexref_u), and the program
+    // header's result type (the value rides the int return register,
+    // exactly as Ops.return_u writes it).
     public static final int T_UINT = 4;
 
     public record Program(int[] code, String[] pool, int nlocals, int needsFrameWord) {

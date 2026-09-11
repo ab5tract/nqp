@@ -6,7 +6,6 @@ class JAST::Class is JAST::Node {
     has str $!super;
     has str $!filename;
     has str $!serialized;
-    has str $!codeprograms;
     has @!methods;
     has @!fields;
     has @!nested_classes;
@@ -18,8 +17,6 @@ class JAST::Class is JAST::Node {
     has int $!serialized_count;
     has str $!sc_handle;
     has str $!sc_desc;
-    has int $!fallbacks;
-    has int $!unit_road;
     has @!programs;
     has @!callsites;
     has @!blockvalues;
@@ -39,8 +36,6 @@ class JAST::Class is JAST::Node {
         $!serialized_count := -1;
         $!sc_handle := '';
         $!sc_desc := '';
-        $!fallbacks := 0;
-        $!unit_road := 0;
         @!programs := [];
         @!callsites := [];
         @!blockvalues := [];
@@ -57,11 +52,6 @@ class JAST::Class is JAST::Node {
     method name(*@value) { @value ?? ($!name := @value[0]) !! $!name }
     method super(*@value) { @value ?? ($!super := @value[0]) !! $!super }
     method serialized(*@value) { @value ?? ($!serialized := @value[0]) !! $!serialized }
-    # The compilation unit's engine programs, joined length-prefixed --
-    # they travel as a jar sidecar like the serialized SC, not as one
-    # string constant per program: the CORE.c pool overflowed at 71010
-    # entries the first time the programs went in as constants.
-    method codeprograms(*@value) { @value ?? ($!codeprograms := @value[0]) !! $!codeprograms }
     # Unit ids (class names on the class road) of nested in-memory units this unit's serialization points into.
     method nested_classes(*@value) { @value ?? (@!nested_classes := @value[0]) !! @!nested_classes }
     # The unit artifact's record (docs/superpowers/specs/2026-09-09-jvm-unit-artifact-design.md):
@@ -74,9 +64,6 @@ class JAST::Class is JAST::Node {
     method serialized_count(*@value) { @value ?? ($!serialized_count := @value[0]) !! $!serialized_count }
     method sc_handle(*@value) { @value ?? ($!sc_handle := @value[0]) !! $!sc_handle }
     method sc_desc(*@value) { @value ?? ($!sc_desc := @value[0]) !! $!sc_desc }
-    method fallbacks(*@value) { @value ?? ($!fallbacks := @value[0]) !! $!fallbacks }
-    # 1 = compiled on the NQP_UNIT road (every block encoded, or the compile died); the writer's input
-    method unit_road(*@value) { @value ?? ($!unit_road := @value[0]) !! $!unit_road }
     method programs(*@value) { @value ?? (@!programs := @value[0]) !! @!programs }
     method callsites(*@value) { @value ?? (@!callsites := @value[0]) !! @!callsites }
     method blockvalues(*@value) { @value ?? (@!blockvalues := @value[0]) !! @!blockvalues }

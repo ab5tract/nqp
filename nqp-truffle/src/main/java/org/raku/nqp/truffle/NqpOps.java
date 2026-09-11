@@ -144,9 +144,14 @@ final class NqpOps {
         // SaveStackException that the save-stack machinery captures across
         // engine frames, and the resumed value waits in the return register.
         OP_CONTINUATIONRESET = 379, OP_CONTINUATIONCONTROL = 380,
-        OP_CONTINUATIONINVOKE = 381;
+        OP_CONTINUATIONINVOKE = 381,
+        // Encoder-internal, no QAST op of this name: the num32 half of
+        // Compiler.nqp's emit_sized_native_trunc (its d2f/f2d pair), so a
+        // store into a num32 lexical or parameter rounds to single
+        // precision the way MoarVM's sized register does.
+        OP_SIZED_NUM32 = 382;
 
-    static final int OP_COUNT = 382;
+    static final int OP_COUNT = 383;
 
     /* COERCE kinds, in encoder order. */
     static final int C_I2O = 0, C_N2O = 1, C_S2O = 2,
@@ -156,14 +161,20 @@ final class NqpOps {
         C_S2I = 13, C_N2S = 14, C_S2N = 15;
 
     @TruffleBoundary
-    static Object run(int id, Object[] a, CompilationUnit cu, ThreadContext tc, CallFrame cf) {
+    static Object run(int id, int rtype, Object[] a, CompilationUnit cu, ThreadContext tc,
+                      CallFrame cf) {
         try {
             return run0(id, a, cu, tc, cf);
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
             // Any op that reaches user code (a sink, a decont through a
             // Proxy, a handler-running control) is a suspension point;
-            // every OPCALL site is wrapped, so answer a token uniformly.
-            return new NqpCont.Suspend(sse, NqpWire.T_OBJ);
+            // every OPCALL site is wrapped, so answer a token. The token
+            // carries THIS op's result type -- the resume reads the value
+            // out of the return registers by it -- which is what the
+            // OPCALLT wire tag exists to supply; a uint op (wire type 4)
+            // reads from the int register.
+            return new NqpCont.Suspend(sse,
+                rtype == NqpWire.T_UINT ? NqpWire.T_INT : rtype);
         } catch (IllegalStateException e) {
             throw new IllegalStateException(e.getMessage() + " (op id " + id + ")", e);
         }
@@ -572,6 +583,7 @@ final class NqpOps {
                 } catch (Throwable t) { throw sneaky(t); }
                 return Ops.result_o(cf);
             }
+            case OP_SIZED_NUM32: return (double) (float) dbl(a[0]);
             case OP_ISTYPE_ND: return Ops.istype_nd(smo(a[0]), smo(a[1]), tc);
             case OP_WHO: return Ops.who(smo(a[0]), tc);
             case OP_GETPAYLOAD: return Ops.getpayload(smo(a[0]), tc);
@@ -941,12 +953,107 @@ final class NqpOps {
         try {
             return site.resolve().invokeExact(full);
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
-            return new NqpCont.Suspend(sse, NqpWire.T_OBJ);
+            /* The token carries THIS site's result type, not T_OBJ: the
+             * resume reads the suspended call's value out of the return
+             * registers by it (resumeEngine -> readResult), so an int-typed
+             * classlib op resumed as T_OBJ handed a Raku object to the next
+             * int-typed argument ("P6OpaqueDelegateInstance cannot be cast
+             * to Number" out of a MethodHandle's unboxLong, 2026-09-10).
+             * A uint site (wire type 4) reads from the int register. */
+            return new NqpCont.Suspend(sse,
+                rtype == NqpWire.T_UINT ? NqpWire.T_INT : rtype);
         } catch (RuntimeException | Error e) {
             throw e;
         } catch (Throwable t) {
             throw sneaky(t);
         }
+    }
+
+    /* ----- NQP_ARITY_TRACE: an arity refusal names no block, and the
+     * frame-free road has no CallFrame to name one from, so a refusal in
+     * generated or dynamically compiled code is otherwise unlocatable.
+     * The flag is static and the printing is behind a boundary: the
+     * compiled catch arm carries neither. =2 adds the host stack. ----- */
+
+    static final boolean ARITY_TRACE = System.getenv("NQP_ARITY_TRACE") != null;
+    private static final boolean ARITY_TRACE_STACK =
+        "2".equals(System.getenv("NQP_ARITY_TRACE"));
+
+    @TruffleBoundary
+    static void traceArityRefusal(Object[] fa, int required, int accepted, Throwable t) {
+        /* A continuation capture crossing the prologue is not an arity
+         * refusal, and printing is not worth breaking one over: every
+         * dereference below is guarded and the whole body is wrapped, so
+         * the diagnostic can never replace the error it exists to explain. */
+        if (t instanceof org.raku.nqp.runtime.SaveStackException) return;
+        try {
+            CodeRef cr = (CodeRef) fa[NqpRootNode.ARG_CR];
+            org.raku.nqp.runtime.StaticCodeInfo si = cr == null ? null : cr.staticInfo;
+            System.err.println("nqp arity: refused in '" + (cr == null ? "<null>" : cr.name)
+                + "' uid=" + (si == null ? "?" : si.uniqueId)
+                + " at " + (si == null ? "?" : si.sourceFile + ":" + si.sourceLine)
+                + " outer=" + (si == null || si.outerStaticInfo == null
+                    ? "?" : si.outerStaticInfo.uniqueId)
+                + " required=" + required + " accepted=" + accepted + ": " + t);
+            StringBuilder ab = new StringBuilder();
+            Object[] args = (Object[]) fa[NqpRootNode.ARG_ARGS];
+            if (args == null) ab.append(" <null args>");
+            else for (Object o : args)
+                ab.append(' ').append(o == null ? "null"
+                    : o instanceof SixModelObject smo ? String.valueOf(smo.st.debugName)
+                    : o.getClass().getSimpleName() + "=" + o);
+            CallFrame ccf = (CallFrame) fa[NqpRootNode.ARG_CF];
+            CallFrame caller = ccf == null ? null : ccf.caller;
+            CallSiteDescriptor csd = (CallSiteDescriptor) fa[NqpRootNode.ARG_CSD];
+            System.err.println("nqp arity:   args:" + ab
+                + " csd=" + (csd == null ? "?" : String.valueOf(csd.numPositionals))
+                + " caller=" + (caller == null || caller.codeRef == null ? "?"
+                    : "'" + caller.codeRef.name + "' uid="
+                      + caller.codeRef.staticInfo.uniqueId + " at "
+                      + caller.codeRef.staticInfo.sourceFile + ":"
+                      + caller.codeRef.staticInfo.sourceLine));
+            CompilationUnit ccu = (CompilationUnit) fa[NqpRootNode.ARG_CU];
+            StringBuilder cb = new StringBuilder();
+            if (ccu == null || ccu.codeRefs == null) cb.append(" <none>");
+            else for (CodeRef c : ccu.codeRefs)
+                cb.append(" [").append(c == null ? "?" : c.staticInfo.uniqueId)
+                  .append(" '").append(c == null ? "?" : c.name).append("']");
+            System.err.println("nqp arity:   unit "
+                + (ccu == null ? "?" : ccu.unitId())
+                + " mainlineQbid=" + (ccu == null ? "?" : String.valueOf(ccu.mainlineQbid()))
+                + " coderefs:" + cb);
+            if (ARITY_TRACE_STACK)
+                new Throwable("the arity refusal's host stack").printStackTrace();
+        } catch (Throwable ignored) {
+            System.err.println("nqp arity: (trace itself failed: " + ignored + ")");
+        }
+    }
+
+    /**
+     * The suspension token a DEDICATED operation answers when a
+     * continuation capture crosses it -- the same value {@link #run} and
+     * {@link #classlib} return for the table and registry roads, so the
+     * OPCALL site's IsSuspend tail yields it and the frame joins the
+     * resume chain. Without it {@link #carry} rethrows the capture raw
+     * (a ControlException) and it escapes the whole program, which
+     * NqpCodeEngine reports as a non-suspendable site. Only the ops that
+     * can reach user code need it: p6sink (the sink method), decont (a
+     * Proxy FETCH), p6typecheckrv (a subset's where block).
+     */
+    static Object suspendToken(org.raku.nqp.runtime.SaveStackException sse) {
+        return new NqpCont.Suspend(sse, NqpWire.T_OBJ);
+    }
+
+    /**
+     * The same token for a site whose static result type is NOT an object.
+     * The resume reads the suspended call's value out of the return
+     * registers by this type ({@link NqpCodeEngine#resumeEngine} ->
+     * readResult), so an int-typed site must say so: resuming istype as
+     * T_OBJ handed a Raku Bool to code expecting a long
+     * ("P6OpaqueDelegateInstance cannot be cast to Number").
+     */
+    static Object suspendToken(org.raku.nqp.runtime.SaveStackException sse, int rtype) {
+        return new NqpCont.Suspend(sse, rtype);
     }
 
     static RuntimeException carry(Throwable t) {
@@ -1115,7 +1222,9 @@ final class NqpOps {
         for (CallFrame f = cf; f != null; f = f.outer) {
             org.raku.nqp.runtime.StaticCodeInfo sci = f.codeRef.staticInfo;
             int i = switch (type) {
-                case NqpWire.T_INT -> sci.iTryGetLexicalIdx(name);
+                // A uint lexical lives in the int slots; only the reference
+                // type it is wrapped in differs (Ops.lexref_at case 4).
+                case NqpWire.T_INT, NqpWire.T_UINT -> sci.iTryGetLexicalIdx(name);
                 case NqpWire.T_NUM -> sci.nTryGetLexicalIdx(name);
                 case NqpWire.T_STR -> sci.sTryGetLexicalIdx(name);
                 default -> -1;
@@ -1188,7 +1297,9 @@ final class NqpOps {
         for (CallFrame f = cf; f != null; f = f.outer, depth++) {
             org.raku.nqp.runtime.StaticCodeInfo sci = f.codeRef.staticInfo;
             int i = switch (type) {
-                case NqpWire.T_INT -> sci.iTryGetLexicalIdx(name);
+                // T_UINT reaches here only from a lexicalref site: uint
+                // lexicals share the int slot table.
+                case NqpWire.T_INT, NqpWire.T_UINT -> sci.iTryGetLexicalIdx(name);
                 case NqpWire.T_NUM -> sci.nTryGetLexicalIdx(name);
                 case NqpWire.T_STR -> sci.sTryGetLexicalIdx(name);
                 default -> sci.oTryGetLexicalIdx(name);
@@ -1650,7 +1761,13 @@ final class NqpOps {
      */
     static void storeReturnInto(int type, Object v, CallFrame target) {
         switch (type) {
-            case NqpWire.T_INT -> { target.iRet = lng(v); target.retType = (byte) CallFrame.RET_INT; }
+            // A uint result rides the int register, exactly as Ops.return_u
+            // writes it (iRet + RET_INT); the unsignedness lived in the ops
+            // that produced it, not in the register. Without this a block
+            // whose value is a uint (a `has uint $.x` accessor) reached the
+            // object case and threw Long-cannot-be-cast-to-SixModelObject.
+            case NqpWire.T_INT, NqpWire.T_UINT ->
+                { target.iRet = lng(v); target.retType = (byte) CallFrame.RET_INT; }
             case NqpWire.T_NUM -> { target.nRet = dbl(v); target.retType = (byte) CallFrame.RET_NUM; }
             case NqpWire.T_STR -> { target.sRet = (String) v; target.retType = (byte) CallFrame.RET_STR; }
             default -> { target.oRet = (SixModelObject) v; target.retType = (byte) CallFrame.RET_OBJ; }
@@ -1660,6 +1777,7 @@ final class NqpOps {
     @TruffleBoundary
     private static void returnSlow(int type, Object v, CallFrame cf) {
         switch (type) {
+            case NqpWire.T_UINT -> Ops.return_u(lng(v), cf);
             case NqpWire.T_INT -> Ops.return_i(lng(v), cf);
             case NqpWire.T_NUM -> Ops.return_n(dbl(v), cf);
             case NqpWire.T_STR -> Ops.return_s((String) v, cf);

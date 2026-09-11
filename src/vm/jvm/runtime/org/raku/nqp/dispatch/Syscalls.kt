@@ -483,10 +483,10 @@ object Syscalls {
             void
         }
 
-        /* Builds the compiling unit's record in memory -- the record road
+        /* Builds the compiling unit's record in memory -- the unit road
          * for a script, an EVAL, a BEGIN-time unit, or a --target=jar with
-         * no --output under NQP_UNIT -- for nqp::loadcompunit to turn into
-         * a ProgramUnit: no zip, no class. */
+         * no --output -- for nqp::loadcompunit to turn into a ProgramUnit:
+         * no zip, no class. */
         define("jvm-build-unit", OBJ, OBJ) { args ->
             val res = org.raku.nqp.runtime.EvalResult()
             res.record = org.raku.nqp.runtime.unit.UnitWriter.record(args.obj(0), args.obj(1), args.tc)
@@ -520,9 +520,20 @@ object Syscalls {
             val codeType = args.obj(1)
             val tc = args.tc
             val cu = tc.curFrame!!.codeRef.staticInfo.compUnit
+            val trace = Ops.REPOINT_TRACE
+            if (trace)
+                System.err.println("nqp repoint: unit=" + cu.unitId()
+                    + " from frame '" + tc.curFrame!!.codeRef.name
+                    + "' cuid=" + tc.curFrame!!.codeRef.staticInfo.uniqueId)
             if (registry is org.raku.nqp.sixmodel.reprs.VMHashInstance) {
                 for ((cuid, entries) in registry.storage) {
-                    val target = cu.lookupCodeRef(cuid) ?: continue
+                    val target = cu.lookupCodeRef(cuid)
+                    if (trace)
+                        System.err.println("nqp repoint:   cuid=" + cuid + " -> " +
+                            (if (target == null) "MISS (left alone)"
+                             else "'" + target.name + "' cuid=" +
+                                  target.staticInfo.uniqueId))
+                    if (target == null) continue
                     if (entries == null) continue
                     val n = entries.elems(tc)
                     var i = 0L

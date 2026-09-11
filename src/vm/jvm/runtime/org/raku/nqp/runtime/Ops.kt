@@ -147,6 +147,11 @@ import org.raku.nqp.sixmodel.reprs.VMThreadInstance
 object Ops {
     private var theVMNull: SixModelObject? = null
 
+    /** NQP_REPOINT_TRACE: the code-object/code-ref pairing that a unit's own
+     *  load-time fixup and the RakuAST fixup perform. Read once -- setcodeobj
+     *  runs per code ref at every unit load. */
+    @JvmField val REPOINT_TRACE = System.getenv("NQP_REPOINT_TRACE") != null
+
     /* I/O opcodes */
     @JvmStatic
     fun print(v: String?, tc: ThreadContext): String? {
@@ -1570,6 +1575,21 @@ object Ops {
                         "No num lexical reference type registered for current HLL")
                 val ref = refType.st.REPR.allocate(tc, refType.st) as NativeRefInstanceNumLex
                 ref.lexicals = target.nLex
+                ref.idx = idx
+                ref.sizeSpec = spec
+                return ref
+            }
+            // The engine's wire type 4 (T_UINT): a uint lexical lives in the
+            // int slots (BlockInfo remaps 10 -> 1), but the reference is the
+            // HLL's UNSIGNED one, so it boxes as a magnitude -- exactly what
+            // the bytecode path's getlexref_u does.
+            4 -> {
+                val refType = hll.uintLexRef
+                if (refType == null || isnull(refType) == 1L)
+                    throw ExceptionHandling.dieInternal(tc,
+                        "No uint lexical reference type registered for current HLL")
+                val ref = refType.st.REPR.allocate(tc, refType.st) as NativeRefInstanceIntLex
+                ref.lexicals = target.iLex
                 ref.idx = idx
                 ref.sizeSpec = spec
                 return ref
@@ -6810,6 +6830,30 @@ object Ops {
     @JvmStatic
     fun setcodeobj(code: SixModelObject?, obj: SixModelObject?, tc: ThreadContext): SixModelObject? {
         if (code is CodeRef) {
+            /* NQP_REPOINT_TRACE: the RakuAST code-ref fixup's own pairing --
+             * which code ref each code object is being tied to. */
+            if (REPOINT_TRACE && code.staticInfo.uniqueId != null
+                    && System.getenv("NQP_REPOINT_STACK") == code.staticInfo.uniqueId) {
+                val names = StringBuilder("nqp setcodeobj: who ties cuid "
+                    + code.staticInfo.uniqueId + ":")
+                var fr = tc.curFrame
+                var n = 0
+                while (fr != null && n < 12) {
+                    val s = fr.codeRef?.staticInfo
+                    names.append("\n    '").append(fr.codeRef?.name ?: "?").append("' ")
+                        .append(s?.sourceFile).append(':').append(s?.sourceLine)
+                    fr = fr.caller
+                    n++
+                }
+                System.err.println(names)
+            }
+            if (REPOINT_TRACE && code.staticInfo.uniqueId != null)
+                System.err.println("nqp setcodeobj: coderef cuid="
+                    + code.staticInfo.uniqueId + " name='" + code.name
+                    + "' unit=" + code.staticInfo.compUnit.unitId()
+                    + " <- codeobj " + (if (obj == null) "null"
+                        else obj.st.debugName + "@"
+                            + Integer.toHexString(System.identityHashCode(obj))))
             code.codeObject = obj
             return code
         }
@@ -8999,7 +9043,7 @@ object Ops {
     }
     /** Turns a runtime compile's output into a live unit: on the class
      *  road by defining the class and instantiating it, on the record
-     *  road (NQP_UNIT) by building a ProgramUnit from the record. Either
+     *  unit road by building a ProgramUnit from the record. Either
      *  way the unit is initialized under the compilee's HLL config when
      *  asked, and retained for nested embedding while a compilation is
      *  under way. */
@@ -9071,6 +9115,21 @@ object Ops {
         val result = Array.st.REPR.allocate(tc, Array.st)
         for (i in res.cu!!.codeRefs!!.indices)
             result.bind_pos_boxed(tc, i.toLong(), res.cu!!.codeRefs!![i])
+        /* NQP_REPOINT_TRACE: what the RakuAST code-ref fixup is handed --
+         * the list order, and the cuid getcodecuid answers per element,
+         * which is what it pairs code objects by. */
+        if (REPOINT_TRACE) {
+            val sb = StringBuilder("nqp compunitcodes: unit " + res.cu!!.unitId()
+                + " mainlineQbid=" + res.cu!!.mainlineQbid() + " n="
+                + res.cu!!.codeRefs!!.size)
+            for (i in res.cu!!.codeRefs!!.indices) {
+                val c = res.cu!!.codeRefs!![i]
+                sb.append("\n  [").append(i).append("] cuid=")
+                  .append(c.staticInfo.uniqueId).append(" name='")
+                  .append(c.name).append("'")
+            }
+            System.err.println(sb)
+        }
         return result
     }
     @JvmStatic

@@ -1,10 +1,10 @@
-# Compiles a module on the artifact road (NQP_UNIT=1, --target=jar) and
-# loads it back with `use`: the jar must carry unit.meta and no class
+# Compiles a module on the artifact road (--target=jar with an --output)
+# and loads it back with `use`: the jar must carry unit.meta and no class
 # entry, and a sub, a closure over an outer, a handler and a regex from it
 # must run.
 #
-# Both halves run in child processes: the compile because the road is
-# chosen by an environment variable, and the load because `use` resolves
+# Both halves run in child processes: the compile so the jar comes from a
+# compilation of its own, and the load because `use` resolves
 # the module's symbols while this file is being compiled, long before the
 # jar exists.
 
@@ -66,7 +66,7 @@ else {
         run-command(nqp::list('/bin/sh', '-c', $command), :stdout, :stderr)
     }
 
-    my @compiled := sh("NQP_UNIT=1 $runner --target=jar --output=$jar $src");
+    my @compiled := sh("$runner --target=jar --output=$jar $src");
     unless ok(nqp::stat($jar, nqp::const::STAT_EXISTS) == 1,
               'compiled the module on the artifact road') {
         say('# ' ~ @compiled[1]);

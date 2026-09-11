@@ -82,9 +82,10 @@ object CodeEngines {
         args: Array<Any?>?,
     ) = codeRun(cu.engineProgram(idx), cu, tc, cf, csd, args)
 
-    /** The entry point generated block bodies call. */
-    @JvmStatic
-    fun codeRun(
+    /** Reached only through codeRunIdx: no compiler emits a string-constant
+     *  program since milestone 3, and no stage0 body ever called this
+     *  directly (javap over stage0's jars, 2026-09-09). */
+    private fun codeRun(
         encoded: String,
         cu: CompilationUnit,
         tc: ThreadContext,

@@ -285,17 +285,21 @@ class QAST::TruffleEncoder {
     # leave the block half-described.
     #
     # Compile-time knobs, mirroring the rx set:
-    #   NQP_CODE_RUN=1        master switch: attempt encoding at all
+    #   NQP_CODE_RUN          master switch: attempt encoding at all.
+    #                        ON by default since milestone 3 (2026-09-09);
+    #                        NQP_CODE_RUN=0 turns the encoder off.
     #   NQP_CODE_ENCODED=1    print each block the engine takes over
     #   NQP_CODE_BAIL=1       print why a block was refused
     #   NQP_CODE_SKIP=a,b     refuse these blocks by name
     #   NQP_CODE_SKIP_ANON=1  refuse blocks with no name
     #   NQP_CODE_ONLY=a,b     refuse everything else
-    #   NQP_CODE_PRECOMP=1   precompiled (comp_mode) units encode too: the
+    #   NQP_CODE_PRECOMP     precompiled (comp_mode) units encode too: the
     #                        program bakes into the emitted class as a
     #                        string constant, exactly as an rx descriptor
     #                        does, and runs from the jar with no knob set
-    #                        at run time (Phase 4 of the migration)
+    #                        at run time (Phase 4 of the migration).
+    #                        ON by default since milestone 3 (2026-09-09);
+    #                        NQP_CODE_PRECOMP=0 turns it off.
 
     # Wire tags; NqpWire.java numbers them identically.
     my int $W_STMTS := 1;
@@ -332,6 +336,10 @@ class QAST::TruffleEncoder {
     my int $W_FORLOOP := 32;
     my int $W_P6BINDSIG := 33;
     my int $W_P6TRYBINDSIG := 34;
+    my int $W_FORLOOPL := 35;
+    # OPCALL that carries the op's static result type ahead of the id, so a
+    # suspension token can name the return register the resume reads.
+    my int $W_OPCALLT := 36;
 
     # Handler categories, matching ExceptionHandling on the runtime side
     # (and the Compiler's own copies).
@@ -397,7 +405,17 @@ class QAST::TruffleEncoder {
         return 0 if $run_init_done;
         $run_init_done := 1;
         my %env := nqp::getenvhash();
-        $code_run := nqp::existskey(%env, 'NQP_CODE_RUN') ?? 1 !! 0;
+        # Always on since milestone 3 (2026-09-09): the engine build is the
+        # build and the unit road needs every block encoded, so NQP_CODE_RUN
+        # is not a knob -- do not set it at all. Compiler.nqp dies on
+        # NQP_CODE_RUN=0 / NQP_CODE_PRECOMP=0, and stage0's class-road
+        # bootstrap compiler reads the mere PRESENCE of NQP_CODE_RUN (even
+        # '=0') as "encode", so exporting it into a gradle build builds
+        # stage1 differently. The surviving switches are the diagnostics:
+        # NQP_CODE_ENCODED, NQP_CODE_BAIL, NQP_CODE_WHY, NQP_CODE_STRICT.
+        $code_run := nqp::existskey(%env, 'NQP_CODE_RUN')
+            ?? (nqp::atkey(%env, 'NQP_CODE_RUN') ne '0' ?? 1 !! 0)
+            !! 1;
         return 0 unless $code_run;
         $code_encoded  := nqp::existskey(%env, 'NQP_CODE_ENCODED') ?? 1 !! 0;
         $code_bail_p   := nqp::existskey(%env, 'NQP_CODE_BAIL') ?? 1 !! 0;
@@ -421,7 +439,9 @@ class QAST::TruffleEncoder {
         $code_noframe  := nqp::existskey(%env, 'NQP_CODE_NOFRAME')
             ?? (nqp::atkey(%env, 'NQP_CODE_NOFRAME') ne '0' ?? 1 !! 0)
             !! 1;
-        $code_precomp  := nqp::existskey(%env, 'NQP_CODE_PRECOMP') ?? 1 !! 0;
+        $code_precomp  := nqp::existskey(%env, 'NQP_CODE_PRECOMP')
+            ?? (nqp::atkey(%env, 'NQP_CODE_PRECOMP') ne '0' ?? 1 !! 0)
+            !! 1;
         # Desugars are ON BY DEFAULT (every register_op_desugar entry builds
         # a fresh tree, so applying one and bailing leaves the original tree
         # for the bytecode path). NQP_CODE_NO_DESUGAR=a,b names ops to
@@ -575,6 +595,10 @@ class QAST::TruffleEncoder {
         op3('continuationreset', 379, $T_OBJ, 'oo');
         op3('continuationcontrol', 380, $T_OBJ, 'ioo');
         op3('continuationinvoke', 381, $T_OBJ, 'oo');
+        # Encoder-internal (no QAST op of this name exists): the num32 half
+        # of Compiler.nqp's emit_sized_native_trunc, a round trip through a
+        # 32-bit float (the bytecode path's d2f/f2d). sized_trunc emits it.
+        op3('sized_num32', 382, $T_NUM, 'n');
         op3('box_i/2', 186, $T_OBJ, 'io');
         op3('box_n/2', 187, $T_OBJ, 'no');
         op3('box_s/2', 188, $T_OBJ, 'so');
@@ -634,6 +658,61 @@ class QAST::TruffleEncoder {
 
     sub cbail(str $why) { nqp::die('code-bail ' ~ $why) }
 
+    # Every BlockInfo walk in Compiler.nqp is guarded with
+    # `nqp::istype($cur_block, BlockInfo)`, and that guard is load-bearing:
+    # the outer of the outermost BlockInfo is not always another BlockInfo.
+    # A block compiled during a BEGIN-time EVAL reaches one whose outer is
+    # a RakuAST::Block, and an unguarded walk then calls .qast on it ("No
+    # such method 'qast' for invocant of type 'RakuAST::Block'", which the
+    # null-message bug above used to turn into a bare NullPointerException).
+    # BlockInfo is `my`-scoped to Compiler.nqp, so the test is a duck-typed
+    # one: only a BlockInfo answers to `qast`.
+    #
+    # FIVE walks need it, not four: the four lexical resolvers
+    # (lexical_type_of, resolve_lexref, lexical_in_scope, the lexicalref
+    # scope resolver) and the scope-from-symbol-table walk in encode_var,
+    # whose twin is Compiler.nqp:5470. Without the guard there the walk
+    # dies on .qast instead of reaching `cbail('scopeless var')`.
+    sub block_info($cur) { nqp::can($cur, 'qast') ?? 1 !! 0 }
+
+    # Is a block with this cuid one of the blocks THIS block's own deferred
+    # loop will compile? A QAST::BVal names a block of the same
+    # compilation, and the block may sit on either side of the reference
+    # (t/qast/01-qast.t's 'BVal node preceding its block'). Either order
+    # resolves on the deferred nested-block road -- whichever slot the loop
+    # reaches first compiles the block, and every slot patches from the
+    # same cuid_to_qbid -- so $*CODEREFS.know_cuid alone is too strict a
+    # test at encode time.
+    #
+    # The walk STOPS at a nested QAST::Block, and that boundary is the
+    # whole point: the deferred loop compiles a block through
+    # $comp.as_jast($blk), which takes its outer from $*BLOCK -- the block
+    # being encoded here. A block declared one level deeper (inside a
+    # nested block B) belongs to B's deferral, not this one; admitting it
+    # would let this block's deferral reach it first and compile it with
+    # the WRONG outer, silently, on a road that has no fallback. So the
+    # answer is exactly the set of blocks this block declares itself, and
+    # the deeper shape refuses loudly, as it did before.
+    #
+    # A BVal's value is likewise a REFERENCE, not containment: descending
+    # into it would walk in circles (the very shape the tests build).
+    #
+    # $root marks the block being encoded, whose OWN children are the walk
+    # (it is a QAST::Block itself, so the boundary above would otherwise
+    # stop the walk before it began).
+    sub block_in_tree($node, str $cuid, int $root = 0) {
+        return 0 unless nqp::istype($node, QAST::Node);
+        unless $root {
+            return ($node.cuid eq $cuid ?? 1 !! 0)
+                if nqp::istype($node, QAST::Block);
+            return 0 if nqp::istype($node, QAST::BVal);
+        }
+        for $node.list {
+            return 1 if block_in_tree($_, $cuid);
+        }
+        0
+    }
+
     # A classlib registry RT type (Compiler.nqp: obj 0, int 1, num 2, str 3,
     # uint 10) as an encoder type; a uint RESULT is T_UINT so it boxes
     # unsigned, a uint ARGUMENT is the int slot it travels in.
@@ -680,7 +759,7 @@ class QAST::TruffleEncoder {
         1
     }
 
-    method encode_block($node, $block, $comp, :$comp_mode, :$sidecar, :$unit_road) {
+    method encode_block($node, $block, $comp, :$comp_mode) {
         run_init();
         sub trace(str $verdict) { self.why($node, $comp_mode, $verdict) }
         if !$code_run { trace('no: code_run off'); return '' }
@@ -691,11 +770,6 @@ class QAST::TruffleEncoder {
         if $code_only_set && !nqp::existskey(%code_only, $name) {
             trace('no: not in only'); return ''
         }
-        if $node.has_exit_handler { trace('no: exit handler'); return '' }
-        # A raw block (Compiler.nqp's own deserialize/load/main wrappers)
-        # is a parameterless declaration to the engine; on the class road
-        # its body stays bytecode, on the artifact road it must encode.
-        if $node.blocktype eq 'raw' && !$unit_road { trace('no: raw blocktype'); return '' }
         # An immediate block is compiled AND called by its enclosing block,
         # which is why encode_node already refuses one as a child
         # ('block immediate'). Encoding one as a target is the same
@@ -716,7 +790,13 @@ class QAST::TruffleEncoder {
             'params', nqp::list(), 'decls', nqp::list(),
             'nested', nqp::list(),
             'block', $block, 'qast', $node, 'comp', $comp, 'dispatches', 0,
-            'frame_op', 0, 'uses_hll', 0, 'hidx', 0,
+            # An exit-handler block (Raku LEAVE/KEEP/UNDO/POST, Lock.protect)
+            # runs its handler from CallFrame.leave(): it needs a frame, since
+            # a frame-free entry builds none and would skip the handler
+            # silently. The value is already on the caller's registers when
+            # leave() runs (StoreRet wraps the program; NqpDispatch and
+            # ProgramEntry leave after the call), as the stub's postlude did.
+            'frame_op', ($node.has_exit_handler ?? 1 !! 0), 'uses_hll', 0, 'hidx', 0,
             # A custom_args block (Raku's full-binder signatures: sub-
             # signatures, generic/coercive types, capture slurpies) binds
             # its arguments itself, through the p6bindsig prologue in its
@@ -737,7 +817,15 @@ class QAST::TruffleEncoder {
             # exception is a real compile error that must stay loud -- a
             # swallowed one lets a block that should refuse to compile
             # compile.
+            # A message is not guaranteed: an exception thrown with a
+            # payload and no message (Raku's control and X:: throws) reads
+            # back as a null string, and nqp::index over one is a host NPE
+            # -- which then REPLACES the real exception, so the compile
+            # dies with a bare NullPointerException naming nothing
+            # (BEGIN-time EVAL inside a class, 2026-09-10). No message is
+            # not a refusal, so it rethrows like any other exception.
             my str $msg := nqp::getmessage($err);
+            $msg := '' if nqp::isnull_s($msg);
             nqp::rethrow($err) if nqp::index($msg, 'code-bail') < 0;
             trace('no: bail ' ~ $msg);
             if $code_bail_p {
@@ -815,26 +903,6 @@ class QAST::TruffleEncoder {
                 ~ ' uses_hll=' ~ %e<uses_hll>);
         }
         nqp::splice(@code, @ltypes, 4, 0);
-        # The size gate, BEFORE the commit: on the string road the program
-        # travels as one string constant, which the class file caps at
-        # 65535 UTF-8 bytes (the rx descriptor's cliff). A jar-bound unit
-        # (:sidecar) ships its programs in the LZ4 sidecar by index, where
-        # no such cap exists, so the gate is the string road's alone: the
-        # BOOTSTRAP BEGIN bodies (67k-134k, six of them) were the whole
-        # residue of it (2026-09-09). A refusal after the commit
-        # would hand the bytecode path a block whose lexicals are already
-        # registered ("Lexical '&parent' already declared", found
-        # 2026-09-04 when the BOOTSTRAP BEGIN body, 4 decls and thousands
-        # of statements, first reached here as an immediate block). The
-        # estimate is an upper bound: every code word as decimal plus its
-        # separator, every pool entry with its length prefix, and room
-        # for the nested qbids patched in below.
-        my int $est := 32 + 6 * nqp::elems(%e<nested>);
-        for @code { $est := $est + nqp::chars(~$_) + 1 }
-        for %e<pool> { $est := $est + nqp::chars($_) + 8 }
-        if $est > 60000 && !$sidecar {
-            trace('no: program too large (' ~ $est ~ ')'); return ''
-        }
         trace('YES: committing ' ~ nqp::elems(%e<decls>) ~ ' decls');
         for %e<decls> -> $d {
             my str $kind := $d[0];
@@ -879,10 +947,6 @@ class QAST::TruffleEncoder {
         nqp::push(@out, ' ' ~ nqp::elems(%e<pool>));
         for %e<pool> { nqp::push(@out, ' ' ~ nqp::chars($_) ~ ':' ~ $_) }
         $out := nqp::join('', @out);
-        # The gate above bounded this; refusing here would be the bug it
-        # exists to prevent, so a miss is an invariant failure, not a bail.
-        nqp::die('code engine: program of ' ~ $node.cuid ~ ' grew past the size gate after commit ('
-            ~ nqp::chars($out) ~ ' chars)') if nqp::chars($out) > 65000 && !$sidecar;
         if $code_encoded {
             nqp::say('code engine: ' ~ ($name eq '' ?? '<anon ' ~ $node.cuid ~ '>' !! $name));
         }
@@ -1005,12 +1069,10 @@ class QAST::TruffleEncoder {
                 # A uint parameter (objprimspec 10): fetch unsigned so a
                 # full-width value unboxes, and bind/default as int -- the
                 # wire type 4 (T_UINT) tells the builder to use posparam_u.
-                # A sized uint (under 64 bits) still needs post-fetch
-                # masking; leave those to the fallback.
+                # A sized uint (under 64 bits) is masked by the truncating
+                # task below, the way the bytecode path masks after the fetch.
                 my int $uspec := nqp::objprimspec($p.returns);
                 if $uspec == 10 {
-                    my int $ubits := nqp::objprimbits($p.returns);
-                    cbail('sized uint param') if $ubits > 0 && $ubits < 64;
                     $uint := 1;
                     $ptype := $T_INT;
                 }
@@ -1042,7 +1104,31 @@ class QAST::TruffleEncoder {
             for @($p) {
                 nqp::push(@tasks, $_) if nqp::istype($_, QAST::Node);
             }
-            epush(%e, nqp::elems(@tasks));
+            # MoarVM fetches a sized parameter into a sized register, so the
+            # argument arrives already truncated; every slot here is full
+            # width, so Compiler.nqp emits emit_sized_native_trunc between
+            # the fetch and the store. The wire has no room for a width in
+            # the param record, so the same truncation rides as the FIRST
+            # task -- tasks run right after the bind, in order, and a
+            # re-bind of the parameter through sized_trunc is exactly the
+            # value the bytecode path would have stored. A full-width or
+            # object parameter produces no task at all.
+            my int $ntrunc := 0;
+            my $truncq;
+            unless $p.slurpy {
+                my $pv := QAST::Var.new( :name($p.name), :scope($p.scope),
+                                         :returns($p.returns) );
+                my $tv := self.sized_trunc($pv, $p.returns);
+                unless nqp::eqaddr($tv, $pv) {
+                    $ntrunc := 1;
+                    $truncq := QAST::Op.new( :op('bind'),
+                        QAST::Var.new( :name($p.name), :scope($p.scope),
+                                       :returns($p.returns) ),
+                        $tv );
+                }
+            }
+            epush(%e, $ntrunc + nqp::elems(@tasks));
+            self.encode_node($truncq, %e, $T_VOID) if $ntrunc;
             for @tasks {
                 self.encode_node($_, %e, $T_VOID);
             }
@@ -1192,8 +1278,9 @@ class QAST::TruffleEncoder {
             cbail('block ' ~ $bt);
         }
         if nqp::istype($n, QAST::BVal) {
-            cbail('bval to an uncompiled block')
-                unless $*CODEREFS.know_cuid($n.value.cuid);
+            cbail('bval to a block the unit never compiles')
+                unless $*CODEREFS.know_cuid($n.value.cuid)
+                    || block_in_tree(%e<qast>, $n.value.cuid, 1);
             epush(%e, $W_CODEREF);
             nqp::push(%e<nested>, [nqp::elems(%e<code>), $n.value]);
             epush(%e, 0);
@@ -1687,21 +1774,33 @@ class QAST::TruffleEncoder {
             # into binds + ifs (a fresh tree over the same children, so a
             # later bail hands the bytecode path the untouched op) and let
             # the simple-chain road below encode each individual link.
-            if nqp::istype($op[0], QAST::Op)
-                && ($op[0].op eq 'chain' || $op[0].op eq 'chainstatic') {
+            # Which child holds the left operand: Compiler.nqp's
+            # get_arg_idx. A named link is `chain :name(&infix) $a, $b`; an
+            # UNNAMED one (a metaop, or an operator that is a code object)
+            # is `chain $callee, $a, $b`, so both its operands and the walk
+            # into a nested link sit one child further along -- reading
+            # $op[0] for the nest test would have taken the CALLEE for the
+            # left operand.
+            my int $op_ai := $op.name eq '' ?? 1 !! 0;
+            if nqp::elems(@($op)) > $op_ai
+                && nqp::istype($op[$op_ai], QAST::Op)
+                && ($op[$op_ai].op eq 'chain' || $op[$op_ai].op eq 'chainstatic') {
+                my @callee_names;
                 my @callees;
                 my @operands;
                 my $cur := $op;
                 while nqp::istype($cur, QAST::Op)
                     && ($cur.op eq 'chain' || $cur.op eq 'chainstatic') {
-                    cbail('unnamed chain link') if $cur.name eq '';
-                    cbail('chain link arity') unless nqp::elems(@($cur)) == 2;
-                    nqp::unshift(@callees, $cur.name);
-                    nqp::unshift(@operands, $cur[1]);
-                    $cur := $cur[0];
+                    my int $ai := $cur.name eq '' ?? 1 !! 0;
+                    cbail('chain link arity')
+                        unless nqp::elems(@($cur)) == ($ai ?? 3 !! 2);
+                    nqp::unshift(@callee_names, $cur.name);
+                    nqp::unshift(@callees, $ai ?? $cur[0] !! nqp::null());
+                    nqp::unshift(@operands, $cur[$ai + 1]);
+                    $cur := $cur[$ai];
                 }
                 nqp::unshift(@operands, $cur);
-                my int $nlinks := nqp::elems(@callees);
+                my int $nlinks := nqp::elems(@callee_names);
                 my @v;
                 my int $k := 0;
                 while $k <= $nlinks { nqp::push(@v, $op.unique('chain_o')); $k++ }
@@ -1711,9 +1810,15 @@ class QAST::TruffleEncoder {
                 # link($i): result of links $i..end, with @v[$i] and @v[$i+1] bound.
                 my $linkq;
                 $linkq := -> int $i {
-                    my $call := QAST::Op.new( :op('call'), :name(@callees[$i]),
-                        QAST::Var.new( :name(@v[$i]),   :scope('local') ),
-                        QAST::Var.new( :name(@v[$i + 1]), :scope('local') ) );
+                    my $lv := QAST::Var.new( :name(@v[$i]),     :scope('local') );
+                    my $rv := QAST::Var.new( :name(@v[$i + 1]), :scope('local') );
+                    # An unnamed link's callee is a value, so it is
+                    # decont'ed and called, exactly as chain_codegen's
+                    # `decont($c_ast[0])` callee_qast is.
+                    my $call := @callee_names[$i] ne ''
+                        ?? QAST::Op.new( :op('call'), :name(@callee_names[$i]), $lv, $rv )
+                        !! QAST::Op.new( :op('call'),
+                             QAST::Op.new( :op('decont'), @callees[$i] ), $lv, $rv );
                     $i == $nlinks - 1
                         ?? $call
                         !! QAST::Stmts.new(
@@ -1780,16 +1885,20 @@ class QAST::TruffleEncoder {
     # that cannot see this block's locals -- and would have taken a closure
     # per iteration besides. :nohandler is the plain W_LOOP over fetch+call.
     # Value context answers the iterated list; void answers nothing. The
-    # labelled form is still refused (nothing emits nqp::for with a label:
-    # NQP has no loop labels, and Raku's for is its own iterator loop).
+    # labelled form (NQP's Actions push :label onto nqp::for, t/nqp/084)
+    # is W_FORLOOPL: the same shape with a label local the unwind arms read.
     method encode_for($op, %e, int $want) {
         my int $nohandler := 0;
+        my $label_node;
         my @ops;
         for @($op) {
             if $_.named eq 'nohandler' { $nohandler := 1 }
+            elsif $_.named eq 'label' { $label_node := $_ }
             elsif $_.named ne '' { cbail('for :' ~ $_.named) }
             else { nqp::push(@ops, $_) }
         }
+        my int $has_label := nqp::defined($label_node) ?? 1 !! 0;
+        cbail('labeled nohandler for') if $has_label && $nohandler;
         cbail('for needs 2 operands') unless nqp::elems(@ops) == 2;
         cbail('for block not a block') unless nqp::istype(@ops[1], QAST::Block);
         my $blk := @ops[1];
@@ -1838,12 +1947,20 @@ class QAST::TruffleEncoder {
             my int $lid := &*REGISTER_UNWIND_HANDLER($outer, $EX_CAT_LAST, :ex_obj(1));
             my int $nrid := &*REGISTER_UNWIND_HANDLER($lid, $EX_CAT_NEXT +| $EX_CAT_REDO, :ex_obj(1));
             %e<frame_op> := 1;
-            epush(%e, $W_FORLOOP);
+            my int $lbl_local := $has_label ?? new_elocal(%e, $T_OBJ) !! 0;
+            epush(%e, $has_label ?? $W_FORLOOPL !! $W_FORLOOP);
             my int $ct_at := nqp::elems(%e<code>);
             epush(%e, 0);
             epush(%e, $lid);
             epush(%e, $nrid);
             epush(%e, $outer);
+            if $has_label {
+                # The label value, bound into $lbl_local by the builder before
+                # the loop's try; evaluated in the outer handler context.
+                epush(%e, $lbl_local);
+                %e<hidx> := $outer;
+                self.encode_child($label_node, %e, $T_OBJ);
+            }
             %e<hidx> := $lid;
             nqp::bindpos(%e<code>, $ct_at, self.encode_node($cond, %e, $T_ANY));
             %e<hidx> := $nrid;
@@ -2205,8 +2322,23 @@ class QAST::TruffleEncoder {
             # path makes (Ops.throwcatdyn_c); the result, should a block
             # handler resume, is read from the frame's return register.
             my str $kind := $op.name;
-            for @($op) {
-                cbail('labeled control') if $_.named eq 'label';
+            my $label;
+            for @($op) { $label := $_ if $_.named eq 'label' }
+            if $label {
+                my int $lcat := $kind eq 'next' ?? $EX_CAT_NEXT +| $EX_CAT_LABELED
+                             !! $kind eq 'redo' ?? $EX_CAT_REDO +| $EX_CAT_LABELED
+                             !! $kind eq 'last' ?? $EX_CAT_LAST +| $EX_CAT_LABELED
+                             !! 0;
+                cbail('labeled control ' ~ $kind) unless $lcat;
+                my str $tmp := QAST::Node.unique('ctrl_ex');
+                my sub lv() { QAST::Var.new( :name($tmp), :scope('local') ) }
+                return self.encode_node(QAST::Stmts.new(
+                    QAST::Op.new( :op('bind'),
+                        QAST::Var.new( :name($tmp), :scope('local'), :decl('var') ),
+                        QAST::Op.new( :op('newexception') ) ),
+                    QAST::Op.new( :op('setpayload'), lv(), $label ),
+                    QAST::Op.new( :op('setextype'), lv(), QAST::IVal.new( :value($lcat) ) ),
+                    QAST::Op.new( :op('throw'), lv() )), %e, $want);
             }
             my int $cat := $kind eq 'next' ?? $EX_CAT_NEXT
                         !! $kind eq 'redo' ?? $EX_CAT_REDO
@@ -2343,7 +2475,19 @@ class QAST::TruffleEncoder {
         cbail('op ' ~ $name) if nqp::isnull($entry);
         my str $args := $entry[2];
         cbail('op ' ~ $name ~ ' arity ' ~ $nargs) unless $nargs == nqp::chars($args);
-        epush(%e, $W_OPCALL);
+        # A NON-object result goes out as W_OPCALLT, which carries the type:
+        # an op that suspends has to tell the resume which return register
+        # the value is in, and plain W_OPCALL has no room for it (an int op
+        # resumed as an object then fed the next native argument a
+        # SixModelObject). Object-typed ops keep the shorter tag, as do the
+        # hand-written emissions above -- all of those are object-typed.
+        if $entry[1] == $T_OBJ {
+            epush(%e, $W_OPCALL);
+        }
+        else {
+            epush(%e, $W_OPCALLT);
+            epush(%e, $entry[1]);
+        }
         epush(%e, $entry[0]);
         epush(%e, $nargs);
         my int $i := 0;
@@ -2363,7 +2507,14 @@ class QAST::TruffleEncoder {
     # in $tmp (block topic and fail-value); only the test consults
     # .defined. Mirrors encode_callmethod's lang-meth-call wire with the
     # invocant read from $tmp and no further arguments.
-    method emit_defined_test(%e, int $tmp) {
+    # $condt is the type the condition local actually holds. `with`/`without`
+    # tests it by CALLING `.defined` on it, so a native has to be boxed
+    # first -- exactly the `$qastcomp.coercion($cond, $RT_OBJ)` the class
+    # road applies to its dup'd copy (Compiler.nqp's withy arm). The local
+    # itself keeps its own type: the __IM_ local the class road hands to a
+    # cond-passing block is typed from the condition, and so is the value
+    # the two-child form yields when the test fails.
+    method emit_defined_test(%e, int $tmp, int $condt = $T_OBJ) {
         my int $mtmp := new_elocal(%e, $T_OBJ);
         epush(%e, $W_DISPATCH);
         %e<dispatches> := %e<dispatches> + 1;
@@ -2373,7 +2524,12 @@ class QAST::TruffleEncoder {
         epush(%e, $T_OBJ); epush(%e, $T_STR); epush(%e, $T_OBJ);
         epush(%e, $W_OPCALL); epush(%e, 51); epush(%e, 1);   # decont
         epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $mtmp);
-        epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $tmp);
+        if $condt != $T_OBJ {
+            my int $kind := coerce_kind($condt, $T_OBJ);
+            cbail('withy cond coercion') if $kind < 0;
+            epush(%e, $W_COERCE); epush(%e, $kind);
+        }
+        epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
         epush(%e, $W_SVAL); epush(%e, epool(%e, 'defined'));
         epush(%e, $W_LOCGET); epush(%e, $T_OBJ); epush(%e, $mtmp);
     }
@@ -2471,8 +2627,7 @@ class QAST::TruffleEncoder {
             epush(%e, $negate);
             epush(%e, $has_else ?? 1 !! 0);
             if $withy {
-                cbail('withy cond not obj') if $condt != $T_OBJ;
-                self.emit_defined_test(%e, $tmp);
+                self.emit_defined_test(%e, $tmp, $condt);
             }
             else {
                 epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
@@ -2531,8 +2686,7 @@ class QAST::TruffleEncoder {
             epush(%e, $negate);
             epush(%e, 1);
             if $withy {
-                cbail('withy cond not obj') if $condt != $T_OBJ;
-                self.emit_defined_test(%e, $tmp);
+                self.emit_defined_test(%e, $tmp, $condt);
             }
             else {
                 epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
@@ -2557,7 +2711,25 @@ class QAST::TruffleEncoder {
             epush(%e, $W_LOCGET); epush(%e, $condt); epush(%e, $tmp);
             return $rt;
         }
-        cbail('withy general') if $withy;
+        if $withy {
+            # with/without whose then-arm takes no condition: the condition
+            # into an obj local, the same `defined` dispatch the cond-passing
+            # branches make (Compiler.nqp: coerce to obj, findmethod
+            # 'defined', lang-call, istrue), then the plain IFS/IFV layout
+            # with an obj condition. Value context with two children never
+            # reaches here (the branch above owns it).
+            my int $rt := $void ?? $T_VOID !! ($want == $T_ANY ?? $T_OBJ !! $want);
+            epush(%e, $W_STMTS); epush(%e, 2);
+            my int $tmp := new_elocal(%e, $T_OBJ);
+            epush(%e, $W_LOCBIND); epush(%e, $T_OBJ); epush(%e, $tmp);
+            self.encode_child($op[0], %e, $T_OBJ);
+            epush(%e, $void ?? $W_IFS !! $W_IFV);
+            epush(%e, $T_OBJ); epush(%e, $negate); epush(%e, $n == 3 ?? 1 !! 0);
+            self.emit_defined_test(%e, $tmp);
+            self.encode_child($op[1], %e, $rt);
+            self.encode_child($op[2], %e, $rt) if $n == 3;
+            return $void ?? $T_OBJ !! $rt;
+        }
         epush(%e, $void ?? $W_IFS !! $W_IFV);
         my int $ct_at := nqp::elems(%e<code>);
         epush(%e, 0);
@@ -2565,7 +2737,6 @@ class QAST::TruffleEncoder {
         epush(%e, $n == 3 ?? 1 !! 0);
         # Condition type is known only after encoding it; the slot is
         # reserved above and patched here.
-        my int $mark := nqp::elems(%e<code>);
         my int $condt := self.encode_node($op[0], %e, $T_ANY);
         $condt := $T_INT if $condt == $T_UINT;
         nqp::bindpos(%e<code>, $ct_at, $condt);
@@ -2763,7 +2934,7 @@ class QAST::TruffleEncoder {
                 return nqp::existskey(%e<ownref>, $name) ?? '' !! 'lexical';
             }
             my $cur := %e<block>.outer;
-            while $cur {
+            while $cur && block_info($cur) {
                 if $cur.qast.ann('DYN_COMP_WRAPPER') {
                     $cur := 0;
                 }
@@ -2839,7 +3010,7 @@ class QAST::TruffleEncoder {
         # the compiler does.
         if $scope eq '' {
             my $cur := %e<block>;
-            while $cur {
+            while $cur && block_info($cur) {
                 my %sym := $cur.qast.symbol($name);
                 if %sym {
                     $scope := %sym<scope>;
@@ -2895,10 +3066,14 @@ class QAST::TruffleEncoder {
                 }
             }
             else {
+                # The declaration this bind targets, resolved ONCE: both
+                # the lexicalref check and the sized-store width want it,
+                # and this is the encoder's hottest walk (every lexical
+                # bind in the whole compilation, up the BlockInfo chain).
+                my @rl := self.resolve_lexref($name, %e);
                 # "Cannot bind to QAST::Var resolving to a lexicalref" on
                 # the bytecode path; a bail keeps that error its own.
-                cbail('bind to a lexicalref through lexical scope')
-                    if self.resolve_lexref($name, %e)[0] == 2;
+                cbail('bind to a lexicalref through lexical scope') if @rl[0] == 2;
                 if $outer {
                     epush(%e, $W_LEXBIND_OUTER); epush(%e, $type); epush(%e, epool(%e, $name));
                 }
@@ -2906,19 +3081,13 @@ class QAST::TruffleEncoder {
                     %e<frame_op> := 1;
                     epush(%e, $W_LEXBIND); epush(%e, $type); epush(%e, epool(%e, $name));
                 }
-                my int $ubits := self.sized_uint_bits($var, $name, %e);
-                if $ubits {
-                    # Truncate to the declared width: value & ((1<<bits)-1),
-                    # exactly Compiler.nqp's emit_sized_native_trunc for uint.
-                    self.encode_child(
-                        QAST::Op.new( :op('bitand_i'), $bindval,
-                            QAST::IVal.new(
-                                :value(nqp::sub_i(nqp::bitshiftl_i(1, $ubits), 1)) ) ),
-                        %e, $type);
-                }
-                else {
-                    self.encode_child($bindval, %e, $type);
-                }
+                # A store to a SIZED native lexical truncates to the
+                # declared width, exactly as Compiler.nqp's lexical bind
+                # road does (emit_sized_native_trunc before bindlex_<c>):
+                # int8/16/32 sign-wrap, uint8/16/32 mask, num32 rounds to
+                # single precision. A full-width type wraps to nothing.
+                self.encode_child(
+                    self.sized_trunc($bindval, sized_ret_of(@rl, $var)), %e, $type);
             }
             return $type;
         }
@@ -2927,10 +3096,14 @@ class QAST::TruffleEncoder {
             # The typed accessors by the declared type, as the bytecode
             # path picks getattr_<t>/bindattr_<t>: 81/82 object, 117-119
             # and 121-123 for int/num/str.
+            # The declared WIDTH plays no part here, as it does not on the
+            # bytecode path: Compiler.nqp picks getattr_<char>/bindattr_<char>
+            # off the primspec alone (typechar) and emits no truncation for an
+            # attribute -- the P6opaque slot is the declared width, so the
+            # REPR truncates the store itself. Sized and full-width emit the
+            # same thing.
             my int $aspec := nqp::isnull($var.returns) ?? 0 !! nqp::objprimspec($var.returns);
             my int $auint := $aspec == 10 ?? 1 !! 0;
-            cbail('sized uint attribute')
-                if $auint && nqp::objprimbits($var.returns) > 0 && nqp::objprimbits($var.returns) < 64;
             my int $t := $auint ?? $T_UINT !! rt_of($var.returns);
             cbail('attribute type') if $t < 0 || $t > 4;
             # A uint attribute (objprimspec 10) uses getattr_u/bindattr_u,
@@ -2974,9 +3147,18 @@ class QAST::TruffleEncoder {
                 epush(%e, $W_LEXGET); epush(%e, $T_OBJ); epush(%e, epool(%e, $name));
                 return $T_OBJ;
             }
-            my int $t := $kind == 1 ?? @r[1] !! rt_of($var.returns);
+            # A declaration found statically decides the SLOT type, and a
+            # uint declaration was remapped to the int slots long before
+            # this (so the bytecode path's getlexref_i is what matches).
+            # Nothing found statically takes the type from .returns, where
+            # a uint stays a uint: the bytecode path's getlexref_u, wire
+            # type 4, which Ops.lexref_at wraps in the HLL's uint ref.
+            my int $t := $kind == 1 ?? @r[1]
+                !! (nqp::isnull($var.returns) ?? $T_OBJ
+                    !! (nqp::objprimspec($var.returns) == 10 ?? $T_UINT
+                        !! rt_of($var.returns)));
             cbail('lexicalref to a non-native ' ~ $name) if $t == $T_OBJ;
-            cbail('lexicalref type') if $t < 0 || $t > 3;
+            cbail('lexicalref type') if $t < 0 || $t > 4;
             my int $spec := $kind == 1 ?? sized_native_ref_spec(@r[2]) !! 0;
             %e<frame_op> := 1;
             epush(%e, $W_LEXREF); epush(%e, $t); epush(%e, epool(%e, $name)); epush(%e, $spec);
@@ -2990,10 +3172,14 @@ class QAST::TruffleEncoder {
             # form.
             cbail('attributeref bind') unless nqp::isnull($bindval);
             cbail('attributeref shape') unless nqp::elems(@($var)) == 2;
+            # The width plays no part: Compiler.nqp picks getattrref_<char>
+            # off the primspec alone (typechar), and Ops.getattrref_u
+            # allocates a hintless attribute reference whose stores go
+            # through the REPR, which knows the attribute's declared width.
+            # A sized attributeref is therefore the same emission as a
+            # full-width one.
             my int $arspec := nqp::isnull($var.returns) ?? 0 !! nqp::objprimspec($var.returns);
             my int $aruint := $arspec == 10 ?? 1 !! 0;
-            cbail('sized uint attributeref')
-                if $aruint && nqp::objprimbits($var.returns) > 0 && nqp::objprimbits($var.returns) < 64;
             my int $t := $aruint ?? $T_INT !! rt_of($var.returns);
             cbail('attributeref to a non-native') if $t == $T_OBJ;
             my int $id := $aruint ?? 313
@@ -3169,7 +3355,7 @@ class QAST::TruffleEncoder {
             return %e<own>{$name};
         }
         my $cur := %e<block>.outer;
-        while $cur {
+        while $cur && block_info($cur) {
             if $cur.qast.ann('DYN_COMP_WRAPPER') {
                 $cur := 0;
             }
@@ -3205,7 +3391,7 @@ class QAST::TruffleEncoder {
                 nqp::existskey(%e<ownret>, $name) ?? %e<ownret>{$name} !! nqp::null()];
         }
         my $cur := %e<block>.outer;
-        while $cur {
+        while $cur && block_info($cur) {
             if $cur.qast.ann('DYN_COMP_WRAPPER') {
                 $cur := 0;
             }
@@ -3226,7 +3412,7 @@ class QAST::TruffleEncoder {
     method lexical_in_scope(str $name, %e) {
         return 1 if nqp::existskey(%e<own>, $name);
         my $cur := %e<block>.outer;
-        while $cur {
+        while $cur && block_info($cur) {
             if $cur.qast.ann('DYN_COMP_WRAPPER') {
                 $cur := 0;
             }
@@ -3241,24 +3427,23 @@ class QAST::TruffleEncoder {
 
     method encode_decl($var, %e, str $decl, str $scope) {
         my str $name := $var.name;
-        # A plain (unsized) uint lexical shares the int slot table, exactly
-        # as BlockInfo.register_lexical remaps it ("$type := 1 if $type ==
+        # A uint lexical shares the int slot table, exactly as
+        # BlockInfo.register_lexical remaps it ("$type := 1 if $type ==
         # 10"): its storage is a long, and the unsigned-ness lives in the
-        # ops that read it, not the slot. A SIZED uint (uint8/16/32) still
-        # bails -- a direct store into its slot would skip the truncation
-        # the bytecode path does, and it reaches this road rarely (native
-        # lvalues are lexicalref-scoped and truncate through the reference).
+        # ops that read it, not the slot. A SIZED native (int8, uint16,
+        # num32) stores truncated to its declared width -- the bind road
+        # wraps every store in sized_trunc, as Compiler.nqp's
+        # emit_sized_native_trunc does.
         my int $type := lex_rt($var.returns);
         cbail('uint or wide lexical') if $type > 3 || $type < 0;
         if $decl eq 'param' {
             cbail('param scope ' ~ $scope) unless $scope eq 'lexical' || $scope eq 'local';
             # A native parameter fetches through posparam_<t>/namedparam_<t>
             # and binds into a typed slot. A slurpy is always an object; a
-            # sized native (int8, num32) would need the bytecode path's
-            # explicit truncation after the fetch, so it stays out for now.
+            # sized native gets patch_params' truncating first task, the
+            # bytecode path's post-fetch emit_sized_native_trunc.
             if $type != $T_OBJ {
                 cbail('typed slurpy param') if $var.slurpy;
-                cbail('sized typed param') if sized_native_ref_spec($var.returns);
             }
             if $scope eq 'local' {
                 self.declare_elocal($var, %e, $type);
@@ -3338,19 +3523,45 @@ class QAST::TruffleEncoder {
         rt_of($typeobj)
     }
 
-    # The width to mask a bind to, if the target lexical is a SIZED uint
-    # (uint8/16/32); 0 otherwise. The bind node's own :returns carries it for
-    # a decl-with-init (`my uint8 $x = v`); a later reassignment reads the
-    # width from the declaration recorded in %e<ownret>.
-    method sized_uint_bits($var, str $name, %e) {
-        my $ret := $var.returns;
-        if nqp::isnull($ret) && nqp::existskey(%e<ownret>, $name) {
-            $ret := %e<ownret>{$name};
+    # The declared `returns` that decides the width a store to this
+    # lexical truncates to: Compiler.nqp reads it off the DECLARING block
+    # ($decl-block.lexical_returns($name)), so a bind through an outer
+    # lexical truncates to the outer declaration's width too. The bind
+    # node's own :returns is the fallback for a decl-with-init
+    # (`my uint8 $x = v`), whose declaration is the node itself.
+    # Takes the ALREADY-resolved declaration, so the caller's single
+    # resolve_lexref walk serves both it and the lexicalref check.
+    sub sized_ret_of(@r, $var) {
+        return @r[2] if @r[0] == 1 && !nqp::isnull(@r[2]);
+        $var.returns
+    }
+
+    # Compiler.nqp's emit_sized_native_trunc, as a QAST rewrite over the
+    # value being stored: a store to a sized native truncates to the
+    # declared width the way MoarVM's sized registers do -- mask for
+    # unsigned, shift out and arithmetically back for signed, a round trip
+    # through a 32-bit float for num32. A full-width or non-native type
+    # answers the value unchanged, so every caller can wrap unconditionally.
+    method sized_trunc($value, $returns) {
+        return $value if nqp::isnull($returns);
+        my int $spec := nqp::objprimspec($returns);
+        if $spec == 1 || $spec == 10 {
+            my int $bits := nqp::objprimbits($returns);
+            if $bits > 0 && $bits < 64 {
+                return $spec == 10
+                    ?? QAST::Op.new( :op('bitand_i'), $value,
+                         QAST::IVal.new(
+                           :value(nqp::sub_i(nqp::bitshiftl_i(1, $bits), 1)) ) )
+                    !! QAST::Op.new( :op('bitshiftr_i'),
+                         QAST::Op.new( :op('bitshiftl_i'), $value,
+                           QAST::IVal.new( :value(64 - $bits) ) ),
+                         QAST::IVal.new( :value(64 - $bits) ) );
+            }
         }
-        return 0 if nqp::isnull($ret);
-        return 0 unless nqp::objprimspec($ret) == 10;
-        my int $bits := nqp::objprimbits($ret);
-        ($bits > 0 && $bits < 64) ?? $bits !! 0
+        elsif $spec == 2 && nqp::objprimbits($returns) == 32 {
+            return QAST::Op.new( :op('sized_num32'), $value );
+        }
+        $value
     }
 
     sub rt_of($typeobj) {

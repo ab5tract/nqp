@@ -54,6 +54,11 @@ public final class NqpCodeEngine implements CodeEngine {
         if (program instanceof com.oracle.truffle.api.RootCallTarget rct
                 && rct.getRootNode() instanceof NqpRootNode root && root.blockName == null) {
             root.blockName = cf.codeRef == null ? "" : cf.codeRef.name;
+            /* The one point a CodeRef meets its program root: the wire's
+             * exit-handler invariant is checked here, once, rather than on
+             * every frame-free entry. Before the overrides, so forcing a
+             * block framed cannot mask an encoder disagreement. */
+            NqpFrameFree.checkExitHandler(root, cf.codeRef);
             // The frame-free overrides (NQP_FRAMEFREE*), now that the name is known.
             NqpFrameFree.apply(root, root.blockName);
         }
@@ -91,6 +96,19 @@ public final class NqpCodeEngine implements CodeEngine {
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static RuntimeException nonSuspendable(CallFrame cf,
                                                    org.raku.nqp.runtime.SaveStackException sse) {
+        /* NQP_CONT_TRACE: who escaped, and what had already saved below it.
+         * SaveStackException.toString lists the frames the capture has
+         * joined so far, so the topmost name there is the frame under the
+         * one that failed to yield -- the pair locates the unwrapped site. */
+        if (System.getenv("NQP_CONT_TRACE") != null) {
+            org.raku.nqp.runtime.StaticCodeInfo sci =
+                cf.codeRef == null ? null : cf.codeRef.staticInfo;
+            System.err.println("nqp cont: non-suspendable escape in '"
+                + (cf.codeRef == null ? "<null>" : cf.codeRef.name) + "' uid="
+                + (sci == null ? "?" : sci.uniqueId) + " at "
+                + (sci == null ? "?" : sci.sourceFile + ":" + sci.sourceLine)
+                + "; saved so far: " + sse);
+        }
         return new IllegalStateException(
             "continuation captured at a non-suspendable site in an engine-run block ("
             + (cf.codeRef == null ? "<anon>" : cf.codeRef.name) + ")", sse);

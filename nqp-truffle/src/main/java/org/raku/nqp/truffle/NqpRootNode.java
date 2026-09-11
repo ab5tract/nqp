@@ -197,11 +197,15 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     /** One op from the {@link NqpOps} table, all operands boxed. */
     @Operation
     @ConstantOperand(type = int.class, name = "id")
+    @ConstantOperand(type = int.class, name = "rtype")
     public static final class RunOp {
+        /* rtype is the op's static result type, from the wire's OPCALLT tag
+         * (T_OBJ for the untyped OPCALL). It is used for one thing: a
+         * suspension token has to name the return register the resume reads. */
         @Specialization
-        static Object doOp(VirtualFrame f, int id, @Variadic Object[] a) {
+        static Object doOp(VirtualFrame f, int id, int rtype, @Variadic Object[] a) {
             try {
-                return NqpOps.run(id, a, cu(f), tc(f), cf(f));
+                return NqpOps.run(id, rtype, a, cu(f), tc(f), cf(f));
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -512,6 +516,9 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static Object doDecont(VirtualFrame f, Object site, Object o) {
             try {
                 return NqpTypeOps.decont((NqpTypeOps.DecontSite) site, o, tc(f));
+            } catch (org.raku.nqp.runtime.SaveStackException sse) {
+                /* A Proxy FETCH is user code; see NqpOps.suspendToken. */
+                return NqpOps.suspendToken(sse);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -529,10 +536,14 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     @Operation
     @ConstantOperand(type = Object.class, name = "site")
     public static final class IsConcreteOp {
+        /* Object, not long, and for the same reason as IsTypeOp: isconcrete
+         * deconts its operand, and a Proxy FETCH is user code. */
         @Specialization
-        static long doIsConcrete(VirtualFrame f, Object site, Object o) {
+        static Object doIsConcrete(VirtualFrame f, Object site, Object o) {
             try {
                 return NqpTypeOps.isconcrete((NqpTypeOps.IsConcreteSite) site, o, tc(f));
+            } catch (org.raku.nqp.runtime.SaveStackException sse) {
+                return NqpOps.suspendToken(sse, NqpWire.T_INT);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -542,10 +553,22 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     @Operation
     @ConstantOperand(type = Object.class, name = "site")
     public static final class IsTypeOp {
+        /* Answers Object, not long: istype DOES reach user code -- it
+         * deconts both operands (a Proxy FETCH) and its slow road runs
+         * type_check / accepts_type (a subset's `where` block) / istrue --
+         * so a continuation can be captured across it, and the save path
+         * has to answer the suspension token the OPCALL site's IsSuspend
+         * tail looks for. The normal path answers a boxed Long, which is
+         * what every table op already answers through RunOp; the consumers
+         * (Truthy, the arg coercions) take Object. */
         @Specialization
-        static long doIsType(VirtualFrame f, Object site, Object o, Object type) {
+        static Object doIsType(VirtualFrame f, Object site, Object o, Object type) {
             try {
                 return NqpTypeOps.istype((NqpTypeOps.IsTypeSite) site, o, type, tc(f));
+            } catch (org.raku.nqp.runtime.SaveStackException sse) {
+                /* T_INT, not T_OBJ: this site's value is an int, and the
+                 * resume reads the register by the token's type. */
+                return NqpOps.suspendToken(sse, NqpWire.T_INT);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -559,6 +582,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static Object doSink(VirtualFrame f, Object site, Object o) {
             try {
                 return NqpTypeOps.p6sink((NqpTypeOps.SinkSite) site, o, tc(f));
+            } catch (org.raku.nqp.runtime.SaveStackException sse) {
+                /* .sink is user code and may take/gather: answer the token
+                 * the table road answers, so this frame joins the resume
+                 * chain instead of letting the capture escape raw. */
+                return NqpOps.suspendToken(sse);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -572,6 +600,9 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static Object doHllize(VirtualFrame f, Object site, Object o) {
             try {
                 return NqpTypeOps.hllize((NqpTypeOps.HllizeSite) site, o, cu(f), tc(f));
+            } catch (org.raku.nqp.runtime.SaveStackException sse) {
+                /* A foreign transform is user code; see NqpOps.suspendToken. */
+                return NqpOps.suspendToken(sse);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -605,6 +636,9 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static Object doCheck(VirtualFrame f, Object site, Object rv, Object routine, Object bypass) {
             try {
                 return NqpTypeOps.p6typecheckrv((NqpTypeOps.RvCheckSite) site, rv, routine, bypass, tc(f));
+            } catch (org.raku.nqp.runtime.SaveStackException sse) {
+                /* A subset's where block is user code; see NqpOps.suspendToken. */
+                return NqpOps.suspendToken(sse);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -701,6 +735,12 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
                 return NqpOps.checkarity((CallFrame) fa[ARG_CF], (ThreadContext) fa[ARG_TC],
                 (CallSiteDescriptor) fa[ARG_CSD], (Object[]) fa[ARG_ARGS], required, accepted);
             } catch (Throwable t) {
+                /* NQP_ARITY_TRACE: which block's header refused, since the
+                 * arity message itself names no block (and the frame-free
+                 * road has no CallFrame to name one from). Behind a
+                 * boundary, off a static flag: nothing of it is partially
+                 * evaluated into the compiled catch arm. */
+                if (NqpOps.ARITY_TRACE) NqpOps.traceArityRefusal(fa, required, accepted, t);
                 throw NqpOps.carry(t);
             }
         }
