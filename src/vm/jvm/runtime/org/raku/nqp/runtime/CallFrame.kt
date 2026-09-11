@@ -417,11 +417,10 @@ class CallFrame : Cloneable {
         wanted.priorInvocation = closed
     }
 
-    /** Set by leave(), leaveTorn() or leaveSuspended(): the live-invocation
-     *  count is given back exactly once per frame, by whichever road gets
-     *  there first. NOT the exit-handler flag -- a frame packed into a
-     *  continuation gives its count back at the save but has not exited, so
-     *  its handler is still owed; see exitHandlerRun. */
+    /** Set by leave() or leaveTorn(): the live-invocation count is given
+     *  back exactly once per frame, at its REAL exit (normal or torn). The
+     *  save road (leaveSuspended) sets neither this nor exitHandlerRun -- a
+     *  frame packed into a continuation is still live and comes back. */
     @JvmField var left = false
 
     /** Set by leave() or leaveTorn(): the exit handler runs exactly once,
@@ -440,8 +439,8 @@ class CallFrame : Cloneable {
      * engine road also leaves as the unwind passes through it runs its
      * handler once, here, with the absent result, rather than twice or with
      * the caller's stale return register. `left` separately keeps the count
-     * one-shot, so a frame whose count was already given back on the save
-     * road (leaveSuspended) still gets its handler here. tc.curFrame is
+     * one-shot between this road and leave(); the save road
+     * (leaveSuspended) touches neither flag. tc.curFrame is
      * restored after the handler: the unwind continues to its target. An
      * exception the handler throws replaces the in-flight one (the phaser's
      * exception wins, as on MoarVM).
