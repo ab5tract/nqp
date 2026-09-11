@@ -68,7 +68,15 @@ object UnitLoader {
     @JvmStatic
     fun load(tc: ThreadContext, filename0: String) {
         var filename = filename0
+        /* Keyed by the name as given, before the ModuleLoader.class rewrite
+         * below: the dedupe is per requested path, as it always was.
+         * Recorded BEFORE the load so a unit whose load block loads itself
+         * again does not recurse, and taken back out again if the load
+         * throws -- otherwise a missing or corrupt artifact makes every
+         * later nqp::loadbytecode of the same path a silent no-op, and the
+         * real failure surfaces much later as an unrelated missing symbol. */
         if (!tc.gc.loadedUnits.add(filename)) return
+        var loaded = false
         try {
             var file = File(filename)
             if (!file.isFile && filename == "ModuleLoader.class") {
@@ -82,11 +90,14 @@ object UnitLoader {
             if (!isUnitFile(filename))
                 throw ExceptionHandling.dieInternal(tc, "loadbytecode: $filename is not a unit artifact")
             loadAndRun(tc, filename, tc.gc.sharingHint)
+            loaded = true
         } catch (e: ControlException) {
             throw e
         } catch (e: Exception) {
             if (e is RuntimeException && e.javaClass.name.startsWith("org.raku.nqp")) throw e
             throw ExceptionHandling.dieInternal(tc, e)
+        } finally {
+            if (!loaded) tc.gc.loadedUnits.remove(filename0)
         }
     }
 

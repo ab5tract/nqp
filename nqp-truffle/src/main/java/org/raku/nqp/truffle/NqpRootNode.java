@@ -19,8 +19,9 @@ import org.raku.nqp.runtime.UnwindException;
 
 /**
  * The Bytecode DSL root node general code runs on — the interpreter half of
- * the jast2bc-to-Truffle migration (docs/jvm-truffle-migration.md in
- * rakudo). The processor generates {@code NqpRootNodeGen} from this spec:
+ * the engine, and since the class road was deleted the only one there is
+ * (how it got here is history: docs/jvm-truffle-migration.md in rakudo).
+ * The processor generates {@code NqpRootNodeGen} from this spec:
  * cached and uncached tiers, OSR, and a serializable bytecode form, which
  * is what answers both per-code-object node memory for the setting and the
  * precompiled-jar story.

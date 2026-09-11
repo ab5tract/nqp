@@ -211,8 +211,10 @@ public final class NqpCodeEngine implements CodeEngine {
                  * frame packed away in a continuation --
                  * Dispatch.descriptorFor reads tc.curFrame, so race/hyper
                  * runs then resolved callsite descriptors against the
-                 * wrong unit. */
-                cf.leave();
+                 * wrong unit. leaveSuspended, not leave: the save is not
+                 * this frame's exit, so its LEAVE/KEEP/UNDO stay owed to
+                 * the real one. */
+                cf.leaveSuspended();
                 throw sse;
             }
         } catch (Throwable t) {
@@ -229,7 +231,9 @@ public final class NqpCodeEngine implements CodeEngine {
         } catch (NqpHostError wrapped) {
             throw org.raku.nqp.runtime.ExceptionHandling.dieInternal(tc, wrapped.original);
         } catch (org.raku.nqp.runtime.ControlException ce) {
-            cf.leave();
+            /* A capture deeper in that reached us raw is a save, not this
+             * frame's exit; anything else really leaves it. */
+            cf.leaveThrough(ce);
             throw ce;
         } catch (Throwable t) {
             throw org.raku.nqp.runtime.ExceptionHandling.dieInternal(tc, t);
@@ -237,8 +241,9 @@ public final class NqpCodeEngine implements CodeEngine {
         if (r instanceof ContinuationResult cr2) {
             NqpCont.Suspend token = (NqpCont.Suspend) cr2.getResult();
             /* Same discipline as the catch above: the frame is saved in
-             * the continuation, so leave it before the save propagates. */
-            cf.leave();
+             * the continuation, so leave it before the save propagates --
+             * suspended, not exited, so no exit handler here either. */
+            cf.leaveSuspended();
             throw token.sse.pushFrame(0, RESUME,
                 new Object[] { cr2, token.rtype, token.finish }, cf);
         }
