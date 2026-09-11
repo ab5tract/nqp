@@ -253,12 +253,15 @@ Two structural limits stay:
   and cannot know about a block the backend invents afterwards. A local
   lives in one frame and cannot be named from another, so a rule whose code
   touches one is refused outright (`qastnode over a lowered local`).
-* PROVISIONAL: a rule with more than 16 pieces stays on the bytecode path —
-  the callback dispatch compiles into one generated method, and rakudo's
-  `comp_unit` (sixty-odd `:my` pieces) broke its emission ("JAST node isn't
-  a JAST::Class", the 64KB method limit is the suspect). Once-per-parse
-  rules gain nothing from the engine; split the dispatch across methods if
-  a hot rule ever hits the cap.
+* PROVISIONAL, and written against a road that no longer exists: a rule
+  with more than 16 pieces stayed on the bytecode path, because the
+  callback dispatch compiled into one generated method and rakudo's
+  `comp_unit` (sixty-odd `:my` pieces) broke its emission ("JAST node
+  isn't a JAST::Class", the 64KB method limit the suspect). There is no
+  bytecode path and no generated method since 2026-09-10 (unit-artifact
+  milestone 4), so the 64KB reason for the cap is gone; the cap itself
+  was never re-derived on the unit road. Once-per-parse rules gain
+  nothing from the engine either way.
 
 ## Why the engine is Kotlin
 
@@ -404,8 +407,11 @@ Worth trying, in the order I would now bet on them:
    its compiled program, and allocates a fresh `NqpCursor`; every subrule
    call does `Ops.findmethod` by name plus a fresh argument array, where the
    bytecode path has an `invokedynamic` site with a guard chain. The program
-   lookup should not be a lookup at all: `JAST::Class` takes fields, so the
-   rule's own class can hold the compiled program in a static.
+   lookup should not be a lookup at all. (The 2026-09 suggestion here was
+   "`JAST::Class` takes fields, so the rule's own class can hold the
+   compiled program in a static". There are no generated classes any more
+   — milestone 4 deleted the class road on 2026-09-10 — so the same idea
+   now means a slot in the unit record instead.)
 3. **`altOrder` allocates** a fresh marks array per named-alt entry — a real
    `BOOTIntArray` SixModelObject, filled one `push_native` at a time — and
    reads its answer back through the cursor's bstack, where the bytecode path

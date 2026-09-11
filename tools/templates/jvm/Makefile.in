@@ -18,7 +18,6 @@ LZ4 = @lz4@
 
 RUNTIME_JAVAS = \
   @nfp(src/vm/jvm/runtime/org/raku/nqp/io/*.java)@ \
-  @nfp(src/vm/jvm/runtime/org/raku/nqp/jast2bc/*.java)@ \
   @nfp(src/vm/jvm/runtime/org/raku/nqp/runtime/*.java)@ \
   @nfp(src/vm/jvm/runtime/org/raku/nqp/sixmodel/*.java)@ \
   @nfp(src/vm/jvm/runtime/org/raku/nqp/sixmodel/reprs/*.java)@ \
@@ -36,11 +35,6 @@ THIRDPARTY_JARS = $(ASM)@cpsep@$(ASMTREE)@cpsep@$(FASTUTIL)@cpsep@$(JLINE)@cpsep
 @for_stages(@bpv(@ucstage@_GEN_CAT)@ = @bpm(GEN_CAT)@ @lcstage@
 @bpv(NQP_@ucstage@_FLAGS)@ = --javaclass=nqp
 )@
-
-# 
-@bpv(ASTNODES_SOURCES)@	= @nfp(src/vm/jvm/QAST/JASTNodes.nqp)@
-
-@bpv(NQP_SOURCES_EXTRA)@ = @nfp(src/vm/@backend@/NQP/Ops.nqp)@
 
 @bpv(CLEANUPS_EXTRA)@ = \
 	*.class \

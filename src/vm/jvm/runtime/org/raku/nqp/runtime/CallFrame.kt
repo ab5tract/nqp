@@ -417,43 +417,138 @@ class CallFrame : Cloneable {
         wanted.priorInvocation = closed
     }
 
-    /** Set by leave(): the live-invocation count is given back once. */
+    /** Set by leave() or leaveTorn(): the live-invocation count is given
+     *  back exactly once per frame, at its REAL exit (normal or torn). The
+     *  save road (leaveSuspended) sets neither this nor exitHandlerRun -- a
+     *  frame packed into a continuation is still live and comes back. */
     @JvmField var left = false
 
+    /** Set by leave() or leaveTorn(): the exit handler runs exactly once,
+     *  at the frame's REAL exit (normal or torn), never on the save road. */
+    private var exitHandlerRun = false
+
     /**
-     * Give back this frame's live-invocation count when the unwinder tears
-     * it past without running leave() (an exception's target is a handler
-     * further out, so the frames between never reach their postlude). Kept
-     * idempotent with leave() via `left`, and deliberately does NOT run an
-     * exit handler or touch tc.curFrame -- a torn frame's exit handler does
-     * not run here, and only the count needs correcting so CallFrame.<init>'s
-     * outer-resolution search does not keep hunting for outers that have
-     * already exited (the search was ~40% of a dispatch's cost, spent walking
-     * the whole caller chain for over-counted, long-gone module mainlines).
+     * The unwinder tears this frame past without running its postlude (an
+     * exception's target is a handler further out). Raku runs LEAVE, UNDO
+     * and POST on an exceptional exit, so the exit handler runs here with
+     * the result ABSENT -- the HLL's null value, which is what MoarVM's
+     * unwind hands it (VMNull, hllized) -- and then the live-invocation
+     * count is given back (so CallFrame.<init>'s outer-resolution search
+     * does not keep hunting for outers that have already exited).
+     * `exitHandlerRun` makes the handler one-shot with leave(): a frame the
+     * engine road also leaves as the unwind passes through it runs its
+     * handler once, here, with the absent result, rather than twice or with
+     * the caller's stale return register. `left` separately keeps the count
+     * one-shot between this road and leave(); the save road
+     * (leaveSuspended) touches neither flag. tc.curFrame is
+     * restored after the handler: the unwind continues to its target. An
+     * exception the handler throws replaces the in-flight one (the phaser's
+     * exception wins, as on MoarVM).
      */
-    fun countLeft() {
+    fun leaveTorn() {
+        if (exitHandlerRun) return
+        exitHandlerRun = true
+        val sci = codeRef.staticInfo
         if (!left) {
             left = true
-            codeRef.staticInfo.liveInvocations.decrementAndGet()
+            sci.liveInvocations.decrementAndGet()
+        }
+        if (sci.hasExitHandler) {
+            /* The unwind is still in flight and continues to its target
+             * once the handler has run, so this frame is put back. */
+            val origCur = tc.curFrame
+            tc.curFrame = this
+            try {
+                runExitHandler(sci, sci.compUnit.hllConfig.nullValue)
+            } finally {
+                tc.curFrame = origCur
+            }
         }
     }
 
     fun leave() {
         val sci = this.codeRef.staticInfo
         sci.priorInvocation = this
+        /* Read before the block below mutates it: true means the torn walk
+         * already ran this frame's exit handler, with the absent result. */
+        val alreadyRun = exitHandlerRun
+        exitHandlerRun = true
         if (!left) {
             left = true
             sci.liveInvocations.decrementAndGet()
         }
-        if (sci.hasExitHandler) {
-            val origUnwinder = tc.unwinder
+        if (sci.hasExitHandler && !alreadyRun)
+            runExitHandler(sci, Ops.result_o(this.caller!!))
+        this.tc.curFrame = this.caller
+    }
+
+    /**
+     * The frame is being packed into a continuation. It is NOT exiting, so
+     * the only thing the save road owes anyone is tc.curFrame: the frame
+     * has left the caller chain (the resume road puts it back), and the
+     * unit that resolves dispatch descriptors reads tc.curFrame.
+     *
+     * Everything leave() does beyond that would be a lie about a frame
+     * that is coming back, and each lie had a symptom:
+     *
+     *  - the exit handler. Raku's LEAVE, KEEP and UNDO belong to the real
+     *    exit, with the real result. Running it here consumed the frame's
+     *    single handler run at the first `take`, with the caller's stale
+     *    return register as the resultish, and left the real exit silent.
+     *
+     *  - `left` / liveInvocations, and priorInvocation. A suspended frame
+     *    is still live, and giving its count back makes it look exited to
+     *    outerFor: with liveInvocations back at 0 the caller-chain search
+     *    is skipped and the block's outer resolves to priorInvocation --
+     *    which the save road had just pointed at THIS frame. That is
+     *    invisible while a static frame has one invocation at a time, and
+     *    wrong the moment it has two. `("aa".."ac")` is that moment:
+     *    SEQUENCE's multi-character branch builds each character's range
+     *    with the sequence operator, i.e. with SEQUENCE, so the inner
+     *    invocation runs while the outer one is packed into a
+     *    continuation. The inner gather's blocks then bound to the OUTER
+     *    invocation's frame, its `$stop = 1` landed in the wrong frame's
+     *    lexicals, its `until $stop` never saw it, and every
+     *    multi-character Str range hung.
+     *
+     * The real exit (leave() on the resume road, leaveTorn() when the
+     * unwinder tears the frame past) still gives the count back exactly
+     * once and still sets priorInvocation, because by then it is true.
+     */
+    fun leaveSuspended() {
+        this.tc.curFrame = this.caller
+    }
+
+    /**
+     * A control exception is passing out through this frame: leave it the
+     * way that exception means. A SaveStackException is a continuation
+     * capture -- the frame is being packed away, not exited, and every
+     * road that packs a frame throws one -- so it takes the save road;
+     * any other control exception really does leave the frame. Named once
+     * here because all four sites that leave a frame on a control throw
+     * (the two engine entries, the artifact block's entry, the resume
+     * road) have to agree.
+     */
+    fun leaveThrough(ce: ControlException) {
+        if (ce is SaveStackException) leaveSuspended() else leave()
+    }
+
+    /**
+     * Run this frame's HLL exit handler (Raku's LEAVE/KEEP/UNDO/POST) with
+     * [result] as the frame's resultish -- the real return value on a normal
+     * exit, the HLL's null value when the unwinder tore the frame past. A
+     * fresh unwinder for the handler's own control flow, and the in-flight
+     * one back afterwards even if the handler throws.
+     */
+    private fun runExitHandler(sci: StaticCodeInfo, result: SixModelObject?) {
+        val origUnwinder = tc.unwinder
+        try {
             tc.unwinder = UnwindException()
-            val hll = sci.compUnit.hllConfig
-            Ops.invokeDirect(tc, hll.exitHandler, exitHandlerCallSite,
-                arrayOf<Any?>(this.codeRef, Ops.result_o(this.caller!!)))
+            Ops.invokeDirect(tc, sci.compUnit.hllConfig.exitHandler, exitHandlerCallSite,
+                arrayOf<Any?>(this.codeRef, result))
+        } finally {
             tc.unwinder = origUnwinder
         }
-        this.tc.curFrame = this.caller
     }
 
     /* Package-private in Java; Kotlin has no package visibility, and

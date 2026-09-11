@@ -73,7 +73,6 @@ import org.raku.nqp.io.ServerSocketHandle
 import org.raku.nqp.io.SocketHandle
 import org.raku.nqp.io.StandardReadHandle
 import org.raku.nqp.io.StandardWriteHandle
-import org.raku.nqp.jast2bc.JASTCompiler
 import org.raku.nqp.dispatch.BindFailure
 import org.raku.nqp.sixmodel.BoolificationSpec
 import org.raku.nqp.sixmodel.Boxable
@@ -151,6 +150,33 @@ object Ops {
      *  load-time fixup and the RakuAST fixup perform. Read once -- setcodeobj
      *  runs per code ref at every unit load. */
     @JvmField val REPOINT_TRACE = System.getenv("NQP_REPOINT_TRACE") != null
+
+    /** NQP_DO_TRACE: every bind of Code.$!do -- which code object takes
+     *  which code ref, and the nqp frames that did it. */
+    @JvmField val DO_TRACE = System.getenv("NQP_DO_TRACE") != null
+
+    @JvmStatic
+    fun traceDoBind(obj: SixModelObject?, name: String?, value: SixModelObject?, tc: ThreadContext) {
+        if (name != "\$!do") return
+        val sb = StringBuilder("nqp \$!do: obj "
+            + (if (obj == null) "null" else obj.st?.debugName.toString() + "@"
+                + Integer.toHexString(System.identityHashCode(obj)))
+            + " <- " + (if (value is CodeRef) "coderef cuid="
+                + value.staticInfo.uniqueId + " name='" + value.name
+                + "' unit=" + value.staticInfo.compUnit.unitId()
+                + "@" + Integer.toHexString(System.identityHashCode(value))
+              else value.toString()))
+        var fr = tc.curFrame
+        var n = 0
+        while (fr != null && n < 8) {
+            val s = fr.codeRef?.staticInfo
+            sb.append("\n    '").append(fr.codeRef?.name ?: "?").append("' ")
+                .append(s?.sourceFile).append(':').append(s?.sourceLine)
+            fr = fr.caller
+            n++
+        }
+        System.err.println(sb)
+    }
 
     /* I/O opcodes */
     @JvmStatic
@@ -3265,8 +3291,7 @@ object Ops {
     /* Will a bind failure in the current frame become a resumption of the
      * dispatch that invoked it? The same answer as the
      * bind-will-resume-on-failure syscall, callable without a dispatch
-     * instruction: this is asked in every full-binder frame's prologue, and
-     * an invokedynamic per prologue eats into the per-class indy budget. */
+     * instruction: this is asked in every full-binder frame's prologue. */
     @JvmStatic
     fun bindWillResumeOnFailure(tc: ThreadContext): Long {
         val frame = tc.frame
@@ -3632,6 +3657,7 @@ object Ops {
     }
     @JvmStatic
     fun bindattr(obj: SixModelObject?, ch: SixModelObject?, name: String?, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
+        if (DO_TRACE) traceDoBind(obj, name, value, tc)
         obj!!.bind_attribute_boxed(tc, decont(ch, tc), name, STable.NO_HINT, value)
         if (obj.sc != null)
             scwbObject(tc, obj)
@@ -3679,6 +3705,7 @@ object Ops {
     }
     @JvmStatic
     fun bindattr(obj: SixModelObject?, ch: SixModelObject?, name: String?, value: SixModelObject?, hint: Long, tc: ThreadContext): SixModelObject? {
+        if (DO_TRACE) traceDoBind(obj, name, value, tc)
         obj!!.bind_attribute_boxed(tc, decont(ch, tc), name, hint, value)
         if (obj.sc != null)
             scwbObject(tc, obj)
@@ -7941,15 +7968,15 @@ object Ops {
     }
     @JvmStatic
     fun loadbytecode(filename: String?, tc: ThreadContext): String? {
-        LibraryLoader.load(tc, filename)
+        org.raku.nqp.runtime.unit.UnitLoader.load(tc, filename!!)
         return filename
     }
     @JvmStatic
     fun loadbytecodebuffer(buffer: SixModelObject?, tc: ThreadContext): SixModelObject? {
         if (buffer is VMArrayInstance_i8)
-            LibraryLoader.load(tc, buffer.slots)
+            org.raku.nqp.runtime.unit.UnitLoader.load(tc, buffer.slots!!)
         else if (buffer is VMArrayInstance_u8)
-            LibraryLoader.load(tc, buffer.slots)
+            org.raku.nqp.runtime.unit.UnitLoader.load(tc, buffer.slots!!)
         else
             throw ExceptionHandling.dieInternal(tc, "loadbytecodebuffer expects a uint8 or int8 VMArray")
         return buffer
@@ -8964,14 +8991,7 @@ object Ops {
     }
 
     /* Evaluation of code; JVM-specific ops. */
-    @JvmStatic
-    fun compilejast(jast: SixModelObject?, jastNodes: SixModelObject?, tc: ThreadContext): SixModelObject {
-        val res = EvalResult()
-        res.jc = JASTCompiler.buildClass(jast!!, jastNodes!!, false, tc)
-        return res
-    }
-    /** The unit an in-memory compiled block belongs to (a class name on
-     * the class road, a unit id on the record road), when one was
+    /** The unit id an in-memory compiled block belongs to, when one was
      * retained for nested-unit persistence; empty string otherwise. */
     @JvmStatic
     fun jvmclassofcuid(cuid: String?, tc: ThreadContext): String =
@@ -9036,51 +9056,33 @@ object Ops {
         return null
     }
 
-    @JvmStatic
-    fun compilejasttofile(jast: SixModelObject?, jastNodes: SixModelObject?, filename: String?, tc: ThreadContext): SixModelObject? {
-        JASTCompiler.writeClass(jast!!, jastNodes!!, filename!!, tc)
-        return jast
-    }
-    /** Turns a runtime compile's output into a live unit: on the class
-     *  road by defining the class and instantiating it, on the record
-     *  unit road by building a ProgramUnit from the record. Either
-     *  way the unit is initialized under the compilee's HLL config when
-     *  asked, and retained for nested embedding while a compilation is
-     *  under way. */
+    /** Turns a runtime compile's record into a live unit: a ProgramUnit
+     *  built from the record, initialized under the compilee's HLL config
+     *  when asked, and retained for nested embedding while a compilation
+     *  is under way. */
     @JvmStatic
     fun loadcompunit(obj: SixModelObject?, compileeHLL: Long, tc: ThreadContext): SixModelObject? {
         try {
             val res = obj as EvalResult
             val rec = res.record
-            val unitName: String
-            if (rec != null) {
-                val u = org.raku.nqp.runtime.unit.ProgramUnit(rec)
-                u.shared = false
-                res.cu = u
-                unitName = rec.meta.unitId
-                if (System.getenv("NQP_CODE_WHY") != null)
-                    System.err.println("unit record $unitName (${rec.programs.size} programs, ${rec.meta.blocks.size} qbids)")
-            }
-            else {
-                val cuClass = tc.gc.byteClassLoader.defineClass(res.jc!!.name, res.jc!!.bytes!!)
-                res.cu = cuClass.newInstance() as CompilationUnit
-                unitName = res.jc!!.name!!
-            }
+                ?: throw ExceptionHandling.dieInternal(tc, "loadcompunit: no unit record to load")
+            val u = org.raku.nqp.runtime.unit.ProgramUnit(rec)
+            u.shared = false
+            res.cu = u
+            val unitName = rec.meta.unitId
+            if (System.getenv("NQP_CODE_WHY") != null)
+                System.err.println("unit record $unitName (${rec.programs.size} programs, ${rec.meta.blocks.size} qbids)")
             if (compileeHLL != 0L)
                 usecompileehllconfig(tc)
-            res.cu!!.initializeCompilationUnit(tc)
+            u.initializeCompilationUnit(tc)
             if (compileeHLL != 0L)
                 usecompilerhllconfig(tc)
             /* A unit compiled while a compilation is under way may be a
              * nested unit whose code refs the enclosing serialization
-             * points into; retain what embedding it later needs, on the
-             * road it was compiled on. */
+             * points into; retain what embedding it later needs. */
             if (!tc.compilingSCs.isNullOrEmpty()) {
-                if (rec != null)
-                    tc.gc.inMemoryUnitRecords[unitName] = rec
-                else
-                    tc.gc.inMemoryUnitBytes[unitName] = res.jc!!.bytes!!
-                res.cu!!.codeRefs?.let { crs ->
+                tc.gc.inMemoryUnitRecords[unitName] = rec
+                u.codeRefs?.let { crs ->
                     for (cr in crs) {
                         val cuid = cr.staticInfo.uniqueId
                         if (!cuid.isNullOrEmpty())
@@ -9088,7 +9090,6 @@ object Ops {
                     }
                 }
             }
-            res.jc = null
             res.record = null
             return obj
         }

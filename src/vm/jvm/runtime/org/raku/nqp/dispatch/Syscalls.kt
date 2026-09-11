@@ -475,21 +475,19 @@ object Syscalls {
             DispatchValue(ArgKind.STR, Ops.jvmclassofcuid(args.str(0), args.tc))
         }
 
-        /* Writes the compiling unit as a unit artifact (programs +
-         * serialized context + block table, no class file). A syscall so
-         * HLL::Backend::JVM, compiled by the stage0 compiler, can reach it. */
-        define("jvm-write-unit", OBJ, OBJ, STR) { args ->
-            org.raku.nqp.runtime.unit.UnitWriter.write(args.obj(0), args.obj(1), args.str(2), args.tc)
+        /* The driver's record (QAST::UnitRecord): written as a unit
+         * artifact (programs + serialized context + block table), or
+         * built in memory for nqp::loadcompunit -- a script, an EVAL, a
+         * BEGIN-time unit, or a --target=jar with no --output. Syscalls
+         * rather than ops so the compiler itself can reach them without a
+         * bootstrap-breaking new op. */
+        define("jvm-write-unit-record", OBJ, STR) { args ->
+            org.raku.nqp.runtime.unit.UnitWriter.write(args.obj(0), args.str(1), args.tc)
             void
         }
-
-        /* Builds the compiling unit's record in memory -- the unit road
-         * for a script, an EVAL, a BEGIN-time unit, or a --target=jar with
-         * no --output -- for nqp::loadcompunit to turn into a ProgramUnit:
-         * no zip, no class. */
-        define("jvm-build-unit", OBJ, OBJ) { args ->
+        define("jvm-build-unit-record", OBJ) { args ->
             val res = org.raku.nqp.runtime.EvalResult()
-            res.record = org.raku.nqp.runtime.unit.UnitWriter.record(args.obj(0), args.obj(1), args.tc)
+            res.record = org.raku.nqp.runtime.unit.UnitWriter.record(args.obj(0), args.tc)
             obj(res)
         }
 

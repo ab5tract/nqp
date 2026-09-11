@@ -17,7 +17,6 @@ import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.reprs.JavaObjectWrapper
 
-import org.raku.nqp.jast2bc.BytecodeVersion
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
@@ -224,12 +223,7 @@ open class BootJavaInterop(gc: GlobalContext) {
     protected open fun computeInterop(tc: ThreadContext, klass: Class<*>): SixModelObject {
         val adaptor = createAdaptor(klass)
 
-        val adaptorUnit: CompilationUnit
-        try {
-            adaptorUnit = adaptor.constructed!!.newInstance() as CompilationUnit
-        } catch (roe: ReflectiveOperationException) {
-            throw RuntimeException(roe)
-        }
+        val adaptorUnit = AdaptorUnit(adaptor.constructed!!, adaptor.descriptors, klass.getName())
         adaptorUnit.initializeCompilationUnit(tc)
 
         val hash = gc.BOOTHash!!.st.REPR.allocate(tc, gc.BOOTHash!!.st)
@@ -277,7 +271,7 @@ open class BootJavaInterop(gc: GlobalContext) {
     protected open fun createAdaptor(target: Class<*>): ClassContext {
         val cw = ClassWriter(ClassWriter.COMPUTE_MAXS or ClassWriter.COMPUTE_FRAMES)
         val className = "org/raku/nqp/generatedadaptor/" + target.getName().replace('.', '/')
-        cw.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER, className, null, TYPE_CU.getInternalName(), null)
+        cw.visit(BytecodeVersion.EMITTED, Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER, className, null, "java/lang/Object", null)
 
         cw.visitField(Opcodes.ACC_STATIC or Opcodes.ACC_PUBLIC, "constants", "[Ljava/lang/Object;", null, null).visitEnd()
 
@@ -290,36 +284,9 @@ open class BootJavaInterop(gc: GlobalContext) {
         for (f in target.getFields()) createAdaptorField(cc, f)
         for (c in target.getConstructors()) createAdaptorConstructor(cc, c)
         createAdaptorSpecials(cc)
-        compunitMethods(cc)
 
         finishClass(cc)
         return cc
-    }
-
-    protected open fun compunitMethods(c: ClassContext) {
-        val cw = c.cv!!
-        var mv: MethodVisitor
-        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "getCallSites", "()[Lorg/raku/nqp/runtime/CallSiteDescriptor;", null, null)
-        mv.visitCode()
-        mv.visitInsn(Opcodes.ACONST_NULL)
-        mv.visitInsn(Opcodes.ARETURN)
-        mv.visitMaxs(0, 0)
-        mv.visitEnd()
-
-        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "hllName", "()Ljava/lang/String;", null, null)
-        mv.visitCode()
-        mv.visitLdcInsn("")
-        mv.visitInsn(Opcodes.ARETURN)
-        mv.visitMaxs(0, 0)
-        mv.visitEnd()
-
-        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null)
-        mv.visitCode()
-        mv.visitVarInsn(Opcodes.ALOAD, 0)
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "org/raku/nqp/runtime/CompilationUnit", "<init>", "()V")
-        mv.visitInsn(Opcodes.RETURN)
-        mv.visitMaxs(0, 0)
-        mv.visitEnd()
     }
 
     /** Override this to customize the calling convention for method adaptors. */
@@ -813,9 +780,6 @@ open class BootJavaInterop(gc: GlobalContext) {
                 Type.getMethodDescriptor(Type.VOID_TYPE, TYPE_CU, TYPE_TC, TYPE_CR, TYPE_CSD, TYPE_AOBJ),
                 null, null)
         mc.mv = mv
-        val av = mv.visitAnnotation("Lorg/raku/nqp/runtime/CodeRefAnnotation;", true)
-        av.visit("name", "callout " + cc.target!!.getName() + " " + desc)
-        av.visitEnd()
         mv.visitCode()
         cc.descriptors.add(desc)
 

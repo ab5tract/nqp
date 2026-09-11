@@ -122,7 +122,8 @@ public final class NqpCodeEngine implements CodeEngine {
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static RuntimeException suspend(ContinuationResult cr, CallFrame cf) {
         NqpCont.Suspend token = (NqpCont.Suspend) cr.getResult();
-        return token.sse.pushFrame(0, RESUME, new Object[] { cr, token.rtype }, cf);
+        return token.sse.pushFrame(0, RESUME,
+            new Object[] { cr, token.rtype, token.finish }, cf);
     }
 
     private static RuntimeException hostForm(Throwable t) {
@@ -156,6 +157,11 @@ public final class NqpCodeEngine implements CodeEngine {
     static void resumeEngine(org.raku.nqp.runtime.ResumeStatus.Frame frame) throws Throwable {
         ContinuationResult cr = (ContinuationResult) frame.saveSpace[0];
         int rtype = (Integer) frame.saveSpace[1];
+        /* A fused op's tail, if the suspended site had one; see
+         * NqpCont.Suspend.finish. */
+        @SuppressWarnings("unchecked")
+        java.util.function.Function<Object, Object> finish =
+            (java.util.function.Function<Object, Object>) frame.saveSpace[2];
         ThreadContext tc = frame.tc;
         CallFrame cf = frame.callFrame;
         /* A continuation can resume on another thread, and the suspended
@@ -169,18 +175,48 @@ public final class NqpCodeEngine implements CodeEngine {
          * frame's arguments before re-entering it. */
         cr.getFrame().getArguments()[NqpRootNode.ARG_TC] = tc;
         Object inject;
+        boolean finishing = false;
         try {
             frame.resumeNextSave();
-            inject = NqpOps.readResult(rtype, cf);
+            /* Without a finisher the suspended call's value IS the site's
+             * result and is read by the site's static type; with one, the
+             * value is the INNER call's (always an object) and the op's
+             * tail turns it into the op's result. The flag keeps the tail
+             * out of the save-stack catch: this frame is not re-saved once
+             * resumeNextSave has returned, so a throw from the tail -- a
+             * failed type check, or a capture the tail itself provoked --
+             * must go through the yield as the op's own throw (Rethrow),
+             * never as a save that would drop this frame's work. */
+            if (finish == null) {
+                inject = NqpOps.readResult(rtype, cf);
+            }
+            else {
+                Object inner = NqpOps.readResult(NqpWire.T_OBJ, cf);
+                finishing = true;
+                inject = finish.apply(inner);
+            }
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
-            /* resumeNextSave already re-saved this frame. Leave it too:
-             * a re-suspending bytecode frame leaves through its postlude,
-             * and skipping this made tc.curFrame point at a frame packed
-             * away in a continuation -- Dispatch.descriptorFor reads
-             * tc.curFrame, so race/hyper runs then resolved callsite
-             * descriptors against the wrong unit. */
-            cf.leave();
-            throw sse;
+            /* A capture the FINISHER provoked is not this frame's save:
+             * nothing re-saved it, so it goes through the yield with the
+             * other throws (the program's handler regions see it as the
+             * op's throw, and an unhandled one reports as a
+             * non-suspendable site rather than silently losing work). */
+            if (finishing) {
+                inject = new NqpCont.Rethrow(sse);
+            }
+            else {
+                /* resumeNextSave already re-saved this frame. Leave it
+                 * too: a re-suspending bytecode frame leaves through its
+                 * postlude, and skipping this made tc.curFrame point at a
+                 * frame packed away in a continuation --
+                 * Dispatch.descriptorFor reads tc.curFrame, so race/hyper
+                 * runs then resolved callsite descriptors against the
+                 * wrong unit. leaveSuspended, not leave: the save is not
+                 * this frame's exit, so its LEAVE/KEEP/UNDO stay owed to
+                 * the real one. */
+                cf.leaveSuspended();
+                throw sse;
+            }
         } catch (Throwable t) {
             /* Deliver the exception through the yield so the program's
              * handler regions see it as the suspended call's own throw. */
@@ -195,7 +231,9 @@ public final class NqpCodeEngine implements CodeEngine {
         } catch (NqpHostError wrapped) {
             throw org.raku.nqp.runtime.ExceptionHandling.dieInternal(tc, wrapped.original);
         } catch (org.raku.nqp.runtime.ControlException ce) {
-            cf.leave();
+            /* A capture deeper in that reached us raw is a save, not this
+             * frame's exit; anything else really leaves it. */
+            cf.leaveThrough(ce);
             throw ce;
         } catch (Throwable t) {
             throw org.raku.nqp.runtime.ExceptionHandling.dieInternal(tc, t);
@@ -203,10 +241,11 @@ public final class NqpCodeEngine implements CodeEngine {
         if (r instanceof ContinuationResult cr2) {
             NqpCont.Suspend token = (NqpCont.Suspend) cr2.getResult();
             /* Same discipline as the catch above: the frame is saved in
-             * the continuation, so leave it before the save propagates. */
-            cf.leave();
+             * the continuation, so leave it before the save propagates --
+             * suspended, not exited, so no exit handler here either. */
+            cf.leaveSuspended();
             throw token.sse.pushFrame(0, RESUME,
-                new Object[] { cr2, token.rtype }, cf);
+                new Object[] { cr2, token.rtype, token.finish }, cf);
         }
         cf.leave();
     }

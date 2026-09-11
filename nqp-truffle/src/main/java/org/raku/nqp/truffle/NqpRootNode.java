@@ -19,8 +19,9 @@ import org.raku.nqp.runtime.UnwindException;
 
 /**
  * The Bytecode DSL root node general code runs on — the interpreter half of
- * the jast2bc-to-Truffle migration (docs/jvm-truffle-migration.md in
- * rakudo). The processor generates {@code NqpRootNodeGen} from this spec:
+ * the engine, and since the class road was deleted the only one there is
+ * (how it got here is history: docs/jvm-truffle-migration.md in rakudo).
+ * The processor generates {@code NqpRootNodeGen} from this spec:
  * cached and uncached tiers, OSR, and a serializable bytecode form, which
  * is what answers both per-code-object node memory for the setting and the
  * precompiled-jar story.
@@ -542,6 +543,10 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static Object doIsConcrete(VirtualFrame f, Object site, Object o) {
             try {
                 return NqpTypeOps.isconcrete((NqpTypeOps.IsConcreteSite) site, o, tc(f));
+            } catch (NqpTypeOps.SuspendedIn s) {
+                /* The capture crossed the fused op's inner call; the token
+                 * carries the op's tail. See NqpTypeOps.SuspendedIn. */
+                return NqpOps.suspendToken(s.sse, s.finish);
             } catch (org.raku.nqp.runtime.SaveStackException sse) {
                 return NqpOps.suspendToken(sse, NqpWire.T_INT);
             } catch (Throwable t) {
@@ -565,6 +570,10 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static Object doIsType(VirtualFrame f, Object site, Object o, Object type) {
             try {
                 return NqpTypeOps.istype((NqpTypeOps.IsTypeSite) site, o, type, tc(f));
+            } catch (NqpTypeOps.SuspendedIn s) {
+                /* The capture crossed the decont or the accepts_type call;
+                 * the token carries the rest of istype. */
+                return NqpOps.suspendToken(s.sse, s.finish);
             } catch (org.raku.nqp.runtime.SaveStackException sse) {
                 /* T_INT, not T_OBJ: this site's value is an int, and the
                  * resume reads the register by the token's type. */
@@ -636,6 +645,10 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static Object doCheck(VirtualFrame f, Object site, Object rv, Object routine, Object bypass) {
             try {
                 return NqpTypeOps.p6typecheckrv((NqpTypeOps.RvCheckSite) site, rv, routine, bypass, tc(f));
+            } catch (NqpTypeOps.SuspendedIn s) {
+                /* The where block captured; the token carries the pass/fail
+                 * tail, so the op still answers rv and not the block. */
+                return NqpOps.suspendToken(s.sse, s.finish);
             } catch (org.raku.nqp.runtime.SaveStackException sse) {
                 /* A subset's where block is user code; see NqpOps.suspendToken. */
                 return NqpOps.suspendToken(sse);

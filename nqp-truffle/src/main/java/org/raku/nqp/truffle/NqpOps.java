@@ -1056,6 +1056,20 @@ final class NqpOps {
         return new NqpCont.Suspend(sse, rtype);
     }
 
+    /**
+     * The token for a FUSED op that has work left after the call the
+     * capture crossed: the finisher is that work as a function of the
+     * inner call's value. The resume reads that value as an OBJECT (the
+     * inner call is user code -- a Proxy FETCH, a where block -- whose
+     * result register is an object) and answers the finisher's value as
+     * the op's own, which for the int-typed ops is a boxed Long, exactly
+     * what their non-suspending road already answers.
+     */
+    static Object suspendToken(org.raku.nqp.runtime.SaveStackException sse,
+                               java.util.function.Function<Object, Object> finish) {
+        return new NqpCont.Suspend(sse, NqpWire.T_OBJ, finish);
+    }
+
     static RuntimeException carry(Throwable t) {
         if (t instanceof com.oracle.truffle.api.exception.AbstractTruffleException ate) return ate;
         if (t instanceof UnwindException u) return new NqpUnwind(u);
@@ -1468,6 +1482,10 @@ final class NqpOps {
 
     static Object bindattr(AttrSite site, Object o, Object ch, String name, Object value,
                            ThreadContext tc) {
+        /* NQP_DO_TRACE belongs to whichever road actually binds: the slow
+         * road below reaches Ops.bindattr, which traces there, so a gate
+         * here as well printed every slow bind twice. The sited road below
+         * traces for itself. */
         if (!site.resolved) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             resolveAttr(site, o, ch, name, tc);
@@ -1477,6 +1495,7 @@ final class NqpOps {
                 && ((org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance) o).delegate == null) {
             SixModelObject obj = (SixModelObject) o;
             SixModelObject v = smo(value);
+            if (Ops.DO_TRACE) Ops.traceDoBind(obj, name, v, tc);
             try {
                 setter.invokeExact(obj, v);
             } catch (Throwable t) {
