@@ -35,7 +35,6 @@ import org.raku.nqp.sixmodel.reprs.NativeCall.ArgType
 import org.raku.nqp.sixmodel.reprs.NativeCallBody
 import org.raku.nqp.sixmodel.reprs.NativeCallInstance
 import org.raku.nqp.sixmodel.reprs.NativeRefInstance
-import org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance
 import org.raku.nqp.sixmodel.reprs.Refreshable
 import org.raku.nqp.sixmodel.reprs.VMArrayInstance
 import org.raku.nqp.sixmodel.reprs.VMArrayInstance_i
@@ -621,15 +620,10 @@ object NativeCallOps {
             call = target.body!!
         }
         else {
-            /* Handle mixins by following delegates. */
-            var resolved = target
-            if (resolved is P6OpaqueBaseInstance
-            && Ops.isnull(resolved.delegate) == 0L)
-                resolved = resolved.delegate!!
-            var boxed = resolved.get_boxing_of(tc, ncrepr.ID.toLong()) as NativeCallBody?
+            var boxed = target.get_boxing_of(tc, ncrepr.ID.toLong()) as NativeCallBody?
             if (boxed == null) {
                 boxed = NativeCallBody()
-                resolved.set_boxing_of(tc, ncrepr.ID.toLong(), boxed)
+                target.set_boxing_of(tc, ncrepr.ID.toLong(), boxed)
             }
             call = boxed
         }
