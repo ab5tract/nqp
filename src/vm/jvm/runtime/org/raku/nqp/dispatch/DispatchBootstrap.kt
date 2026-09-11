@@ -122,12 +122,24 @@ object DispatchBootstrap {
         resettables.add(action)
     }
 
+    /**
+     * Registers a helper-made callsite for the per-run reset -- the code
+     * engine's per-instruction sites use this: their programs record
+     * against one GlobalContext's types and the program objects survive
+     * eval-server runs (NqpLanguage keeps parsed call targets by source).
+     */
+    @JvmStatic
+    fun registerSite(site: DispatchCallSite) {
+        linked.add(site)
+    }
+
     /** Makes every callsite in this process cold again. */
     @JvmStatic
     fun resetAll() {
         for (site in linked) site.reset()
         org.raku.nqp.runtime.Ops.resetHelperDispatchSites()
         org.raku.nqp.runtime.GrammarEngines.clearProgramCache()
+        org.raku.nqp.runtime.CodeEngines.clearProgramCache()
         for (action in resettables) action.run()
     }
 
@@ -135,16 +147,18 @@ object DispatchBootstrap {
     fun dispatch_noa(caller: Lookup, indyName: String, type: MethodType): CallSite {
         try {
             val handlerType = MethodType.methodType(Void.TYPE, DispatchCallSite::class.java,
-                String::class.java, Integer.TYPE, ThreadContext::class.java,
+                Class::class.java, String::class.java, Integer.TYPE, ThreadContext::class.java,
                 Array<Any>::class.java)
             val handler = caller.findStatic(Dispatch::class.java, "dispatch", handlerType)
 
-            /* Curry the callsite in, and gather the dispatch arguments (which
-             * follow the dispatcher name, callsite index and thread context)
-             * into an array. */
+            /* Curry the callsite and the linking class in -- the class names
+             * the callsite-descriptor table csIdx points into, so descriptor
+             * resolution never leans on tc.curFrame -- and gather the
+             * dispatch arguments (which follow the dispatcher name, callsite
+             * index and thread context) into an array. */
             val site = DispatchCallSite(type, fromIndy = true)
             val cold = MethodHandles
-                .insertArguments(handler, 0, site)
+                .insertArguments(handler, 0, site, caller.lookupClass())
                 .asCollector(Array<Any>::class.java, type.parameterCount() - 3)
                 .asType(type)
             site.coldTarget = cold

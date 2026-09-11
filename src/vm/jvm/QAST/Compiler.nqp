@@ -621,9 +621,12 @@ my $chain_codegen := sub ($qastcomp, $op) {
                 $il.append($AASTORE);
                 $ti := $ti + 1;
             }
+            # The emitting class rides along so the descriptor table is
+            # resolved from it, never from a possibly-stale tc.curFrame.
+            $il.append(JAST::PushCVal.new( :value('L' ~ $*JCLASS.name ~ ';') ));
             $il.append(savesite(JAST::Instruction.new( :op('invokestatic'),
                 'Lorg/raku/nqp/dispatch/Dispatch;', 'dispatchWide', 'Void',
-                $TYPE_STR, 'Integer', $TYPE_TC, "[$TYPE_OBJ" )));
+                $TYPE_STR, 'Integer', $TYPE_TC, "[$TYPE_OBJ", 'Ljava/lang/Class;' )));
         }
         $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
         $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
@@ -1644,9 +1647,10 @@ sub emit_wide_dispatch($il, str $dispatcher, $cs_idx, @arg_results) {
         $il.append($AASTORE);
         $i := $i - 1;
     }
+    $il.append(JAST::PushCVal.new( :value('L' ~ $*JCLASS.name ~ ';') ));
     $il.append(savesite(JAST::Instruction.new( :op('invokestatic'),
         'Lorg/raku/nqp/dispatch/Dispatch;', 'dispatchWide', 'Void',
-        $TYPE_STR, 'Integer', $TYPE_TC, "[$TYPE_OBJ" )));
+        $TYPE_STR, 'Integer', $TYPE_TC, "[$TYPE_OBJ", 'Ljava/lang/Class;' )));
 }
 
 # Emit a dispatch on @args, the way the 'dispatch' op does: the dispatcher
@@ -4137,6 +4141,10 @@ class QAST::CompilerJAST {
     }
 
     multi method as_jast(QAST::CompUnit $cu, :$want) {
+        # Truffle-migration coverage survey (Phase 1): reporting only, and
+        # only when its knobs are set; see QAST::TruffleEncoder.
+        QAST::TruffleEncoder.survey_cu($cu);
+
         # A compilation-unit-wide source of IDs for handlers.
         my $*EH_IDX := 1;
 
@@ -4153,6 +4161,10 @@ class QAST::CompilerJAST {
 
         my %*CUID_TO_QBID;
         my $*NEXT_QBID := 0;
+        # Engine programs of jar-bound comp-mode blocks, collected here and
+        # written as one jar sidecar (see JAST::Class.codeprograms); the
+        # emitted bodies reference them by index.
+        my @*ENGINE_PROGRAMS := nqp::list_s();
         # Pre-seed to make sure that qbids correspond to serialization IDs
         my $*COMP_MODE := $cu.compilation_mode;
         # Comp-mode units pair code refs with methods by block id, so the
@@ -4324,6 +4336,17 @@ class QAST::CompilerJAST {
         $mainline_meth.append(JAST::PushIndex.new( :value(self.cuid_to_qbid($cu[0].cuid)) ));
         $mainline_meth.append($IRETURN);
         $*JCLASS.add_method($mainline_meth);
+
+        # Engine programs collected from jar-bound blocks travel as one
+        # sidecar entry; joined here, last, so every block -- the
+        # deserialize and load methods included -- has had its say.
+        if nqp::elems(@*ENGINE_PROGRAMS) {
+            my @joined := [~nqp::elems(@*ENGINE_PROGRAMS)];
+            for @*ENGINE_PROGRAMS -> str $p {
+                nqp::push(@joined, ' ' ~ nqp::chars($p) ~ ':' ~ $p);
+            }
+            $*JCLASS.codeprograms(nqp::join('', @joined));
+        }
 
         return $*JCLASS;
     }
@@ -4677,15 +4700,61 @@ class QAST::CompilerJAST {
             my $*BLOCK_TA := BlockTempAlloc.new();
             my $*TA := $*BLOCK_TA;
 
-            # Compile method body.
+            # Compile method body -- or hand it whole to the code engine.
+            # The choice is made here, at compile time, exactly as it is
+            # for regexes: an encoded block's body is one codeRun call
+            # (parameter binding included), and there is no bytecode body
+            # to fall back to. Precompiled units are eligible when the
+            # encoder's NQP_CODE_PRECOMP knob says so: the program bakes
+            # into the class file as a string constant, exactly as an rx
+            # descriptor does.
             my $body;
+            my int $engine_body := 0;
             my $*STACK := StackState.new();
             my $*NEED_ARGS_ARRAY := 0;
             {
                 my $*BLOCK := $block;
                 my $*WANT;
-                $body := self.compile_all_the_stmts($node.list, :node($node.node));
-                $*STACK.obtain(NQPMu, $body);
+                my str $engine_prog := '';
+                unless $node.custom_args {
+                    $engine_prog := QAST::TruffleEncoder.encode_block($node, $block, self,
+                        :comp_mode($*COMP_MODE));
+                }
+                if $engine_prog ne '' {
+                    $engine_body := 1;
+                    my $il := JAST::InstructionList.new();
+                    # A jar-bound unit's programs travel in one sidecar,
+                    # referenced by index -- one string constant per
+                    # program overflowed CORE.c's constant pool (71010
+                    # entries against the 65535 limit). Everything else
+                    # keeps the string road.
+                    my int $as_index := $*COMP_MODE
+                        && %*COMPILING<%?OPTIONS><target> eq 'jar';
+                    if $as_index {
+                        my int $pidx := nqp::elems(@*ENGINE_PROGRAMS);
+                        nqp::push_s(@*ENGINE_PROGRAMS, $engine_prog);
+                        $il.append(JAST::PushIndex.new( :value($pidx) ));
+                    }
+                    else {
+                        $il.append(JAST::PushSVal.new( :value($engine_prog) ));
+                    }
+                    $il.append($ALOAD_0);
+                    $il.append($ALOAD_1);
+                    $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
+                    $il.append(JAST::Instruction.new( :op('aload'), 'csd' ));
+                    $il.append(JAST::Instruction.new( :op('aload'), '__args' ));
+                    $il.append(JAST::Instruction.new( :op('invokestatic'),
+                        'Lorg/raku/nqp/runtime/CodeEngines;',
+                        $as_index ?? 'codeRunIdx' !! 'codeRun', 'Void',
+                        ($as_index ?? 'Integer' !! $TYPE_STR),
+                        $TYPE_CU, $TYPE_TC, $TYPE_CF, $TYPE_CSD, "[$TYPE_OBJ" ));
+                    $body := result($il, $RT_VOID);
+                    $*STACK.obtain(NQPMu, $body);
+                }
+                else {
+                    $body := self.compile_all_the_stmts($node.list, :node($node.node));
+                    $*STACK.obtain(NQPMu, $body);
+                }
             }
 
             # Stash lexical names.
@@ -4696,8 +4765,10 @@ class QAST::CompilerJAST {
             $*JMETH.cr_slex(@lex_names[$RT_STR]);
 
             # If we have custom args processing, we always take an args array.
+            # An engine body does too: arity check and parameter binding
+            # happen inside the program, from the raw csd and args.
             my $il := JAST::InstructionList.new();
-            if $node.custom_args {
+            if $node.custom_args || $engine_body {
                 $*JMETH.add_argument('__args', "[$TYPE_OBJ");
             }
             elsif !self.try_setup_args_expectation($*JMETH, $block, $il) {
@@ -4856,10 +4927,13 @@ class QAST::CompilerJAST {
             # Add method body JAST.
             $il.append($body.jast);
 
-            # Store return value.
-            $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
-            $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
-                'return_' ~ typechar($body.type), 'Void', jtype($body.type), $TYPE_CF ));
+            # Store return value. An engine body already stored it, typed,
+            # inside codeRun.
+            unless $engine_body {
+                $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
+                $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
+                    'return_' ~ typechar($body.type), 'Void', jtype($body.type), $TYPE_CF ));
+            }
 
             # Make sure this goes before the body.
             my int $save_sites := $block.num_save_sites;

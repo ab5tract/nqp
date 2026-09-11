@@ -1059,7 +1059,8 @@ object Ops {
                 /* If our stdin is connected to an output stream of another process, we need to let it run in a thread. */
                 val pc = ProcessChannel(process, process.outputStream,
                     ((`in`.handle as SyncProcessHandle).chan as ProcessChannel).`in`!!)
-                Thread(pc).start()
+                /* A blocking pump: exactly what a virtual thread is for. */
+                Thread.ofVirtual().start(pc)
             }
         }
 
@@ -1274,6 +1275,28 @@ object Ops {
             if (found != -1)
                 return curFrame.iLex!![found]
             curFrame = curFrame.outer
+        }
+        if (System.getenv("NQP_EH_DEBUG") != null) {
+            val sb = StringBuilder("getlex_i MISS '$name' outer chain:")
+            var f = tc.curFrame
+            var i = 0
+            while (f != null && i < 8) {
+                sb.append(" [").append(f.codeRef.name).append("]")
+                f = f.outer
+                i++
+            }
+            System.err.println(sb)
+            var s: StaticCodeInfo? = tc.curFrame?.codeRef?.staticInfo
+            val sb2 = StringBuilder("static chain:")
+            var j = 0
+            while (s != null && j < 8) {
+                sb2.append(" [").append(s.oLexicalNames?.joinToString(",") ?: "-")
+                   .append(if (s.iTryGetLexicalIdx(name) != -1) " HAS-$name" else "")
+                   .append("]")
+                s = s.outerStaticInfo
+                j++
+            }
+            System.err.println(sb2)
         }
         throw ExceptionHandling.dieInternal(tc, "Lexical '" + name + "' not found")
     }
@@ -2796,8 +2819,18 @@ object Ops {
             }
         }
 
+        val callerFrame = tc.curFrame
         try {
             ArgsExpectation.invokeByExpectation(tc, cr, callSite, argList)
+        }
+        catch (r: org.raku.nqp.dispatch.BindReturnException) {
+            /* The callee's signature bind failed on a Junction argument and
+             * the language's bind_error handler autothreaded the call: its
+             * result IS the call's result. The callee frame has already
+             * unwound; land the value where a normal return would have. */
+            val caller = callerFrame ?: tc.dummyCaller
+            caller.oRet = r.value
+            caller.retType = CallFrame.RET_OBJ.toByte()
         }
         catch (e: ControlException) {
             throw e
@@ -6962,11 +6995,28 @@ object Ops {
             invokeArgless(tc, code)
         }
     }
+    /* nqp threads are virtual by default (Project Loom): the thread-pool
+     * scheduler's workers and hyper/race batches are exactly the cheap,
+     * blocking-friendly tasks virtual threads are for, and Truffle 25
+     * runs guest code on them (pinning its carrier for the duration,
+     * which a worker would have monopolized anyway). Two carve-outs:
+     * a non-daemon thread must hold the JVM open, which only a platform
+     * thread can, and NQP_JVM_PLATFORM_THREADS=1 restores the old
+     * behavior wholesale as the measurement/kill switch. */
+    private val platformThreadsOnly = System.getenv("NQP_JVM_PLATFORM_THREADS") != null
+
     @JvmStatic
     fun newthread(code: SixModelObject?, appLifetime: Long, tc: ThreadContext): SixModelObject {
         val thread = tc.gc.Thread!!.st.REPR.allocate(tc, tc.gc.Thread!!.st)
-        (thread as VMThreadInstance).thread = Thread(CodeRunnable(tc.gc, thread, code))
-        thread.thread!!.setDaemon(appLifetime != 0L)
+        val body = CodeRunnable(tc.gc, thread, code)
+        thread as VMThreadInstance
+        if (appLifetime != 0L && !platformThreadsOnly) {
+            thread.thread = Thread.ofVirtual().unstarted(body)
+        }
+        else {
+            thread.thread = Thread(body)
+            thread.thread!!.setDaemon(appLifetime != 0L)
+        }
         return thread
     }
 

@@ -1,2 +1,3 @@
 src/vm/jvm/QAST/RxDescriptor.nqp
+src/vm/jvm/QAST/TruffleEncoder.nqp
 src/vm/jvm/QAST/Compiler.nqp

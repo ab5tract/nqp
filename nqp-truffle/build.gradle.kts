@@ -144,6 +144,20 @@ tasks.register<JavaExec>("rxcheck") {
     }
 }
 
+tasks.register<JavaExec>("nqpcheck") {
+    group = "verification"
+    description = "Smoke-checks the Bytecode DSL interpreter for general NQP code."
+    mainClass = "org.raku.nqp.truffle.NqpCheck"
+    classpath = harnessClasspath()
+    val truffleModules = configurations.runtimeClasspath
+    doFirst {
+        jvmArgs(
+            "--module-path", truffleModules.get().asPath,
+            "--add-modules", "org.graalvm.truffle,org.graalvm.truffle.runtime",
+        )
+    }
+}
+
 tasks.register<JavaExec>("rxdesc") {
     group = "verification"
     description = "Checks the QAST::Regex descriptor decodes to the same engine."
