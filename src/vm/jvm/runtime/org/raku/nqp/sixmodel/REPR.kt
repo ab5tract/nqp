@@ -1,9 +1,8 @@
 package org.raku.nqp.sixmodel
 
-import org.objectweb.asm.ClassWriter
-import org.objectweb.asm.MethodVisitor
 import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.ThreadContext
+import org.raku.nqp.sixmodel.reprs.SlotKind
 
 /**
  * Base of all 6model representations. Has default implementations of functions that
@@ -97,6 +96,12 @@ abstract class REPR {
      * The second step has the STable fully formed (though objects it
      * references may not be) and should do the rest of the work. */
     abstract fun deserialize_stub(tc: ThreadContext, st: STable): SixModelObject?
+
+    /** The stub with the reader in hand; a representation whose stub's
+     *  shape depends on serialized data (RakuObject) overrides this one. */
+    open fun deserialize_stub(tc: ThreadContext, st: STable, reader: SerializationReader): SixModelObject? =
+        deserialize_stub(tc, st)
+
     abstract fun deserialize_finish(tc: ThreadContext, st: STable, reader: SerializationReader, obj: SixModelObject)
 
     /**
@@ -116,35 +121,9 @@ abstract class REPR {
     }
 
     /**
-     * Flattening related functions.
+     * The slot kind an object of this representation occupies when flattened
+     * into a RakuObject (get_storage_spec says INLINED); null for a
+     * reference representation.
      */
-    open fun inlineStorage(tc: ThreadContext, st: STable, cw: ClassWriter, prefix: String) {
-        throw ExceptionHandling.dieInternal(tc, "This representation cannot inline itself into another")
-    }
-    open fun inlineBind(tc: ThreadContext, st: STable, mv: MethodVisitor, className: String, prefix: String) {
-        throw ExceptionHandling.dieInternal(tc, "This representation cannot inline itself into another")
-    }
-    open fun inlineGet(tc: ThreadContext, st: STable, mv: MethodVisitor, className: String, prefix: String) {
-        throw ExceptionHandling.dieInternal(tc, "This representation cannot inline itself into another")
-    }
-    open fun inlineDeserialize(tc: ThreadContext, st: STable, mv: MethodVisitor, className: String, prefix: String) {
-        throw ExceptionHandling.dieInternal(tc, "This representation cannot inline itself into another")
-    }
-    open fun generateBoxingMethods(tc: ThreadContext, st: STable, cw: ClassWriter, className: String, prefix: String) {
-        throw ExceptionHandling.dieInternal(tc, "This representation does not support being a box target")
-    }
-    open fun serialize_inlined(tc: ThreadContext, st: STable, writer: SerializationWriter,
-            prefix: String, obj: SixModelObject) {
-        throw ExceptionHandling.dieInternal(tc, "This representation cannot serialize an inlined representation of itself")
-    }
-    // These two functions are called when determining if a new class is needed; they should append a complete description
-    // of the code they would use for inline* or generateBoxingMethods, in a format which is arbitrary except that it may
-    // not contain imbalanced parens, and return true.  Returning false means no description is possible and the class must
-    // always be created fresh.
-    open fun inline_description(tc: ThreadContext, st: STable, out: StringBuilder): Boolean {
-        return false
-    }
-    open fun box_description(tc: ThreadContext, st: STable, out: StringBuilder): Boolean {
-        return false
-    }
+    open fun inlinedKind(): SlotKind? = null
 }

@@ -3,9 +3,9 @@ package org.raku.nqp.runtime
 import java.lang.ref.SoftReference
 import java.util.Hashtable
 
-/** The loader for the plain classes generated at runtime (P6Opaque's
- *  attribute classes, the interop adaptors). Units are artifacts and do
- *  not come through here. */
+/** The loader for the plain classes generated at runtime (the C-struct
+ *  bodies, the interop adaptors). Units are artifacts and do not come
+ *  through here. */
 class ByteClassLoader : ClassLoader {
     private val made: MutableMap<String, SoftReference<Class<*>>> = Hashtable()
 

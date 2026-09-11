@@ -3,11 +3,6 @@ use nqpmo;
 my $plan := 22;
 plan($plan);
 
-if nqp::getcomp('nqp').backend.name eq 'jvm' {
-    skip("This test doesn't work on the jvm", $plan);
-    nqp::exit(0);
-}
-
 sub add_to_sc($sc, $idx, $obj) {
     nqp::scsetobj($sc, $idx, $obj);
     nqp::setobjsc($obj, $sc);
