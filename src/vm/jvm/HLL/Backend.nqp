@@ -76,7 +76,28 @@ class HLL::Backend::JVM {
         %jastnodes<JAST::PushIndex> := JAST::PushIndex;
         %jastnodes<JAST::TryCatch> := JAST::TryCatch;
         %jastnodes<JAST::Annotation> := JAST::Annotation;
-        if (%adverbs<target> eq 'classfile' || %adverbs<target> eq 'jar') && %adverbs<output> {
+        if $jast.unit_road {
+            # The artifact road (NQP_UNIT). A jar-bound unit with an
+            # output file is written as a zip; every other unit -- a
+            # script, an EVAL, a BEGIN-time unit, a --target=jar with no
+            # --output -- is built in memory as a record, which the jvm
+            # stage (nqp::loadcompunit) turns into a ProgramUnit. No class
+            # file either way; Compiler.nqp refuses --target=classfile on
+            # this road, and it is the writer, not this junction, that
+            # refuses a unit with fallbacks (there are none: the compiler
+            # died first).
+            if %adverbs<target> eq 'jar' && %adverbs<output> {
+                # The syscall's argument kinds are checked at the call
+                # site; %adverbs<output> arrives boxed.
+                my str $unit_output := %adverbs<output>;
+                nqp::syscall('jvm-write-unit', $jast, %jastnodes, $unit_output);
+                nqp::null()
+            }
+            else {
+                nqp::syscall('jvm-build-unit', $jast, %jastnodes)
+            }
+        }
+        elsif (%adverbs<target> eq 'classfile' || %adverbs<target> eq 'jar') && %adverbs<output> {
             nqp::compilejasttofile($jast, %jastnodes, %adverbs<output>);
             nqp::null()
         }

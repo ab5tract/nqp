@@ -53,7 +53,17 @@ public class LibraryLoader {
                 }
             }
 
-            resolveClass(tc, loadFile(filename, tc.gc.byteClassLoader, tc.gc.sharingHint));
+            if (org.raku.nqp.runtime.unit.UnitLoader.isUnitFile(filename)) {
+                try {
+                    org.raku.nqp.runtime.unit.UnitLoader.loadAndRun(tc, filename, tc.gc.sharingHint);
+                }
+                catch (ControlException e) { throw e; }
+                catch (IOException | IllegalStateException | IllegalArgumentException e) {
+                    throw ExceptionHandling.dieInternal(tc, e);
+                }
+            }
+            else
+                resolveClass(tc, loadFile(filename, tc.gc.byteClassLoader, tc.gc.sharingHint));
         }
         catch (IOException | IllegalArgumentException | ClassNotFoundException e) {
             throw ExceptionHandling.dieInternal(tc, e);
@@ -75,7 +85,29 @@ public class LibraryLoader {
 
     public static void load(ThreadContext tc, ByteBuffer buffer) {
         try {
-            resolveClass(tc, loadJar(buffer, tc.gc.byteClassLoader));
+            // The sniff reads the buffer directly (no copy): it is only the
+            // first local file header's worth of bytes either way. Only the
+            // artifact road needs a byte[] -- for loadJar (the class road)
+            // the JarInputStream reads the buffer itself.
+            if (org.raku.nqp.runtime.unit.UnitZip.isUnit(buffer)) {
+                byte[] bytes;
+                if (buffer.hasArray() && buffer.arrayOffset() == 0 && buffer.position() == 0
+                        && buffer.array().length == buffer.remaining())
+                    bytes = buffer.array();
+                else {
+                    bytes = new byte[buffer.remaining()];
+                    buffer.duplicate().get(bytes);
+                }
+                try {
+                    org.raku.nqp.runtime.unit.UnitLoader.loadAndRun(tc, bytes);
+                }
+                catch (ControlException e) { throw e; }
+                catch (IllegalStateException | IllegalArgumentException e) {
+                    throw ExceptionHandling.dieInternal(tc, e);
+                }
+            }
+            else
+                resolveClass(tc, loadJar(buffer, tc.gc.byteClassLoader));
         }
         catch (IOException | IllegalArgumentException | ClassNotFoundException e) {
             throw ExceptionHandling.dieInternal(tc, e);
@@ -169,6 +201,35 @@ public class LibraryLoader {
         catch (ReflectiveOperationException e) {
             throw ExceptionHandling.dieInternal(tc, e);
         }
+    }
+
+    /* Road-agnostic app load for entry points (runner main, eval server):
+     * the unit is initialized (deserialized) but its load block is not run;
+     * an entry block does that itself. */
+    public static CompilationUnit loadApp(ThreadContext tc, String path, boolean shared) {
+        if (org.raku.nqp.runtime.unit.UnitLoader.isUnitFile(path, shared)) {
+            try {
+                return org.raku.nqp.runtime.unit.UnitLoader.loadUnit(tc, path, shared);
+            }
+            catch (ControlException e) { throw e; }
+            catch (IOException | IllegalStateException | IllegalArgumentException e) {
+                throw ExceptionHandling.dieInternal(tc, e);
+            }
+        }
+        try {
+            return CompilationUnit.setupCompilationUnit(tc, loadFile(path, tc.gc.byteClassLoader, shared), shared);
+        }
+        catch (IOException | IllegalArgumentException | ReflectiveOperationException e) {
+            throw ExceptionHandling.dieInternal(tc, e);
+        }
+    }
+
+    /* Warms whichever road the path takes, so a server pays for parsing once. */
+    public static void prime(String path, ByteClassLoader loader) throws IOException, ClassNotFoundException {
+        if (org.raku.nqp.runtime.unit.UnitLoader.isUnitFile(path, true))
+            org.raku.nqp.runtime.unit.UnitLoader.record(path, true);
+        else
+            loadFile(path, loader, true);
     }
 
     public static ByteBuffer readToHeapBuffer(InputStream is) throws IOException {

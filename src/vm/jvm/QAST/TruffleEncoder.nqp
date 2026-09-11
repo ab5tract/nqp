@@ -680,7 +680,7 @@ class QAST::TruffleEncoder {
         1
     }
 
-    method encode_block($node, $block, $comp, :$comp_mode, :$sidecar) {
+    method encode_block($node, $block, $comp, :$comp_mode, :$sidecar, :$unit_road) {
         run_init();
         sub trace(str $verdict) { self.why($node, $comp_mode, $verdict) }
         if !$code_run { trace('no: code_run off'); return '' }
@@ -692,7 +692,10 @@ class QAST::TruffleEncoder {
             trace('no: not in only'); return ''
         }
         if $node.has_exit_handler { trace('no: exit handler'); return '' }
-        if $node.blocktype eq 'raw' { trace('no: raw blocktype'); return '' }
+        # A raw block (Compiler.nqp's own deserialize/load/main wrappers)
+        # is a parameterless declaration to the engine; on the class road
+        # its body stays bytecode, on the artifact road it must encode.
+        if $node.blocktype eq 'raw' && !$unit_road { trace('no: raw blocktype'); return '' }
         # An immediate block is compiled AND called by its enclosing block,
         # which is why encode_node already refuses one as a child
         # ('block immediate'). Encoding one as a target is the same
@@ -910,6 +913,22 @@ class QAST::TruffleEncoder {
         $rtype
     }
 
+    # Splices @words into the program at $at and moves every nested-block
+    # slot the walk recorded by position at or after $at right by the
+    # same amount, so the deferred qbid patch still lands on its CODEREF
+    # cell. One rule serves both callers: a prologue goes in after its
+    # placeholder ($at is the placeholder's index + 1, so the placeholder
+    # itself stays put), a coercion goes in at the mark of the subtree it
+    # wraps. Splicing without the shift wrote every deferred qbid over
+    # the tag of a neighbouring node ("unknown tag 11142", 2026-09-09).
+    sub splice_code(%e, @words, int $at) {
+        nqp::splice(%e<code>, @words, $at, 0);
+        my int $n := nqp::elems(@words);
+        for %e<nested> -> $nb {
+            nqp::bindpos($nb, 0, $nb[0] + $n) if $nb[0] >= $at;
+        }
+    }
+
     # Parameters were collected while the walk met their declarations;
     # the prologue is spliced in where the placeholder sits. Any default
     # expressions are encoded here, into a scratch list.
@@ -923,8 +942,12 @@ class QAST::TruffleEncoder {
             # puts csd/args on the frame for the binder to read. A lowered
             # parameter alongside would be bound twice; nothing emits one.
             cbail('custom_args block with lowered params') if nqp::elems(@params);
-            my @hdr := nqp::list($W_PARAMS, 0, -1, 0);
-            nqp::splice(%e<code>, @hdr, $params_at, 1);
+            # Written exactly as the full prologue below is: the $W_PARAMS
+            # placeholder stays where it was and the three header words go in
+            # after it, so the nested-block slots the walk recorded by
+            # position all move right by three (splice_code moves the slots).
+            my @hdr := nqp::list(0, -1, 0);
+            splice_code(%e, @hdr, $params_at + 1);
             return 0;
         }
         my int $pos_required := 0;
@@ -1027,12 +1050,7 @@ class QAST::TruffleEncoder {
         %e<code> := @save;
         %e<nested> := @nested_save;
         nqp::bindkey(%e, 'inparams', 0);
-        nqp::splice(%e<code>, @p, $params_at + 1, 0);
-        # Everything the walk recorded by position sits after the
-        # placeholder this prologue was just spliced over; shift it.
-        for %e<nested> -> $nb {
-            nqp::bindpos($nb, 0, $nb[0] + nqp::elems(@p)) if $nb[0] > $params_at;
-        }
+        splice_code(%e, @p, $params_at + 1);
     }
 
     # Encodes one node, coercing its value to $want when the types allow
@@ -1047,13 +1065,7 @@ class QAST::TruffleEncoder {
         return $want if ($got == $T_UINT && $want == $T_INT) || ($got == $T_INT && $want == $T_UINT);
         my int $kind := coerce_kind($got, $want);
         cbail('no coercion ' ~ $got ~ '->' ~ $want) if $kind < 0;
-        nqp::splice(%e<code>, [$W_COERCE, $kind], $mark, 0);
-        # Nested-block qbid slots recorded inside the subtree just moved
-        # two places right; patch their positions as patch_params does,
-        # or the deferred qbid patch lands on the wrong cell.
-        for %e<nested> -> $nb {
-            nqp::bindpos($nb, 0, $nb[0] + 2) if $nb[0] >= $mark;
-        }
+        splice_code(%e, [$W_COERCE, $kind], $mark);
         $want
     }
 
@@ -1197,6 +1209,14 @@ class QAST::TruffleEncoder {
             epush(%e, $W_OPCALL); epush(%e, 112); epush(%e, 1);
             self.encode_child($n[0], %e, $T_INT);
             return $T_OBJ;
+        }
+        if nqp::istype($n, QAST::VM) {
+            # Exactly what as_jast(QAST::VM) does: the backend picks its
+            # own alternative and the rest of the node is not ours. A node
+            # with no 'jvm' alternative would not compile on the class
+            # road either, so it bails rather than dying here.
+            cbail('QAST::VM without a jvm alternative') unless $n.supports('jvm');
+            return self.encode_node($n.alternative('jvm'), %e, $want);
         }
         cbail('node ' ~ $n.HOW.name($n));
     }
@@ -2581,10 +2601,7 @@ class QAST::TruffleEncoder {
             || ($from == $T_UINT && $to == $T_INT) || ($from == $T_INT && $to == $T_UINT);
         my int $kind := coerce_kind($from, $to);
         cbail('no coercion ' ~ $from ~ '->' ~ $to) if $kind < 0;
-        nqp::splice(%e<code>, [$W_COERCE, $kind], $mark, 0);
-        for %e<nested> -> $nb {
-            nqp::bindpos($nb, 0, $nb[0] + 2) if $nb[0] >= $mark;
-        }
+        splice_code(%e, [$W_COERCE, $kind], $mark);
         1
     }
 

@@ -54,7 +54,7 @@ repositories {
  * is already on the boot classpath, and a jar that is on both becomes a
  * second, unrelated copy of every class it holds.
  */
-val truffleModules: Configuration by configurations.creating {
+val truffleModules: Configuration = configurations.create("truffleModules") {
     isCanBeConsumed = false
     isCanBeResolved = true
 }
@@ -90,7 +90,7 @@ dependencies {
  */
 val truffleModuleDir = layout.buildDirectory.dir("truffle-modules")
 
-val syncTruffleModules by tasks.registering(Sync::class) {
+val syncTruffleModules = tasks.register<Sync>("syncTruffleModules") {
     group = "build"
     description = "Stages the Truffle module jars for the runner's --module-path."
     from(truffleModules)

@@ -6511,25 +6511,8 @@ object Ops {
 
         val binaryBlob: ByteBuffer
         if (blob == null)
-            try {
-                val cuKlass: Class<*> = cu.javaClass
-                val cuName = cuKlass.simpleName
-                var cuStream = cuKlass.getResourceAsStream(cuName + ".serialized.lz4")
-                try {
-                    if (cuStream != null)
-                        binaryBlob = LibraryLoader.readToHeapBufferLz4(cuStream)
-                    else {
-                        cuStream = cuKlass.getResourceAsStream(cuName + ".serialized")
-                        binaryBlob = LibraryLoader.readToHeapBuffer(cuStream)
-                    }
-                }
-                finally {
-                    cuStream!!.close()
-                }
-            }
-            catch (e: IOException) {
-                throw ExceptionHandling.dieInternal(tc, e)
-            }
+            binaryBlob = cu.serializedBlob()
+                ?: throw ExceptionHandling.dieInternal(tc, "unit ${cu.unitId()} has no serialized context to deserialize")
         else
             try {
                 binaryBlob = Base64.decode(blob)
@@ -8943,7 +8926,8 @@ object Ops {
         res.jc = JASTCompiler.buildClass(jast!!, jastNodes!!, false, tc)
         return res
     }
-    /** The class an in-memory compiled block belongs to, when one was
+    /** The unit an in-memory compiled block belongs to (a class name on
+     * the class road, a unit id on the record road), when one was
      * retained for nested-unit persistence; empty string otherwise. */
     @JvmStatic
     fun jvmclassofcuid(cuid: String?, tc: ThreadContext): String =
@@ -8959,43 +8943,40 @@ object Ops {
     @JvmStatic
     fun jvmclaimnested(className: String?, idxs: SixModelObject?, cuids: SixModelObject?, tc: ThreadContext): SixModelObject? {
         val cu = tc.frame.codeRef.staticInfo.compUnit
-        try {
-            val klass = Class.forName(className, true, cu.javaClass.classLoader)
-            val nested = klass.getDeclaredConstructor().newInstance() as CompilationUnit
-            nested.shared = tc.gc.sharingHint
-            /* The enclosing SC is still empty at this point; the nested
-             * unit's own deserialization code (static block lexical values
-             * and the like) runs via jvm-finish-nested afterwards. */
-            nested.initializeCompilationUnit(tc, false)
-            tc.gc.claimedNestedUnits[className!!] = nested
-            val byCuid = HashMap<String, CodeRef>()
-            nested.codeRefs?.let { crs ->
-                for (cr in crs) {
-                    val cuid = cr.staticInfo.uniqueId
-                    if (!cuid.isNullOrEmpty())
-                        byCuid[cuid] = cr
-                }
-            }
-            val n = idxs!!.elems(tc).toInt()
-            var table = cu.qbidToCodeRef!!
-            for (k in 0 until n) {
-                idxs.at_pos_native(tc, k.toLong())
-                val idx = tc.nativeI.toInt()
-                cuids!!.at_pos_native(tc, k.toLong())
-                val cuid = tc.nativeS!!
-                val cr = byCuid[cuid]
-                    ?: throw ExceptionHandling.dieInternal(tc,
-                        "Nested unit $className carries no block with cuid '$cuid'")
-                if (idx >= table.size) {
-                    table = table.copyOf(idx + 1)
-                    cu.qbidToCodeRef = table
-                }
-                table[idx] = cr
+        /* The enclosing SC is still empty at this point; the nested
+         * unit's own deserialization code (static block lexical values
+         * and the like) runs via jvm-finish-nested afterwards. */
+        val nested = try {
+            cu.claimNested(tc, className!!)
+        } catch (e: ControlException) {
+            throw e
+        } catch (e: Exception) {
+            throw ExceptionHandling.dieInternal(tc, "Could not load nested compilation unit $className: $e")
+        }
+        tc.gc.claimedNestedUnits[className!!] = nested
+        val byCuid = HashMap<String, CodeRef>()
+        nested.codeRefs?.let { crs ->
+            for (cr in crs) {
+                val cuid = cr.staticInfo.uniqueId
+                if (!cuid.isNullOrEmpty())
+                    byCuid[cuid] = cr
             }
         }
-        catch (e: ReflectiveOperationException) {
-            throw ExceptionHandling.dieInternal(tc,
-                "Could not load nested compilation unit $className: $e")
+        val n = idxs!!.elems(tc).toInt()
+        var table = cu.qbidToCodeRef!!
+        for (k in 0 until n) {
+            idxs.at_pos_native(tc, k.toLong())
+            val idx = tc.nativeI.toInt()
+            cuids!!.at_pos_native(tc, k.toLong())
+            val cuid = tc.nativeS!!
+            val cr = byCuid[cuid]
+                ?: throw ExceptionHandling.dieInternal(tc,
+                    "Nested unit $className carries no block with cuid '$cuid'")
+            if (idx >= table.size) {
+                table = table.copyOf(idx + 1)
+                cu.qbidToCodeRef = table
+            }
+            table[idx] = cr
         }
         return null
     }
@@ -9016,12 +8997,31 @@ object Ops {
         JASTCompiler.writeClass(jast!!, jastNodes!!, filename!!, tc)
         return jast
     }
+    /** Turns a runtime compile's output into a live unit: on the class
+     *  road by defining the class and instantiating it, on the record
+     *  road (NQP_UNIT) by building a ProgramUnit from the record. Either
+     *  way the unit is initialized under the compilee's HLL config when
+     *  asked, and retained for nested embedding while a compilation is
+     *  under way. */
     @JvmStatic
     fun loadcompunit(obj: SixModelObject?, compileeHLL: Long, tc: ThreadContext): SixModelObject? {
         try {
             val res = obj as EvalResult
-            val cuClass = tc.gc.byteClassLoader.defineClass(res.jc!!.name, res.jc!!.bytes!!)
-            res.cu = cuClass.newInstance() as CompilationUnit
+            val rec = res.record
+            val unitName: String
+            if (rec != null) {
+                val u = org.raku.nqp.runtime.unit.ProgramUnit(rec)
+                u.shared = false
+                res.cu = u
+                unitName = rec.meta.unitId
+                if (System.getenv("NQP_CODE_WHY") != null)
+                    System.err.println("unit record $unitName (${rec.programs.size} programs, ${rec.meta.blocks.size} qbids)")
+            }
+            else {
+                val cuClass = tc.gc.byteClassLoader.defineClass(res.jc!!.name, res.jc!!.bytes!!)
+                res.cu = cuClass.newInstance() as CompilationUnit
+                unitName = res.jc!!.name!!
+            }
             if (compileeHLL != 0L)
                 usecompileehllconfig(tc)
             res.cu!!.initializeCompilationUnit(tc)
@@ -9029,10 +9029,13 @@ object Ops {
                 usecompilerhllconfig(tc)
             /* A unit compiled while a compilation is under way may be a
              * nested unit whose code refs the enclosing serialization
-             * points into; retain what embedding it later needs. */
+             * points into; retain what embedding it later needs, on the
+             * road it was compiled on. */
             if (!tc.compilingSCs.isNullOrEmpty()) {
-                val unitName = res.jc!!.name!!
-                tc.gc.inMemoryUnitBytes[unitName] = res.jc!!.bytes!!
+                if (rec != null)
+                    tc.gc.inMemoryUnitRecords[unitName] = rec
+                else
+                    tc.gc.inMemoryUnitBytes[unitName] = res.jc!!.bytes!!
                 res.cu!!.codeRefs?.let { crs ->
                     for (cr in crs) {
                         val cuid = cr.staticInfo.uniqueId
@@ -9042,6 +9045,7 @@ object Ops {
                 }
             }
             res.jc = null
+            res.record = null
             return obj
         }
         catch (e: ControlException) {
