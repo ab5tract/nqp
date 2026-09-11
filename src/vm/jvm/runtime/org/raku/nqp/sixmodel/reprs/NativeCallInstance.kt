@@ -11,6 +11,6 @@ class NativeCallInstance : SixModelObject() {
 
     override fun get_int(tc: ThreadContext): Long {
         val body = this.body
-        return if (body == null || body.entry_point == null) 0 else 1
+        return if (body == null || body.entryPoint == null) 0 else 1
     }
 }

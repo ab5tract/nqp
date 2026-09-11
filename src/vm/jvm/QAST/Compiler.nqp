@@ -184,7 +184,11 @@ my @pop_ins := [
     $POP2,
 ];
 sub pop_ins($type) {
-    @pop_ins[$type]
+    # A void result left nothing on the stack; $RT_VOID is -1 and a negative
+    # index would wrap around to the end of the table and pop2 thin air.
+    $type == $RT_VOID
+        ?? JAST::InstructionList.new()
+        !! @pop_ins[$type]
 }
 
 # Mapping of QAST::Want type identifiers to $RT_*.
@@ -259,6 +263,12 @@ class QAST::OperationsJAST {
     method add_core_op($op, $handler, :$inlinable = 1) {
         %core_ops{$op} := $handler;
         self.set_core_op_inlinability($op, $inlinable);
+    }
+
+    # Is there a handler for this core op? HLL code asks through the
+    # backend's supports-op to decide between implementation strategies.
+    method core_op_supported($op) {
+        nqp::existskey(%core_ops, $op)
     }
 
     # Adds a HLL op handler.
@@ -456,6 +466,51 @@ class QAST::OperationsJAST {
     }
 }
 
+# The size spec Ops.sizedref wants for a reference to a sized native
+# lexical: low byte = bit width, +256 = unsigned, 32 alone = num32;
+# 0 = full width, nothing to note.
+sub sized_native_ref_spec($returns) {
+    my int $spec := nqp::isnull($returns) ?? 0 !! nqp::objprimspec($returns);
+    if $spec == 1 || $spec == 10 {
+        my int $bits := nqp::objprimbits($returns);
+        if $bits > 0 && $bits < 64 {
+            return $spec == 10 ?? 256 + $bits !! $bits;
+        }
+    }
+    elsif $spec == 2 {
+        return 32 if nqp::objprimbits($returns) == 32;
+    }
+    0
+}
+
+# A store to a sized native variable truncates the value to the declared
+# width, the way MoarVM's sized registers do: mask for unsigned, shift out
+# and arithmetically back for signed, and a round-trip through float for
+# num32. The value to store is on the stack; full-width types emit nothing.
+sub emit_sized_native_trunc($il, $returns, int $rt) {
+    my int $spec := nqp::isnull($returns) ?? 0 !! nqp::objprimspec($returns);
+    if ($rt == $RT_INT || $rt == $RT_UINT) && ($spec == 1 || $spec == 10) {
+        my int $bits := nqp::objprimbits($returns);
+        if $bits > 0 && $bits < 64 {
+            if $spec == 10 {
+                $il.append(JAST::PushIVal.new(
+                    :value(nqp::sub_i(nqp::bitshiftl_i(1, $bits), 1)) ));
+                $il.append(JAST::Instruction.new( :op('land') ));
+            }
+            else {
+                $il.append(JAST::PushIndex.new( :value(64 - $bits) ));
+                $il.append(JAST::Instruction.new( :op('lshl') ));
+                $il.append(JAST::PushIndex.new( :value(64 - $bits) ));
+                $il.append(JAST::Instruction.new( :op('lshr') ));
+            }
+        }
+    }
+    elsif $rt == $RT_NUM && $spec == 2 && nqp::objprimbits($returns) == 32 {
+        $il.append(JAST::Instruction.new( :op('d2f') ));
+        $il.append(JAST::Instruction.new( :op('f2d') ));
+    }
+}
+
 sub savesite($il) {
     my $index   := $*BLOCK.alloc_save_site;
     my $reenter := JAST::Label.new( :name( "reenter_"~$index ) );
@@ -510,34 +565,30 @@ my $chain_codegen := sub ($qastcomp, $op) {
         $*STACK.obtain($il, $bres);
         $il.append(JAST::Instruction.new( :op('astore'), $btmp ));
 
-        my $indy_meth;
-        my @argTypes := [$TYPE_SMO, $TYPE_SMO];
-        my $calltmp  := 0;
-        if $c_ast.name {
-            $indy_meth := $c_ast.op eq 'chainstatic' ?? 'subcallstatic_noa' !! 'subcall_noa';
-            @argTypes  := [$TYPE_STR, 'I', $TYPE_TC, $TYPE_SMO, $TYPE_SMO];
-        }
-        else {
-            my $callres := $qastcomp.as_jast($c_ast[0], :want($RT_OBJ));
-            $calltmp    := $*TA.fresh_o();
-            $il.append($callres.jast);
-            $*STACK.obtain($il, $callres);
-            $il.append(JAST::Instruction.new( :op('astore'), $calltmp ));
-            $indy_meth := 'indcall_noa';
-            @argTypes  := ['I', $TYPE_TC, $TYPE_SMO, $TYPE_SMO, $TYPE_SMO];
-        }
+        # The link is a lang-call dispatch on the (decontainerized) callee,
+        # the same as MoarVM's chain emission.
+        my $callee_qast := $c_ast.name
+            ?? QAST::Op.new( :op('decont'),
+                 QAST::Var.new( :name($c_ast.name), :scope('lexical') ) )
+            !! QAST::Op.new( :op('decont'), $c_ast[0] );
+        my $callres := $qastcomp.as_jast($callee_qast, :want($RT_OBJ));
+        my $calltmp := $*TA.fresh_o();
+        $il.append($callres.jast);
+        $*STACK.obtain($il, $callres);
+        $il.append(JAST::Instruction.new( :op('astore'), $calltmp ));
 
         $*STACK.spill_to_locals($il);
-        my $cs_idx := $*CODEREFS.get_callsite_idx([$ARG_OBJ, $ARG_OBJ], []);
+        my $cs_idx := $*CODEREFS.get_callsite_idx([$ARG_OBJ, $ARG_OBJ, $ARG_OBJ], []);
 
-        $il.append(JAST::PushSVal.new( :value($c_ast.name) )) if $c_ast.name;
+        $il.append(JAST::PushSVal.new( :value('lang-call') ));
         $il.append(JAST::PushIndex.new( :value($cs_idx) ));
         $il.append($ALOAD_1);
-        $il.append(JAST::Instruction.new( :op('aload'), $calltmp )) if $calltmp;
+        $il.append(JAST::Instruction.new( :op('aload'), $calltmp ));
         $il.append(JAST::Instruction.new( :op('aload'), $atmp ));
         $il.append(JAST::Instruction.new( :op('aload'), $btmp ));
         $il.append(savesite(JAST::InvokeDynamic.new(
-            $indy_meth, 'V', @argTypes, 'org/raku/nqp/runtime/IndyBootstrap', $indy_meth,
+            'dispatch_noa', 'V', [$TYPE_STR, 'I', $TYPE_TC, $TYPE_SMO, $TYPE_SMO, $TYPE_SMO],
+            'org/raku/nqp/dispatch/DispatchBootstrap', 'dispatch_noa'
         )));
         $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
         $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
@@ -871,14 +922,19 @@ for <if unless with without> -> $op_name {
             my $cond_temp := $*TA.fresh_o();
             $il.append(JAST::Instruction.new( :op('astore'), $meth_temp));
             $il.append(JAST::Instruction.new( :op('astore'), $cond_temp));
-            my $cs_idx := $*CODEREFS.get_callsite_idx([$ARG_OBJ], []);
-            my @argTypes := ['I', $TYPE_TC, $TYPE_SMO, $TYPE_SMO];
+            # Through lang-call, not a raw invocation: the resolved method
+            # can be a multi's proto, whose {*} resumes the dispatch that
+            # invoked it.
+            my $cs_idx := $*CODEREFS.get_callsite_idx([$ARG_OBJ, $ARG_OBJ], []);
+            my @argTypes := [$TYPE_STR, 'I', $TYPE_TC, $TYPE_SMO, $TYPE_SMO];
+            $il.append(JAST::PushSVal.new( :value('lang-call') ));
             $il.append(JAST::PushIndex.new( :value($cs_idx) ));
             $il.append($ALOAD_1);
             $il.append(JAST::Instruction.new( :op('aload'), $meth_temp ));
             $il.append(JAST::Instruction.new( :op('aload'), $cond_temp ));
             $il.append(savesite(JAST::InvokeDynamic.new(
-                'indcall_noa', 'V', @argTypes, 'org/raku/nqp/runtime/IndyBootstrap', 'indcall_noa'
+                'dispatch_noa', 'V', @argTypes,
+                'org/raku/nqp/dispatch/DispatchBootstrap', 'dispatch_noa'
             )));
             $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
             $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
@@ -1442,7 +1498,7 @@ QAST::OperationsJAST.add_core_op('for', -> $qastcomp, $op {
 });
 
 # Calling
-sub process_args_onto_stack($qastcomp, @children, $il, :$obj_first, :$inv_first, :$name_first, :$obj_second) {
+sub process_args_onto_stack($qastcomp, @children, $il, :$obj_first, :$inv_first, :$name_first, :$obj_second, :$str_second) {
     # Make sure we do positionals before nameds.
     my @pos;
     my @named;
@@ -1465,6 +1521,11 @@ sub process_args_onto_stack($qastcomp, @children, $il, :$obj_first, :$inv_first,
             $arg_res := $qastcomp.as_jast(@order[$i], :want($RT_OBJ));
         }
         elsif $i == 0 && $name_first {
+            $arg_res := $qastcomp.as_jast(@order[$i], :want($RT_STR));
+        }
+        elsif $i == 1 && $str_second {
+            # A method name in a dispatch capture must be a native str, the
+            # way MoarVM compiles it with :want(MVM_reg_str).
             $arg_res := $qastcomp.as_jast(@order[$i], :want($RT_STR));
         }
         else {
@@ -1505,7 +1566,110 @@ sub process_args_onto_stack($qastcomp, @children, $il, :$obj_first, :$inv_first,
     # Return callsite index (which may create it if needed).
     return [$*CODEREFS.get_callsite_idx(@callsite, @argnames), @arg_results, @arg_jtypes];
 }
+# A JVM method descriptor is capped at 255 parameter slots (longs and
+# doubles take two), so a callsite wider than that cannot be an
+# invokedynamic MethodType. Count the slots a dispatch would need; past the
+# limit the args are packed into an Object[] by emit_wide_dispatch instead.
+sub dispatch_arg_slots(@arg_results) {
+    my int $slots := 3;   # ThreadContext + dispatcher name + callsite index
+    for @arg_results {
+        my int $t := $_.type;
+        $slots := $slots + ($t == $RT_INT || $t == $RT_UINT || $t == $RT_NUM ?? 2 !! 1);
+    }
+    $slots
+}
+
+# The wide-callsite fallback: build the argument array directly, boxing
+# natives the way the invokedynamic path's asType adapter does, and dispatch
+# through a plain invokestatic with no per-instruction cache. The array is
+# filled back to front because the stack tracker releases results from its
+# tail; the args were already evaluated in order by process_args_onto_stack.
+sub emit_wide_dispatch($il, str $dispatcher, $cs_idx, @arg_results) {
+    my int $nargs := +@arg_results;
+    $il.append(JAST::PushSVal.new( :value($dispatcher) ));
+    $il.append(JAST::PushIndex.new( :value($cs_idx) ));
+    $il.append($ALOAD_1);
+    $il.append(JAST::PushIndex.new( :value($nargs) ));
+    $il.append(JAST::Instruction.new( :op('anewarray'), $TYPE_OBJ ));
+    my int $i := $nargs - 1;
+    while $i >= 0 {
+        my $res := @arg_results[$i];
+        $il.append($DUP);
+        $il.append(JAST::PushIndex.new( :value($i) ));
+        $*STACK.obtain($il, $res);
+        my int $type := $res.type;
+        if $type == $RT_INT || $type == $RT_UINT {
+            $il.append(JAST::Instruction.new( :op('invokestatic'),
+                $TYPE_LONG, 'valueOf', $TYPE_LONG, 'Long' ));
+        }
+        elsif $type == $RT_NUM {
+            $il.append(JAST::Instruction.new( :op('invokestatic'),
+                $TYPE_DOUBLE, 'valueOf', $TYPE_DOUBLE, 'Double' ));
+        }
+        $il.append($AASTORE);
+        $i := $i - 1;
+    }
+    $il.append(savesite(JAST::Instruction.new( :op('invokestatic'),
+        'Lorg/raku/nqp/dispatch/Dispatch;', 'dispatchWide', 'Void',
+        $TYPE_STR, 'Integer', $TYPE_TC, "[$TYPE_OBJ" )));
+}
+
+# Emit a dispatch on @args, the way the 'dispatch' op does: the dispatcher
+# name and callsite index ride along as extra arguments, using the fact that
+# the stack was spilled to sneak the ThreadContext in.
+sub emit_dispatch($qastcomp, $node, str $dispatcher, @args, :$str_second) {
+    my $il := JAST::InstructionList.new();
+    my @argstuff := process_args_onto_stack($qastcomp, @args, $il, :$str_second);
+    my $cs_idx := @argstuff[0];
+    $*STACK.spill_to_locals($il);
+
+    if dispatch_arg_slots(@argstuff[1]) > 250 {
+        emit_wide_dispatch($il, $dispatcher, $cs_idx, @argstuff[1]);
+        return result_from_cf($il, rttype_from_typeobj($node.returns));
+    }
+
+    nqp::unshift(@argstuff[2], 'I');
+    nqp::unshift(@argstuff[2], $TYPE_STR);
+    $il.append(JAST::PushSVal.new( :value($dispatcher) ));
+    $il.append(JAST::PushIndex.new( :value($cs_idx) ));
+    $il.append($ALOAD_1);
+    $*STACK.obtain($il, |@argstuff[1]) if @argstuff[1];
+    $il.append(savesite(JAST::InvokeDynamic.new(
+        'dispatch_noa', 'V', @argstuff[2],
+        'org/raku/nqp/dispatch/DispatchBootstrap', 'dispatch_noa'
+    )));
+
+    result_from_cf($il, rttype_from_typeobj($node.returns));
+}
+
 my $call_codegen := sub ($qastcomp, $node) {
+    # Calls go through the language's call dispatcher, which lang-call looks
+    # up from the HLL of what is being invoked. The callee is its first
+    # argument, so a named call resolves the name lexically first -- the same
+    # lookup the invokedynamic call path did at its callsite. Set
+    # NQP_JVM_NO_LANG_CALL to compile the old invokedynamic paths instead,
+    # for chasing a dispatch bug back under its rock.
+    unless nqp::getenvhash()<NQP_JVM_NO_LANG_CALL> {
+        # The callee is decontainerized at the callsite, the same as MoarVM's
+        # call emission: lang-call goes on the callee's type and a container
+        # would defeat both the delegation and the callsite's type guard.
+        my @dispatch-args := nqp::clone(@($node));
+        if $node.name ne "" {
+            nqp::unshift(@dispatch-args, QAST::Op.new( :op('decont'),
+                QAST::Var.new( :name($node.name), :scope('lexical') ) ));
+        }
+        elsif nqp::elems(@dispatch-args) {
+            my $callee := nqp::shift(@dispatch-args);
+            $callee := QAST::Op.new( :op('decont'), $callee )
+                unless nqp::istype($callee, QAST::WVal) && !nqp::iscont($callee.value);
+            nqp::unshift(@dispatch-args, $callee);
+        }
+        else {
+            nqp::die("A 'call' node must have a name or at least one child");
+        }
+        return emit_dispatch($qastcomp, $node, 'lang-call', @dispatch-args);
+    }
+
     my $il := JAST::InstructionList.new();
 
     # If it's a direct call, then use invokedynamic to resolve the name in
@@ -1559,7 +1723,7 @@ my $call_codegen := sub ($qastcomp, $node) {
 }
 QAST::OperationsJAST.add_core_op('call', :!inlinable, $call_codegen);
 QAST::OperationsJAST.add_core_op('callstatic', :!inlinable, $call_codegen);
-QAST::OperationsJAST.add_core_op('callmethod', -> $qastcomp, $node {
+my $callmethod_codegen := sub ($qastcomp, $node) {
     my $il := JAST::InstructionList.new();
 
     # Ensure we have an invocant.
@@ -1567,6 +1731,33 @@ QAST::OperationsJAST.add_core_op('callmethod', -> $qastcomp, $node {
         nqp::die("A 'callmethod' node must have at least one child");
     }
     my @children := nqp::clone(@($node));
+
+    # lang-meth-call takes the decontainerized invocant, the method name, and
+    # then the invocant again followed by the arguments: resolution drops the
+    # first two and puts the method it found in their place, leaving the
+    # invocant to be the method's first argument. Bind the invocant to a local
+    # on the way past so the expression is evaluated once and not twice.
+    unless nqp::getenvhash()<NQP_JVM_NO_LANG_CALL> {
+        my @rest := nqp::clone(@children);
+        my $inv  := nqp::shift(@rest);
+        my $name := $node.name ne ''
+            ?? QAST::SVal.new( :value($node.name) )
+            !! nqp::elems(@rest)
+                ?? nqp::shift(@rest)
+                !! nqp::die("Method call must either supply a name or have a child node that evaluates to the name");
+
+        my str $inv-local := QAST::Node.unique('__meth_inv');
+        my @dispatch-args := [
+            QAST::Op.new( :op('decont'),
+                QAST::Op.new( :op('bind'),
+                    QAST::Var.new( :name($inv-local), :scope('local'), :decl('var') ),
+                    $inv ) ),
+            $name,
+            QAST::Var.new( :name($inv-local), :scope('local') )
+        ];
+        nqp::push(@dispatch-args, $_) for @rest;
+        return emit_dispatch($qastcomp, $node, 'lang-meth-call', @dispatch-args, :str_second);
+    }
 
     # If it's a direct call, we can get invokedynamic to do something smart
     # with guard clauses for us.
@@ -1621,9 +1812,77 @@ QAST::OperationsJAST.add_core_op('callmethod', -> $qastcomp, $node {
     }
 
     result_from_cf($il, rttype_from_typeobj($node.returns));
-});
+}
+QAST::OperationsJAST.add_core_op('callmethod', $callmethod_codegen);
 
-QAST::OperationsJAST.map_classlib_core_op('dispatch', $TYPE_OPS, 'dispatch', [$RT_STR, $RT_STR, $RT_STR, $RT_OBJ], $RT_OBJ, :tc);
+# Dispatching. All of these are sugar over a dispatch: the dispatcher to use
+# is a compile-time constant, and everything else travels in the callsite, so
+# one code path serves them all.
+sub add_dispatcher_op($qastcomp, $op, str $prefix) {
+    my @args := nqp::clone($op.list);
+    if $prefix eq 'boot-syscall' {
+        nqp::unshift(@args, QAST::SVal.new( :value($prefix) ));
+    }
+    elsif $prefix eq 'dispatcher-register' || $prefix eq 'dispatcher-delegate' {
+        nqp::unshift(@args, QAST::SVal.new( :value($prefix) ));
+        nqp::unshift(@args, QAST::SVal.new( :value('boot-syscall') ));
+    }
+    elsif $prefix eq 'dispatcher-track-' || $prefix eq 'dispatcher-guard-' {
+        my $what := nqp::shift(@args);
+        nqp::die("First operand of a '" ~ $op.op ~ "' op must be a constant string")
+            unless nqp::istype($what, QAST::SVal);
+        nqp::unshift(@args, QAST::SVal.new( :value($prefix ~ $what.value) ));
+        nqp::unshift(@args, QAST::SVal.new( :value('boot-syscall') ));
+    }
+
+    my $name_qast := nqp::shift(@args);
+    nqp::die('First node of a dispatch op must be a constant string naming the dispatcher')
+        unless nqp::istype($name_qast, QAST::SVal);
+
+    # Compile the arguments and form a callsite, exactly as for a call; the
+    # dispatcher name and callsite index ride along as extra arguments, using
+    # the fact that the stack was spilled to sneak the ThreadContext in.
+    my $il := JAST::InstructionList.new();
+    my @argstuff := process_args_onto_stack($qastcomp, @args, $il);
+    my $cs_idx := @argstuff[0];
+    $*STACK.spill_to_locals($il);
+
+    if dispatch_arg_slots(@argstuff[1]) > 250 {
+        emit_wide_dispatch($il, $name_qast.value, $cs_idx, @argstuff[1]);
+        return result_from_cf($il, rttype_from_typeobj($op.returns));
+    }
+
+    nqp::unshift(@argstuff[2], 'I');
+    nqp::unshift(@argstuff[2], $TYPE_STR);
+    $il.append(JAST::PushSVal.new( :value($name_qast.value) ));
+    $il.append(JAST::PushIndex.new( :value($cs_idx) ));
+    $il.append($ALOAD_1);
+    $*STACK.obtain($il, |@argstuff[1]) if @argstuff[1];
+    $il.append(savesite(JAST::InvokeDynamic.new(
+        'dispatch_noa', 'V', @argstuff[2],
+        'org/raku/nqp/dispatch/DispatchBootstrap', 'dispatch_noa'
+    )));
+
+    result_from_cf($il, rttype_from_typeobj($op.returns));
+}
+QAST::OperationsJAST.add_core_op('dispatch', :!inlinable, -> $qastcomp, $op {
+    add_dispatcher_op($qastcomp, $op, '');
+});
+QAST::OperationsJAST.add_core_op('syscall', :!inlinable, -> $qastcomp, $op {
+    add_dispatcher_op($qastcomp, $op, 'boot-syscall');
+});
+QAST::OperationsJAST.add_core_op('register', :!inlinable, -> $qastcomp, $op {
+    add_dispatcher_op($qastcomp, $op, 'dispatcher-register');
+});
+QAST::OperationsJAST.add_core_op('delegate', :!inlinable, -> $qastcomp, $op {
+    add_dispatcher_op($qastcomp, $op, 'dispatcher-delegate');
+});
+QAST::OperationsJAST.add_core_op('track', :!inlinable, -> $qastcomp, $op {
+    add_dispatcher_op($qastcomp, $op, 'dispatcher-track-');
+});
+QAST::OperationsJAST.add_core_op('guard', :!inlinable, -> $qastcomp, $op {
+    add_dispatcher_op($qastcomp, $op, 'dispatcher-guard-');
+});
 
 # Binding
 QAST::OperationsJAST.add_core_op('bind', -> $qastcomp, $op {
@@ -2876,6 +3135,10 @@ QAST::OperationsJAST.map_classlib_core_op('objprimspec', $TYPE_OPS, 'objprimspec
 QAST::OperationsJAST.map_classlib_core_op('objprimunsigned', $TYPE_OPS, 'objprimunsigned', [$RT_OBJ], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('objprimbits', $TYPE_OPS, 'objprimbits', [$RT_OBJ], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('isinvokable', $TYPE_OPS, 'isinvokable', [$RT_OBJ], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('iscoderef', $TYPE_OPS, 'iscoderef', [$RT_OBJ], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('gettypehllrole', $TYPE_OPS, 'gettypehllrole', [$RT_OBJ], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('assertparamcheck', $TYPE_OPS, 'assertparamcheck', [$RT_INT], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('bindcomplete', $TYPE_OPS, 'bindcomplete', [], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('setinvokespec', $TYPE_OPS, 'setinvokespec', [$RT_OBJ, $RT_OBJ, $RT_STR, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('setparameterizer', $TYPE_OPS, 'setparameterizer', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('parameterizetype', $TYPE_OPS, 'parameterizetype', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
@@ -2915,10 +3178,51 @@ QAST::OperationsJAST.map_classlib_core_op('decont_n', $TYPE_OPS, 'decont_n', [$R
 QAST::OperationsJAST.map_classlib_core_op('decont_s', $TYPE_OPS, 'decont_s', [$RT_OBJ], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('assign', $TYPE_OPS, 'assign', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('assignunchecked', $TYPE_OPS, 'assignunchecked', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
-QAST::OperationsJAST.map_classlib_core_op('assign_i', $TYPE_OPS, 'assign_i', [$RT_OBJ, $RT_INT], $RT_OBJ, :tc);
-QAST::OperationsJAST.map_classlib_core_op('assign_u', $TYPE_OPS, 'assign_u', [$RT_OBJ, $RT_UINT], $RT_OBJ, :tc);
-QAST::OperationsJAST.map_classlib_core_op('assign_n', $TYPE_OPS, 'assign_n', [$RT_OBJ, $RT_NUM], $RT_OBJ, :tc);
-QAST::OperationsJAST.map_classlib_core_op('assign_s', $TYPE_OPS, 'assign_s', [$RT_OBJ, $RT_STR], $RT_OBJ, :tc);
+# A native assign whose target is a reference to a lexical or attribute in
+# reach lowers to a direct bind, exactly as the MoarVM backend does. The
+# bind's result is the assigned value (an attribute bind yields it at full
+# width, so a compound step yields the unstored result while the attribute
+# stores truncated), where the real container assign yields the container.
+sub native_assign_bind_scope($target) {
+    if nqp::istype($target, QAST::Var) {
+        my str $scope := $target.scope;
+        if $scope eq 'attributeref' {
+            return 'attribute';
+        }
+        elsif $scope eq 'lexicalref' {
+            my $block := $*BLOCK;
+            my str $name := $target.name;
+            while nqp::istype($block, $*BLOCK.WHAT) {
+                last if $block.qast.ann('DYN_COMP_WRAPPER');
+                return 'lexical' if nqp::defined($block.lexical_type($name));
+                last if nqp::defined($block.lexicalref_type($name));
+                $block := $block.outer;
+            }
+        }
+    }
+    ''
+}
+for [['assign_i', 'jvm_container_assign_i'], ['assign_u', 'jvm_container_assign_u'],
+     ['assign_n', 'jvm_container_assign_n'], ['assign_s', 'jvm_container_assign_s']] -> @spec {
+    my str $op_name       := @spec[0];
+    my str $fallback_name := @spec[1];
+    QAST::OperationsJAST.add_core_op($op_name, -> $qastcomp, $op {
+        my $target := $op[0];
+        my str $bind_scope := native_assign_bind_scope($target);
+        if $bind_scope ne '' {
+            $op.op('bind');
+            $target.scope($bind_scope);
+            $qastcomp.as_jast($op)
+        }
+        else {
+            $qastcomp.as_jast(QAST::Op.new( :op($fallback_name), $op[0], $op[1] ))
+        }
+    });
+}
+QAST::OperationsJAST.map_classlib_core_op('jvm_container_assign_i', $TYPE_OPS, 'assign_i', [$RT_OBJ, $RT_INT], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('jvm_container_assign_u', $TYPE_OPS, 'assign_u', [$RT_OBJ, $RT_UINT], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('jvm_container_assign_n', $TYPE_OPS, 'assign_n', [$RT_OBJ, $RT_NUM], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('jvm_container_assign_s', $TYPE_OPS, 'assign_s', [$RT_OBJ, $RT_STR], $RT_OBJ, :tc);
 
 # lexical related opcodes
 QAST::OperationsJAST.map_classlib_core_op('getlex', $TYPE_OPS, 'getlex', [$RT_STR], $RT_OBJ, :tc);
@@ -2926,6 +3230,7 @@ QAST::OperationsJAST.map_classlib_core_op('getlex_i', $TYPE_OPS, 'getlex_i', [$R
 QAST::OperationsJAST.map_classlib_core_op('getlex_n', $TYPE_OPS, 'getlex_n', [$RT_STR], $RT_NUM, :tc);
 QAST::OperationsJAST.map_classlib_core_op('getlex_s', $TYPE_OPS, 'getlex_s', [$RT_STR], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('getlexref_i', $TYPE_OPS, 'getlexref_i', [$RT_STR], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('getlexref_u', $TYPE_OPS, 'getlexref_u', [$RT_STR], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('getlexref_n', $TYPE_OPS, 'getlexref_n', [$RT_STR], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('getlexref_s', $TYPE_OPS, 'getlexref_s', [$RT_STR], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('bindlex', $TYPE_OPS, 'bindlex', [$RT_STR, $RT_OBJ], $RT_OBJ, :tc);
@@ -2963,6 +3268,7 @@ QAST::OperationsJAST.map_classlib_core_op('getcodename', $TYPE_OPS, 'getcodename
 QAST::OperationsJAST.map_classlib_core_op('setcodename', $TYPE_OPS, 'setcodename', [$RT_OBJ, $RT_STR], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('getcodecuid', $TYPE_OPS, 'getcodecuid', [$RT_OBJ], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('forceouterctx', $TYPE_OPS, 'forceouterctx', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('captureinnerlex', $TYPE_OPS, 'captureinnerlex', [$RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('freshcoderef', $TYPE_OPS, 'freshcoderef', [$RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('markcodestatic', $TYPE_OPS, 'markcodestatic', [$RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('markcodestub', $TYPE_OPS, 'markcodestub', [$RT_OBJ], $RT_OBJ, :tc);
@@ -3165,6 +3471,13 @@ QAST::OperationsJAST.map_classlib_core_op('killprocasync', $TYPE_IO_OPS, 'killpr
 QAST::OperationsJAST.map_classlib_core_op('cas', $TYPE_OPS, 'cas', [$RT_OBJ, $RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('atomicload', $TYPE_OPS, 'atomicload', [$RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('atomicstore', $TYPE_OPS, 'atomicstore', [$RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
+QAST::OperationsJAST.map_classlib_core_op('atomicload_i', $TYPE_OPS, 'atomicload_i', [$RT_OBJ], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('atomicstore_i', $TYPE_OPS, 'atomicstore_i', [$RT_OBJ, $RT_INT], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('atomicadd_i', $TYPE_OPS, 'atomicadd_i', [$RT_OBJ, $RT_INT], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('atomicinc_i', $TYPE_OPS, 'atomicinc_i', [$RT_OBJ], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('atomicdec_i', $TYPE_OPS, 'atomicdec_i', [$RT_OBJ], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('cas_i', $TYPE_OPS, 'cas_i', [$RT_OBJ, $RT_INT, $RT_INT], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('barrierfull', $TYPE_OPS, 'barrierfull', [], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('casattr', $TYPE_OPS, 'casattr', [$RT_OBJ, $RT_OBJ, $RT_STR, $RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('atomicbindattr', $TYPE_OPS, 'atomicbindattr', [$RT_OBJ, $RT_OBJ, $RT_STR, $RT_OBJ], $RT_OBJ, :tc);
 
@@ -3197,18 +3510,14 @@ QAST::OperationsJAST.map_classlib_core_op('nativecallsizeof', $TYPE_NATIVE_OPS, 
 QAST::OperationsJAST.map_classlib_core_op('nativecallcast', $TYPE_NATIVE_OPS, 'nativecallcast', [$RT_OBJ, $RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 QAST::OperationsJAST.map_classlib_core_op('nativecallglobal', $TYPE_NATIVE_OPS, 'nativecallglobal', [$RT_STR, $RT_STR, $RT_OBJ, $RT_OBJ], $RT_OBJ, :tc);
 
-QAST::OperationsJAST.add_core_op('getcodelocation', -> $qastcomp, $op {
-    $qastcomp.as_jast(QAST::Op.new(
-        :op('hash'),
-        QAST::SVal.new( :value<file> ), QAST::SVal.new( :value<unknown> ),
-        QAST::SVal.new( :value<line> ), QAST::IVal.new( :value(-1) )
-    ));
-});
+QAST::OperationsJAST.map_classlib_core_op('getcodelocation', $TYPE_OPS, 'getcodelocation', [$RT_OBJ], $RT_OBJ, :tc);
 
 QAST::OperationsJAST.map_classlib_core_op('jvmgetunicodeversion', $TYPE_OPS, 'jvmgetunicodeversion', [], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('getuniname', $TYPE_OPS, 'getuniname', [$RT_INT], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('unipropcode', $TYPE_OPS, 'unipropcode', [$RT_STR], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('getuniprop_str', $TYPE_OPS, 'getuniprop_str', [$RT_INT, $RT_INT], $RT_STR, :tc);
+QAST::OperationsJAST.map_classlib_core_op('getuniprop_int', $TYPE_OPS, 'getuniprop_int', [$RT_INT, $RT_INT], $RT_INT, :tc);
+QAST::OperationsJAST.map_classlib_core_op('getuniprop_bool', $TYPE_OPS, 'getuniprop_bool', [$RT_INT, $RT_INT], $RT_INT, :tc);
 
 QAST::OperationsJAST.map_classlib_core_op('force_gc', $TYPE_OPS, 'force_gc', [], $RT_OBJ, :tc);
 
@@ -3217,21 +3526,6 @@ QAST::OperationsJAST.map_classlib_core_op('coerce_is', $TYPE_OPS, 'coerce_is', [
 QAST::OperationsJAST.map_classlib_core_op('coerce_us', $TYPE_OPS, 'coerce_us', [$RT_UINT], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('coerce_ns', $TYPE_OPS, 'coerce_ns', [$RT_NUM], $RT_STR, :tc);
 QAST::OperationsJAST.map_classlib_core_op('coerce_in', $TYPE_OPS, 'coerce_in', [$RT_INT], $RT_NUM, :tc);
-QAST::OperationsJAST.map_classlib_core_op('jvmsyscall', $TYPE_OPS, 'syscall', [$RT_STR, $RT_OBJ], $RT_OBJ, :tc);
-QAST::OperationsJAST.add_core_op('syscall', -> $qastcomp, $op {
-    # The dispatcher-era boot-syscall surface. Desugar
-    # nqp::syscall(name, args...) into a runtime helper taking the
-    # arguments as a list; individual syscalls are implemented (or
-    # rejected by name) in Ops.syscall.
-    my $list := QAST::Op.new( :op('list') );
-    my int $i := 1;
-    my int $n := +@($op);
-    while $i < $n {
-        $list.push($op[$i]);
-        $i++;
-    }
-    $qastcomp.as_jast(QAST::Op.new( :op('jvmsyscall'), $op[0], $list ));
-});
 QAST::OperationsJAST.map_classlib_core_op('coerce_ni', $TYPE_OPS, 'coerce_ni', [$RT_NUM], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('coerce_ui', $TYPE_OPS, 'coerce_ui', [$RT_UINT], $RT_INT, :tc);
 QAST::OperationsJAST.map_classlib_core_op('coerce_iu', $TYPE_OPS, 'coerce_iu', [$RT_INT], $RT_UINT, :tc);
@@ -3365,6 +3659,8 @@ class QAST::CompilerJAST {
         has @!locals;           # QAST::Var nodes of declared locals
         has %!local_types;      # Mapping of local registers to type names
         has %!lexical_types;    # Mapping of lexical names to types
+        has %!local_returns;    # Mapping of local names to their type objects
+        has %!lexical_returns;  # Mapping of lexical names to their type objects
         has %!lexicalref_types; # Mapping of lexical names to types
         has %!lexical_idxs;     # Lexical indexes (but have to know type too)
         has @!lexical_names;    # List by type of lexial name lists
@@ -3384,6 +3680,8 @@ class QAST::CompilerJAST {
             @!locals := nqp::list();
             %!local_types := nqp::hash();
             %!lexical_types := nqp::hash();
+            %!local_returns := nqp::hash();
+            %!lexical_returns := nqp::hash();
             %!lexicalref_types := nqp::hash();
             %!lexical_idxs := nqp::hash();
             %!local2temp := nqp::hash();
@@ -3452,6 +3750,7 @@ class QAST::CompilerJAST {
             if nqp::existskey(%!lexical_types, $name) || nqp::existskey(%!lexicalref_types, $name) {
                 nqp::die("Lexical '$name' already declared");
             }
+            %!lexical_returns{$name} := $var.returns;
             %!lexical_types{$name} := $type;
             $type := 1 if $type == 10; # Work around for missing unsigned lexical type category
             %!lexical_idxs{$name} := nqp::elems(@!lexical_names[$type]);
@@ -3474,6 +3773,7 @@ class QAST::CompilerJAST {
             if nqp::existskey(%!local_types, $name) {
                 nqp::die("Local '$name' already declared");
             }
+            %!local_returns{$name} := $var.returns;
             %!local_types{$name} := rttype_from_typeobj($var.returns);
         }
 
@@ -3495,6 +3795,8 @@ class QAST::CompilerJAST {
             $tempify ?? $tempify[0] !! [ $name, %!local_types{$name} ]
         }
         method lexical_type($name) { %!lexical_types{$name} }
+        method lexical_returns($name) { %!lexical_returns{$name} }
+        method local_returns($name) { %!local_returns{$name} }
         method lexicalref_type($name) { %!lexicalref_types{$name} }
         method lexical_idx($name) { %!lexical_idxs{$name} }
         method lexical_names_by_type() { @!lexical_names }
@@ -3806,6 +4108,13 @@ class QAST::CompilerJAST {
         my $*NEXT_QBID := 0;
         # Pre-seed to make sure that qbids correspond to serialization IDs
         my $*COMP_MODE := $cu.compilation_mode;
+        # Comp-mode units pair code refs with methods by block id, so the
+        # cuid strings are dead weight there (and the setting's constant
+        # pool lives close to the 64K limit). A nested unit is the
+        # exception: it never deserializes, and the enclosing compilation
+        # reconnects its code objects by looking the cuids up on the
+        # freshly compiled code refs.
+        my $*EMIT_CUIDS := !$*COMP_MODE || $cu.is_nested;
         if $*COMP_MODE {
             for $cu.code_ref_blocks() -> $qblock {
                 %*CUID_TO_QBID{$qblock.cuid} := $*NEXT_QBID++;
@@ -3841,8 +4150,14 @@ class QAST::CompilerJAST {
                 $block.push(QAST::Stmt.new($_));
             }
 
-            # If we need to do deserialization, emit code for that.
-            if $*COMP_MODE {
+            # If we need to do deserialization, emit code for that. A
+            # nested unit (an EVAL inside another compilation) does not
+            # serialize: its objects live in the enclosing compilation's
+            # SC and this unit only ever runs in the process that compiled
+            # it. Serializing it would also fail outright, as compiler
+            # state like @!compstuff thunks is still live mid-compilation.
+            # The MoarVM backend skips it the same way.
+            if $*COMP_MODE && !$cu.is_nested {
                 $block.push(self.deserialization_code($cu.sc(), $cu.code_ref_blocks(),
                     $cu.repo_conflict_resolver()));
             }
@@ -3976,6 +4291,57 @@ class QAST::CompilerJAST {
     }
 
     method deserialization_code($sc, @code_ref_blocks, $repo_conf_res) {
+        # Some code-ref slots may belong to nested units (EVALs run at
+        # BEGIN time) rather than to blocks compiled into this unit. Their
+        # classfiles ride along in the jar, and the deserialization code
+        # loads them back and installs their code refs into the slots
+        # before deserializing, matched by cuid. The slot index is the
+        # block's position: the code ref table is keyed that way.
+        my %nested_by_class;
+        my @nested_class_names;
+        my int $crb_idx := 0;
+        for @code_ref_blocks {
+            my str $crb_cuid := $_.cuid;
+            unless $*CODEREFS.know_cuid($crb_cuid) {
+                my str $nested_class := nqp::syscall('jvm-class-of-cuid', $crb_cuid);
+                if $nested_class ne '' {
+                    unless nqp::existskey(%nested_by_class, $nested_class) {
+                        %nested_by_class{$nested_class} := [[], []];
+                        nqp::push(@nested_class_names, $nested_class);
+                    }
+                    nqp::push(%nested_by_class{$nested_class}[0], $crb_idx);
+                    nqp::push(%nested_by_class{$nested_class}[1], $crb_cuid);
+                }
+            }
+            $crb_idx := $crb_idx + 1;
+        }
+        my $nested_claims := QAST::Stmts.new();
+        my $nested_finish := QAST::Stmts.new();
+        if @nested_class_names {
+            $*JCLASS.nested_classes(@nested_class_names);
+            for @nested_class_names -> $nested_class {
+                $nested_finish.push(QAST::Op.new(
+                    :op('syscall'),
+                    QAST::SVal.new( :value('jvm-finish-nested') ),
+                    QAST::SVal.new( :value($nested_class) )
+                ));
+                my $idx_list := QAST::Op.new( :op('list_i') );
+                for %nested_by_class{$nested_class}[0] {
+                    $idx_list.push(QAST::IVal.new( :value($_) ));
+                }
+                my $cuid_list := QAST::Op.new( :op('list_s') );
+                for %nested_by_class{$nested_class}[1] {
+                    $cuid_list.push(QAST::SVal.new( :value($_) ));
+                }
+                $nested_claims.push(QAST::Op.new(
+                    :op('syscall'),
+                    QAST::SVal.new( :value('jvm-claim-nested') ),
+                    QAST::SVal.new( :value($nested_class) ),
+                    $idx_list, $cuid_list
+                ));
+            }
+        }
+
         # Serialize it.
         my $sh := nqp::list_s();
         my $serialized := nqp::serialize($sc, $sh);
@@ -4034,6 +4400,7 @@ class QAST::CompilerJAST {
                 QAST::Var.new( :name('conflicts'), :scope('local'), :decl('var') ),
                 QAST::Op.new( :op('list') )
             ),
+            $nested_claims,
             QAST::Op.new(
                 :op('deserialize'),
                 nqp::isnull($serialized) ?? QAST::Op.new( :op('null_s') ) !! QAST::SVal.new( :value($serialized) ),
@@ -4042,6 +4409,7 @@ class QAST::CompilerJAST {
                 QAST::Op.new( :op('null') ),
                 QAST::Var.new( :name('conflicts'), :scope('local') )
             ),
+            $nested_finish,
             QAST::Op.new(
                 :op('if'),
                 QAST::Op.new(
@@ -4064,20 +4432,40 @@ class QAST::CompilerJAST {
     # its cursor to `self`, say - never sees the argument at all without them.
     method emit_param_tasks($il, $block, $var) {
         for $var.list {
-            if nqp::istype($_, QAST::ParamTypeCheck) {
-                nqp::die('QAST::ParamTypeCheck is not supported on the JVM backend');
-            }
             my $*BLOCK := $block;
-            my $task := self.as_jast($_, :want($RT_VOID));
+            # A type check evaluates to a flag that assertparamcheck turns
+            # into a bind failure rather than a throw, so a multi can try the
+            # next candidate. MoarVM compiles the node the same way.
+            my $task := self.as_jast(
+                nqp::istype($_, QAST::ParamTypeCheck)
+                    ?? QAST::Op.new( :op('assertparamcheck'), $_[0] )
+                    !! $_,
+                :want($RT_VOID));
             $il.append($task.jast);
             $*STACK.obtain($il, $task);
         }
+    }
+
+    # Does binding this parameter run a check that can fail? Reporting such a
+    # failure means handing the arguments to the HLL, which only the args
+    # array route keeps hold of.
+    method param_can_bind_fail($var) {
+        for $var.list {
+            return 1 if nqp::istype($_, QAST::ParamTypeCheck);
+        }
+        0
     }
 
     method try_setup_args_expectation($jmeth, $block, $il) {
         # Needing an args array forces the binder.
         if $*NEED_ARGS_ARRAY {
             return $ARG_EXP_USE_BINDER;
+        }
+
+        # So does a parameter whose binding can fail, since the arguments have
+        # to survive for the failure to be reported against.
+        for $block.params {
+            return $ARG_EXP_USE_BINDER if self.param_can_bind_fail($_);
         }
 
         # Otherwise, go by arity, then look at particular cases.
@@ -4187,7 +4575,40 @@ class QAST::CompilerJAST {
             # are handled out of band).
             my $*JMETH := JAST::Method.new( :name('qb_'~self.cuid_to_qbid($node.cuid)), :returns('Void'), :static(1) );
             $*JMETH.cr_name($node.name);
-            $*JMETH.cr_cuid($node.cuid) unless $*COMP_MODE;
+            $*JMETH.cr_cuid($node.cuid) unless $*COMP_MODE && !$*EMIT_CUIDS;
+
+            # Note the block's source location so nqp::getcodelocation has
+            # something to answer with at runtime. A node that knows its own
+            # file and line (RakuAST origins) is believed outright, the same
+            # way the MoarVM backend does; otherwise the position is computed
+            # from the orig, honoring #line directives.
+            if $node.node && nqp::can($node.node, 'file') && nqp::can($node.node, 'line') {
+                my $loc-file := $node.node.file;
+                if $loc-file {
+                    $*JMETH.cr_file(~$loc-file);
+                    $*JMETH.cr_line($node.node.line);
+                    # The unmapped line pairs with the LineNumberTable rows,
+                    # which come from orig-line/lineof without directives.
+                    $*JMETH.cr_rawline(nqp::can($node.node, 'orig-line')
+                        ?? $node.node.orig-line()
+                        !! nqp::can($node.node, 'orig')
+                            ?? HLL::Compiler.lineof($node.node.orig(),
+                                   $node.node.from(), :cache(1), :directives(0))
+                            !! $node.node.line);
+                }
+            }
+            elsif $node.node && nqp::can($node.node, 'orig') {
+                my $line-file := HLL::Compiler.linefileof(
+                    $node.node.orig(), $node.node.from(), :cache(1), :directives(1));
+                my $loc-file := $line-file[1]
+                    || nqp::ifnull(nqp::getlexdyn('$?FILES'), '');
+                if $loc-file {
+                    $*JMETH.cr_file(~$loc-file);
+                    $*JMETH.cr_line($line-file[0]);
+                    $*JMETH.cr_rawline(HLL::Compiler.lineof(
+                        $node.node.orig(), $node.node.from(), :cache(1), :directives(0)));
+                }
+            }
             $*CODEREFS.register_method($*JMETH, $node.cuid);
 
             # Set outer if we have one.
@@ -4330,6 +4751,11 @@ class QAST::CompilerJAST {
                             $il.append($lbl);
                         }
                     }
+                    # MoarVM fetches a sized parameter into a sized register,
+                    # so the argument arrives already truncated. Every local
+                    # here is full width, so do it explicitly. A slurpy or a
+                    # full-width parameter emits nothing.
+                    emit_sized_native_trunc($il, $_.returns, $type);
                     if $_.scope eq 'local' {
                         $il.append(JAST::Instruction.new( :op(store_ins($type)), $_.name ));
                     }
@@ -4686,6 +5112,23 @@ class QAST::CompilerJAST {
                     $line := HLL::Compiler.lineof($node.orig(), $node.from(), :cache(1), :directives(0));
                 }
                 $il.append(JAST::Annotation.new( :line($line) ));
+
+                # A #line directive between this method's statements changes
+                # what the raw line maps to; record the section so backtraces
+                # can honor it (the method-level mapping only covers the
+                # block's declaration point).
+                if $*JMETH.cr_file {
+                    if nqp::can($node, 'file') && nqp::can($node, 'line') {
+                        my $mfile := $node.file;
+                        $*JMETH.cr_add_section($line, $node.line, ~$mfile) if $mfile;
+                    }
+                    else {
+                        my $line-file := HLL::Compiler.linefileof(
+                            $node.orig(), $node.from(), :cache(1), :directives(1));
+                        $*JMETH.cr_add_section($line, $line-file[0], ~$line-file[1])
+                            if $line-file[1];
+                    }
+                }
             }
 
             my $void := $all_void || $i != $resultchild;
@@ -4824,15 +5267,27 @@ class QAST::CompilerJAST {
                     # declaration itself appears. Emitters put these in the
                     # block's declaration prologue, ahead of any use.
                     $*BLOCK.add_local($node);
+                    # Only when nothing has put a container there already.
+                    # Parameters are bound in the frame prologue, ahead of the
+                    # body this declaration sits in, so a lowered parameter's
+                    # local arrives holding the argument -- overwriting it with
+                    # a fresh container would throw the argument away. Locals
+                    # start out null, so anything else still vivifies.
                     return self.as_jast(QAST::Op.new(
-                        :op('bind'),
-                        QAST::Var.new( :name($node.name), :scope('local') ),
+                        :op('if'),
+                        QAST::Op.new( :op('isnull'),
+                            QAST::Var.new( :name($node.name), :scope('local') ) ),
                         QAST::Op.new(
-                            # clone_nd, not clone: the prototype *is* a
-                            # container, and clone decontainerizes first.
-                            :op('clone_nd'),
-                            QAST::WVal.new( :value($node.value) )
-                        )
+                            :op('bind'),
+                            QAST::Var.new( :name($node.name), :scope('local') ),
+                            QAST::Op.new(
+                                # clone_nd, not clone: the prototype *is* a
+                                # container, and clone decontainerizes first.
+                                :op('clone_nd'),
+                                QAST::WVal.new( :value($node.value) )
+                            )
+                        ),
+                        QAST::Var.new( :name($node.name), :scope('local') )
                     ), :want($RT_OBJ));
                 }
                 elsif $scope ne 'lexical' {
@@ -4897,6 +5352,9 @@ class QAST::CompilerJAST {
                     my $valres := self.as_jast_clear_bindval($*BINDVAL, :want($type));
                     $il.append($valres.jast);
                     $*STACK.obtain($il, $valres);
+                    # No truncation here: locals match MoarVM registers,
+                    # which are full width whatever the declared type; only
+                    # lexical slots, attributes and boxes store sized.
                     $il.append(dup_ins($type));
                     $il.append(JAST::Instruction.new( :op(store_ins($type)), $info[0] ));
                 }
@@ -5002,6 +5460,9 @@ class QAST::CompilerJAST {
                 my $valres := self.as_jast_clear_bindval($*BINDVAL, :want($type));
                 $il.append($valres.jast);
                 $*STACK.obtain($il, $valres);
+                my $decl-block := $local ?? $*BLOCK !! $declarer;
+                emit_sized_native_trunc($il,
+                    nqp::ifnull($decl-block.lexical_returns($name), nqp::null()), $type);
             }
 
             # If it's declared in the local scope...
@@ -5152,6 +5613,17 @@ class QAST::CompilerJAST {
                     $il.append(JAST::PushIndex.new( :value($scopes) ));
                     $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
                         "getlexref_{$c}_si", $TYPE_SMO, $TYPE_TC, 'Integer', 'Integer' ));
+                }
+                my $decl-block := $local ?? $*BLOCK !! $declarer;
+                my int $szspec := sized_native_ref_spec($decl-block.lexical_returns($name));
+                if $szspec {
+                    # The long slots carry no width, so a reference to a
+                    # sized lexical is told the declared one; its stores
+                    # then truncate the way MoarVM's sized registers do.
+                    $il.append(JAST::PushIVal.new( :value($szspec) ));
+                    $il.append($ALOAD_1);
+                    $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
+                        'sizedref', $TYPE_SMO, $TYPE_SMO, 'Long', $TYPE_TC ));
                 }
                 return result($il, $RT_OBJ);
             }
@@ -6128,10 +6600,7 @@ class QAST::CompilerJAST {
         }
 
         unless $node.subtype eq 'zerowidth' {
-            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-            $il.append($IVAL_ONE);
-            $il.append($LADD);
-            $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
+            self.regex_advance_char($il);
         }
 
         $il
@@ -6181,10 +6650,7 @@ class QAST::CompilerJAST {
         $il.append(JAST::Instruction.new( :op($node.negate ?? 'ifge' !! 'iflt'), %*REG<fail> ));
 
         unless $node.subtype eq 'zerowidth' {
-            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-            $il.append($IVAL_ONE);
-            $il.append($LADD);
-            $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
+            self.regex_advance_char($il);
         }
 	$il.append($donelabel) if $donelabel;
 
@@ -6234,10 +6700,7 @@ class QAST::CompilerJAST {
         }
 
         unless $node.subtype eq 'zerowidth' {
-            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-            $il.append($IVAL_ONE);
-            $il.append($LADD);
-            $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
+            self.regex_advance_char($il);
         }
 
         $il;
@@ -6248,24 +6711,47 @@ class QAST::CompilerJAST {
         my $litconst := $node[0];
         my $litlen := nqp::chars($litconst);
 
-        $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-        $il.append(JAST::PushIVal.new( :value($litlen) ));
-        $il.append($LADD);
-        $il.append(JAST::Instruction.new( :op('lload'), %*REG<eos> ));
-        $il.append($LCMP);
-        $il.append(JAST::Instruction.new( :op('ifgt'), %*REG<fail> ));
+        # Only worth asking when a match is what we want. A negated literal
+        # with no room left cannot be there, which is exactly the assertion
+        # succeeding -- failing here would reject `\C[...]` against a target
+        # shorter than the long character it rules out. The comparisons below
+        # all answer false for a range past the end, so nothing needs the
+        # guard for correctness.
+        unless $node.negate {
+            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+            $il.append(JAST::PushIVal.new( :value($litlen) ));
+            $il.append($LADD);
+            $il.append(JAST::Instruction.new( :op('lload'), %*REG<eos> ));
+            $il.append($LCMP);
+            $il.append(JAST::Instruction.new( :op('ifgt'), %*REG<fail> ));
+        }
 
-        $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
-        $il.append(JAST::PushIndex.new(
-            :value($node.subtype eq 'ignorecase' ?? 1 !! 0) ));
-        $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-        $il.append($L2I);
-        $il.append(JAST::PushSVal.new( :value($litconst) ));
-        $il.append(JAST::PushIndex.new( :value(0) ));
-        $il.append(JAST::PushIndex.new( :value($litlen) ));
-        $il.append(JAST::Instruction.new( :op('invokevirtual'),
-            $TYPE_STR, 'regionMatches', 'Z', 'Z', 'Integer', $TYPE_STR, 'Integer', 'Integer' ));
-        $il.append(JAST::Instruction.new( :op($node.negate ?? 'ifne' !! 'ifeq'), %*REG<fail> ));
+        my str $subtype := $node.subtype;
+        if $subtype eq 'ignoremark' || $subtype eq 'ignorecase+ignoremark' {
+            # The mark-insensitive comparisons live in Ops; regionMatches
+            # below only knows exact and case-insensitive.
+            $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
+            $il.append(JAST::PushSVal.new( :value($litconst) ));
+            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+            $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
+                ($subtype eq 'ignoremark' ?? 'eqatim' !! 'eqaticim'),
+                'Long', $TYPE_STR, $TYPE_STR, 'Long' ));
+            $il.append($L2I);
+            $il.append(JAST::Instruction.new( :op($node.negate ?? 'ifne' !! 'ifeq'), %*REG<fail> ));
+        }
+        else {
+            $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
+            $il.append(JAST::PushIndex.new(
+                :value($subtype eq 'ignorecase' ?? 1 !! 0) ));
+            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+            $il.append($L2I);
+            $il.append(JAST::PushSVal.new( :value($litconst) ));
+            $il.append(JAST::PushIndex.new( :value(0) ));
+            $il.append(JAST::PushIndex.new( :value($litlen) ));
+            $il.append(JAST::Instruction.new( :op('invokevirtual'),
+                $TYPE_STR, 'regionMatches', 'Z', 'Z', 'Integer', $TYPE_STR, 'Integer', 'Integer' ));
+            $il.append(JAST::Instruction.new( :op($node.negate ?? 'ifne' !! 'ifeq'), %*REG<fail> ));
+        }
 
         unless $node.subtype eq 'zerowidth' {
             $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
@@ -6713,14 +7199,22 @@ class QAST::CompilerJAST {
         $il.append($LADD);
         $il.append($DUP2);
         $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
-        if nqp::elems($node.list) && $node.subtype ne 'ignorecase' {
-            # shuffle the stack variables into place for indexfrom.
+        if nqp::elems($node.list) {
+            # Pick the index variant matching the literal's semantics, the
+            # same way the MoarVM backend does.
+            my str $subtype := $node.subtype;
+            my str $indexop :=
+                $subtype eq 'ignorecase'            ?? 'indexic'   !!
+                $subtype eq 'ignoremark'            ?? 'indexim'   !!
+                $subtype eq 'ignorecase+ignoremark' ?? 'indexicim' !!
+                                                       'indexfrom';
+            # shuffle the stack variables into place for the index op.
             $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
             $il.append(JAST::PushSVal.new( :value($node[0]) ));
             $il.append($DUP2_X2);
             $il.append($POP2);
             $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
-                    "indexfrom", 'Long', $TYPE_STR, $TYPE_STR, 'Long'));
+                    $indexop, 'Long', $TYPE_STR, $TYPE_STR, 'Long'));
             $il.append($DUP2);
             $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
             $il.append(JAST::PushIVal.new( :value(-1) ));
@@ -7015,30 +7509,108 @@ class QAST::CompilerJAST {
 
     method uniprop($node) {
         my $il := JAST::InstructionList.new();
-        if nqp::elems(@($node)) > 1 {
-            nqp::die("Unicode property pairs NYI on jvm backend");
-        }
 
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
         $il.append(JAST::Instruction.new( :op('lload'), %*REG<eos> ));
         $il.append($LCMP);
         $il.append(JAST::Instruction.new( :op('ifge'), %*REG<fail> ));
 
-        $il.append(JAST::PushSVal.new( :value($node[0]) ));
-        $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
-        $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-        $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
-            "ischarprop", 'Long', $TYPE_STR, $TYPE_STR, 'Long' ));
+        if nqp::elems(@($node)) > 1 {
+            # A property pair, <:Block("Basic Latin")>: the property's value
+            # at this position is smartmatched against the given matcher,
+            # which the cursor delegates so a grammar can override it.
+            $il.append(self.uniprop_pair($node));
+        }
+        else {
+            $il.append(JAST::PushSVal.new( :value($node[0]) ));
+            $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
+            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+            $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
+                "ischarprop", 'Long', $TYPE_STR, $TYPE_STR, 'Long' ));
+        }
         $il.append($L2I);
         $il.append(JAST::Instruction.new( :op($node.negate ?? 'ifne' !! 'ifeq'), %*REG<fail> ));
 
         unless $node.subtype eq 'zerowidth' {
-            $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
-            $il.append($IVAL_ONE);
-            $il.append($LADD);
-            $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
+            self.regex_advance_char($il);
         }
 
+        $il
+    }
+
+    # Step over the character at pos. MoarVM counts a position per codepoint,
+    # where a position here is a UTF-16 unit and a non-BMP codepoint occupies
+    # two of them, so a bare increment would land between the halves of one
+    # character and match a lone surrogate.
+    method regex_advance_char($il) {
+        $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+        $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
+        $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+        $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
+            "cpwidth", 'Long', $TYPE_STR, 'Long' ));
+        $il.append($LADD);
+        $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
+    }
+
+    # The value side of a property pair, left on the stack as a long that is
+    # 1 when the matcher accepted it. A property carries either a string
+    # value or a numeric one, and which it is shows in the reading: an empty
+    # string means the string reading found nothing, so ask for the number.
+    # <:name(...)> reads the codepoint's own name instead of a property.
+    method uniprop_pair($node) {
+        my $prop    := ~$node[0];
+        my $by_name := $prop eq 'name' || $prop eq 'Name';
+        my $ord     := self.unique('rxuniprop_ord');
+        my $val     := self.unique('rxuniprop_val');
+        my $matcher := self.unique('rxuniprop_matcher');
+
+        my sub localvar($name, *%opts) {
+            QAST::Var.new( :name($name), :scope('local'), |%opts )
+        }
+        my sub propcode() {
+            QAST::Op.new( :op('unipropcode'), QAST::SVal.new( :value($prop) ) )
+        }
+        # Unboxed here rather than left to the caller's :want, so that both
+        # arms of the choice below already agree on the int type. This is
+        # what MoarVM's int result register does for the same call.
+        my sub accepts($arg) {
+            QAST::Op.new( :op('unbox_i'),
+                QAST::Op.new(
+                    :op('callmethod'), :name('!DELEGATE_ACCEPTS'),
+                    localvar(%*REG<cur>),
+                    localvar($matcher),
+                    $arg
+                ))
+        }
+
+        my $qast := QAST::Stmts.new(
+            QAST::Op.new( :op('bind'),
+                localvar($ord, :decl('var'), :returns(int)),
+                QAST::Op.new( :op('ordat'),
+                    localvar(%*REG<tgt>, :returns(str)),
+                    localvar(%*REG<pos>, :returns(int)) )),
+            QAST::Op.new( :op('bind'),
+                localvar($val, :decl('var'), :returns(str)),
+                $by_name
+                    ?? QAST::Op.new( :op('getuniname'), localvar($ord, :returns(int)) )
+                    !! QAST::Op.new( :op('getuniprop_str'),
+                           localvar($ord, :returns(int)), propcode() )),
+            QAST::Op.new( :op('bind'),
+                localvar($matcher, :decl('var')),
+                $node[1] ));
+
+        $qast.push($by_name
+            ?? accepts(localvar($val, :returns(str)))
+            !! QAST::Op.new( :op('if'),
+                   QAST::Op.new( :op('chars'), localvar($val, :returns(str)) ),
+                   accepts(localvar($val, :returns(str))),
+                   accepts(QAST::Op.new( :op('getuniprop_int'),
+                       localvar($ord, :returns(int)), propcode() )) ));
+
+        my $il  := JAST::InstructionList.new();
+        my $res := self.as_jast($qast, :want($RT_INT));
+        $il.append($res.jast);
+        $*STACK.obtain($il, $res);
         $il
     }
 

@@ -452,7 +452,7 @@ class SerializationWriter(
         /* Put repossessions table in place, and set location/rows in header. */
         output.position(56)
         output.putInt(offset)
-        output.putInt(sc.rep_scs.size)
+        output.putInt(sc.repScs.size)
         output.position(offset)
         outputs[REPOS].flip()
         output.put(outputs[REPOS])
@@ -477,6 +477,8 @@ class SerializationWriter(
     /* This handles the serialization of an object, which largely involves a
      * delegation to its representation. */
     private fun serializeObject(obj: SixModelObject) {
+        if (System.getenv("NQP_DEBUG_SERIAL") != null)
+            lastObject = obj
         /* Get index of SC that holds the STable and its index. */
         val ref = getSTableRefInfo(obj.st)
 
@@ -615,7 +617,39 @@ class SerializationWriter(
         st.REPR.serialize_repr_data(tc, st, this)
     }
 
+    private var lastObject: SixModelObject? = null
+    private var lastContext: CallFrame? = null
+
     private fun closureToStaticCodeRef(closure: CodeRef, fatal: Boolean): SixModelObject? {
+        if (System.getenv("NQP_DEBUG_SERIAL") != null && fatal) {
+            System.err.println("[serial-at] object=" +
+                (lastObject?.let { Ops.typeName(it, tc) } ?: "-") +
+                " context=" + (lastContext?.codeRef?.name ?: "-") +
+                " ctxCuid=" + (lastContext?.codeRef?.staticInfo?.uniqueId ?: "-"))
+            val lo = lastObject
+            if (lo != null && Ops.islist(lo, tc) == 1L) {
+                val ne = Ops.elems(lo, tc).toInt()
+                for (k in 0 until ne) {
+                    val el = lo.at_pos_boxed(tc, k.toLong())
+                    System.err.println("[serial-at]   [" + k + "] " +
+                        (if (el == null) "null" else Ops.typeName(el, tc) +
+                         (if (el is CodeRef) " name='" + el.name + "' cuid=" +
+                              el.staticInfo.uniqueId + " src=" +
+                              el.staticInfo.sourceFile + ":" + el.staticInfo.sourceLine
+                          else "")))
+                }
+            }
+        }
+        if (System.getenv("NQP_DEBUG_SERIAL") != null) {
+            val co = closure.codeObject
+            System.err.println("[serial] closure name='" + closure.name +
+                "' cuid=" + closure.staticInfo.uniqueId +
+                " src=" + closure.staticInfo.sourceFile + ":" + closure.staticInfo.sourceLine +
+                " outer=" + (closure.outer?.codeRef?.name ?: "-") +
+                " stub=" + closure.isCompilerStub +
+                " codeObject=" + (if (co == null) "null" else Ops.typeName(co, tc)) +
+                " staticSC=" + (closure.staticInfo.staticCode?.sc?.handle ?: "NONE"))
+        }
         val staticCode: SixModelObject? = closure.staticInfo.staticCode
         if (Ops.isnull(staticCode) == 1L) {
             if (fatal)
@@ -625,10 +659,14 @@ class SerializationWriter(
                 return null
         }
         if (staticCode!!.sc == null) {
-            if (fatal)
+            if (fatal) {
+                val cr = staticCode as CodeRef
                 throw ExceptionHandling.dieInternal(tc,
-                    "Serialization Error: could not locate static code ref for closure " +
-                    (staticCode as CodeRef).name)
+                    "Serialization Error: could not locate static code ref for closure '" +
+                    cr.name + "' (cuid " + cr.staticInfo.uniqueId +
+                    ", from " + (cr.staticInfo.sourceFile ?: "unknown") +
+                    ":" + cr.staticInfo.sourceLine + ")")
+            }
             else
                 return null
         }
@@ -692,6 +730,13 @@ class SerializationWriter(
             if (Ops.isnull(closureToStaticCodeRef(cf.codeRef, false)) == 1L) {
                 return 0
             } else {
+                if (System.getenv("NQP_DEBUG_SERIAL") != null) {
+                    val si = cf.codeRef.staticInfo
+                    System.err.println("[serial-ctx] add frame codeRef='" +
+                        cf.codeRef.name + "' src=" + si.sourceFile + ":" + si.sourceLine +
+                        " outer='" + (cf.outer?.codeRef?.let { it.name + "@" +
+                            it.staticInfo.sourceFile + ":" + it.staticInfo.sourceLine } ?: "-") + "'")
+                }
                 contexts.add(cf)
                 cf.sc = this.sc
                 return contexts.size
@@ -709,6 +754,10 @@ class SerializationWriter(
     }
 
     private fun serializeContext(cf: CallFrame) {
+        if (System.getenv("NQP_DEBUG_SERIAL") != null) {
+            lastObject = null
+            lastContext = cf
+        }
         /* Locate the static code ref this context points to. */
         val staticCodeRef = closureToStaticCodeRef(cf.codeRef, true)!!
         val staticCodeSC = staticCodeRef.sc
@@ -796,16 +845,16 @@ class SerializationWriter(
     /* Goes through the list of repossessions and serializes them all. */
     private fun serializeRepossessions() {
         /* Allocate table space, provided we've actually something to do. */
-        val numRepos = sc.rep_indexes.size
+        val numRepos = sc.repIndexes.size
         if (numRepos == 0)
             return
         growToHold(REPOS, numRepos * REPOS_TABLE_ENTRY_SIZE)
 
         /* Make entries. */
         for (i in 0 until numRepos) {
-            val objIdx = sc.rep_indexes.getInt(i) shr 1
-            val isST = sc.rep_indexes.getInt(i) and 1
-            val origSC = sc.rep_scs[i]
+            val objIdx = sc.repIndexes.getInt(i) shr 1
+            val isST = sc.repIndexes.getInt(i) and 1
+            val origSC = sc.repScs[i]
 
             /* Work out original object's SC location. */
             val origSCIdx = getSCId(origSC)

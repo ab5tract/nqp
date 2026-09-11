@@ -4,6 +4,7 @@ import java.util.Random
 
 import it.unimi.dsi.fastutil.ints.IntArrayList
 
+import org.raku.nqp.dispatch.DispatchRecord
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.reprs.CallCaptureInstance
 import org.raku.nqp.sixmodel.reprs.SCRefInstance
@@ -58,11 +59,11 @@ class ThreadContext(
      * following set of slots, along with a flag indicating value
      * type, provide a way to do that.
      */
-    @JvmField var native_i = 0L
-    @JvmField var native_n = 0.0
-    @JvmField var native_s: String? = null
-    @JvmField var native_j: Any? = null
-    @JvmField var native_type = 0
+    @JvmField var nativeI = 0L
+    @JvmField var nativeN = 0.0
+    @JvmField var nativeS: String? = null
+    @JvmField var nativeJ: Any? = null
+    @JvmField var nativeType = 0
 
     /**
      * The current unwind exception.
@@ -83,6 +84,19 @@ class ThreadContext(
      * The currently saved capture for custom processing.
      */
     @JvmField var savedCC: CallCaptureInstance? = null
+
+    /**
+     * The dispatches in progress on this thread, innermost last. A dispatch
+     * stays here while whatever it invoked is running, which is how a callee
+     * finds the dispatch to resume.
+     */
+    @JvmField val dispatchRecords = ArrayList<DispatchRecord>()
+
+    /**
+     * Set around an invocation made on behalf of a dispatch, so that the frame
+     * the invocation creates can note which dispatch it came from.
+     */
+    @JvmField var pendingDispatch: DispatchRecord? = null
 
     /**
      * The currently set dispatcher, for the next interested call (or the

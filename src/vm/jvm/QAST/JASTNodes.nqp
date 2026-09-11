@@ -8,6 +8,7 @@ class JAST::Class is JAST::Node {
     has str $!serialized;
     has @!methods;
     has @!fields;
+    has @!nested_classes;
     
     method BUILD(:$name!, :$super!, :$filename) {
         $!name    := $name;
@@ -15,6 +16,7 @@ class JAST::Class is JAST::Node {
         $!filename := $filename;
         @!methods := [];
         @!fields  := [];
+        @!nested_classes := [];
     }
     
     method add_method($method) {
@@ -28,6 +30,7 @@ class JAST::Class is JAST::Node {
     method name(*@value) { @value ?? ($!name := @value[0]) !! $!name }
     method super(*@value) { @value ?? ($!super := @value[0]) !! $!super }
     method serialized(*@value) { @value ?? ($!serialized := @value[0]) !! $!serialized }
+    method nested_classes(*@value) { @value ?? (@!nested_classes := @value[0]) !! @!nested_classes }
     method methods() { @!methods }
     
     method dump() {
@@ -119,7 +122,11 @@ class JAST::Method is JAST::Node {
     has int $!has_exit_handler;
     has int $!args_expectation;
     has int $!is_thunk;
-    
+    has str $!cr_file;
+    has int $!cr_line;
+    has int $!cr_rawline;
+    has @!cr_sections;
+
     method BUILD(:$name!, :$returns!, :$static = 1) {
         $!name := $name;
         $!returns := $returns;
@@ -135,8 +142,12 @@ class JAST::Method is JAST::Node {
         @!cr_nlex := [];
         @!cr_slex := [];
         @!cr_handlers := [];
+        $!cr_file := '';
+        $!cr_line := 0;
+        $!cr_rawline := 0;
+        @!cr_sections := [];
     }
-    
+
     method add_argument($name, $type) {
         nqp::push(@!arguments, [$name, $type]);
     }
@@ -168,6 +179,34 @@ class JAST::Method is JAST::Node {
     method has_exit_handler(*@value) { $!has_exit_handler := @value[0] if @value; $!has_exit_handler }
     method args_expectation(*@value) { $!args_expectation := @value[0] if @value; $!args_expectation }
     method is_thunk(*@value) { $!is_thunk := @value[0] if @value; $!is_thunk }
+    method cr_file(*@value) { @value ?? ($!cr_file := @value[0]) !! $!cr_file }
+    method cr_line(*@value) { @value ?? ($!cr_line := @value[0]) !! $!cr_line }
+    method cr_sections() { @!cr_sections }
+
+    # Note that source at raw (directive-free) line $rawline reads as line
+    # $line of $file: a #line directive section within this method's body.
+    # Only a change of mapping adds a row, so methods without an intra-body
+    # directive record nothing, and rows stay sorted by raw line.
+    method cr_add_section($rawline, $line, $file) {
+        my int $n := nqp::elems(@!cr_sections);
+        my $cur_file;
+        my int $cur_delta;
+        if $n {
+            my @last := @!cr_sections[$n - 1];
+            return 0 if $rawline < @last[0];
+            $cur_file  := @last[2];
+            $cur_delta := @last[0] - @last[1];
+        }
+        else {
+            $cur_file  := $!cr_file;
+            $cur_delta := $!cr_rawline - $!cr_line;
+        }
+        unless $file eq $cur_file && $rawline - $line == $cur_delta {
+            nqp::push(@!cr_sections, [$rawline, $line, $file]);
+        }
+        1
+    }
+    method cr_rawline(*@value) { @value ?? ($!cr_rawline := @value[0]) !! $!cr_rawline }
 
     method dump(@dumped) {
         nqp::push(@dumped, "+ method");
@@ -195,6 +234,11 @@ class JAST::Method is JAST::Node {
         }
         if $!args_expectation {
             nqp::push(@dumped, "++ args_expectation $!args_expectation");
+        }
+        if $!cr_file ne '' {
+            nqp::push(@dumped, "++ crfile $!cr_file");
+            nqp::push(@dumped, "++ crline $!cr_line");
+            nqp::push(@dumped, "++ crrawline $!cr_rawline");
         }
         for @!instructions {
             $_.dump(@dumped);

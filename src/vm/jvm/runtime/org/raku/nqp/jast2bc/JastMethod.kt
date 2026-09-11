@@ -25,6 +25,15 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
     @JvmField var hasExitHandler = false
     @JvmField var argsExpectation: Short = 0
     @JvmField var isThunk = false
+    @JvmField var crFile: String? = null
+    @JvmField var crLine = 0
+    @JvmField var crRawLine = 0
+    /* Intra-method #line directive sections: parallel arrays of the raw
+     * line a section starts at, the line it reads as, and the file it
+     * reads as part of. Null when the body has no directive of its own. */
+    @JvmField var crSectionRaw: IntArray? = null
+    @JvmField var crSectionLine: IntArray? = null
+    @JvmField var crSectionFile: Array<String?>? = null
 
     /* Package-private in the Java original; JASTCompiler reads them. */
     @JvmField val beginAll = Label()
@@ -94,6 +103,32 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
             /* Most likely a version of the node without the field. */
             false
         }
+        try {
+            val file = Ops.getattr_s(jast, jastMethod, "$!cr_file", crFileHint, tc)
+            if (file != null && file.isNotEmpty()) {
+                crFile = file
+                crLine = Ops.getattr_i(jast, jastMethod, "$!cr_line", crLineHint, tc).toInt()
+                crRawLine = Ops.getattr_i(jast, jastMethod, "$!cr_rawline", crRawLineHint, tc).toInt()
+                val sections = Ops.getattr(jast, jastMethod, "@!cr_sections", crSectionsHint, tc)!!
+                val numSections = Ops.elems(sections, tc).toInt()
+                if (numSections > 0) {
+                    val raw = IntArray(numSections)
+                    val mapped = IntArray(numSections)
+                    val files = arrayOfNulls<String>(numSections)
+                    for (j in 0 until numSections) {
+                        val row = sections.at_pos_boxed(tc, j.toLong())!!
+                        raw[j] = row.at_pos_boxed(tc, 0)!!.get_int(tc).toInt()
+                        mapped[j] = row.at_pos_boxed(tc, 1)!!.get_int(tc).toInt()
+                        files[j] = row.at_pos_boxed(tc, 2)!!.get_str(tc)
+                    }
+                    crSectionRaw = raw
+                    crSectionLine = mapped
+                    crSectionFile = files
+                }
+            }
+        } catch (t: Throwable) {
+            /* Most likely a version of the node without the fields. */
+        }
     }
 
     private fun fillList(list: MutableList<String?>, smoList: SixModelObject, tc: ThreadContext) {
@@ -122,6 +157,10 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
         private var hasExitHandlerHint = 0L
         private var argsExpectationHint = 0L
         private var isThunkHint = 0L
+        private var crFileHint = 0L
+        private var crLineHint = 0L
+        private var crRawLineHint = 0L
+        private var crSectionsHint = 0L
 
         @JvmStatic
         fun setup(jastMethod: SixModelObject, tc: ThreadContext) {
@@ -142,6 +181,10 @@ class JastMethod @Throws(Exception::class) constructor(jast: SixModelObject, jas
             hasExitHandlerHint  = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!has_exit_handler")
             argsExpectationHint = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!args_expectation")
             isThunkHint         = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!is_thunk")
+            crFileHint          = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!cr_file")
+            crLineHint          = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!cr_line")
+            crRawLineHint       = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "$!cr_rawline")
+            crSectionsHint      = jastMethod.st.REPR.hint_for(tc, jastMethod.st, jastMethod, "@!cr_sections")
         }
     }
 }

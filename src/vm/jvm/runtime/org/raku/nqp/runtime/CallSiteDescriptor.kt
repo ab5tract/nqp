@@ -114,19 +114,19 @@ class CallSiteDescriptor(flags: ByteArray, names: Array<String>?) {
                             flatArray.at_pos_native(cf.tc, i)
                             when (prim) {
                                 BoxedPrimitive.INT -> {
-                                    newArgs.add(cf.tc.native_i)
+                                    newArgs.add(cf.tc.nativeI)
                                     newFlags.add(ARG_INT)
                                 }
                                 BoxedPrimitive.UINT -> {
-                                    newArgs.add(cf.tc.native_i)
+                                    newArgs.add(cf.tc.nativeI)
                                     newFlags.add(ARG_UINT)
                                 }
                                 BoxedPrimitive.NUM -> {
-                                    newArgs.add(cf.tc.native_n)
+                                    newArgs.add(cf.tc.nativeN)
                                     newFlags.add(ARG_NUM)
                                 }
                                 BoxedPrimitive.STR -> {
-                                    newArgs.add(cf.tc.native_s)
+                                    newArgs.add(cf.tc.nativeS)
                                     newFlags.add(ARG_STR)
                                 }
                                 else ->

@@ -40,29 +40,29 @@ abstract class SixModelObject : Cloneable {
      * Attribute access functions. The native variants load the value into
      * or store a value from the Thread Context.
      */
-    open fun get_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    open fun get_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
             name: String?, hint: Long): SixModelObject? {
         throw ExceptionHandling.dieInternal(tc, this.st.REPR.name + " representation does not support attributes")
     }
-    open fun get_attribute_native(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long) {
+    open fun get_attribute_native(tc: ThreadContext, classHandle: SixModelObject?, name: String?, hint: Long) {
         throw ExceptionHandling.dieInternal(tc, this.st.REPR.name + " representation does not support natively typed attributes")
     }
-    open fun bind_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    open fun bind_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
             name: String?, hint: Long, value: SixModelObject?) {
         throw ExceptionHandling.dieInternal(tc, this.st.REPR.name + " representation does not support attributes")
     }
-    open fun bind_attribute_native(tc: ThreadContext, class_handle: SixModelObject?, name: String?, hint: Long) {
+    open fun bind_attribute_native(tc: ThreadContext, classHandle: SixModelObject?, name: String?, hint: Long) {
         throw ExceptionHandling.dieInternal(tc, this.st.REPR.name + " representation does not support natively typed attributes")
     }
-    open fun is_attribute_initialized(tc: ThreadContext, class_handle: SixModelObject?,
+    open fun is_attribute_initialized(tc: ThreadContext, classHandle: SixModelObject?,
             name: String?, hint: Long): Long {
         throw ExceptionHandling.dieInternal(tc, this.st.REPR.name + " representation does not support attributes")
     }
-    open fun cas_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    open fun cas_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
             name: String?, expected: SixModelObject?, value: SixModelObject?): SixModelObject? {
         throw ExceptionHandling.dieInternal(tc, this.st.REPR.name + " representation does not support cas of attributes")
     }
-    open fun atomic_bind_attribute_boxed(tc: ThreadContext, class_handle: SixModelObject?,
+    open fun atomic_bind_attribute_boxed(tc: ThreadContext, classHandle: SixModelObject?,
             name: String?, value: SixModelObject?) {
         throw ExceptionHandling.dieInternal(tc, this.st.REPR.name + " representation does not support atomic binding to attributes")
     }
@@ -75,6 +75,13 @@ abstract class SixModelObject : Cloneable {
     }
     open fun get_int(tc: ThreadContext): Long {
         throw ExceptionHandling.dieInternal(tc, "This type (" + this.st.REPR.name + ") cannot unbox to a native integer")
+    }
+    /* Reading into an unsigned native, where MoarVM has an accessor of its
+     * own: a bigint of 64 bits is a value an unsigned native holds, while
+     * the signed reading stops at 63. Only a type that can tell the two
+     * apart overrides this. */
+    open fun get_uint(tc: ThreadContext): Long {
+        return get_int(tc)
     }
     open fun set_num(tc: ThreadContext, value: Double) {
         throw ExceptionHandling.dieInternal(tc, "This type (" + this.st.REPR.name + ") cannot box a native number")

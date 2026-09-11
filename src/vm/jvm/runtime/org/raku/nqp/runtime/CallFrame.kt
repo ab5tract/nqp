@@ -2,6 +2,7 @@ package org.raku.nqp.runtime
 
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap
 
+import org.raku.nqp.dispatch.DispatchRecord
 import org.raku.nqp.sixmodel.SerializationContext
 import org.raku.nqp.sixmodel.SixModelObject
 
@@ -12,6 +13,16 @@ import org.raku.nqp.sixmodel.SixModelObject
  */
 class CallFrame : Cloneable {
     companion object {
+        /**
+         * A frame that holds a scope but was never invoked, whose outer is
+         * the nearest live instance of the static frame it belongs inside
+         * (auto-closing one if there is none). This is what a phaser needs
+         * when it may run without its enclosing block ever being entered.
+         */
+        @JvmStatic
+        fun contextOnly(tc: ThreadContext, sci: StaticCodeInfo): CallFrame =
+            CallFrame(tc, sci)
+
         const val RET_OBJ = 0
         const val RET_INT = 1
         const val RET_NUM = 2
@@ -106,6 +117,13 @@ class CallFrame : Cloneable {
      */
     @JvmField var args: Array<Any?>? = null
 
+    /**
+     * The dispatch that invoked this frame, if a dispatch did. Walking the
+     * caller chain and reading this at each step gives the interleaving of
+     * frames and dispatches that a resumption is looked for in.
+     */
+    @JvmField var dispatchRecord: DispatchRecord? = null
+
     // Empty constructor for things that want to fake one up.
     constructor()
 
@@ -114,6 +132,13 @@ class CallFrame : Cloneable {
         this.tc = tc
         this.codeRef = cr
         this.caller = tc.curFrame
+
+        // Claim the dispatch that is invoking us, if one is.
+        val pendingDispatch = tc.pendingDispatch
+        if (pendingDispatch != null) {
+            this.dispatchRecord = pendingDispatch
+            tc.pendingDispatch = null
+        }
 
         // Set outer; if it's explicitly in the code ref, use that. If not,
         // go hunting for one. Fall back to outer's prior invocation.
@@ -177,6 +202,13 @@ class CallFrame : Cloneable {
         if (sci.contextsAwaitingOuter != null)
             adoptWaitingContexts(sci)
 
+        /* Note this invocation while it is still live, not only in leave():
+         * another thread resolving the outer of a closure declared in this
+         * scope (an END phaser run by a dying thread, say) walks its own
+         * caller chain, misses, and would otherwise auto-close a fresh empty
+         * frame while the real one is still running here. */
+        sci.priorInvocation = this
+
         // Current call frame becomes this new one.
         tc.curFrame = this
     }
@@ -226,6 +258,9 @@ class CallFrame : Cloneable {
 
         if (sci.contextsAwaitingOuter != null)
             adoptWaitingContexts(sci)
+
+        /* As above: visible to other threads while live. */
+        sci.priorInvocation = this
     }
 
     /**

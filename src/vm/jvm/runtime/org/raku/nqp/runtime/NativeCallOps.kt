@@ -2,6 +2,7 @@ package org.raku.nqp.runtime
 
 import java.lang.foreign.Arena
 import java.lang.foreign.FunctionDescriptor
+import java.lang.foreign.Linker
 import java.lang.foreign.MemoryLayout
 import java.lang.foreign.MemorySegment
 import java.lang.foreign.ValueLayout
@@ -15,6 +16,7 @@ import java.util.HashMap
 import org.raku.nqp.sixmodel.BoxedPrimitive
 import org.raku.nqp.sixmodel.REPRRegistry
 import org.raku.nqp.sixmodel.SixModelObject
+import org.raku.nqp.sixmodel.Boxable
 import org.raku.nqp.sixmodel.StorageSpec
 import org.raku.nqp.sixmodel.reprs.CArray
 import org.raku.nqp.sixmodel.reprs.CArrayInstance
@@ -87,18 +89,18 @@ object NativeCallOps {
                     argInfo[i] = info.at_key_boxed(tc, "callback_args")
             }
             @Suppress("UNCHECKED_CAST")
-            call.arg_types = argTypes as Array<ArgType>
-            call.arg_info = argInfo
+            call.argTypes = argTypes as Array<ArgType>
+            call.argInfo = argInfo
 
-            call.ret_type = getArgType(tc, returns, true)
+            call.retType = getArgType(tc, returns, true)
 
             call.handle = NativeSupport.LINKER.downcallHandle(address,
-                descriptorFor(tc, call.ret_type!!, call.arg_types!!))
-            call.ctor_handle = null
+                descriptorFor(tc, call.retType!!, call.argTypes!!))
+            call.ctorHandle = null
             /* Last: a non-null entry point is how Rakudo's !setup decides the
              * call site is already built, so nothing may be missing once it
              * is set. */
-            call.entry_point = address
+            call.entryPoint = address
 
             return 1L
         }
@@ -112,12 +114,12 @@ object NativeCallOps {
         val call = getNativeCallBody(tc, callObject)
 
         try {
-            val argTypes = call.arg_types!!
+            val argTypes = call.argTypes!!
             /* C++ structure invocant, in case we hit a C++ constructor. */
             var cppstruct: CPPStructInstance? = null
             /* Convert arguments into array of appropriate objects. */
             val n = arguments.elems(tc).toInt()
-            /* TODO: Make sure n == call.arg_types.length? */
+            /* TODO: Make sure n == call.argTypes.length? */
             val cArgs = arrayOfNulls<Any>(n)
             for (i in 0 until n) {
                 val arg = arguments.at_pos_boxed(tc, i.toLong())
@@ -128,7 +130,7 @@ object NativeCallOps {
                     cArgs[i] = struct.storage
                 }
                 else {
-                    cArgs[i] = toNativeType(tc, arg, argTypes[i], call.arg_info!![i])
+                    cArgs[i] = toNativeType(tc, arg, argTypes[i], call.argInfo!![i])
                 }
 
                 /* C wants to see a null pointer, not a Java null. */
@@ -139,63 +141,19 @@ object NativeCallOps {
             if (cppstruct != null) {
                 /* We are calling a C++ constructor so we hand back the invocant (THIS) we recorded earlier. */
                 ctorHandle(tc, call).invokeWithArguments(*cArgs)
-                return toNQPType(tc, call.ret_type, returns, cppstruct.storage)
+                return toNQPType(tc, call.retType, returns, cppstruct.storage)
             }
             else {
                 /* The actual foreign function call. */
                 val returned = call.handle!!.invokeWithArguments(*cArgs)
 
                 /* Assign to NativeRefs in case the argument is in an 'is rw' param slot, or otherwise call refresh(). */
-                for (i in 0 until arguments.elems(tc).toInt()) {
-                    var o = arguments.at_pos_boxed(tc, i.toLong())
-                    val ref = cArgs[i] as? MemorySegment
-                    when (argTypes[i]) {
-                        ArgType.CHAR_RW ->
-                            (o as NativeRefInstance).store_i(tc, ref!!.get(ValueLayout.JAVA_BYTE, 0).toLong())
-                        ArgType.UCHAR_RW -> {
-                            var bval = ref!!.get(ValueLayout.JAVA_BYTE, 0).toLong()
-                            bval += if (bval < 0) 0x100 else 0
-                            (o as NativeRefInstance).store_i(tc, bval)
-                        }
-                        ArgType.SHORT_RW ->
-                            (o as NativeRefInstance).store_i(tc, ref!!.get(ValueLayout.JAVA_SHORT, 0).toLong())
-                        ArgType.USHORT_RW -> {
-                            var sval = ref!!.get(ValueLayout.JAVA_SHORT, 0).toLong()
-                            sval += if (sval < 0) 0x10000 else 0
-                            (o as NativeRefInstance).store_i(tc, sval)
-                        }
-                        ArgType.INT_RW ->
-                            (o as NativeRefInstance).store_i(tc, ref!!.get(ValueLayout.JAVA_INT, 0).toLong())
-                        ArgType.UINT_RW -> {
-                            var ival = ref!!.get(ValueLayout.JAVA_INT, 0).toLong()
-                            ival += if (ival < 0) 0x100000000L else 0
-                            (o as NativeRefInstance).store_i(tc, ival)
-                        }
-                        ArgType.LONG_RW, ArgType.ULONG_RW ->
-                            (o as NativeRefInstance).store_i(tc, readCLong(ref!!, 0))
-                        ArgType.LONGLONG_RW, ArgType.ULONGLONG_RW ->
-                            (o as NativeRefInstance).store_i(tc, ref!!.get(ValueLayout.JAVA_LONG, 0))
-                        ArgType.FLOAT_RW ->
-                            (o as NativeRefInstance).store_n(tc, ref!!.get(ValueLayout.JAVA_FLOAT, 0).toDouble())
-                        ArgType.DOUBLE_RW ->
-                            (o as NativeRefInstance).store_n(tc, ref!!.get(ValueLayout.JAVA_DOUBLE, 0))
-                        ArgType.CPOINTER_RW -> {
-                            o = Ops.decont(o, tc)
-                            (o as CPointerInstance).set_int(tc, NativeSupport.address(ref!!.get(ValueLayout.ADDRESS, 0)))
-                        }
-                        ArgType.VMARRAY -> {
-                            /* The callee wrote through the pointer we handed
-                             * it, so copy the buffer back over the slots. */
-                            vmarrayFromNative(tc, Ops.decont(o, tc), ref)
-                            refresh(o, tc)
-                        }
-                        else ->
-                            refresh(o, tc)
-                    }
-                }
+                for (i in 0 until arguments.elems(tc).toInt())
+                    writeBackRW(tc, arguments.at_pos_boxed(tc, i.toLong()),
+                        cArgs[i] as? MemorySegment, argTypes[i])
 
                 /* Wrap returned in the appropriate REPR type. */
-                return toNQPType(tc, call.ret_type, returns, returned)
+                return toNQPType(tc, call.retType, returns, returned)
             }
         }
         catch (e: ControlException) {
@@ -205,6 +163,307 @@ object NativeCallOps {
             throw ExceptionHandling.dieInternal(tc, t)
         }
     }
+
+    /** After a native call, propagates what the callee wrote through an 'is
+     * rw' reference or an array back into the argument, or refreshes it. */
+    private fun writeBackRW(tc: ThreadContext, arg: SixModelObject?, ref: MemorySegment?,
+                            type: ArgType?) {
+        var o = arg
+        when (type) {
+            ArgType.CHAR_RW ->
+                (o as NativeRefInstance).store_i(tc, ref!!.get(ValueLayout.JAVA_BYTE, 0).toLong())
+            ArgType.UCHAR_RW -> {
+                var bval = ref!!.get(ValueLayout.JAVA_BYTE, 0).toLong()
+                bval += if (bval < 0) 0x100 else 0
+                (o as NativeRefInstance).store_i(tc, bval)
+            }
+            ArgType.SHORT_RW ->
+                (o as NativeRefInstance).store_i(tc, ref!!.get(ValueLayout.JAVA_SHORT, 0).toLong())
+            ArgType.USHORT_RW -> {
+                var sval = ref!!.get(ValueLayout.JAVA_SHORT, 0).toLong()
+                sval += if (sval < 0) 0x10000 else 0
+                (o as NativeRefInstance).store_i(tc, sval)
+            }
+            ArgType.INT_RW ->
+                (o as NativeRefInstance).store_i(tc, ref!!.get(ValueLayout.JAVA_INT, 0).toLong())
+            ArgType.UINT_RW -> {
+                var ival = ref!!.get(ValueLayout.JAVA_INT, 0).toLong()
+                ival += if (ival < 0) 0x100000000L else 0
+                (o as NativeRefInstance).store_i(tc, ival)
+            }
+            ArgType.LONG_RW, ArgType.ULONG_RW ->
+                (o as NativeRefInstance).store_i(tc, readCLong(ref!!, 0))
+            ArgType.LONGLONG_RW, ArgType.ULONGLONG_RW ->
+                (o as NativeRefInstance).store_i(tc, ref!!.get(ValueLayout.JAVA_LONG, 0))
+            ArgType.FLOAT_RW ->
+                (o as NativeRefInstance).store_n(tc, ref!!.get(ValueLayout.JAVA_FLOAT, 0).toDouble())
+            ArgType.DOUBLE_RW ->
+                (o as NativeRefInstance).store_n(tc, ref!!.get(ValueLayout.JAVA_DOUBLE, 0))
+            ArgType.CPOINTER_RW -> {
+                o = Ops.decont(o, tc)
+                (o as CPointerInstance).set_int(tc, NativeSupport.address(ref!!.get(ValueLayout.ADDRESS, 0)))
+            }
+            ArgType.VMARRAY -> {
+                /* The callee wrote through the pointer we handed
+                 * it, so copy the buffer back over the slots. */
+                vmarrayFromNative(tc, Ops.decont(o, tc), ref)
+                refresh(o, tc)
+            }
+            else ->
+                refresh(o, tc)
+        }
+    }
+
+    /**
+     * The dispatcher-path native call, reached through the boot-foreign-code
+     * dispatcher with (call object, return type, args...). Unlike [call],
+     * whose arguments arrive as a list of boxed objects, these arrive as
+     * dispatch values — native ints/nums/strs wherever the dispatch program
+     * unboxed them, boxed objects otherwise — so conversion goes by the
+     * callsite argument kind first and the C parameter type second.
+     */
+    @JvmStatic
+    fun dispatchCall(tc: ThreadContext, descriptor: CallSiteDescriptor,
+                     args: Array<Any?>): org.raku.nqp.dispatch.DispatchValue {
+        val callObject = args[0] as SixModelObject
+        val returns = args[1] as SixModelObject
+        val call = getNativeCallBody(tc, callObject)
+        try {
+            val argTypes = call.argTypes!!
+            var n = args.size - 2
+            /* A variadic call carries more arguments than the built site has
+             * types for; the dispatcher appends a bitfield naming which of
+             * them are pass-by-pointer-and-write-back. */
+            val isVariadic = n > argTypes.size
+            var rwBitfield = 0L
+            if (isVariadic) {
+                n -= 1
+                rwBitfield = Ops.unbox_i(Ops.decont(args[n + 2] as SixModelObject?, tc), tc)
+            }
+            if (n != argTypes.size && !isVariadic)
+                throw ExceptionHandling.dieInternal(tc,
+                    "Wrong number of arguments to a native call: got $n, expected ${argTypes.size}")
+            val varargLayouts =
+                if (isVariadic) arrayOfNulls<MemoryLayout>(n - argTypes.size) else null
+            val cArgs = arrayOfNulls<Any>(n)
+            /* C++ structure invocant, in case we hit a C++ constructor. */
+            var cppstruct: CPPStructInstance? = null
+            for (i in 0 until n) {
+                if (i >= argTypes.size) {
+                    /* A variadic argument: its C type comes from what the
+                     * dispatch program made of it, mirroring the default
+                     * argument promotions. */
+                    val value = args[i + 2]
+                    val j = i - argTypes.size
+                    when (org.raku.nqp.dispatch.ArgKind.ofFlag(descriptor.argFlags[i + 2])) {
+                        org.raku.nqp.dispatch.ArgKind.INT,
+                        org.raku.nqp.dispatch.ArgKind.UINT -> {
+                            varargLayouts!![j] = ValueLayout.JAVA_LONG
+                            cArgs[i] = value as Long
+                        }
+                        org.raku.nqp.dispatch.ArgKind.NUM -> {
+                            varargLayouts!![j] = ValueLayout.JAVA_DOUBLE
+                            cArgs[i] = value as Double
+                        }
+                        org.raku.nqp.dispatch.ArgKind.STR -> {
+                            varargLayouts!![j] = ValueLayout.ADDRESS
+                            cArgs[i] = if (value == null) MemorySegment.NULL
+                                       else NativeSupport.toCString(value as String)
+                        }
+                        org.raku.nqp.dispatch.ArgKind.OBJ -> {
+                            if ((rwBitfield shr i) and 1L == 1L) {
+                                varargLayouts!![j] = ValueLayout.ADDRESS
+                                cArgs[i] = rwVarargToNative(tc, value as SixModelObject?)
+                            }
+                            else {
+                                val (layout, cValue) = varargToNative(tc, value as SixModelObject?)
+                                varargLayouts!![j] = layout
+                                cArgs[i] = cValue
+                            }
+                        }
+                    }
+                    continue
+                }
+                val type = argTypes[i]
+                val value = args[i + 2]
+                cArgs[i] = when (org.raku.nqp.dispatch.ArgKind.ofFlag(descriptor.argFlags[i + 2])) {
+                    org.raku.nqp.dispatch.ArgKind.OBJ -> {
+                        if (i == 0 && type == ArgType.CPPSTRUCT &&
+                                Ops.isconcrete(value as SixModelObject?, tc) == 0L) {
+                            /* A C++ constructor: allocate the struct (THIS)
+                             * to hand to the callee, and return it after. */
+                            val struct = returns.st.REPR.allocate(tc, returns.st) as CPPStructInstance
+                            cppstruct = struct
+                            struct.storage
+                        }
+                        else
+                            toNativeType(tc, value as SixModelObject?, type, call.argInfo!![i])
+                    }
+                    org.raku.nqp.dispatch.ArgKind.INT,
+                    org.raku.nqp.dispatch.ArgKind.UINT -> intToNative(tc, value as Long, type)
+                    org.raku.nqp.dispatch.ArgKind.NUM -> numToNative(tc, value as Double, type)
+                    org.raku.nqp.dispatch.ArgKind.STR -> strToNative(tc, value as String?, type)
+                }
+                /* C wants to see a null pointer, not a Java null. */
+                if (cArgs[i] == null && isPointerType(type))
+                    cArgs[i] = MemorySegment.NULL
+            }
+
+            if (cppstruct != null) {
+                /* Calling a C++ constructor: hand back the invocant (THIS). */
+                ctorHandle(tc, call).invokeWithArguments(*cArgs)
+                return org.raku.nqp.dispatch.DispatchValue(org.raku.nqp.dispatch.ArgKind.OBJ,
+                    toNQPType(tc, call.retType, returns, cppstruct.storage))
+            }
+
+            val handle =
+                if (isVariadic) {
+                    @Suppress("UNCHECKED_CAST")
+                    variadicHandle(tc, call, varargLayouts!! as Array<MemoryLayout>)
+                }
+                else call.handle!!
+            val returned = handle.invokeWithArguments(*cArgs)
+
+            /* Only an object argument can carry an 'is rw' reference or an
+             * array for the callee to write into. */
+            for (i in 0 until argTypes.size)
+                if (org.raku.nqp.dispatch.ArgKind.ofFlag(descriptor.argFlags[i + 2]) ==
+                        org.raku.nqp.dispatch.ArgKind.OBJ)
+                    writeBackRW(tc, args[i + 2] as SixModelObject?,
+                        cArgs[i] as? MemorySegment, argTypes[i])
+            /* And propagate what the callee wrote through the pointers the
+             * bitfield asked for. */
+            for (i in argTypes.size until n)
+                if ((rwBitfield shr i) and 1L == 1L)
+                    rwVarargWriteBack(tc, args[i + 2] as SixModelObject?,
+                        cArgs[i] as MemorySegment)
+
+            return org.raku.nqp.dispatch.DispatchValue(org.raku.nqp.dispatch.ArgKind.OBJ,
+                toNQPType(tc, call.retType, returns, returned))
+        }
+        catch (e: ControlException) {
+            throw e
+        }
+        catch (t: Throwable) {
+            throw ExceptionHandling.dieInternal(tc, t)
+        }
+    }
+
+    /** A variadic pass-by-pointer argument: the value the reference holds,
+     * in freshly allocated C storage for the callee to read and write. A
+     * full 8-byte slot regardless of the referenced width: little-endian
+     * reads of a narrower type see the right bytes, matching how the
+     * value-side promotions widen everything to 8 bytes as well. */
+    private fun rwVarargToNative(tc: ThreadContext, v: SixModelObject?): MemorySegment {
+        val m = NativeSupport.allocate(8)
+        if (Ops.iscont_i(v) != 0L || Ops.iscont_u(v) != 0L)
+            m.set(ValueLayout.JAVA_LONG, 0, (v as NativeRefInstance).fetch_i(tc))
+        else if (Ops.iscont_n(v) != 0L)
+            m.set(ValueLayout.JAVA_DOUBLE, 0, (v as NativeRefInstance).fetch_n(tc))
+        else
+            throw ExceptionHandling.dieInternal(tc,
+                "Can only pass a native reference by pointer in a variadic native call")
+        return m
+    }
+
+    /** Writes what the callee left in a pass-by-pointer variadic argument's
+     * storage back through the reference it came from. */
+    private fun rwVarargWriteBack(tc: ThreadContext, v: SixModelObject?, m: MemorySegment) {
+        if (Ops.iscont_i(v) != 0L || Ops.iscont_u(v) != 0L)
+            (v as NativeRefInstance).store_i(tc, m.get(ValueLayout.JAVA_LONG, 0))
+        else if (Ops.iscont_n(v) != 0L)
+            (v as NativeRefInstance).store_n(tc, m.get(ValueLayout.JAVA_DOUBLE, 0))
+    }
+
+    /** An object variadic argument, marshalled by what it is rather than by
+     * a declared parameter type (a variadic parameter has none): its C type
+     * and the value to pass, promoted the way C's default argument
+     * promotions would. */
+    private fun varargToNative(tc: ThreadContext, v0: SixModelObject?): Pair<MemoryLayout, Any> {
+        val v = Ops.decont(v0, tc)
+        if (v == null || Ops.isconcrete(v, tc) == 0L)
+            return Pair(ValueLayout.ADDRESS, MemorySegment.NULL)
+        return when (v) {
+            is CPointerInstance -> Pair(ValueLayout.ADDRESS, v.pointer ?: MemorySegment.NULL)
+            is CArrayInstance -> Pair(ValueLayout.ADDRESS, v.storage!!)
+            is CPPStructInstance -> Pair(ValueLayout.ADDRESS, v.storage!!)
+            is CStructInstance -> Pair(ValueLayout.ADDRESS, v.storage!!)
+            is CUnionInstance -> Pair(ValueLayout.ADDRESS, v.storage!!)
+            is CStrInstance -> Pair(ValueLayout.ADDRESS, v.cstr ?: MemorySegment.NULL)
+            else -> {
+                val spec = v.st.REPR.get_storage_spec(tc, v.st)
+                when {
+                    spec.canBox.contains(Boxable.INT) ->
+                        Pair(ValueLayout.JAVA_LONG, v.get_int(tc))
+                    spec.canBox.contains(Boxable.NUM) ->
+                        Pair(ValueLayout.JAVA_DOUBLE, v.get_num(tc))
+                    spec.canBox.contains(Boxable.STR) ->
+                        Pair(ValueLayout.ADDRESS, NativeSupport.toCString(v.get_str(tc)))
+                    else -> throw ExceptionHandling.dieInternal(tc,
+                        "Don't know how to pass a ${Ops.typeName(v, tc)} as a variadic native call argument")
+                }
+            }
+        }
+    }
+
+    /** The downcall handle for one variadic shape of a call site. */
+    private fun variadicHandle(tc: ThreadContext, call: NativeCallBody,
+                               layouts: Array<MemoryLayout>): MethodHandle {
+        var handles = call.variadicHandles
+        if (handles == null) {
+            handles = java.util.concurrent.ConcurrentHashMap()
+            call.variadicHandles = handles
+        }
+        val key = layouts.joinToString("|") { it.toString() }
+        return handles.getOrPut(key) {
+            NativeSupport.LINKER.downcallHandle(call.entryPoint,
+                descriptorFor(tc, call.retType!!, call.argTypes!!)
+                    .appendArgumentLayouts(*layouts),
+                Linker.Option.firstVariadicArg(call.argTypes!!.size))
+        }
+    }
+
+    /** A native int dispatch value, converted for a C parameter type. */
+    private fun intToNative(tc: ThreadContext, value: Long, target: ArgType?): Any? =
+        when (target) {
+            ArgType.CHAR, ArgType.UCHAR -> value.toByte()
+            ArgType.SHORT, ArgType.USHORT -> value.toShort()
+            ArgType.INT, ArgType.UINT -> value.toInt()
+            ArgType.LONG, ArgType.ULONG -> cLong(value)
+            ArgType.LONGLONG, ArgType.ULONGLONG -> value
+            /* An Int-typed argument for a pointer parameter carries the
+             * address itself; the marshalling dispatcher unboxes CPointers
+             * to native ints the same way. */
+            ArgType.CPOINTER ->
+                if (value == 0L) MemorySegment.NULL else NativeSupport.pointer(value)
+            /* An undefined Str argument reaches us as a literal int 0: the
+             * dispatch program cannot track a value that is not there. */
+            ArgType.ASCIISTR, ArgType.UTF8STR, ArgType.UTF16STR ->
+                if (value == 0L) MemorySegment.NULL
+                else throw ExceptionHandling.dieInternal(tc,
+                    "A non-zero native int argument cannot be passed for a $target native parameter")
+            else -> throw ExceptionHandling.dieInternal(tc,
+                "A native int argument cannot be passed for a $target native parameter")
+        }
+
+    /** A native num dispatch value, converted for a C parameter type. */
+    private fun numToNative(tc: ThreadContext, value: Double, target: ArgType?): Any? =
+        when (target) {
+            ArgType.FLOAT -> value.toFloat()
+            ArgType.DOUBLE -> value
+            else -> throw ExceptionHandling.dieInternal(tc,
+                "A native num argument cannot be passed for a $target native parameter")
+        }
+
+    /** A native str dispatch value, converted for a C parameter type. */
+    private fun strToNative(tc: ThreadContext, value: String?, target: ArgType?): Any? =
+        when (target) {
+            /* TODO: Handle encodings, as toNativeType. */
+            ArgType.ASCIISTR, ArgType.UTF8STR, ArgType.UTF16STR ->
+                if (value == null) null else NativeSupport.toCString(value)
+            else -> throw ExceptionHandling.dieInternal(tc,
+                "A native str argument cannot be passed for a $target native parameter")
+        }
 
     @JvmStatic
     fun refresh(obj: SixModelObject?, tc: ThreadContext): Long {
@@ -217,21 +476,21 @@ object NativeCallOps {
     }
 
     @JvmStatic
-    fun nativecallglobal(libname: String?, symbol: String, target_spec: SixModelObject, target_type: SixModelObject, tc: ThreadContext): SixModelObject? {
+    fun nativecallglobal(libname: String?, symbol: String, targetSpec: SixModelObject, targetType: SixModelObject, tc: ThreadContext): SixModelObject? {
         try {
             /* Load the library and locate the symbol. */
             /* TODO: Error handling! */
-            var entry_point = NativeSupport.unbounded(
+            var entryPoint = NativeSupport.unbounded(
                 NativeSupport.libraryLookup(libname).find(symbol).orElseThrow {
                     UnsatisfiedLinkError("Cannot find symbol '$symbol'"
                         + (if (libname.isNullOrEmpty()) " in the running process" else " in library '$libname'"))
                 })
 
-            val ss = target_spec.st.REPR.get_storage_spec(tc, target_spec.st)
+            val ss = targetSpec.st.REPR.get_storage_spec(tc, targetSpec.st)
             if (ss.boxedPrimitive == BoxedPrimitive.STR)
-                entry_point = NativeSupport.unbounded(entry_point!!.get(ValueLayout.ADDRESS, 0))
+                entryPoint = NativeSupport.unbounded(entryPoint!!.get(ValueLayout.ADDRESS, 0))
 
-            return castNativeCall(tc, target_spec, target_type, entry_point)
+            return castNativeCall(tc, targetSpec, targetType, entryPoint)
         }
         catch (t: Throwable) {
             throw ExceptionHandling.dieInternal(tc, t)
@@ -268,7 +527,7 @@ object NativeCallOps {
     }
 
     @JvmStatic
-    fun nativecallcast(target_spec: SixModelObject, target_type: SixModelObject, source: SixModelObject, tc: ThreadContext): SixModelObject? {
+    fun nativecallcast(targetSpec: SixModelObject, targetType: SixModelObject, source: SixModelObject, tc: ThreadContext): SixModelObject? {
         var o: MemorySegment? = null
 
         if (source is CPointerInstance) {
@@ -296,17 +555,17 @@ object NativeCallOps {
             }
         }
 
-        return castNativeCall(tc, target_spec, target_type, o)
+        return castNativeCall(tc, targetSpec, targetType, o)
     }
 
     @JvmStatic
-    fun castNativeCall(tc: ThreadContext, target_spec: SixModelObject, target_type: SixModelObject, from: MemorySegment?): SixModelObject? {
+    fun castNativeCall(tc: ThreadContext, targetSpec: SixModelObject, targetType: SixModelObject, from: MemorySegment?): SixModelObject? {
         val o = NativeSupport.unbounded(from)
         if (o == null)
-            return target_type
+            return targetType
 
-        val nqpobj = target_type.st.REPR.allocate(tc, target_type.st)
-        val ss = target_spec.st.REPR.get_storage_spec(tc, target_spec.st)
+        val nqpobj = targetType.st.REPR.allocate(tc, targetType.st)
+        val ss = targetSpec.st.REPR.get_storage_spec(tc, targetSpec.st)
 
         when (ss.boxedPrimitive) {
             BoxedPrimitive.INT, BoxedPrimitive.UINT ->
@@ -331,7 +590,7 @@ object NativeCallOps {
                 /* TODO: Handle encodings. */
                 nqpobj.set_str(tc, o.getString(0))
             else -> {
-                if (target_type is CStrInstance) {
+                if (targetType is CStrInstance) {
                     /* TODO: Handle encodings. */
                     nqpobj.set_str(tc, o.getString(0))
                 }
@@ -343,7 +602,7 @@ object NativeCallOps {
                     nqpobj.managed = false
                 }
                 else if (nqpobj is CTypeInstance) {
-                    nqpobj.storage = sizedAs(target_type, o)
+                    nqpobj.storage = sizedAs(targetType, o)
                 }
                 else {
                     throw ExceptionHandling.dieInternal(tc,
@@ -411,11 +670,11 @@ object NativeCallOps {
     }
 
     private fun ctorHandle(tc: ThreadContext, call: NativeCallBody): MethodHandle {
-        var handle = call.ctor_handle
+        var handle = call.ctorHandle
         if (handle == null) {
-            handle = NativeSupport.LINKER.downcallHandle(call.entry_point,
-                descriptorFor(tc, ArgType.VOID, call.arg_types!!))
-            call.ctor_handle = handle
+            handle = NativeSupport.LINKER.downcallHandle(call.entryPoint,
+                descriptorFor(tc, ArgType.VOID, call.argTypes!!))
+            call.ctorHandle = handle
         }
         return handle
     }
@@ -550,7 +809,7 @@ object NativeCallOps {
             return vmarrayToNative(tc, v!!)
         }
         ArgType.CHAR_RW, ArgType.UCHAR_RW -> {
-            if (Ops.iscont_i(v) == 0L)
+            if (Ops.iscont_i(v) == 0L && Ops.iscont_u(v) == 0L)
                 throw ExceptionHandling.dieInternal(tc,
                     String.format("Native call expected argument that references a native integer, but got %s", v))
             val m = NativeSupport.allocate(1)
@@ -558,7 +817,7 @@ object NativeCallOps {
             return m
         }
         ArgType.SHORT_RW, ArgType.USHORT_RW -> {
-            if (Ops.iscont_i(v) == 0L)
+            if (Ops.iscont_i(v) == 0L && Ops.iscont_u(v) == 0L)
                 throw ExceptionHandling.dieInternal(tc,
                     String.format("Native call expected argument that references a native integer, but got %s", v))
             val m = NativeSupport.allocate(2)
@@ -566,7 +825,7 @@ object NativeCallOps {
             return m
         }
         ArgType.INT_RW, ArgType.UINT_RW -> {
-            if (Ops.iscont_i(v) == 0L)
+            if (Ops.iscont_i(v) == 0L && Ops.iscont_u(v) == 0L)
                 throw ExceptionHandling.dieInternal(tc,
                     String.format("Native call expected argument that references a native integer, but got %s", v))
             val m = NativeSupport.allocate(4)
@@ -574,7 +833,7 @@ object NativeCallOps {
             return m
         }
         ArgType.LONG_RW, ArgType.ULONG_RW -> {
-            if (Ops.iscont_i(v) == 0L)
+            if (Ops.iscont_i(v) == 0L && Ops.iscont_u(v) == 0L)
                 throw ExceptionHandling.dieInternal(tc,
                     String.format("Native call expected argument that references a native integer, but got %s", v))
             val m = NativeSupport.allocate(NativeSupport.C_LONG_SIZE.toLong())
@@ -584,7 +843,7 @@ object NativeCallOps {
             return m
         }
         ArgType.LONGLONG_RW, ArgType.ULONGLONG_RW -> {
-            if (Ops.iscont_i(v) == 0L)
+            if (Ops.iscont_i(v) == 0L && Ops.iscont_u(v) == 0L)
                 throw ExceptionHandling.dieInternal(tc,
                     String.format("Native call expected argument that references a native integer, but got %s", v))
             val m = NativeSupport.allocate(8)
@@ -734,18 +993,18 @@ object NativeCallOps {
     }
 
     private fun getArgType(tc: ThreadContext, info: SixModelObject, isReturn: Boolean): ArgType {
-        var type_name = info.at_key_boxed(tc, "type")!!.get_str(tc)!!
+        var typeName = info.at_key_boxed(tc, "type")!!.get_str(tc)!!
 
         val rw = info.at_key_boxed(tc, "rw")
         if (rw != null && rw.get_int(tc) == 1L)
-            type_name += "_RW"
+            typeName += "_RW"
 
         var type = ArgType.VOID
         try {
-            type = java.lang.Enum.valueOf(ArgType::class.java, type_name.uppercase())
+            type = java.lang.Enum.valueOf(ArgType::class.java, typeName.uppercase())
         }
         catch (e: IllegalArgumentException) {
-            throw ExceptionHandling.dieInternal(tc, String.format("Unknown type '%s' used for native call", type_name))
+            throw ExceptionHandling.dieInternal(tc, String.format("Unknown type '%s' used for native call", typeName))
         }
 
         if (!isReturn && type == ArgType.VOID) {
@@ -836,10 +1095,10 @@ object NativeCallOps {
          * items are the argument types. We collect the data needed when it's
          * time to call back into NQP: type objects for argument and return
          * types, and the ArgTypes for all of them. */
-        val num_info = infos.elems(tc).toInt()
-        val argumentTypes = arrayOfNulls<SixModelObject>(num_info - 1)
-        val argumentInfo = arrayOfNulls<ArgType>(num_info - 1)
-        for (i in 1 until num_info) {
+        val numInfo = infos.elems(tc).toInt()
+        val argumentTypes = arrayOfNulls<SixModelObject>(numInfo - 1)
+        val argumentInfo = arrayOfNulls<ArgType>(numInfo - 1)
+        for (i in 1 until numInfo) {
             val info = infos.at_pos_boxed(tc, i.toLong())!!
             argumentTypes[i - 1] = info.at_key_boxed(tc, "typeobj")
             argumentInfo[i - 1] = getArgType(tc, info, false)
@@ -852,7 +1111,7 @@ object NativeCallOps {
         val handler = CallbackHandler(tc.gc, function, returnInfo, argumentTypes, argumentInfo as Array<ArgType>)
         val descriptor = descriptorFor(tc, returnInfo, argumentInfo as Array<ArgType>)
         val target = CALL_FUNCTION.bindTo(handler)
-            .asCollector(Array<Any?>::class.java, num_info - 1)
+            .asCollector(Array<Any?>::class.java, numInfo - 1)
             .asType(descriptor.toMethodType())
 
         val stub = NativeSupport.LINKER.upcallStub(target, descriptor, Arena.ofAuto())

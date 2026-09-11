@@ -369,7 +369,18 @@ class HLL::Compiler does HLL::Backend::Default {
                 my $message := nqp::getmessage($error);
                 my $payload := nqp::getpayload($error);
                 if nqp::isnull_s($message) && nqp::can($payload, 'message') {
-                    $message := $payload.message;
+                    # Rendering the message runs high-level code, which can
+                    # itself fail; that failure must not take the actual
+                    # error's origin with it.
+                    my int $rendered := 0;
+                    try {
+                        $message := $payload.message;
+                        $rendered := 1;
+                    }
+                    unless $rendered {
+                        $message := "(message unavailable: rendering it failed; payload type "
+                            ~ $payload.HOW.name($payload) ~ ")";
+                    }
                 }
                 $err.say($message);
                 $err.say(nqp::join("\n", nqp::backtracestrings($error)));

@@ -18,4 +18,10 @@ annotation class CodeRefAnnotation(
     val hasExitHandler: Boolean = false,
     val argsExpectation: Short = 0,
     val isThunk: Boolean = false,
+    val sourceFile: String = "",
+    val sourceLine: Int = -1,
+    val sourceLineDelta: Int = 0,
+    val sourceSectionRaw: IntArray = [],
+    val sourceSectionLine: IntArray = [],
+    val sourceSectionFile: Array<String> = [],
 )

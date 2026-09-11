@@ -97,6 +97,22 @@ class KnowHOWMethods : CompilationUnit() {
         }
     }
 
+    fun find_method(tc: ThreadContext, cr: CodeRef, csd0: CallSiteDescriptor, args0: Array<Any?>) {
+        val cf = CallFrame(tc, cr)
+        try {
+            val csd = Ops.checkarity(cf, csd0, args0, 3, 3)
+            val args = tc.flatArgs!!
+            val self = Ops.posparam_o(cf, csd, args, 0)
+            val name = Ops.posparam_s(cf, csd, args, 2)
+            if (Ops.isnull(self) == 1L || self !is KnowHOWREPRInstance)
+                throw ExceptionHandling.dieInternal(tc, "KnowHOW methods must be called on object instance with REPR KnowHOWREPR")
+            Ops.return_o(self.methods!![name!!] ?: Ops.createNull(tc), cf)
+        }
+        finally {
+            cf.leave()
+        }
+    }
+
     fun compose(tc: ThreadContext, cr: CodeRef, csd0: CallSiteDescriptor, args0: Array<Any?>) {
         val cf = CallFrame(tc, cr)
         try {
@@ -136,7 +152,7 @@ class KnowHOWMethods : CompilationUnit() {
                 nameObj.set_str(tc, attribute.name)
                 attrInfo.bind_key_boxed(tc, "name", nameObj)
                 attrInfo.bind_key_boxed(tc, "type", attribute.type)
-                if (attribute.box_target != 0) {
+                if (attribute.boxTarget != 0) {
                     /* Merely having the key serves as a "yes". */
                     attrInfo.bind_key_boxed(tc, "box_target", attrInfo)
                 }
@@ -233,7 +249,7 @@ class KnowHOWMethods : CompilationUnit() {
             /* Populate it. */
             obj.name = nameArg
             obj.type = if (Ops.isnull(typeArg) == 0L) typeArg else tc.gc.KnowHOW
-            obj.box_target = if (btArg == 0L) 0 else 1
+            obj.boxTarget = if (btArg == 0L) 0 else 1
 
             /* Return produced object. */
             Ops.return_o(obj, cf)
@@ -288,7 +304,7 @@ class KnowHOWMethods : CompilationUnit() {
             val csd = Ops.checkarity(cf, csd0, args0, 1, 1)
             val args = tc.flatArgs!!
             val self = Ops.posparam_o(cf, csd, args, 0)
-            Ops.return_i((self as KnowHOWAttributeInstance).box_target.toLong(), cf)
+            Ops.return_i((self as KnowHOWAttributeInstance).boxTarget.toLong(), cf)
         }
         finally {
             cf.leave()
@@ -296,7 +312,7 @@ class KnowHOWMethods : CompilationUnit() {
     }
 
     override fun getCodeRefs(): Array<CodeRef> {
-        val refs = arrayOfNulls<CodeRef>(12)  // every slot is filled below
+        val refs = arrayOfNulls<CodeRef>(13)  // every slot is filled below
         val snull: Array<String>? = null
         val hnull = arrayOf<LongArray>()
         val mt = MethodType.methodType(Void.TYPE, ThreadContext::class.java,
@@ -327,6 +343,8 @@ class KnowHOWMethods : CompilationUnit() {
                 "type", "attr_type", snull, snull, snull, snull, hnull, 0.toShort())
             refs[11] = CodeRef(this, l.findVirtual(KnowHOWMethods::class.java, "attr_box_target", mt).bindTo(this),
                 "box_target", "attr_box_target", snull, snull, snull, snull, hnull, 0.toShort())
+            refs[12] = CodeRef(this, l.findVirtual(KnowHOWMethods::class.java, "find_method", mt).bindTo(this),
+                "find_method", "find_method", snull, snull, snull, snull, hnull, 0.toShort())
         }
         catch (e: Exception) {
             throw RuntimeException(e)

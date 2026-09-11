@@ -42,6 +42,13 @@ class HLLConfig {
     /** The type to use for slurpy hashes. */
     @JvmField var slurpyHashType: SixModelObject? = null
 
+    /**
+     * Invoked with a capture of the arguments when binding a parameter fails
+     * and no dispatch asked to resume on that. The language uses it to report
+     * the failure in its own terms; without one the failure is a plain error.
+     */
+    @JvmField var bindError: SixModelObject? = null
+
     /** The type to use for array iteration (should have VMIter REPR). */
     @JvmField var arrayIteratorType: SixModelObject? = null
 
@@ -95,4 +102,17 @@ class HLLConfig {
     @JvmField var uintMultidimRef: SixModelObject? = null
     @JvmField var numMultidimRef: SixModelObject? = null
     @JvmField var strMultidimRef: SixModelObject? = null
+
+    /* The dispatchers this language wants the language-sensitive boot
+     * dispatchers to hand over to, by name. */
+    @JvmField var callDispatcher: String? = null
+    @JvmField var methodCallDispatcher: String? = null
+    @JvmField var findMethodDispatcher: String? = null
+    @JvmField var hllizeDispatcher: String? = null
+    @JvmField var istypeDispatcher: String? = null
+    @JvmField var isinvokableDispatcher: String? = null
+    @JvmField var resumeErrorDispatcher: String? = null
+
+    /* Invoked when a method is not found, in place of throwing. */
+    @JvmField var methodNotFoundError: SixModelObject? = null
 }

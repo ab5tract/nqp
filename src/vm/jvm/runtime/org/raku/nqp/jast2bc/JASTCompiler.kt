@@ -113,6 +113,19 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
                     jos.write(digest)
                     jos.closeEntry()
 
+                    /* Nested units (EVALs run while this unit compiled)
+                     * whose code refs the serialization points into ride
+                     * along, to be loaded back by jvmclaimnested. */
+                    for (nestedName in c.nestedClassNames) {
+                        val nestedBytes = tc.gc.inMemoryUnitBytes[nestedName]
+                            ?: throw RuntimeException(
+                                "No retained classfile for nested unit " + nestedName)
+                        val jen = JarEntry(nestedName + ".class")
+                        jos.putNextEntry(jen)
+                        jos.write(nestedBytes)
+                        jos.closeEntry()
+                    }
+
                     jos.close()
                 }
             }
@@ -197,6 +210,7 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
 
         c.name = jastClass.className
         c.serialized = jastClass.serialized
+        c.nestedClassNames = jastClass.nestedClasses
 
         val className = jastClass.className!!.replace('.', '/')
         val superName = jastClass.superName!!.replace('.', '/')
@@ -300,6 +314,27 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
             if (method.hasExitHandler) av.visit("hasExitHandler", method.hasExitHandler)
             if (method.argsExpectation > 0) av.visit("argsExpectation", method.argsExpectation)
             if (method.isThunk) av.visit("isThunk", method.isThunk)
+            method.crFile?.let {
+                av.visit("sourceFile", it)
+                av.visit("sourceLine", method.crLine)
+                /* Stored as a delta: it is constant per #line-directive
+                 * section, so the constant pool interns a handful of values
+                 * rather than one integer per method (which overflowed the
+                 * setting's 64K pool), and zero -- every non-directive file
+                 * -- costs nothing at all. */
+                val delta = method.crRawLine - method.crLine
+                if (delta != 0) av.visit("sourceLineDelta", delta)
+                /* Intra-body directive sections; rare, so the extra pool
+                 * entries stay negligible (files intern, ints are small). */
+                method.crSectionRaw?.let { raws ->
+                    av.visit("sourceSectionRaw", raws)
+                    av.visit("sourceSectionLine", method.crSectionLine)
+                    val avSect = av.visitArray("sourceSectionFile")
+                    for (f in method.crSectionFile!!)
+                        avSect.visit(null, f)
+                    avSect.visitEnd()
+                }
+            }
             av.visitEnd()
         }
 
@@ -327,7 +362,13 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
                 throw Exception(e.key + " used but not defined in " + method.name)
         }
 
-        m.visitMaxs(0, 0)
+        try {
+            m.visitMaxs(0, 0)
+        }
+        catch (e: Exception) {
+            throw Exception("Bytecode assembly failed for method '" +
+                method.crName + "' (" + method.name + ") in " + className, e)
+        }
         m.visitEnd()
     }
 
@@ -358,7 +399,27 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
         }
         else if (Ops.istype(insn, jastPushS, tc) != 0L) {
             val value = Ops.getattr_s(insn, jastPushS, "\$!value", 0, tc)
-            m.visitLdcInsn(value)
+            /* A constant-pool Utf8 entry's length is a u2 in bytes; a bigger
+             * string literal is pushed in pieces and concatenated. */
+            if (value != null && value.length > 16000 &&
+                    value.toByteArray(Charsets.UTF_8).size > 60000) {
+                if (System.getenv("NQP_DISPATCH_DEBUG") != null)
+                    System.err.println("[big-sval] " + value.length + " chars, starts: '" +
+                        value.substring(0, 80).replace('\n', ' ') + "'")
+                var i = 0
+                var first = true
+                while (i < value.length) {
+                    val end = minOf(i + 16000, value.length)
+                    m.visitLdcInsn(value.substring(i, end))
+                    if (!first)
+                        m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String",
+                            "concat", "(Ljava/lang/String;)Ljava/lang/String;", false)
+                    first = false
+                    i = end
+                }
+            }
+            else
+                m.visitLdcInsn(value)
         }
         else if (Ops.istype(insn, jastPushC, tc) != 0L) {
             val value = Type.getType(Ops.getattr_s(insn, jastPushC, "\$!value", 0, tc))
@@ -377,21 +438,21 @@ class JASTCompiler private constructor(jastNodes: SixModelObject, tc: ThreadCont
             }
             // bandaid for rakudo: reduce number of constant pool entries
             else if (value > java.lang.Short.MAX_VALUE) {
-                var value_remain = value - java.lang.Short.MAX_VALUE
+                var valueRemain = value - java.lang.Short.MAX_VALUE
                 m.visitIntInsn(Opcodes.SIPUSH, java.lang.Short.MAX_VALUE.toInt())
-                while (value_remain > java.lang.Short.MAX_VALUE) {
-                    value_remain = value_remain - java.lang.Short.MAX_VALUE
+                while (valueRemain > java.lang.Short.MAX_VALUE) {
+                    valueRemain = valueRemain - java.lang.Short.MAX_VALUE
                     m.visitIntInsn(Opcodes.SIPUSH, java.lang.Short.MAX_VALUE.toInt())
                     m.visitInsn(Opcodes.IADD)
                 }
-                if (value_remain <= 5) {
-                    m.visitInsn(Opcodes.ICONST_0 + value_remain)
+                if (valueRemain <= 5) {
+                    m.visitInsn(Opcodes.ICONST_0 + valueRemain)
                 }
-                else if (value_remain <= java.lang.Byte.MAX_VALUE) {
-                    m.visitIntInsn(Opcodes.BIPUSH, value_remain)
+                else if (valueRemain <= java.lang.Byte.MAX_VALUE) {
+                    m.visitIntInsn(Opcodes.BIPUSH, valueRemain)
                 }
                 else {
-                    m.visitIntInsn(Opcodes.SIPUSH, value_remain)
+                    m.visitIntInsn(Opcodes.SIPUSH, valueRemain)
                 }
                 m.visitInsn(Opcodes.IADD)
             }

@@ -86,9 +86,9 @@ class P6Opaque : REPR() {
         return st.WHAT
     }
 
-    override fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {
+    override fun compose(tc: ThreadContext, st: STable, reprInfo: SixModelObject) {
         /* Get attribute part of the protocol from the hash. */
-        val attr_info = repr_info.at_key_boxed(tc, "attribute")!!
+        val attrInfo = reprInfo.at_key_boxed(tc, "attribute")!!
 
         /* Go through MRO and find all classes with attributes and build up
          * mapping info hashes. Note, reverse order so indexes will match
@@ -101,9 +101,9 @@ class P6Opaque : REPR() {
         val flattenedSTables = ArrayList<STable?>()
         val attrInfoList = ArrayList<AttrInfo>()
         val reprData = st.REPRData as P6OpaqueREPRData
-        val mroLength = attr_info.elems(tc)
+        val mroLength = attrInfo.elems(tc)
         for (i in mroLength - 1 downTo 0) {
-            val entry = attr_info.at_pos_boxed(tc, i)!!
+            val entry = attrInfo.at_pos_boxed(tc, i)!!
             val type = entry.at_pos_boxed(tc, 0)!!
             val attrs = entry.at_pos_boxed(tc, 1)!!
             val parents = entry.at_pos_boxed(tc, 2)!!
@@ -201,7 +201,7 @@ class P6Opaque : REPR() {
         mv.visitJumpInsn(Opcodes.IFEQ, label)
 
         mv.visitVarInsn(Opcodes.ALOAD, 1) // tc
-        mv.visitVarInsn(Opcodes.ALOAD, 2) // class_handle
+        mv.visitVarInsn(Opcodes.ALOAD, 2) // classHandle
         mv.visitVarInsn(Opcodes.ALOAD, 3) // name
         mv.visitVarInsn(Opcodes.LLOAD, 4) // hint
         if (hasValue)
@@ -719,11 +719,14 @@ class P6Opaque : REPR() {
         return StorageSpec(canBox = canBox)
     }
 
-    override fun hint_for(tc: ThreadContext, st: STable, class_handle: SixModelObject?, name: String?): Long {
-        val rd = st.REPRData as P6OpaqueREPRData
-        val classHandles = rd.classHandles!!
+    override fun hint_for(tc: ThreadContext, st: STable, classHandle: SixModelObject?, name: String?): Long {
+        /* A type that has not been composed yet has no REPR data to look a
+         * hint up in; MoarVM answers NO_HINT there, so we do too and the
+         * access falls back to a by-name lookup at runtime. */
+        val rd = st.REPRData as? P6OpaqueREPRData ?: return STable.NO_HINT
+        val classHandles = rd.classHandles ?: return STable.NO_HINT
         for (i in classHandles.indices) {
-            if (classHandles[i] === class_handle) {
+            if (classHandles[i] === classHandle) {
                 val idx = rd.nameToHintMap!![i].getOrDefault(name, -1)
                 if (idx != -1)
                     return idx.toLong()

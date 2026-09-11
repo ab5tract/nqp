@@ -74,6 +74,7 @@ import org.raku.nqp.io.SocketHandle
 import org.raku.nqp.io.StandardReadHandle
 import org.raku.nqp.io.StandardWriteHandle
 import org.raku.nqp.jast2bc.JASTCompiler
+import org.raku.nqp.dispatch.BindFailure
 import org.raku.nqp.sixmodel.BoolificationSpec
 import org.raku.nqp.sixmodel.Boxable
 import org.raku.nqp.sixmodel.BoxedPrimitive
@@ -104,6 +105,7 @@ import org.raku.nqp.sixmodel.reprs.MultiCacheInstance
 import org.raku.nqp.sixmodel.reprs.NFA
 import org.raku.nqp.sixmodel.reprs.NFAInstance
 import org.raku.nqp.sixmodel.reprs.NFAStateInfo
+import org.raku.nqp.sixmodel.reprs.NativeRefInstance
 import org.raku.nqp.sixmodel.reprs.NativeRefInstanceAttribute
 import org.raku.nqp.sixmodel.reprs.NativeRefInstanceIntLex
 import org.raku.nqp.sixmodel.reprs.NativeRefInstanceMultidim
@@ -562,11 +564,11 @@ object Ops {
 
     @JvmStatic
     fun filereadable(path: String?, tc: ThreadContext): Long {
-        val path_o: Path
+        val pathO: Path
         var res: Long
         try {
-            path_o = Paths.get(path)
-            res = if (Files.isReadable(path_o)) 1 else 0
+            pathO = Paths.get(path)
+            res = if (Files.isReadable(pathO)) 1 else 0
         }
         catch (e: Exception) {
             die_s(e.message, tc)
@@ -577,11 +579,11 @@ object Ops {
 
     @JvmStatic
     fun filewritable(path: String?, tc: ThreadContext): Long {
-        val path_o: Path
+        val pathO: Path
         var res: Long
         try {
-            path_o = Paths.get(path)
-            res = if (Files.isWritable(path_o)) 1 else 0
+            pathO = Paths.get(path)
+            res = if (Files.isWritable(pathO)) 1 else 0
         }
         catch (e: Exception) {
             die_s(e.message, tc)
@@ -592,11 +594,11 @@ object Ops {
 
     @JvmStatic
     fun fileexecutable(path: String?, tc: ThreadContext): Long {
-        val path_o: Path
+        val pathO: Path
         var res: Long
         try {
-            path_o = Paths.get(path)
-            res = if (Files.isExecutable(path_o)) 1 else 0
+            pathO = Paths.get(path)
+            res = if (Files.isExecutable(pathO)) 1 else 0
         }
         catch (e: Exception) {
             die_s(e.message, tc)
@@ -607,11 +609,11 @@ object Ops {
 
     @JvmStatic
     fun fileislink(path: String?, tc: ThreadContext): Long {
-        val path_o: Path
+        val pathO: Path
         var res: Long
         try {
-            path_o = Paths.get(path)
-            res = if (Files.isSymbolicLink(path_o)) 1 else 0
+            pathO = Paths.get(path)
+            res = if (Files.isSymbolicLink(pathO)) 1 else 0
         }
         catch (e: Exception) {
             die_s(e.message, tc)
@@ -881,11 +883,11 @@ object Ops {
 
     @JvmStatic
     fun chmod(path: String?, mode: Long, tc: ThreadContext): Long {
-        val path_o: Path
+        val pathO: Path
         try {
-            path_o = Paths.get(path)
+            pathO = Paths.get(path)
             val perms = modeToPosixFilePermission(mode)
-            Files.setPosixFilePermissions(path_o, perms)
+            Files.setPosixFilePermissions(pathO, perms)
         }
         catch (e: Exception) {
             die_s(IOExceptionMessages.message(e), tc)
@@ -895,11 +897,11 @@ object Ops {
 
     @JvmStatic
     fun chown(path: String?, uid: Long, gid: Long, tc: ThreadContext): Long {
-        val path_o: Path
+        val pathO: Path
         try {
-            path_o = Paths.get(path)
-            Files.setAttribute(path_o, "unix:uid", uid)
-            Files.setAttribute(path_o, "unix:gid", gid)
+            pathO = Paths.get(path)
+            Files.setAttribute(pathO, "unix:uid", uid)
+            Files.setAttribute(pathO, "unix:gid", gid)
         }
         catch (e: Exception) {
             die_s(IOExceptionMessages.message(e), tc)
@@ -909,13 +911,13 @@ object Ops {
 
     @JvmStatic
     fun unlink(path: String?, tc: ThreadContext): Long {
-        val path_o = Paths.get(path)
-        if (Files.isDirectory(path_o)) {
+        val pathO = Paths.get(path)
+        if (Files.isDirectory(pathO)) {
             die_s("Failed to delete file: is a directory", tc)
         }
         else {
             try {
-                Files.deleteIfExists(path_o)
+                Files.deleteIfExists(pathO)
             }
             catch (e: Exception) {
                 die_s(IOExceptionMessages.message(e), tc)
@@ -926,13 +928,13 @@ object Ops {
 
     @JvmStatic
     fun rmdir(path: String?, tc: ThreadContext): Long {
-        val path_o = Paths.get(path)
-        if (!Files.isDirectory(path_o)) {
+        val pathO = Paths.get(path)
+        if (!Files.isDirectory(pathO)) {
             die_s("Failed to rmdir: not a directory", tc)
         }
         else {
             try {
-                Files.delete(path_o)
+                Files.delete(pathO)
             }
             catch (e: Exception) {
                 die_s(IOExceptionMessages.message(e), tc)
@@ -970,10 +972,10 @@ object Ops {
 
     @JvmStatic
     fun rename(before: String?, after: String?, tc: ThreadContext): Long {
-        val before_o = Paths.get(before)
-        val after_o = Paths.get(after)
+        val beforeO = Paths.get(before)
+        val afterO = Paths.get(after)
         try {
-            Files.move(before_o, after_o, StandardCopyOption.REPLACE_EXISTING)
+            Files.move(beforeO, afterO, StandardCopyOption.REPLACE_EXISTING)
         }
         catch (e: Exception) {
             die_s(IOExceptionMessages.message(e), tc)
@@ -983,10 +985,10 @@ object Ops {
 
     @JvmStatic
     fun copy(before: String?, after: String?, tc: ThreadContext): Long {
-        val before_o = Paths.get(before)
-        val after_o = Paths.get(after)
+        val beforeO = Paths.get(before)
+        val afterO = Paths.get(after)
         try {
-            Files.copy(before_o, after_o, StandardCopyOption.REPLACE_EXISTING)
+            Files.copy(beforeO, afterO, StandardCopyOption.REPLACE_EXISTING)
         }
         catch (e: Exception) {
             die_s(IOExceptionMessages.message(e), tc)
@@ -996,10 +998,10 @@ object Ops {
 
     @JvmStatic
     fun link(before: String?, after: String?, tc: ThreadContext): Long {
-        val before_o = Paths.get(before)
-        val after_o = Paths.get(after)
+        val beforeO = Paths.get(before)
+        val afterO = Paths.get(after)
         try {
-            Files.createLink(after_o, before_o)
+            Files.createLink(afterO, beforeO)
         }
         catch (e: Exception) {
             die_s(IOExceptionMessages.message(e), tc)
@@ -1072,10 +1074,10 @@ object Ops {
 
     @JvmStatic
     fun symlink(before: String?, after: String?, tc: ThreadContext): Long {
-        val before_o = Paths.get(before)
-        val after_o = Paths.get(after)
+        val beforeO = Paths.get(before)
+        val afterO = Paths.get(after)
         try {
-            Files.createSymbolicLink(after_o, before_o)
+            Files.createSymbolicLink(afterO, beforeO)
         }
         catch (e: Exception) {
             die_s(IOExceptionMessages.message(e), tc)
@@ -1496,6 +1498,21 @@ object Ops {
         ref.idx = idx
         return ref
     }
+    /** Notes the declared width of the lexical a fresh native reference
+     * points at, from the compiler's knowledge: the long slots themselves
+     * are unsized, so a sized store could not truncate without this. The low
+     * byte of the spec is the bit width, +256 marks unsigned, 32 alone marks
+     * num32; 0 never gets here. */
+    @JvmStatic
+    fun sizedref(ref: SixModelObject?, spec: Long, tc: ThreadContext): SixModelObject? {
+        when (ref) {
+            is NativeRefInstanceIntLex -> ref.sizeSpec = spec.toInt()
+            is NativeRefInstanceNumLex -> ref.sizeSpec = spec.toInt()
+            else -> { }
+        }
+        return ref
+    }
+
     @JvmStatic
     fun getlexref_i(name: String, tc: ThreadContext): SixModelObject {
         var cf = tc.curFrame
@@ -1793,6 +1810,22 @@ object Ops {
         }
     }
 
+    /* Worded as MoarVM's arity_fail words it: the message reaches the user
+     * through an unhandled-exception report, and tests read it. */
+    private fun arityFail(got: Int, min: Int, max: Int): String {
+        val problem = if (max != -1 && got > max) "Too many" else "Too few"
+        return when {
+            min == max ->
+                "$problem positionals passed; expected $min argument" +
+                    (if (min == 1) "" else "s") + " but got $got"
+            max == -1 ->
+                "$problem positionals passed; expected at least $min arguments but got only $got"
+            else ->
+                "$problem positionals passed; expected $min " +
+                    (if (min + 1 == max) "or" else "to") + " $max arguments but got $got"
+        }
+    }
+
     /* Invocation arity check. */
     @JvmStatic
     fun checkarity(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, required: Int, accepted: Int): CallSiteDescriptor {
@@ -1803,8 +1836,12 @@ object Ops {
             cf.tc.flatArgs = args
         val positionals = callSite.numPositionals
         if (positionals < required || positionals > accepted && accepted != -1)
-            throw ExceptionHandling.dieInternal(cf.tc, "Wrong number of arguments passed; expected " +
-                required + ".." + accepted + ", but got " + positionals)
+            throw ExceptionHandling.dieInternal(cf.tc, arityFail(positionals, required, accepted))
+        /* Keep the arguments on the frame. A parameter bound here can still
+         * fail a check the HLL wants to report against the original
+         * arguments, and this route is the only place they survive. */
+        cf.csd = callSite
+        cf.args = cf.tc.flatArgs
         return callSite
     }
 
@@ -1837,6 +1874,23 @@ object Ops {
             throw ExceptionHandling.dieInternal(cf.tc, "Expected native int argument, but got num")
         CallSiteDescriptor.ARG_STR ->
             throw ExceptionHandling.dieInternal(cf.tc, "Expected native int argument, but got str")
+        CallSiteDescriptor.ARG_OBJ ->
+            return decont(args[idx] as SixModelObject?, cf.tc)!!.get_int(cf.tc)
+        else ->
+            throw ExceptionHandling.dieInternal(cf.tc, "Error in argument processing")
+        }
+    }
+    @JvmStatic
+    fun posparam_u(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, idx: Int): Long {
+        when (cs.argFlags[idx]) {
+        CallSiteDescriptor.ARG_INT ->
+            return args[idx] as Long
+        CallSiteDescriptor.ARG_UINT ->
+            return args[idx] as Long
+        CallSiteDescriptor.ARG_NUM ->
+            throw ExceptionHandling.dieInternal(cf.tc, "Expected native uint argument, but got num")
+        CallSiteDescriptor.ARG_STR ->
+            throw ExceptionHandling.dieInternal(cf.tc, "Expected native uint argument, but got str")
         CallSiteDescriptor.ARG_OBJ ->
             return decont(args[idx] as SixModelObject?, cf.tc)!!.get_int(cf.tc)
         else ->
@@ -1892,6 +1946,17 @@ object Ops {
     }
     @JvmStatic
     fun posparam_opt_i(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, idx: Int): Long {
+        if (idx < cs.numPositionals) {
+            cf.tc.lastParameterExisted = 1
+            return posparam_i(cf, cs, args, idx)
+        }
+        else {
+            cf.tc.lastParameterExisted = 0
+            return 0
+        }
+    }
+    @JvmStatic
+    fun posparam_opt_u(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, idx: Int): Long {
         if (idx < cs.numPositionals) {
             cf.tc.lastParameterExisted = 1
             return posparam_i(cf, cs, args, idx)
@@ -2001,6 +2066,30 @@ object Ops {
             throw ExceptionHandling.dieInternal(cf.tc, "Required named argument '" + name + "' not passed")
     }
     @JvmStatic
+    fun namedparam_u(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, name: String): Long {
+        if (cf.workingNameMap == null)
+            cf.workingNameMap = Object2IntOpenHashMap<String>(cs.nameMap)
+        if (cf.workingNameMap!!.containsKey(name)) {
+            val lookup = cf.workingNameMap!!.removeInt(name)
+            when ((lookup and 7).toByte()) {
+            CallSiteDescriptor.ARG_INT ->
+                return args[lookup shr 6] as Long
+            CallSiteDescriptor.ARG_UINT ->
+                return args[lookup shr 6] as Long
+            CallSiteDescriptor.ARG_NUM ->
+                throw ExceptionHandling.dieInternal(cf.tc, "Expected native int argument, but got num")
+            CallSiteDescriptor.ARG_STR ->
+                throw ExceptionHandling.dieInternal(cf.tc, "Expected native int argument, but got str")
+            CallSiteDescriptor.ARG_OBJ ->
+                return decont(args[lookup shr 6] as SixModelObject?, cf.tc)!!.get_int(cf.tc)
+            else ->
+                throw ExceptionHandling.dieInternal(cf.tc, "Error in argument processing")
+            }
+        }
+        else
+            throw ExceptionHandling.dieInternal(cf.tc, "Required named argument '" + name + "' not passed")
+    }
+    @JvmStatic
     fun namedparam_n(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, name: String): Double {
         if (cf.workingNameMap == null)
             cf.workingNameMap = Object2IntOpenHashMap<String>(cs.nameMap)
@@ -2079,6 +2168,33 @@ object Ops {
     }
     @JvmStatic
     fun namedparam_opt_i(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, name: String): Long {
+        if (cf.workingNameMap == null)
+            cf.workingNameMap = Object2IntOpenHashMap<String>(cs.nameMap)
+        if (cf.workingNameMap!!.containsKey(name)) {
+            val lookup = cf.workingNameMap!!.removeInt(name)
+            cf.tc.lastParameterExisted = 1
+            when ((lookup and 7).toByte()) {
+            CallSiteDescriptor.ARG_INT ->
+                return args[lookup shr 6] as Long
+            CallSiteDescriptor.ARG_UINT ->
+                return args[lookup shr 6] as Long
+            CallSiteDescriptor.ARG_NUM ->
+                throw ExceptionHandling.dieInternal(cf.tc, "Expected native int argument, but got num")
+            CallSiteDescriptor.ARG_STR ->
+                throw ExceptionHandling.dieInternal(cf.tc, "Expected native int argument, but got str")
+            CallSiteDescriptor.ARG_OBJ ->
+                return decont(args[lookup shr 6] as SixModelObject?, cf.tc)!!.get_int(cf.tc)
+            else ->
+                throw ExceptionHandling.dieInternal(cf.tc, "Error in argument processing")
+            }
+        }
+        else {
+            cf.tc.lastParameterExisted = 0
+            return 0
+        }
+    }
+    @JvmStatic
+    fun namedparam_opt_u(cf: CallFrame, cs: CallSiteDescriptor, args: Array<Any?>, name: String): Long {
         if (cf.workingNameMap == null)
             cf.workingNameMap = Object2IntOpenHashMap<String>(cs.nameMap)
         if (cf.workingNameMap!!.containsKey(name)) {
@@ -2267,7 +2383,9 @@ object Ops {
             CallFrame.RET_STR ->
                 return coerce_s2i(cf.sRet)
             else ->
-                return unbox_i(cf.oRet, cf.tc)
+                /* Unsigned: the wider reading, or a value that only an
+                 * unsigned native can hold is rejected on its way into one. */
+                return unbox_u(cf.oRet, cf.tc)
         }
     }
     @JvmStatic
@@ -2324,7 +2442,7 @@ object Ops {
     fun captureposarg(obj: SixModelObject?, idx: Long, tc: ThreadContext): SixModelObject? {
         if (obj is CallCaptureInstance) {
             val i = idx.toInt()
-            when (obj.descriptor!!.argFlags[i]) {
+            when (argType(obj.descriptor!!.argFlags[i])) {
             CallSiteDescriptor.ARG_OBJ ->
                 return obj.args!![i] as SixModelObject?
             CallSiteDescriptor.ARG_INT ->
@@ -2468,10 +2586,20 @@ object Ops {
             throw ExceptionHandling.dieInternal(tc, "capturehasnameds requires a CallCapture")
         }
     }
+    /**
+     * The type an argument flag names, with the named and flat bits taken off.
+     * A capture is indexed across all its arguments, positional and named
+     * alike, and a named one carries those bits alongside its type.
+     */
+    @JvmStatic
+    fun argType(flag: Byte): Byte =
+        (flag.toInt() and (CallSiteDescriptor.ARG_NAMED.toInt() or
+            CallSiteDescriptor.ARG_FLAT.toInt()).inv()).toByte()
+
     @JvmStatic
     fun captureposprimspec(obj: SixModelObject?, idx: Long, tc: ThreadContext): Long {
         if (obj is CallCaptureInstance) {
-            when (obj.descriptor!!.argFlags[idx.toInt()]) {
+            when (argType(obj.descriptor!!.argFlags[idx.toInt()])) {
             CallSiteDescriptor.ARG_INT ->
                 return BoxedPrimitive.INT.spec.toLong()
             CallSiteDescriptor.ARG_UINT ->
@@ -2493,10 +2621,59 @@ object Ops {
     @JvmField val emptyCallSite = CallSiteDescriptor(ByteArray(0), null)
     @JvmField val emptyArgList = arrayOfNulls<Any>(0)
     @JvmField val invocantCallSite = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null)
+    @JvmField val methodWithInvocantCallSite = CallSiteDescriptor(
+        byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_OBJ), null)
+
+    /* Invokes a method resolved by a runtime helper on the given invocant,
+     * going through the dispatcher, the way MoarVM's boolification delegates
+     * to lang-call. A direct invocation would run a multi's proto without
+     * the dispatch its resumption resumes. When the method's language has no
+     * call dispatcher registered (the stage0 bootstrap), invoke directly:
+     * such a world has no dispatch-dependent protos either. The callsite is
+     * cached per method, so this stays a replay rather than recording a
+     * dispatch program on every boolification or stringification. */
+    private val helperDispatchSites =
+        java.util.concurrent.ConcurrentHashMap<SixModelObject, org.raku.nqp.dispatch.DispatchCallSite>()
+    private val helperDispatchSiteType =
+        java.lang.invoke.MethodType.methodType(Void.TYPE)
+
+    private fun invokeMethodViaDispatch(tc: ThreadContext, method: SixModelObject?,
+                                        invocant: SixModelObject?) {
+        invokeMethodViaDispatch(tc, method, invocantCallSite, arrayOf<Any?>(invocant))
+    }
+
+    /* As above, for a method with an arbitrary callsite (invocant first, the
+     * method itself not included). The runtime binder uses this for the
+     * ACCEPTS of a constraint check: raw invocation of a resolved method
+     * that turns out to be an onlystar proto would make its {*} resume
+     * whatever unrelated dispatch encloses the call. */
+    @JvmStatic
+    fun invokeMethodViaDispatch(tc: ThreadContext, method: SixModelObject?,
+                                csd: CallSiteDescriptor, args: Array<Any?>) {
+        val routable = method is CodeRef ||
+            (method != null && method.stInitialized &&
+                method.st.hllOwner?.callDispatcher != null)
+        if (!routable) {
+            invokeDirect(tc, method, csd, args)
+            return
+        }
+        val site = helperDispatchSites.computeIfAbsent(method!!) {
+            org.raku.nqp.dispatch.DispatchCallSite(helperDispatchSiteType)
+        }
+        val flags = ByteArray(csd.argFlags.size + 1)
+        flags[0] = CallSiteDescriptor.ARG_OBJ
+        csd.argFlags.copyInto(flags, 1)
+        val fullCsd = CallSiteDescriptor(flags, csd.names)
+        val fullArgs = arrayOfNulls<Any>(args.size + 1)
+        fullArgs[0] = method
+        args.copyInto(fullArgs, 1)
+        org.raku.nqp.dispatch.Dispatch.dispatchWithDescriptor(site, "lang-call",
+            fullCsd, tc, fullArgs)
+    }
     @JvmField val storeCallSite = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_OBJ), null)
-    @JvmField val storeCallSite_i = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_INT), null)
-    @JvmField val storeCallSite_n = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_NUM), null)
-    @JvmField val storeCallSite_s = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_STR), null)
+    @JvmField val storeCallSiteI = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_INT), null)
+    @JvmField val storeCallSiteN = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_NUM), null)
+    @JvmField val storeCallSiteS = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_STR), null)
     @JvmField val findmethCallSite = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_STR), null)
     @JvmField val typeCheckCallSite = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_OBJ), null)
     @JvmField val howObjCallSite = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_OBJ), null)
@@ -2578,25 +2755,6 @@ object Ops {
             throw ExceptionHandling.dieInternal(tc, "invokewithcapture requires a CallCapture")
         }
     }
-    @JvmStatic
-    fun dispatch(dispatcher: String, syscall: String, key: String, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        if (dispatcher != "boot-syscall")
-            throw ExceptionHandling.dieInternal(tc,
-                "Unknown dispatcher '" + dispatcher + "' called")
-        if (syscall != "set-cur-hll-config-key")
-            throw ExceptionHandling.dieInternal(tc,
-                "Unknown syscall '" + syscall + "' called")
-        if (key != "uint_box")
-            throw ExceptionHandling.dieInternal(tc,
-                "Tried to set unsupported config key '" + key + "'")
-
-        val hllName = tc.frame.codeRef.staticInfo.compUnit.hllName()
-        val config = tc.gc.getHLLConfigFor(hllName)
-        config.uintBoxType = value
-
-        return null
-    }
-
     /* Multi-dispatch cache. */
     @JvmStatic
     fun multicacheadd(cache: SixModelObject?, capture: SixModelObject?, result: SixModelObject?, tc: ThreadContext): SixModelObject {
@@ -2771,8 +2929,8 @@ object Ops {
 
         /* Otherwise delegate to the HOW. */
         val how = theInvocant.st.HOW
-        val find_method = findmethod(how, "find_method", tc)
-        invokeDirect(tc, find_method, findmethCallSite,
+        val findMethod = findmethod(how, "find_method", tc)
+        invokeDirect(tc, findMethod, findmethCallSite,
                 arrayOf<Any?>(how, theInvocant, name))
         return result_o(tc.frame)
     }
@@ -2888,6 +3046,48 @@ object Ops {
     fun isinvokable(obj: SixModelObject?, tc: ThreadContext): Long {
         return if (obj is CodeRef || obj!!.st.InvocationSpec != null) 1 else 0
     }
+    /* Assert that a signature bind check passed. A failure either becomes a
+     * resumption of the dispatch that invoked us, if it asked for that, or an
+     * error. */
+    @JvmStatic
+    fun assertparamcheck(ok: Long, tc: ThreadContext): SixModelObject? {
+        if (ok == 0L)
+            BindFailure.failed(tc)
+        return null
+    }
+
+    /* Signature binding in the current frame completed successfully. A no-op
+     * unless the invoking dispatch asked for bind success to be a
+     * resumption. */
+    @JvmStatic
+    fun bindcomplete(tc: ThreadContext): SixModelObject? {
+        BindFailure.complete(tc)
+        return null
+    }
+
+    /* Will a bind failure in the current frame become a resumption of the
+     * dispatch that invoked it? The same answer as the
+     * bind-will-resume-on-failure syscall, callable without a dispatch
+     * instruction: this is asked in every full-binder frame's prologue, and
+     * an invokedynamic per prologue eats into the per-class indy budget. */
+    @JvmStatic
+    fun bindWillResumeOnFailure(tc: ThreadContext): Long {
+        val record = tc.frame.dispatchRecord ?: return 0
+        return if ((record.program?.bindControl ?: record.bindControl) != null) 1 else 0
+    }
+
+    /* The role a type plays in its language: one of the HLL_ROLE_*
+     * constants, which is how hllization decides what to map. */
+    @JvmStatic
+    fun gettypehllrole(obj: SixModelObject?, tc: ThreadContext): Long {
+        return if (obj == null || !obj.stInitialized) 0L else obj.st.hllRole
+    }
+    /* Is this a VM level code handle, as opposed to something a language
+     * wrapped around one? */
+    @JvmStatic
+    fun iscoderef(obj: SixModelObject?, tc: ThreadContext): Long {
+        return if (obj is CodeRef) 1 else 0
+    }
     @JvmStatic
     fun istype(obj: SixModelObject?, type: SixModelObject?, tc: ThreadContext): Long {
         return istype_nd(decont(obj, tc), decont(type, tc), tc)
@@ -2979,9 +3179,19 @@ object Ops {
     fun unbox_i(obj: SixModelObject?, tc: ThreadContext): Long {
         return decont(obj, tc)!!.get_int(tc)
     }
+    /* MoarVM reads a bigint into an unsigned native through an accessor of
+     * its own, which takes any value of 64 bits or fewer, where the signed
+     * one stops at 63 bits for a positive value. There is a single get_int
+     * here to serve both, so the unsigned readers apply the wider rule
+     * themselves and let the value wrap into the signed range, which is
+     * what an unsigned native holds it as anyway. */
+    @JvmStatic
+    fun unsignedFrom(obj: SixModelObject, tc: ThreadContext): Long {
+        return obj.get_uint(tc)
+    }
     @JvmStatic
     fun unbox_u(obj: SixModelObject?, tc: ThreadContext): Long {
-        return decont(obj, tc)!!.get_int(tc)
+        return unsignedFrom(decont(obj, tc)!!, tc)
     }
     @JvmStatic
     fun unbox_n(obj: SixModelObject?, tc: ThreadContext): Double {
@@ -3048,24 +3258,27 @@ object Ops {
         catch (badRef: P6OpaqueBaseInstance.BadReferenceRuntimeException) {
             var retval: SixModelObject? = createNull(tc)
             obj!!.get_attribute_native(tc, decont(ch, tc), name, STable.NO_HINT)
-            if (tc.native_type == ThreadContext.NATIVE_INT) {
-                retval = box_i(tc.native_i, tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)
+            if (tc.nativeType == ThreadContext.NATIVE_INT) {
+                retval = box_i(tc.nativeI, tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)
             }
-            else if (tc.native_type == ThreadContext.NATIVE_NUM) {
-                retval = box_n(tc.native_n, tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc)
+            else if (tc.nativeType == ThreadContext.NATIVE_NUM) {
+                retval = box_n(tc.nativeN, tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc)
             }
-            else if (tc.native_type == ThreadContext.NATIVE_STR) {
-                retval = box_s(tc.native_s, tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
+            else if (tc.nativeType == ThreadContext.NATIVE_STR) {
+                retval = box_s(tc.nativeS, tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
             }
-            else if (tc.native_type == ThreadContext.NATIVE_JVM_OBJ) {
-                val slot = (obj as P6OpaqueBaseInstance).resolveAttribute(obj.st.WHAT, name)
-                val attr_st = (obj.st.REPRData as P6OpaqueREPRData).flattenedSTables!![slot]
-                if (attr_st != null) {
-                    retval = attr_st.REPR.allocate(tc, attr_st)
+            else if (tc.nativeType == ThreadContext.NATIVE_JVM_OBJ) {
+                /* Resolve through the class handle the access named, not
+                 * the object's current type: after a mixin the two differ,
+                 * and only the handle is a key in the attribute maps. */
+                val slot = (obj as P6OpaqueBaseInstance).resolveAttribute(decont(ch, tc), name)
+                val attrSt = (obj.st.REPRData as P6OpaqueREPRData).flattenedSTables!![slot]
+                if (attrSt != null) {
+                    retval = attrSt.REPR.allocate(tc, attrSt)
                     for (field in retval.javaClass.declaredFields) {
                         try {
-                            if (tc.native_j == null || field.type.isAssignableFrom(tc.native_j!!.javaClass)) {
-                                field.set(retval, tc.native_j)
+                            if (tc.nativeJ == null || field.type.isAssignableFrom(tc.nativeJ!!.javaClass)) {
+                                field.set(retval, tc.nativeJ)
                                 break
                             }
                         }
@@ -3081,32 +3294,32 @@ object Ops {
     @JvmStatic
     fun getattr_i(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext): Long {
         obj!!.get_attribute_native(tc, decont(ch, tc), name, STable.NO_HINT)
-        if (tc.native_type == ThreadContext.NATIVE_INT)
-            return tc.native_i
+        if (tc.nativeType == ThreadContext.NATIVE_INT)
+            return tc.nativeI
         else
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native int")
     }
     @JvmStatic
     fun getattr_u(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext): Long {
         obj!!.get_attribute_native(tc, decont(ch, tc), name, STable.NO_HINT)
-        if (tc.native_type == ThreadContext.NATIVE_INT)
-            return tc.native_i
+        if (tc.nativeType == ThreadContext.NATIVE_INT)
+            return tc.nativeI
         else
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native int")
     }
     @JvmStatic
     fun getattr_n(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext): Double {
         obj!!.get_attribute_native(tc, decont(ch, tc), name, STable.NO_HINT)
-        if (tc.native_type == ThreadContext.NATIVE_NUM)
-            return tc.native_n
+        if (tc.nativeType == ThreadContext.NATIVE_NUM)
+            return tc.nativeN
         else
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native num")
     }
     @JvmStatic
     fun getattr_s(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext): String? {
         obj!!.get_attribute_native(tc, decont(ch, tc), name, STable.NO_HINT)
-        if (tc.native_type == ThreadContext.NATIVE_STR)
-            return tc.native_s
+        if (tc.nativeType == ThreadContext.NATIVE_STR)
+            return tc.nativeS
         else
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native str")
     }
@@ -3122,24 +3335,27 @@ object Ops {
         catch (badRef: P6OpaqueBaseInstance.BadReferenceRuntimeException) {
             var retval: SixModelObject? = createNull(tc)
             obj!!.get_attribute_native(tc, decont(ch, tc), name, theHint)
-            if (tc.native_type == ThreadContext.NATIVE_INT) {
-                retval = box_i(tc.native_i, tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)
+            if (tc.nativeType == ThreadContext.NATIVE_INT) {
+                retval = box_i(tc.nativeI, tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)
             }
-            else if (tc.native_type == ThreadContext.NATIVE_NUM) {
-                retval = box_n(tc.native_n, tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc)
+            else if (tc.nativeType == ThreadContext.NATIVE_NUM) {
+                retval = box_n(tc.nativeN, tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc)
             }
-            else if (tc.native_type == ThreadContext.NATIVE_STR) {
-                retval = box_s(tc.native_s, tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
+            else if (tc.nativeType == ThreadContext.NATIVE_STR) {
+                retval = box_s(tc.nativeS, tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
             }
-            else if (tc.native_type == ThreadContext.NATIVE_JVM_OBJ) {
-                val slot = (obj as P6OpaqueBaseInstance).resolveAttribute(obj.st.WHAT, name)
-                val attr_st = (obj.st.REPRData as P6OpaqueREPRData).flattenedSTables!![slot]
-                if (attr_st != null) {
-                    retval = attr_st.REPR.allocate(tc, attr_st)
+            else if (tc.nativeType == ThreadContext.NATIVE_JVM_OBJ) {
+                /* Resolve through the class handle the access named, not
+                 * the object's current type: after a mixin the two differ,
+                 * and only the handle is a key in the attribute maps. */
+                val slot = (obj as P6OpaqueBaseInstance).resolveAttribute(decont(ch, tc), name)
+                val attrSt = (obj.st.REPRData as P6OpaqueREPRData).flattenedSTables!![slot]
+                if (attrSt != null) {
+                    retval = attrSt.REPR.allocate(tc, attrSt)
                     for (field in retval.javaClass.declaredFields) {
                         try {
-                            if (tc.native_j == null || field.type.isAssignableFrom(tc.native_j!!.javaClass)) {
-                                field.set(retval, tc.native_j)
+                            if (tc.nativeJ == null || field.type.isAssignableFrom(tc.nativeJ!!.javaClass)) {
+                                field.set(retval, tc.nativeJ)
                                 break
                             }
                         }
@@ -3160,8 +3376,8 @@ object Ops {
         if (obj!!.st.REPRData is P6OpaqueREPRData && (obj.st.REPRData as P6OpaqueREPRData).mi)
             theHint = STable.NO_HINT
         obj.get_attribute_native(tc, decont(ch, tc), name, theHint)
-        if (tc.native_type == ThreadContext.NATIVE_INT)
-            return tc.native_i
+        if (tc.nativeType == ThreadContext.NATIVE_INT)
+            return tc.nativeI
         else
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native int")
     }
@@ -3173,8 +3389,8 @@ object Ops {
         if (obj!!.st.REPRData is P6OpaqueREPRData && (obj.st.REPRData as P6OpaqueREPRData).mi)
             theHint = STable.NO_HINT
         obj.get_attribute_native(tc, decont(ch, tc), name, theHint)
-        if (tc.native_type == ThreadContext.NATIVE_INT)
-            return tc.native_i
+        if (tc.nativeType == ThreadContext.NATIVE_INT)
+            return tc.nativeI
         else
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native int")
     }
@@ -3185,8 +3401,8 @@ object Ops {
         if (obj!!.st.REPRData is P6OpaqueREPRData && (obj.st.REPRData as P6OpaqueREPRData).mi)
             theHint = STable.NO_HINT
         obj.get_attribute_native(tc, decont(ch, tc), name, theHint)
-        if (tc.native_type == ThreadContext.NATIVE_NUM)
-            return tc.native_n
+        if (tc.nativeType == ThreadContext.NATIVE_NUM)
+            return tc.nativeN
         else
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native num")
     }
@@ -3197,8 +3413,8 @@ object Ops {
         if (obj!!.st.REPRData is P6OpaqueREPRData && (obj.st.REPRData as P6OpaqueREPRData).mi)
             theHint = STable.NO_HINT
         obj.get_attribute_native(tc, decont(ch, tc), name, theHint)
-        if (tc.native_type == ThreadContext.NATIVE_STR)
-            return tc.native_s
+        if (tc.nativeType == ThreadContext.NATIVE_STR)
+            return tc.nativeS
         else
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native str")
     }
@@ -3211,9 +3427,9 @@ object Ops {
     }
     @JvmStatic
     fun bindattr_i(obj: SixModelObject?, ch: SixModelObject?, name: String?, value: Long, tc: ThreadContext): Long {
-        tc.native_i = value
+        tc.nativeI = value
         obj!!.bind_attribute_native(tc, decont(ch, tc), name, STable.NO_HINT)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native int")
         if (obj.sc != null)
             scwbObject(tc, obj)
@@ -3221,9 +3437,9 @@ object Ops {
     }
     @JvmStatic
     fun bindattr_u(obj: SixModelObject?, ch: SixModelObject?, name: String?, value: Long, tc: ThreadContext): Long {
-        tc.native_i = value
+        tc.nativeI = value
         obj!!.bind_attribute_native(tc, decont(ch, tc), name, STable.NO_HINT)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native unsigned int")
         if (obj.sc != null)
             scwbObject(tc, obj)
@@ -3231,9 +3447,9 @@ object Ops {
     }
     @JvmStatic
     fun bindattr_n(obj: SixModelObject?, ch: SixModelObject?, name: String?, value: Double, tc: ThreadContext): Double {
-        tc.native_n = value
+        tc.nativeN = value
         obj!!.bind_attribute_native(tc, decont(ch, tc), name, STable.NO_HINT)
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native num")
         if (obj.sc != null)
             scwbObject(tc, obj)
@@ -3241,9 +3457,9 @@ object Ops {
     }
     @JvmStatic
     fun bindattr_s(obj: SixModelObject?, ch: SixModelObject?, name: String?, value: String?, tc: ThreadContext): String? {
-        tc.native_s = value
+        tc.nativeS = value
         obj!!.bind_attribute_native(tc, decont(ch, tc), name, STable.NO_HINT)
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native str")
         if (obj.sc != null)
             scwbObject(tc, obj)
@@ -3258,9 +3474,9 @@ object Ops {
     }
     @JvmStatic
     fun bindattr_i(obj: SixModelObject?, ch: SixModelObject?, name: String?, value: Long, hint: Long, tc: ThreadContext): Long {
-        tc.native_i = value
+        tc.nativeI = value
         obj!!.bind_attribute_native(tc, decont(ch, tc), name, hint)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native int")
         if (obj.sc != null)
             scwbObject(tc, obj)
@@ -3268,9 +3484,9 @@ object Ops {
     }
     @JvmStatic
     fun bindattr_u(obj: SixModelObject?, ch: SixModelObject?, name: String?, value: Long, hint: Long, tc: ThreadContext): Long {
-        tc.native_i = value
+        tc.nativeI = value
         obj!!.bind_attribute_native(tc, decont(ch, tc), name, hint)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native unsigned int")
         if (obj.sc != null)
             scwbObject(tc, obj)
@@ -3278,9 +3494,9 @@ object Ops {
     }
     @JvmStatic
     fun bindattr_n(obj: SixModelObject?, ch: SixModelObject?, name: String?, value: Double, hint: Long, tc: ThreadContext): Double {
-        tc.native_n = value
+        tc.nativeN = value
         obj!!.bind_attribute_native(tc, decont(ch, tc), name, hint)
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native num")
         if (obj.sc != null)
             scwbObject(tc, obj)
@@ -3288,9 +3504,9 @@ object Ops {
     }
     @JvmStatic
     fun bindattr_s(obj: SixModelObject?, ch: SixModelObject?, name: String?, value: String?, hint: Long, tc: ThreadContext): String? {
-        tc.native_s = value
+        tc.nativeS = value
         obj!!.bind_attribute_native(tc, decont(ch, tc), name, hint)
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "Attribute '" + name + "' is not a native str")
         if (obj.sc != null)
             scwbObject(tc, obj)
@@ -3371,30 +3587,30 @@ object Ops {
     @JvmStatic
     fun atpos_i(arr: SixModelObject?, idx: Long, tc: ThreadContext): Long {
         arr!!.at_pos_native(tc, idx)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int array")
-        return tc.native_i
+        return tc.nativeI
     }
     @JvmStatic
     fun atpos_u(arr: SixModelObject?, idx: Long, tc: ThreadContext): Long {
         arr!!.at_pos_native(tc, idx)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int array")
-        return tc.native_i
+        return tc.nativeI
     }
     @JvmStatic
     fun atpos_n(arr: SixModelObject?, idx: Long, tc: ThreadContext): Double {
         arr!!.at_pos_native(tc, idx)
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "This is not a native num array")
-        return tc.native_n
+        return tc.nativeN
     }
     @JvmStatic
     fun atpos_s(arr: SixModelObject?, idx: Long, tc: ThreadContext): String? {
         arr!!.at_pos_native(tc, idx)
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "This is not a native str array")
-        return tc.native_s
+        return tc.nativeS
     }
     @JvmStatic
     fun bindpos(arr: SixModelObject?, idx: Long, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
@@ -3405,9 +3621,9 @@ object Ops {
     }
     @JvmStatic
     fun bindpos_i(arr: SixModelObject?, idx: Long, value: Long, tc: ThreadContext): Long {
-        tc.native_i = value
+        tc.nativeI = value
         arr!!.bind_pos_native(tc, idx)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int array")
         if (arr.sc != null) { /*new Exception("bindpos_i").printStackTrace(); */
             scwbObject(tc, arr) }
@@ -3415,9 +3631,9 @@ object Ops {
     }
     @JvmStatic
     fun bindpos_u(arr: SixModelObject?, idx: Long, value: Long, tc: ThreadContext): Long {
-        tc.native_i = value
+        tc.nativeI = value
         arr!!.bind_pos_native(tc, idx)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int array")
         if (arr.sc != null) { /*new Exception("bindpos_u").printStackTrace(); */
             scwbObject(tc, arr) }
@@ -3425,9 +3641,9 @@ object Ops {
     }
     @JvmStatic
     fun bindpos_n(arr: SixModelObject?, idx: Long, value: Double, tc: ThreadContext): Double {
-        tc.native_n = value
+        tc.nativeN = value
         arr!!.bind_pos_native(tc, idx)
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "This is not a native num array")
         if (arr.sc != null) { /*new Exception("bindpos_n").printStackTrace(); */
             scwbObject(tc, arr) }
@@ -3435,9 +3651,9 @@ object Ops {
     }
     @JvmStatic
     fun bindpos_s(arr: SixModelObject?, idx: Long, value: String?, tc: ThreadContext): String? {
-        tc.native_s = value
+        tc.nativeS = value
         arr!!.bind_pos_native(tc, idx)
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "This is not a native str array")
         if (arr.sc != null) { /*new Exception("bindpos_s").printStackTrace(); */
             scwbObject(tc, arr) }
@@ -3452,9 +3668,9 @@ object Ops {
     }
     @JvmStatic
     fun push_i(arr: SixModelObject?, value: Long, tc: ThreadContext): Long {
-        tc.native_i = value
+        tc.nativeI = value
         arr!!.push_native(tc)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int array")
         if (arr.sc != null)
             scwbObject(tc, arr)
@@ -3462,9 +3678,9 @@ object Ops {
     }
     @JvmStatic
     fun push_n(arr: SixModelObject?, value: Double, tc: ThreadContext): Double {
-        tc.native_n = value
+        tc.nativeN = value
         arr!!.push_native(tc)
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "This is not a native num array")
         if (arr.sc != null)
             scwbObject(tc, arr)
@@ -3472,9 +3688,9 @@ object Ops {
     }
     @JvmStatic
     fun push_s(arr: SixModelObject?, value: String?, tc: ThreadContext): String? {
-        tc.native_s = value
+        tc.nativeS = value
         arr!!.push_native(tc)
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "This is not a native str array")
         if (arr.sc != null)
             scwbObject(tc, arr)
@@ -3487,23 +3703,23 @@ object Ops {
     @JvmStatic
     fun pop_i(arr: SixModelObject?, tc: ThreadContext): Long {
         arr!!.pop_native(tc)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int array")
-        return tc.native_i
+        return tc.nativeI
     }
     @JvmStatic
     fun pop_n(arr: SixModelObject?, tc: ThreadContext): Double {
         arr!!.pop_native(tc)
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "This is not a native num array")
-        return tc.native_n
+        return tc.nativeN
     }
     @JvmStatic
     fun pop_s(arr: SixModelObject?, tc: ThreadContext): String? {
         arr!!.pop_native(tc)
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "This is not a native str array")
-        return tc.native_s
+        return tc.nativeS
     }
     @JvmStatic
     fun unshift(arr: SixModelObject?, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
@@ -3512,25 +3728,25 @@ object Ops {
     }
     @JvmStatic
     fun unshift_i(arr: SixModelObject?, value: Long, tc: ThreadContext): Long {
-        tc.native_i = value
+        tc.nativeI = value
         arr!!.unshift_native(tc)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int array")
         return value
     }
     @JvmStatic
     fun unshift_n(arr: SixModelObject?, value: Double, tc: ThreadContext): Double {
-        tc.native_n = value
+        tc.nativeN = value
         arr!!.unshift_native(tc)
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "This is not a native num array")
         return value
     }
     @JvmStatic
     fun unshift_s(arr: SixModelObject?, value: String?, tc: ThreadContext): String? {
-        tc.native_s = value
+        tc.nativeS = value
         arr!!.unshift_native(tc)
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "This is not a native str array")
         return value
     }
@@ -3541,23 +3757,23 @@ object Ops {
     @JvmStatic
     fun shift_i(arr: SixModelObject?, tc: ThreadContext): Long {
         arr!!.shift_native(tc)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int array")
-        return tc.native_i
+        return tc.nativeI
     }
     @JvmStatic
     fun shift_n(arr: SixModelObject?, tc: ThreadContext): Double {
         arr!!.shift_native(tc)
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "This is not a native num array")
-        return tc.native_n
+        return tc.nativeN
     }
     @JvmStatic
     fun shift_s(arr: SixModelObject?, tc: ThreadContext): String? {
         arr!!.shift_native(tc)
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "This is not a native str array")
-        return tc.native_s
+        return tc.nativeS
     }
     @JvmStatic
     fun slice(arr: SixModelObject?, beginning: Long, end: Long, tc: ThreadContext): SixModelObject? {
@@ -3575,7 +3791,7 @@ object Ops {
         val res = LongArray(arr.elems(tc).toInt())
         for (i in res.indices) {
             arr.at_pos_native(tc, i.toLong())
-            res[i] = tc.native_i
+            res[i] = tc.nativeI
         }
         return res
     }
@@ -3586,23 +3802,23 @@ object Ops {
     @JvmStatic
     fun atpos2d_i(arr: SixModelObject?, idx1: Long, idx2: Long, tc: ThreadContext): Long {
         arr!!.at_pos_multidim_native(tc, longArrayOf(idx1, idx2))
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int array")
-        return tc.native_i
+        return tc.nativeI
     }
     @JvmStatic
     fun atpos2d_n(arr: SixModelObject?, idx1: Long, idx2: Long, tc: ThreadContext): Double {
         arr!!.at_pos_multidim_native(tc, longArrayOf(idx1, idx2))
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "This is not a native num array")
-        return tc.native_n
+        return tc.nativeN
     }
     @JvmStatic
     fun atpos2d_s(arr: SixModelObject?, idx1: Long, idx2: Long, tc: ThreadContext): String? {
         arr!!.at_pos_multidim_native(tc, longArrayOf(idx1, idx2))
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "This is not a native str array")
-        return tc.native_s
+        return tc.nativeS
     }
     @JvmStatic
     fun atpos3d_o(arr: SixModelObject?, idx1: Long, idx2: Long, idx3: Long, tc: ThreadContext): SixModelObject? {
@@ -3611,23 +3827,23 @@ object Ops {
     @JvmStatic
     fun atpos3d_i(arr: SixModelObject?, idx1: Long, idx2: Long, idx3: Long, tc: ThreadContext): Long {
         arr!!.at_pos_multidim_native(tc, longArrayOf(idx1, idx2, idx3))
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int array")
-        return tc.native_i
+        return tc.nativeI
     }
     @JvmStatic
     fun atpos3d_n(arr: SixModelObject?, idx1: Long, idx2: Long, idx3: Long, tc: ThreadContext): Double {
         arr!!.at_pos_multidim_native(tc, longArrayOf(idx1, idx2, idx3))
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "This is not a native num array")
-        return tc.native_n
+        return tc.nativeN
     }
     @JvmStatic
     fun atpos3d_s(arr: SixModelObject?, idx1: Long, idx2: Long, idx3: Long, tc: ThreadContext): String? {
         arr!!.at_pos_multidim_native(tc, longArrayOf(idx1, idx2, idx3))
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "This is not a native str array")
-        return tc.native_s
+        return tc.nativeS
     }
     @JvmStatic
     fun atposnd_o(arr: SixModelObject?, indices: SixModelObject?, tc: ThreadContext): SixModelObject? {
@@ -3636,23 +3852,23 @@ object Ops {
     @JvmStatic
     fun atposnd_i(arr: SixModelObject?, indices: SixModelObject?, tc: ThreadContext): Long {
         arr!!.at_pos_multidim_native(tc, smoToLongArray(tc, indices!!))
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int array")
-        return tc.native_i
+        return tc.nativeI
     }
     @JvmStatic
     fun atposnd_n(arr: SixModelObject?, indices: SixModelObject?, tc: ThreadContext): Double {
         arr!!.at_pos_multidim_native(tc, smoToLongArray(tc, indices!!))
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "This is not a native num array")
-        return tc.native_n
+        return tc.nativeN
     }
     @JvmStatic
     fun atposnd_s(arr: SixModelObject?, indices: SixModelObject?, tc: ThreadContext): String? {
         arr!!.at_pos_multidim_native(tc, smoToLongArray(tc, indices!!))
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "This is not a native str array")
-        return tc.native_s
+        return tc.nativeS
     }
     @JvmStatic
     fun bindpos2d_o(arr: SixModelObject?, idx1: Long, idx2: Long, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
@@ -3661,26 +3877,26 @@ object Ops {
     }
     @JvmStatic
     fun bindpos2d_i(arr: SixModelObject?, idx1: Long, idx2: Long, value: Long, tc: ThreadContext): Long {
-        tc.native_i = value
+        tc.nativeI = value
         arr!!.bind_pos_multidim_native(tc, longArrayOf(idx1, idx2))
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int array")
         return value
     }
     @JvmStatic
     fun bindpos2d_n(arr: SixModelObject?, idx1: Long, idx2: Long, value: Double, tc: ThreadContext): Double {
-        tc.native_n = value
+        tc.nativeN = value
         arr!!.bind_pos_multidim_native(tc, longArrayOf(idx1, idx2))
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "This is not a native num array")
         return value
     }
 
     @JvmStatic
     fun bindpos2d_s(arr: SixModelObject?, idx1: Long, idx2: Long, value: String?, tc: ThreadContext): String? {
-        tc.native_s = value
+        tc.nativeS = value
         arr!!.bind_pos_multidim_native(tc, longArrayOf(idx1, idx2))
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "This is not a native str array")
         return value
     }
@@ -3691,25 +3907,25 @@ object Ops {
     }
     @JvmStatic
     fun bindpos3d_i(arr: SixModelObject?, idx1: Long, idx2: Long, idx3: Long, value: Long, tc: ThreadContext): Long {
-        tc.native_i = value
+        tc.nativeI = value
         arr!!.bind_pos_multidim_native(tc, longArrayOf(idx1, idx2, idx3))
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int array")
         return value
     }
     @JvmStatic
     fun bindpos3d_n(arr: SixModelObject?, idx1: Long, idx2: Long, idx3: Long, value: Double, tc: ThreadContext): Double {
-        tc.native_n = value
+        tc.nativeN = value
         arr!!.bind_pos_multidim_native(tc, longArrayOf(idx1, idx2, idx3))
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "This is not a native num array")
         return value
     }
     @JvmStatic
     fun bindpos3d_s(arr: SixModelObject?, idx1: Long, idx2: Long, idx3: Long, value: String?, tc: ThreadContext): String? {
-        tc.native_s = value
+        tc.nativeS = value
         arr!!.bind_pos_multidim_native(tc, longArrayOf(idx1, idx2, idx3))
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "This is not a native str array")
         return value
     }
@@ -3722,27 +3938,27 @@ object Ops {
     @JvmStatic
     fun bindposnd_i(arr: SixModelObject?, indices: SixModelObject?, value: Long, tc: ThreadContext): Long {
         val jIndices = smoToLongArray(tc, indices!!)
-        tc.native_i = value
+        tc.nativeI = value
         arr!!.bind_pos_multidim_native(tc, jIndices)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int array")
         return value
     }
     @JvmStatic
     fun bindposnd_n(arr: SixModelObject?, indices: SixModelObject?, value: Double, tc: ThreadContext): Double {
         val jIndices = smoToLongArray(tc, indices!!)
-        tc.native_n = value
+        tc.nativeN = value
         arr!!.bind_pos_multidim_native(tc, jIndices)
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "This is not a native num array")
         return value
     }
     @JvmStatic
     fun bindposnd_s(arr: SixModelObject?, indices: SixModelObject?, value: String?, tc: ThreadContext): String? {
         val jIndices = smoToLongArray(tc, indices!!)
-        tc.native_s = value
+        tc.nativeS = value
         arr!!.bind_pos_multidim_native(tc, jIndices)
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "This is not a native str array")
         return value
     }
@@ -3852,23 +4068,23 @@ object Ops {
     @JvmStatic
     fun atkey_i(hash: SixModelObject?, key: String?, tc: ThreadContext): Long {
         hash!!.at_key_native(tc, key)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int hash")
-        return tc.native_i
+        return tc.nativeI
     }
     @JvmStatic
     fun atkey_n(hash: SixModelObject?, key: String?, tc: ThreadContext): Double {
         hash!!.at_key_native(tc, key)
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "This is not a native num hash")
-        return tc.native_n
+        return tc.nativeN
     }
     @JvmStatic
     fun atkey_s(hash: SixModelObject?, key: String?, tc: ThreadContext): String? {
         hash!!.at_key_native(tc, key)
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "This is not a native str hash")
-        return tc.native_s
+        return tc.nativeS
     }
     @JvmStatic
     fun bindkey(hash: SixModelObject?, key: String?, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
@@ -3879,9 +4095,9 @@ object Ops {
     }
     @JvmStatic
     fun bindkey_i(hash: SixModelObject?, key: String?, value: Long, tc: ThreadContext): Long {
-        tc.native_i = value
+        tc.nativeI = value
         hash!!.bind_key_native(tc, key)
-        if (tc.native_type != ThreadContext.NATIVE_INT)
+        if (tc.nativeType != ThreadContext.NATIVE_INT)
             throw ExceptionHandling.dieInternal(tc, "This is not a native int hash")
         if (hash.sc != null)
             scwbObject(tc, hash)
@@ -3889,9 +4105,9 @@ object Ops {
     }
     @JvmStatic
     fun bindkey_n(hash: SixModelObject?, key: String?, value: Double, tc: ThreadContext): Double {
-        tc.native_n = value
+        tc.nativeN = value
         hash!!.bind_key_native(tc, key)
-        if (tc.native_type != ThreadContext.NATIVE_NUM)
+        if (tc.nativeType != ThreadContext.NATIVE_NUM)
             throw ExceptionHandling.dieInternal(tc, "This is not a native num hash")
         if (hash.sc != null)
             scwbObject(tc, hash)
@@ -3899,9 +4115,9 @@ object Ops {
     }
     @JvmStatic
     fun bindkey_s(hash: SixModelObject?, key: String?, value: String?, tc: ThreadContext): String? {
-        tc.native_s = value
+        tc.nativeS = value
         hash!!.bind_key_native(tc, key)
-        if (tc.native_type != ThreadContext.NATIVE_STR)
+        if (tc.nativeType != ThreadContext.NATIVE_STR)
             throw ExceptionHandling.dieInternal(tc, "This is not a native str hash")
         if (hash.sc != null)
             scwbObject(tc, hash)
@@ -3945,7 +4161,7 @@ object Ops {
         val BOOTIntArray = tc.gc.BOOTIntArray!!
         val dimRes = BOOTIntArray.st.REPR.allocate(tc, BOOTIntArray.st)
         for (i in dims.indices) {
-            tc.native_i = dims[i]
+            tc.nativeI = dims[i]
             dimRes.bind_pos_native(tc, i.toLong())
         }
         return dimRes
@@ -4146,7 +4362,7 @@ object Ops {
             if (cs != null)
                 return cs.fetch_i(tc, obj)
         }
-        return obj!!.get_int(tc)
+        return unsignedFrom(obj!!, tc)
     }
     @JvmStatic
     fun decont_n(obj: SixModelObject?, tc: ThreadContext): Double {
@@ -4277,7 +4493,7 @@ object Ops {
                 for (i in iLexicalNames.indices) {
                     agg.at_key_boxed(tc, iLexicalNames[i])
                     hash.bind_key_boxed(tc, iLexicalNames[i],
-                        box_i(tc.native_i, agg.context!!.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc))
+                        box_i(tc.nativeI, agg.context!!.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc))
                 }
             }
             val nLexicalNames = sci.nLexicalNames
@@ -4285,7 +4501,7 @@ object Ops {
                 for (i in nLexicalNames.indices) {
                     agg.at_key_boxed(tc, nLexicalNames[i])
                     hash.bind_key_boxed(tc, nLexicalNames[i],
-                        box_n(tc.native_n, agg.context!!.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc))
+                        box_n(tc.nativeN, agg.context!!.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc))
                 }
             }
             val sLexicalNames = sci.sLexicalNames
@@ -4293,7 +4509,7 @@ object Ops {
                 for (i in sLexicalNames.indices) {
                     agg.at_key_boxed(tc, sLexicalNames[i])
                     hash.bind_key_boxed(tc, sLexicalNames[i],
-                        box_s(tc.native_s, agg.context!!.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc))
+                        box_s(tc.nativeS, agg.context!!.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc))
                 }
             }
 
@@ -4328,7 +4544,7 @@ object Ops {
         val bs = o!!.st.BoolificationSpec
         when (if (bs == null) BoolificationSpec.MODE_NOT_TYPE_OBJECT else bs.Mode) {
         BoolificationSpec.MODE_CALL_METHOD -> {
-            invokeDirect(tc, bs!!.Method, invocantCallSite, arrayOf<Any?>(o))
+            invokeMethodViaDispatch(tc, bs!!.Method, o)
             return istrue(result_o(tc.frame), tc)
         }
         BoolificationSpec.MODE_UNBOX_INT ->
@@ -4391,7 +4607,7 @@ object Ops {
         // bulk.
         val strMeth = if (o.st.MethodCache == null) null else o.st.MethodCache!!.get("Str")
         if (isnull(strMeth) == 0L) {
-            invokeDirect(tc, strMeth, invocantCallSite, arrayOf<Any?>(o))
+            invokeMethodViaDispatch(tc, strMeth, o)
             return result_s(tc.frame)
         }
 
@@ -4432,7 +4648,7 @@ object Ops {
         // Otherwise, look for a Num method.
         val numMeth = o.st.MethodCache!!.get("Num")
         if (isnull(numMeth) == 0L) {
-            invokeDirect(tc, numMeth, invocantCallSite, arrayOf<Any?>(o))
+            invokeMethodViaDispatch(tc, numMeth, o)
             return result_n(tc.frame)
         }
 
@@ -4533,14 +4749,14 @@ object Ops {
     @JvmStatic
     fun radix(radix: Long, str: String?, zpos: Long, flags: Long, tc: ThreadContext): SixModelObject {
         var zvalue: Long = 0
-        var chars_converted = 0
+        var charsConverted = 0
         var thePos = zpos
         val chars = str!!.length
         var value = zvalue
-        var chars_really_converted = chars_converted
+        var charsReallyConverted = charsConverted
         var pos: Long = -1
         var ch: Char
-        var char_value: Int
+        var charValue: Int
         var neg = false
 
         if (radix > 36) {
@@ -4558,12 +4774,12 @@ object Ops {
         }
 
         while (thePos < chars) {
-            char_value = Character.digit(ch, radix.toInt())
-            if (char_value == -1) break
-            zvalue = zvalue * radix + char_value
-            chars_converted++
+            charValue = Character.digit(ch, radix.toInt())
+            if (charValue == -1) break
+            zvalue = zvalue * radix + charValue
+            charsConverted++
             thePos++; pos = thePos
-            if (char_value != 0 || (flags and 0x04L) == 0L) { value = zvalue; chars_really_converted = chars_converted }
+            if (charValue != 0 || (flags and 0x04L) == 0L) { value = zvalue; charsReallyConverted = charsConverted }
             if (thePos >= chars) break
             ch = str[thePos.toInt()]
             if (ch != '_') continue
@@ -4579,7 +4795,7 @@ object Ops {
                 hllConfig.slurpyArrayType!!.st)
 
         result.push_boxed(tc, box_i(value, hllConfig.intBoxType, tc))
-        result.push_boxed(tc, box_i(chars_really_converted.toLong(), hllConfig.intBoxType, tc))
+        result.push_boxed(tc, box_i(charsReallyConverted.toLong(), hllConfig.intBoxType, tc))
         result.push_boxed(tc, box_i(pos, hllConfig.intBoxType, tc))
 
         return result
@@ -4655,11 +4871,11 @@ object Ops {
             return ""
 
         /* Total size of the resulting string can't be bigger than a String is allowed to be. */
-        val total_count = `val`.length * count
-        if (total_count > MAX_GRAPHEMES)
-            throw ExceptionHandling.dieInternal(tc, "Can't repeat string, required number of graphemes " + total_count + " > max allowed of " + MAX_GRAPHEMES)
+        val totalCount = `val`.length * count
+        if (totalCount > MAX_GRAPHEMES)
+            throw ExceptionHandling.dieInternal(tc, "Can't repeat string, required number of graphemes " + totalCount + " > max allowed of " + MAX_GRAPHEMES)
 
-        val retval = StringBuilder(total_count.toInt())
+        val retval = StringBuilder(totalCount.toInt())
         for (ii in 1..count) {
             retval.append(`val`)
         }
@@ -4695,8 +4911,8 @@ object Ops {
         if (prim == BoxedPrimitive.STR) {
             for (i in 0 until numElems) {
                 arr.at_pos_native(tc, i.toLong())
-                strings[i] = tc.native_s
-                totalLength += tc.native_s!!.length
+                strings[i] = tc.nativeS
+                totalLength += tc.nativeS!!.length
             }
         } else {
             for (i in 0 until numElems) {
@@ -5119,7 +5335,7 @@ object Ops {
         val n = codes!!.elems(tc).toInt()
         for (i in 0 until n) {
             codes.at_pos_native(tc, i.toLong())
-            builder.appendCodePoint(tc.native_i.toInt())
+            builder.appendCodePoint(tc.nativeI.toInt())
         }
         return builder.toString()
     }
@@ -5159,12 +5375,12 @@ object Ops {
           val n = `in`!!.elems(tc).toInt()
           for (i in 0 until n) {
               `in`.at_pos_native(tc, i.toLong())
-              builder.appendCodePoint(tc.native_i.toInt())
+              builder.appendCodePoint(tc.nativeI.toInt())
           }
 
           var i = 0
           for (c in Normalizer.normalize(builder, javaNormalizationForm(normalization, tc)).codePoints().toArray()) {
-              tc.native_i = c.toLong()
+              tc.nativeI = c.toLong()
               out!!.bind_pos_native(tc, (i++).toLong())
           }
       }
@@ -5181,7 +5397,7 @@ object Ops {
     fun strtocodes(str: String?, normalization: Long, codes: SixModelObject?, tc: ThreadContext): SixModelObject? {
         var i = 0
         for (c in Normalizer.normalize(str, javaNormalizationForm(normalization, tc)).codePoints().toArray()) {
-            tc.native_i = c.toLong()
+            tc.nativeI = c.toLong()
             codes!!.bind_pos_native(tc, (i++).toLong())
         }
         return codes
@@ -5217,7 +5433,7 @@ object Ops {
         else {
             res.set_elems(tc, buffer.size.toLong())
             for (i in buffer.indices) {
-                tc.native_i = buffer[i].toLong()
+                tc.nativeI = buffer[i].toLong()
                 res.bind_pos_native(tc, i.toLong())
             }
         }
@@ -5240,7 +5456,7 @@ object Ops {
         else {
             res.set_elems(tc, buffer.size.toLong())
             for (j in 0 until bufPos) {
-                tc.native_i = buffer[j].toLong()
+                tc.nativeI = buffer[j].toLong()
                 res.bind_pos_native(tc, j.toLong())
             }
         }
@@ -5371,22 +5587,22 @@ object Ops {
                 var i = 0
                 while (i < n) {
                     buf.at_pos_native(tc, (i++).toLong())
-                    val a = tc.native_i.toInt()
+                    val a = tc.nativeI.toInt()
                     buf.at_pos_native(tc, (i++).toLong())
-                    val b = tc.native_i.toInt()
+                    val b = tc.nativeI.toInt()
                     sb.appendCodePoint(a + (b shl 8))
                 }
             }
             else if (buf is VMArrayInstance_i16 || buf is VMArrayInstance_u16) {
                 for (i in 0 until n) {
                     buf.at_pos_native(tc, i.toLong())
-                    sb.appendCodePoint(tc.native_i.toInt())
+                    sb.appendCodePoint(tc.nativeI.toInt())
                 }
             }
             else if (buf is VMArrayInstance_i32 || buf is VMArrayInstance_u32) {
                 for (i in 0 until n) {
                     buf.at_pos_native(tc, i.toLong())
-                    val a = tc.native_i.toInt()
+                    val a = tc.nativeI.toInt()
                     sb.appendCodePoint(a and 0xFFFF)
                     sb.appendCodePoint(a shr 16)
                 }
@@ -5733,6 +5949,17 @@ object Ops {
         derivedProps.put("ID_Continue", intArrayOf(48,57,65,90,95,95,97,122,170,170,181,181,183,183,186,186,192,214,216,246,248,442,443,443,444,447,448,451,452,659,660,660,661,687,688,705,710,721,736,740,748,748,750,750,768,879,880,883,884,884,886,887,890,890,891,893,902,902,903,903,904,906,908,908,910,929,931,1013,1015,1153,1155,1159,1162,1319,1329,1366,1369,1369,1377,1415,1425,1469,1471,1471,1473,1474,1476,1477,1479,1479,1488,1514,1520,1522,1552,1562,1568,1599,1600,1600,1601,1610,1611,1631,1632,1641,1646,1647,1648,1648,1649,1747,1749,1749,1750,1756,1759,1764,1765,1766,1767,1768,1770,1773,1774,1775,1776,1785,1786,1788,1791,1791,1808,1808,1809,1809,1810,1839,1840,1866,1869,1957,1958,1968,1969,1969,1984,1993,1994,2026,2027,2035,2036,2037,2042,2042,2048,2069,2070,2073,2074,2074,2075,2083,2084,2084,2085,2087,2088,2088,2089,2093,2112,2136,2137,2139,2208,2208,2210,2220,2276,2302,2304,2306,2307,2307,2308,2361,2362,2362,2363,2363,2364,2364,2365,2365,2366,2368,2369,2376,2377,2380,2381,2381,2382,2383,2384,2384,2385,2391,2392,2401,2402,2403,2406,2415,2417,2417,2418,2423,2425,2431,2433,2433,2434,2435,2437,2444,2447,2448,2451,2472,2474,2480,2482,2482,2486,2489,2492,2492,2493,2493,2494,2496,2497,2500,2503,2504,2507,2508,2509,2509,2510,2510,2519,2519,2524,2525,2527,2529,2530,2531,2534,2543,2544,2545,2561,2562,2563,2563,2565,2570,2575,2576,2579,2600,2602,2608,2610,2611,2613,2614,2616,2617,2620,2620,2622,2624,2625,2626,2631,2632,2635,2637,2641,2641,2649,2652,2654,2654,2662,2671,2672,2673,2674,2676,2677,2677,2689,2690,2691,2691,2693,2701,2703,2705,2707,2728,2730,2736,2738,2739,2741,2745,2748,2748,2749,2749,2750,2752,2753,2757,2759,2760,2761,2761,2763,2764,2765,2765,2768,2768,2784,2785,2786,2787,2790,2799,2817,2817,2818,2819,2821,2828,2831,2832,2835,2856,2858,2864,2866,2867,2869,2873,2876,2876,2877,2877,2878,2878,2879,2879,2880,2880,2881,2884,2887,2888,2891,2892,2893,2893,2902,2902,2903,2903,2908,2909,2911,2913,2914,2915,2918,2927,2929,2929,2946,2946,2947,2947,2949,2954,2958,2960,2962,2965,2969,2970,2972,2972,2974,2975,2979,2980,2984,2986,2990,3001,3006,3007,3008,3008,3009,3010,3014,3016,3018,3020,3021,3021,3024,3024,3031,3031,3046,3055,3073,3075,3077,3084,3086,3088,3090,3112,3114,3123,3125,3129,3133,3133,3134,3136,3137,3140,3142,3144,3146,3149,3157,3158,3160,3161,3168,3169,3170,3171,3174,3183,3202,3203,3205,3212,3214,3216,3218,3240,3242,3251,3253,3257,3260,3260,3261,3261,3262,3262,3263,3263,3264,3268,3270,3270,3271,3272,3274,3275,3276,3277,3285,3286,3294,3294,3296,3297,3298,3299,3302,3311,3313,3314,3330,3331,3333,3340,3342,3344,3346,3386,3389,3389,3390,3392,3393,3396,3398,3400,3402,3404,3405,3405,3406,3406,3415,3415,3424,3425,3426,3427,3430,3439,3450,3455,3458,3459,3461,3478,3482,3505,3507,3515,3517,3517,3520,3526,3530,3530,3535,3537,3538,3540,3542,3542,3544,3551,3570,3571,3585,3632,3633,3633,3634,3635,3636,3642,3648,3653,3654,3654,3655,3662,3664,3673,3713,3714,3716,3716,3719,3720,3722,3722,3725,3725,3732,3735,3737,3743,3745,3747,3749,3749,3751,3751,3754,3755,3757,3760,3761,3761,3762,3763,3764,3769,3771,3772,3773,3773,3776,3780,3782,3782,3784,3789,3792,3801,3804,3807,3840,3840,3864,3865,3872,3881,3893,3893,3895,3895,3897,3897,3902,3903,3904,3911,3913,3948,3953,3966,3967,3967,3968,3972,3974,3975,3976,3980,3981,3991,3993,4028,4038,4038,4096,4138,4139,4140,4141,4144,4145,4145,4146,4151,4152,4152,4153,4154,4155,4156,4157,4158,4159,4159,4160,4169,4176,4181,4182,4183,4184,4185,4186,4189,4190,4192,4193,4193,4194,4196,4197,4198,4199,4205,4206,4208,4209,4212,4213,4225,4226,4226,4227,4228,4229,4230,4231,4236,4237,4237,4238,4238,4239,4239,4240,4249,4250,4252,4253,4253,4256,4293,4295,4295,4301,4301,4304,4346,4348,4348,4349,4680,4682,4685,4688,4694,4696,4696,4698,4701,4704,4744,4746,4749,4752,4784,4786,4789,4792,4798,4800,4800,4802,4805,4808,4822,4824,4880,4882,4885,4888,4954,4957,4959,4969,4977,4992,5007,5024,5108,5121,5740,5743,5759,5761,5786,5792,5866,5870,5872,5888,5900,5902,5905,5906,5908,5920,5937,5938,5940,5952,5969,5970,5971,5984,5996,5998,6000,6002,6003,6016,6067,6068,6069,6070,6070,6071,6077,6078,6085,6086,6086,6087,6088,6089,6099,6103,6103,6108,6108,6109,6109,6112,6121,6155,6157,6160,6169,6176,6210,6211,6211,6212,6263,6272,6312,6313,6313,6314,6314,6320,6389,6400,6428,6432,6434,6435,6438,6439,6440,6441,6443,6448,6449,6450,6450,6451,6456,6457,6459,6470,6479,6480,6509,6512,6516,6528,6571,6576,6592,6593,6599,6600,6601,6608,6617,6618,6618,6656,6678,6679,6680,6681,6683,6688,6740,6741,6741,6742,6742,6743,6743,6744,6750,6752,6752,6753,6753,6754,6754,6755,6756,6757,6764,6765,6770,6771,6780,6783,6783,6784,6793,6800,6809,6823,6823,6912,6915,6916,6916,6917,6963,6964,6964,6965,6965,6966,6970,6971,6971,6972,6972,6973,6977,6978,6978,6979,6980,6981,6987,6992,7001,7019,7027,7040,7041,7042,7042,7043,7072,7073,7073,7074,7077,7078,7079,7080,7081,7082,7082,7083,7083,7084,7085,7086,7087,7088,7097,7098,7141,7142,7142,7143,7143,7144,7145,7146,7148,7149,7149,7150,7150,7151,7153,7154,7155,7168,7203,7204,7211,7212,7219,7220,7221,7222,7223,7232,7241,7245,7247,7248,7257,7258,7287,7288,7293,7376,7378,7380,7392,7393,7393,7394,7400,7401,7404,7405,7405,7406,7409,7410,7411,7412,7412,7413,7414,7424,7467,7468,7530,7531,7543,7544,7544,7545,7578,7579,7615,7616,7654,7676,7679,7680,7957,7960,7965,7968,8005,8008,8013,8016,8023,8025,8025,8027,8027,8029,8029,8031,8061,8064,8116,8118,8124,8126,8126,8130,8132,8134,8140,8144,8147,8150,8155,8160,8172,8178,8180,8182,8188,8255,8256,8276,8276,8305,8305,8319,8319,8336,8348,8400,8412,8417,8417,8421,8432,8450,8450,8455,8455,8458,8467,8469,8469,8472,8472,8473,8477,8484,8484,8486,8486,8488,8488,8490,8493,8494,8494,8495,8500,8501,8504,8505,8505,8508,8511,8517,8521,8526,8526,8544,8578,8579,8580,8581,8584,11264,11310,11312,11358,11360,11387,11388,11389,11390,11492,11499,11502,11503,11505,11506,11507,11520,11557,11559,11559,11565,11565,11568,11623,11631,11631,11647,11647,11648,11670,11680,11686,11688,11694,11696,11702,11704,11710,11712,11718,11720,11726,11728,11734,11736,11742,11744,11775,12293,12293,12294,12294,12295,12295,12321,12329,12330,12333,12334,12335,12337,12341,12344,12346,12347,12347,12348,12348,12353,12438,12441,12442,12443,12444,12445,12446,12447,12447,12449,12538,12540,12542,12543,12543,12549,12589,12593,12686,12704,12730,12784,12799,13312,19893,19968,40908,40960,40980,40981,40981,40982,42124,42192,42231,42232,42237,42240,42507,42508,42508,42512,42527,42528,42537,42538,42539,42560,42605,42606,42606,42607,42607,42612,42621,42623,42623,42624,42647,42655,42655,42656,42725,42726,42735,42736,42737,42775,42783,42786,42863,42864,42864,42865,42887,42888,42888,42891,42894,42896,42899,42912,42922,43000,43001,43002,43002,43003,43009,43010,43010,43011,43013,43014,43014,43015,43018,43019,43019,43020,43042,43043,43044,43045,43046,43047,43047,43072,43123,43136,43137,43138,43187,43188,43203,43204,43204,43216,43225,43232,43249,43250,43255,43259,43259,43264,43273,43274,43301,43302,43309,43312,43334,43335,43345,43346,43347,43360,43388,43392,43394,43395,43395,43396,43442,43443,43443,43444,43445,43446,43449,43450,43451,43452,43452,43453,43456,43471,43471,43472,43481,43520,43560,43561,43566,43567,43568,43569,43570,43571,43572,43573,43574,43584,43586,43587,43587,43588,43595,43596,43596,43597,43597,43600,43609,43616,43631,43632,43632,43633,43638,43642,43642,43643,43643,43648,43695,43696,43696,43697,43697,43698,43700,43701,43702,43703,43704,43705,43709,43710,43711,43712,43712,43713,43713,43714,43714,43739,43740,43741,43741,43744,43754,43755,43755,43756,43757,43758,43759,43762,43762,43763,43764,43765,43765,43766,43766,43777,43782,43785,43790,43793,43798,43808,43814,43816,43822,43968,44002,44003,44004,44005,44005,44006,44007,44008,44008,44009,44010,44012,44012,44013,44013,44016,44025,44032,55203,55216,55238,55243,55291,63744,64109,64112,64217,64256,64262,64275,64279,64285,64285,64286,64286,64287,64296,64298,64310,64312,64316,64318,64318,64320,64321,64323,64324,64326,64433,64467,64829,64848,64911,64914,64967,65008,65019,65024,65039,65056,65062,65075,65076,65101,65103,65136,65140,65142,65276,65296,65305,65313,65338,65343,65343,65345,65370,65382,65391,65392,65392,65393,65437,65438,65439,65440,65470,65474,65479,65482,65487,65490,65495,65498,65500,65536,65547,65549,65574,65576,65594,65596,65597,65599,65613,65616,65629,65664,65786,65856,65908,66045,66045,66176,66204,66208,66256,66304,66334,66352,66368,66369,66369,66370,66377,66378,66378,66432,66461,66464,66499,66504,66511,66513,66517,66560,66639,66640,66717,66720,66729,67584,67589,67592,67592,67594,67637,67639,67640,67644,67644,67647,67669,67840,67861,67872,67897,67968,68023,68030,68031,68096,68096,68097,68099,68101,68102,68108,68111,68112,68115,68117,68119,68121,68147,68152,68154,68159,68159,68192,68220,68352,68405,68416,68437,68448,68466,68608,68680,69632,69632,69633,69633,69634,69634,69635,69687,69688,69702,69734,69743,69760,69761,69762,69762,69763,69807,69808,69810,69811,69814,69815,69816,69817,69818,69840,69864,69872,69881,69888,69890,69891,69926,69927,69931,69932,69932,69933,69940,69942,69951,70016,70017,70018,70018,70019,70066,70067,70069,70070,70078,70079,70080,70081,70084,70096,70105,71296,71338,71339,71339,71340,71340,71341,71341,71342,71343,71344,71349,71350,71350,71351,71351,71360,71369,73728,74606,74752,74850,77824,78894,92160,92728,93952,94020,94032,94032,94033,94078,94095,94098,94099,94111,110592,110593,119141,119142,119143,119145,119149,119154,119163,119170,119173,119179,119210,119213,119362,119364,119808,119892,119894,119964,119966,119967,119970,119970,119973,119974,119977,119980,119982,119993,119995,119995,119997,120003,120005,120069,120071,120074,120077,120084,120086,120092,120094,120121,120123,120126,120128,120132,120134,120134,120138,120144,120146,120485,120488,120512,120514,120538,120540,120570,120572,120596,120598,120628,120630,120654,120656,120686,120688,120712,120714,120744,120746,120770,120772,120779,120782,120831,126464,126467,126469,126495,126497,126498,126500,126500,126503,126503,126505,126514,126516,126519,126521,126521,126523,126523,126530,126530,126535,126535,126537,126537,126539,126539,126541,126543,126545,126546,126548,126548,126551,126551,126553,126553,126555,126555,126557,126557,126559,126559,126561,126562,126564,126564,126567,126570,126572,126578,126580,126583,126585,126588,126590,126590,126592,126601,126603,126619,126625,126627,126629,126633,126635,126651,131072,173782,173824,177972,177984,178205,194560,195101,917760,917999))
     }
 
+    /* How many UTF-16 units the codepoint at this position occupies. A regex
+     * step MoarVM measures in codepoints has to advance by this, or it lands
+     * between the halves of a non-BMP character. */
+    @JvmStatic
+    fun cpwidth(target: String?, offset: Long): Long {
+        val i = offset.toInt()
+        if (target == null || i >= target.length)
+            return 1L
+        return Character.charCount(target.codePointAt(i)).toLong()
+    }
+
     @JvmStatic
     fun ischarprop(propName: String?, target: String?, offset: Long): Long {
         val iOffset = offset.toInt()
@@ -5980,7 +6207,7 @@ object Ops {
 
             var index = 0
             for (s in stringHeap) {
-                tc.native_s = s
+                tc.nativeS = s
                 sh!!.bind_pos_native(tc, (index++).toLong())
             }
 
@@ -6006,7 +6233,7 @@ object Ops {
 
             var index = 0
             for (s in stringHeap) {
-                tc.native_s = s
+                tc.nativeS = s
                 sh!!.bind_pos_native(tc, (index++).toLong())
             }
 
@@ -6032,7 +6259,7 @@ object Ops {
         val shArray = arrayOfNulls<String>(sh!!.elems(tc).toInt())
         for (i in shArray.indices) {
             sh.at_pos_native(tc, i.toLong())
-            shArray[i] = tc.native_s
+            shArray[i] = tc.nativeS
         }
 
         val cu = tc.frame.codeRef.staticInfo.compUnit
@@ -6150,7 +6377,7 @@ object Ops {
 
         /* See if the object is actually owned by another, and it's the
          * owner we need to repossess. */
-        val owner = theObj!!.sc!!.owned_objects.get(theObj)
+        val owner = theObj!!.sc!!.ownedObjects.get(theObj)
         if (isnull(owner) == 0L)
             theObj = owner
 
@@ -6375,6 +6602,19 @@ object Ops {
             throw ExceptionHandling.dieInternal(tc, "getcodename can only be used with a CodeRef")
     }
     @JvmStatic
+    fun getcodelocation(code: SixModelObject?, tc: ThreadContext): SixModelObject {
+        if (code !is CodeRef)
+            throw ExceptionHandling.dieInternal(tc, "getcodelocation can only be used with a CodeRef")
+        val hllConfig = tc.frame.codeRef.staticInfo.compUnit.hllConfig
+        val res = hllConfig.hashType!!.st.REPR.allocate(tc, hllConfig.hashType!!.st)
+        val si = code.staticInfo
+        res.bind_key_boxed(tc, "file",
+            box_s(si.sourceFile ?: "unknown", hllConfig.strBoxType, tc))
+        res.bind_key_boxed(tc, "line",
+            box_i(si.sourceLine.toLong(), hllConfig.intBoxType, tc))
+        return res
+    }
+    @JvmStatic
     fun setcodename(code: SixModelObject?, name: String?, tc: ThreadContext): SixModelObject? {
         if (code is CodeRef) {
             code.name = name
@@ -6390,6 +6630,24 @@ object Ops {
             return code.staticInfo.uniqueId
         else
             throw ExceptionHandling.dieInternal(tc, "getcodename can only be used with a CodeRef")
+    }
+    /**
+     * Gives the code a scope to close over that was never entered. A phaser
+     * can be asked to run without its enclosing block ever having been
+     * invoked -- a QUIT on a whenever that never fired, say -- and it still
+     * has to find that block's lexicals. Build a frame for the enclosing
+     * static scope and hand it to the code as its outer; that frame in turn
+     * finds the nearest live instance of the scope around it, so the phaser
+     * reaches real values wherever there are any. MoarVM's
+     * MVM_frame_capture_inner does the same two steps.
+     */
+    @JvmStatic
+    fun captureinnerlex(code: SixModelObject?, tc: ThreadContext): SixModelObject? {
+        if (code !is CodeRef)
+            throw ExceptionHandling.dieInternal(tc, "captureinnerlex must be used on a CodeRef")
+        val outerStatic = code.staticInfo.outerStaticInfo ?: return code
+        code.outer = CallFrame.contextOnly(tc, outerStatic)
+        return code
     }
     @JvmStatic
     fun forceouterctx(code: SixModelObject?, ctx: SixModelObject?, tc: ThreadContext): SixModelObject? {
@@ -6571,9 +6829,9 @@ object Ops {
                 .processCpuTime
             val cpuMillis = cpuNanos / 1000
             if (res is VMArrayInstance_i) {
-                tc.native_i = cpuMillis / 1000000 // UTIME_SEC
+                tc.nativeI = cpuMillis / 1000000 // UTIME_SEC
                 res.bind_pos_native(tc, 0)
-                tc.native_i = cpuMillis % 1000000 // UTIME_MSEC
+                tc.nativeI = cpuMillis % 1000000 // UTIME_MSEC
                 res.bind_pos_native(tc, 1)
             }
             /* TODO remove workar^H^H^Hdirty hack for non-working native arrays in ThreadPoolScheduler */
@@ -6868,15 +7126,64 @@ object Ops {
                 "Cannot atomic store to an immutable value")
         }
     }
+    /* The integer atomics work on a native-int reference (lexical, attribute
+     * or positional). The reference kinds store into plain long slots that a
+     * VarHandle cannot uniformly cover, so a shared lock provides the
+     * atomicity; only code actually using the atomic ops contends on it. */
+    private val intAtomicsLock = Object()
+    private fun nativeIntRef(cont: SixModelObject?, tc: ThreadContext): NativeRefInstance =
+        cont as? NativeRefInstance ?: throw ExceptionHandling.dieInternal(tc,
+            "Can only do an atomic integer operation on a native integer reference")
     @JvmStatic
-    fun casattr(obj: SixModelObject?, class_handle: SixModelObject?,
-            name: String?, expected: SixModelObject?, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        return obj!!.cas_attribute_boxed(tc, class_handle, name, expected, value)
+    fun atomicload_i(cont: SixModelObject?, tc: ThreadContext): Long {
+        val ref = nativeIntRef(cont, tc)
+        synchronized(intAtomicsLock) { return ref.fetch_i(tc) }
     }
     @JvmStatic
-    fun atomicbindattr(obj: SixModelObject?, class_handle: SixModelObject?,
+    fun atomicstore_i(cont: SixModelObject?, value: Long, tc: ThreadContext): Long {
+        val ref = nativeIntRef(cont, tc)
+        synchronized(intAtomicsLock) { ref.store_i(tc, value) }
+        return value
+    }
+    @JvmStatic
+    fun atomicadd_i(cont: SixModelObject?, addend: Long, tc: ThreadContext): Long {
+        val ref = nativeIntRef(cont, tc)
+        synchronized(intAtomicsLock) {
+            val orig = ref.fetch_i(tc)
+            ref.store_i(tc, orig + addend)
+            return orig
+        }
+    }
+    @JvmStatic
+    fun atomicinc_i(cont: SixModelObject?, tc: ThreadContext): Long =
+        atomicadd_i(cont, 1L, tc)
+    @JvmStatic
+    fun atomicdec_i(cont: SixModelObject?, tc: ThreadContext): Long =
+        atomicadd_i(cont, -1L, tc)
+    @JvmStatic
+    fun cas_i(cont: SixModelObject?, expected: Long, value: Long, tc: ThreadContext): Long {
+        val ref = nativeIntRef(cont, tc)
+        synchronized(intAtomicsLock) {
+            val seen = ref.fetch_i(tc)
+            if (seen == expected)
+                ref.store_i(tc, value)
+            return seen
+        }
+    }
+    @JvmStatic
+    fun barrierfull(tc: ThreadContext): Long {
+        java.lang.invoke.VarHandle.fullFence()
+        return 0L
+    }
+    @JvmStatic
+    fun casattr(obj: SixModelObject?, classHandle: SixModelObject?,
+            name: String?, expected: SixModelObject?, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
+        return obj!!.cas_attribute_boxed(tc, classHandle, name, expected, value)
+    }
+    @JvmStatic
+    fun atomicbindattr(obj: SixModelObject?, classHandle: SixModelObject?,
             name: String?, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        obj!!.atomic_bind_attribute_boxed(tc, class_handle, name, value)
+        obj!!.atomic_bind_attribute_boxed(tc, classHandle, name, value)
         return value
     }
 
@@ -6896,7 +7203,7 @@ object Ops {
     }
     @JvmStatic
     fun timer(queue: SixModelObject?, schedulee: SixModelObject?,
-            timeout: Long, repeat: Long, handle_type: SixModelObject?, tc: ThreadContext): SixModelObject {
+            timeout: Long, repeat: Long, handleType: SixModelObject?, tc: ThreadContext): SixModelObject {
         if (queue !is ConcBlockingQueueInstance)
             throw ExceptionHandling.dieInternal(tc, "timer's first argument should have REPR ConcBlockingQueue")
         val tt = AddToQueueTimerTask(queue.queue, schedulee)
@@ -6905,7 +7212,7 @@ object Ops {
         else
             tc.gc.timer.schedule(tt, timeout)
         /* XXX TODO: cancellation handle. */
-        val handle = handle_type!!.st.REPR.allocate(tc, handle_type.st) as AsyncTaskInstance
+        val handle = handleType!!.st.REPR.allocate(tc, handleType.st) as AsyncTaskInstance
         handle.handle = tt
         return handle
     }
@@ -7063,8 +7370,10 @@ object Ops {
                 if (te.frame!!.codeRef.staticInfo.isThunk)
                     continue
                 val annots = Hash.st.REPR.allocate(tc, Hash.st)
-                annots.bind_key_boxed(tc, "file", box_s(if (te.file == null) "" else te.file, Str, tc))
-                annots.bind_key_boxed(tc, "line", box_i(if (te.line < 0) 1 else te.line.toLong(), Int, tc))
+                val file = te.mappedFile
+                val line = te.mappedLine
+                annots.bind_key_boxed(tc, "file", box_s(if (file == null) "" else file, Str, tc))
+                annots.bind_key_boxed(tc, "line", box_i(if (line < 0) 1 else line.toLong(), Int, tc))
                 val row = Hash.st.REPR.allocate(tc, Hash.st)
                 row.bind_key_boxed(tc, "sub", te.frame!!.codeRef)
                 row.bind_key_boxed(tc, "annotations", annots)
@@ -7121,7 +7430,8 @@ object Ops {
             ExceptionHandling.handlerDynamic(tc, obj.category, false, obj)
         }
         else {
-            throw ExceptionHandling.dieInternal(tc, "rethrow needs an object with VMException representation")
+            throw ExceptionHandling.dieInternal(tc, "rethrow needs an object with VMException representation, got " +
+                (if (obj == null) "null" else typeName(obj, tc) + " (repr " + reprname(obj, tc) + ")"))
         }
     }
     private val theResumer = ResumeException()
@@ -7135,6 +7445,10 @@ object Ops {
         val exObj = exType.st.REPR.allocate(tc, exType.st) as VMExceptionInstance
         exObj.category = category
         exObj.origin = tc.curFrame
+        /* On the exception, not only in the thread's slot: the handler that
+         * finally takes this throw may run after other payload throws have
+         * come and gone, and it is this exception's payload it wants. */
+        exObj.payload = payload
         tc.lastPayload = payload
         ExceptionHandling.handlerLexical(tc, category, exObj, false)
     }
@@ -7144,6 +7458,7 @@ object Ops {
         val exObj = exType.st.REPR.allocate(tc, exType.st) as VMExceptionInstance
         exObj.category = category
         exObj.origin = tc.curFrame
+        exObj.payload = payload
         tc.lastPayload = payload
         ExceptionHandling.handlerLexical(tc, category, exObj, true)
     }
@@ -7208,6 +7523,8 @@ object Ops {
             config.slurpyArrayType = configHash.at_key_boxed(tc, "slurpy_array")
         if (configHash.exists_key(tc, "slurpy_hash") != 0L)
             config.slurpyHashType = configHash.at_key_boxed(tc, "slurpy_hash")
+        if (configHash.exists_key(tc, "bind_error") != 0L)
+            config.bindError = configHash.at_key_boxed(tc, "bind_error")
         if (configHash.exists_key(tc, "array_iter") != 0L)
             config.arrayIteratorType = configHash.at_key_boxed(tc, "array_iter")
         if (configHash.exists_key(tc, "hash_iter") != 0L)
@@ -7276,6 +7593,25 @@ object Ops {
             config.strMultidimRef = configHash.at_key_boxed(tc, "str_multidim_ref")
         if (configHash.exists_key(tc, "lexical_handler_not_found_error") != 0L)
             config.lexicalHandlerNotFoundError = configHash.at_key_boxed(tc, "lexical_handler_not_found_error")
+
+        /* The dispatchers this language wants the language-sensitive boot
+         * dispatchers to hand over to; named, not code objects. */
+        if (configHash.exists_key(tc, "call_dispatcher") != 0L)
+            config.callDispatcher = unbox_s(configHash.at_key_boxed(tc, "call_dispatcher"), tc)
+        if (configHash.exists_key(tc, "method_call_dispatcher") != 0L)
+            config.methodCallDispatcher = unbox_s(configHash.at_key_boxed(tc, "method_call_dispatcher"), tc)
+        if (configHash.exists_key(tc, "find_method_dispatcher") != 0L)
+            config.findMethodDispatcher = unbox_s(configHash.at_key_boxed(tc, "find_method_dispatcher"), tc)
+        if (configHash.exists_key(tc, "hllize_dispatcher") != 0L)
+            config.hllizeDispatcher = unbox_s(configHash.at_key_boxed(tc, "hllize_dispatcher"), tc)
+        if (configHash.exists_key(tc, "istype_dispatcher") != 0L)
+            config.istypeDispatcher = unbox_s(configHash.at_key_boxed(tc, "istype_dispatcher"), tc)
+        if (configHash.exists_key(tc, "isinvokable_dispatcher") != 0L)
+            config.isinvokableDispatcher = unbox_s(configHash.at_key_boxed(tc, "isinvokable_dispatcher"), tc)
+        if (configHash.exists_key(tc, "resume_error_dispatcher") != 0L)
+            config.resumeErrorDispatcher = unbox_s(configHash.at_key_boxed(tc, "resume_error_dispatcher"), tc)
+        if (configHash.exists_key(tc, "method_not_found_error") != 0L)
+            config.methodNotFoundError = configHash.at_key_boxed(tc, "method_not_found_error")
         return configHash
     }
     @JvmStatic
@@ -7347,7 +7683,7 @@ object Ops {
     @JvmStatic
     fun hllize(obj: SixModelObject?, tc: ThreadContext): SixModelObject? {
         val wanted = tc.frame.codeRef.staticInfo.compUnit.hllConfig
-        if (isnull(obj) == 0L && obj!!.st.hllOwner === wanted)
+        if (isnull(obj) == 0L && obj!!.stInitialized && obj.st.hllOwner === wanted)
             return obj
         else
             return hllizeInternal(obj, wanted, tc)
@@ -7355,7 +7691,7 @@ object Ops {
     @JvmStatic
     fun hllizefor(obj: SixModelObject?, language: String, tc: ThreadContext): SixModelObject? {
         val wanted = tc.gc.getHLLConfigFor(language)
-        if (isnull(obj) == 0L && obj!!.st.hllOwner === wanted)
+        if (isnull(obj) == 0L && obj!!.stInitialized && obj.st.hllOwner === wanted)
             return obj
         else
             return hllizeInternal(obj, wanted, tc)
@@ -7375,11 +7711,22 @@ object Ops {
         if (isnull(obj) == 1L)
             return wanted.nullValue
 
+        /* An internal carrier with no STable (EvalResult and friends) has no
+         * HLL identity to map; on MoarVM every object has an STable and these
+         * fall through as role NONE, so pass them through here too. */
+        if (!obj!!.stInitialized)
+            return obj
+
         /* Go by what role the object plays. */
         when (obj!!.st.hllRole.toInt()) {
+            /* For the boxed-native roles, a type object cannot be unboxed;
+             * MoarVM's MVM_hll_map answers with the target language's foreign
+             * type itself there, so mirror that. */
             HLLConfig.ROLE_INT -> {
                 if (isnull(wanted.foreignTypeInt) == 0L) {
-                    return box_i(obj.get_int(tc), wanted.foreignTypeInt, tc)
+                    return if (isconcrete_nd(obj, tc) == 1L)
+                        box_i(obj.get_int(tc), wanted.foreignTypeInt, tc)
+                    else wanted.foreignTypeInt
                 }
                 else if (isnull(wanted.foreignTransformInt) == 0L) {
                     throw RuntimeException("foreign_transform_int NYI")
@@ -7390,7 +7737,9 @@ object Ops {
             }
             HLLConfig.ROLE_NUM -> {
                 if (isnull(wanted.foreignTypeNum) == 0L) {
-                    return box_n(obj.get_num(tc), wanted.foreignTypeNum, tc)
+                    return if (isconcrete_nd(obj, tc) == 1L)
+                        box_n(obj.get_num(tc), wanted.foreignTypeNum, tc)
+                    else wanted.foreignTypeNum
                 }
                 else if (isnull(wanted.foreignTransformNum) == 0L) {
                     throw RuntimeException("foreign_transform_num NYI")
@@ -7401,7 +7750,9 @@ object Ops {
             }
             HLLConfig.ROLE_STR -> {
                 if (isnull(wanted.foreignTypeStr) == 0L) {
-                    return box_s(obj.get_str(tc), wanted.foreignTypeStr, tc)
+                    return if (isconcrete_nd(obj, tc) == 1L)
+                        box_s(obj.get_str(tc), wanted.foreignTypeStr, tc)
+                    else wanted.foreignTypeStr
                 }
                 else if (isnull(wanted.foreignTransformStr) == 0L) {
                     throw RuntimeException("foreign_transform_str NYI")
@@ -7487,14 +7838,14 @@ object Ops {
                 when (act and 0xff) {
                 NFA.EDGE_FATE, NFA.EDGE_CODEPOINT_LL, NFA.EDGE_CODEPOINT,
                 NFA.EDGE_CODEPOINT_NEG, NFA.EDGE_CHARCLASS, NFA.EDGE_CHARCLASS_NEG ->
-                    info.arg_i = smart_intify(edgeInfo.at_pos_boxed(tc, (j + 1).toLong()), tc).toInt()
+                    info.argI = smart_intify(edgeInfo.at_pos_boxed(tc, (j + 1).toLong()), tc).toInt()
                 NFA.EDGE_CHARLIST, NFA.EDGE_CHARLIST_NEG ->
-                    info.arg_s = edgeInfo.at_pos_boxed(tc, (j + 1).toLong())!!.get_str(tc)
+                    info.argS = edgeInfo.at_pos_boxed(tc, (j + 1).toLong())!!.get_str(tc)
                 NFA.EDGE_CODEPOINT_I_LL, NFA.EDGE_CODEPOINT_I, NFA.EDGE_CODEPOINT_I_NEG,
                 NFA.EDGE_CHARRANGE, NFA.EDGE_CHARRANGE_NEG -> {
                     val arg = edgeInfo.at_pos_boxed(tc, (j + 1).toLong())
-                    info.arg_lc = smart_intify(arg!!.at_pos_boxed(tc, 0), tc).toInt().toChar()
-                    info.arg_uc = smart_intify(arg.at_pos_boxed(tc, 1), tc).toInt().toChar()
+                    info.argLc = smart_intify(arg!!.at_pos_boxed(tc, 0), tc).toInt().toChar()
+                    info.argUc = smart_intify(arg.at_pos_boxed(tc, 1), tc).toInt().toChar()
                 }
                 }
 
@@ -7516,7 +7867,7 @@ object Ops {
         val fateRes = BOOTIntArray.st.REPR.allocate(tc, BOOTIntArray.st)
         fateRes.set_elems(tc, fates.size.toLong())
         for (i in fates.indices) {
-            tc.native_i = fates[i].toLong()
+            tc.nativeI = fates[i].toLong()
             fateRes.bind_pos_native(tc, i.toLong())
         }
 
@@ -7535,11 +7886,11 @@ object Ops {
         for (i in fates.indices) {
             marks!!.at_pos_native(tc, fates[i].toLong())
             bstack.bind_pos_native(tc, curLen + (4 * i) + 0)
-            tc.native_i = pos
+            tc.nativeI = pos
             bstack.bind_pos_native(tc, curLen + (4 * i) + 1)
-            tc.native_i = 0
+            tc.nativeI = 0
             bstack.bind_pos_native(tc, curLen + (4 * i) + 2)
-            tc.native_i = caps
+            tc.nativeI = caps
             bstack.bind_pos_native(tc, curLen + (4 * i) + 3)
         }
 
@@ -7555,7 +7906,7 @@ object Ops {
         /* Allocate a "done states" array. */
         val numStates = nfa.numStates
         val done = IntArray(numStates + 1)
-        val orig_pos = pos
+        val origPos = pos
 
         /* Clear out other re-used arrays. */
         val fates = tc.fates
@@ -7602,7 +7953,7 @@ object Ops {
                         else if (act == NFA.EDGE_FATE) {
                             /* Crossed a fate edge. Check if we already saw this, and
                              * if so bump the entry we already saw. */
-                            var arg = edgeInfo[i]!!.arg_i
+                            var arg = edgeInfo[i]!!.argI
                             var foundFate = false
                             arg = arg and 0xffffff   // can go away after reboostrap?
                             for (j in 0 until fates.size) {
@@ -7636,92 +7987,92 @@ object Ops {
 
                     when (act) {
                         NFA.EDGE_CODEPOINT -> {
-                            val arg = edgeInfo[i]!!.arg_i.toChar()
+                            val arg = edgeInfo[i]!!.argI.toChar()
                             if (target[curPos.toInt()] == arg)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CODEPOINT_LL -> {
-                            val arg = edgeInfo[i]!!.arg_i.toChar()
+                            val arg = edgeInfo[i]!!.argI.toChar()
                             if (target[curPos.toInt()] == arg) {
                                 val fate = (edgeInfo[i]!!.act shr 8) and 0xfffff  /* act is probably signed 32 bits */
                                 nextst.add(to)
                                 while (usedlonglit <= fate)
                                     longlit[usedlonglit++] = 0
-                                longlit[fate] = curPos - orig_pos + 1
+                                longlit[fate] = curPos - origPos + 1
                             }
                             continue
                         }
                         NFA.EDGE_CODEPOINT_NEG -> {
-                            val arg = edgeInfo[i]!!.arg_i.toChar()
+                            val arg = edgeInfo[i]!!.argI.toChar()
                             if (target[curPos.toInt()] != arg)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CHARCLASS -> {
-                            if (iscclass(edgeInfo[i]!!.arg_i.toLong(), target, curPos) != 0L)
+                            if (iscclass(edgeInfo[i]!!.argI.toLong(), target, curPos) != 0L)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CHARCLASS_NEG -> {
-                            if (iscclass(edgeInfo[i]!!.arg_i.toLong(), target, curPos) == 0L)
+                            if (iscclass(edgeInfo[i]!!.argI.toLong(), target, curPos) == 0L)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CHARLIST -> {
-                            val arg = edgeInfo[i]!!.arg_s
+                            val arg = edgeInfo[i]!!.argS
                             if (arg!!.indexOf(target[curPos.toInt()]) >= 0)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CHARLIST_NEG -> {
-                            val arg = edgeInfo[i]!!.arg_s
+                            val arg = edgeInfo[i]!!.argS
                             if (arg!!.indexOf(target[curPos.toInt()]) < 0)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CODEPOINT_I -> {
-                            val uc_arg = edgeInfo[i]!!.arg_uc
-                            val lc_arg = edgeInfo[i]!!.arg_lc
+                            val ucArg = edgeInfo[i]!!.argUc
+                            val lcArg = edgeInfo[i]!!.argLc
                             val ord = target[curPos.toInt()]
-                            if (ord == lc_arg || ord == uc_arg)
+                            if (ord == lcArg || ord == ucArg)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CODEPOINT_I_LL -> {
-                            val uc_arg = edgeInfo[i]!!.arg_uc
-                            val lc_arg = edgeInfo[i]!!.arg_lc
+                            val ucArg = edgeInfo[i]!!.argUc
+                            val lcArg = edgeInfo[i]!!.argLc
                             val ord = target[curPos.toInt()]
-                            if (ord == lc_arg || ord == uc_arg) {
+                            if (ord == lcArg || ord == ucArg) {
                                 val fate = (edgeInfo[i]!!.act shr 8) and 0xfffff  /* act is probably signed 32 bits */
                                 nextst.add(to)
                                 while (usedlonglit <= fate)
                                     longlit[usedlonglit++] = 0
-                                longlit[fate] = curPos - orig_pos + 1
+                                longlit[fate] = curPos - origPos + 1
                             }
                             continue
                         }
                         NFA.EDGE_CODEPOINT_I_NEG -> {
-                            val uc_arg = edgeInfo[i]!!.arg_uc
-                            val lc_arg = edgeInfo[i]!!.arg_lc
+                            val ucArg = edgeInfo[i]!!.argUc
+                            val lcArg = edgeInfo[i]!!.argLc
                             val ord = target[curPos.toInt()]
-                            if (ord != lc_arg && ord != uc_arg)
+                            if (ord != lcArg && ord != ucArg)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CHARRANGE -> {
-                            val uc_arg = edgeInfo[i]!!.arg_uc
-                            val lc_arg = edgeInfo[i]!!.arg_lc
+                            val ucArg = edgeInfo[i]!!.argUc
+                            val lcArg = edgeInfo[i]!!.argLc
                             val ord = target[curPos.toInt()]
-                            if (ord >= lc_arg && ord <= uc_arg)
+                            if (ord >= lcArg && ord <= ucArg)
                                 nextst.add(to)
                             continue
                         }
                         NFA.EDGE_CHARRANGE_NEG -> {
-                            val uc_arg = edgeInfo[i]!!.arg_uc
-                            val lc_arg = edgeInfo[i]!!.arg_lc
+                            val ucArg = edgeInfo[i]!!.argUc
+                            val lcArg = edgeInfo[i]!!.argLc
                             val ord = target[curPos.toInt()]
-                            if (ord < lc_arg || ord > uc_arg)
+                            if (ord < lcArg || ord > ucArg)
                                 nextst.add(to)
                             continue
                         }
@@ -7773,19 +8124,19 @@ object Ops {
         val caps: Long
         if (elems > 0) {
             bstack.at_pos_native(tc, elems - 1)
-            caps = tc.native_i
+            caps = tc.nativeI
         }
         else {
             caps = 0
         }
 
-        tc.native_i = mark
+        tc.nativeI = mark
         bstack.push_native(tc)
-        tc.native_i = pos
+        tc.nativeI = pos
         bstack.push_native(tc)
-        tc.native_i = rep
+        tc.nativeI = rep
         bstack.push_native(tc)
-        tc.native_i = caps
+        tc.nativeI = caps
         bstack.push_native(tc)
     }
 
@@ -7794,7 +8145,7 @@ object Ops {
         var ptr = bstack!!.elems(tc)
         while (ptr >= 0) {
             bstack.at_pos_native(tc, ptr)
-            if (tc.native_i == mark)
+            if (tc.nativeI == mark)
                 break
             ptr -= 4
         }
@@ -7807,7 +8158,7 @@ object Ops {
         val caps: Long
         if (ptr > 0) {
             bstack.at_pos_native(tc, ptr - 1)
-            caps = tc.native_i
+            caps = tc.nativeI
         }
         else {
             caps = 0
@@ -7815,7 +8166,7 @@ object Ops {
 
         while (ptr >= 0) {
             bstack.at_pos_native(tc, ptr)
-            if (tc.native_i == mark)
+            if (tc.nativeI == mark)
                 break
             ptr -= 4
         }
@@ -7826,20 +8177,20 @@ object Ops {
             if (ptr > 0) {
                 /* top mark frame is an autofail frame, reuse it to hold captures */
                 bstack.at_pos_native(tc, ptr - 3)
-                if (tc.native_i < 0) {
-                    tc.native_i = caps
+                if (tc.nativeI < 0) {
+                    tc.nativeI = caps
                     bstack.bind_pos_native(tc, ptr - 1)
                 }
             }
 
             /* push a new autofail frame onto bstack to hold the captures */
-            tc.native_i = 0
+            tc.nativeI = 0
             bstack.push_native(tc)
-            tc.native_i = -1
+            tc.nativeI = -1
             bstack.push_native(tc)
-            tc.native_i = 0
+            tc.nativeI = 0
             bstack.push_native(tc)
-            tc.native_i = caps
+            tc.nativeI = caps
             bstack.push_native(tc)
         }
     }
@@ -7957,9 +8308,9 @@ object Ops {
             // XXX: type.st.REPRData could theoretically be null here - it shouldn't be, because if it was
             // we should already have handled a P6bigint successfully in the try above.
             val innerType = (type!!.st.REPRData as P6OpaqueREPRData).flattenedSTables!![hint]!!.WHAT
-            tc.native_j = getBI(tc, obj.get_attribute_boxed(tc, null, null, hint.toLong()), innerType)
+            tc.nativeJ = getBI(tc, obj.get_attribute_boxed(tc, null, null, hint.toLong()), innerType)
         }
-        return tc.native_j as BigInteger
+        return tc.nativeJ as BigInteger
     }
 
     private fun makeBI(tc: ThreadContext, type: SixModelObject?, value: BigInteger): SixModelObject {
@@ -7970,7 +8321,7 @@ object Ops {
         else {
             var hint = (type.st.REPRData as P6OpaqueREPRData).unboxIntSlot
             hint = if (hint < 0) 0 else hint
-            tc.native_j = value
+            tc.nativeJ = value
             try {
                 res.bind_attribute_native(tc, null, null, hint.toLong())
             } catch (rte: RuntimeException) {
@@ -8079,9 +8430,9 @@ object Ops {
     fun div_I(a: SixModelObject?, b: SixModelObject?, type: SixModelObject?, tc: ThreadContext): SixModelObject {
         val dividend = getBI(tc, a, type)
         val divisor = getBI(tc, b, type)
-        val dividend_sign = dividend.signum().toLong()
-        val divisor_sign = divisor.signum().toLong()
-        if (dividend_sign * divisor_sign == -1L) {
+        val dividendSign = dividend.signum().toLong()
+        val divisorSign = divisor.signum().toLong()
+        if (dividendSign * divisorSign == -1L) {
             if (dividend.mod(divisor.abs()).compareTo(BigInteger.ZERO) != 0) {
                 return makeBI(tc, type, dividend.divide(divisor).subtract(BigInteger.ONE))
             }
@@ -8225,21 +8576,21 @@ object Ops {
     }
 
     @JvmStatic
-    fun radix_I(radix_l: Long, str: String?, zpos: Long, flags: Long, type: SixModelObject?, tc: ThreadContext): SixModelObject {
+    fun radix_I(radixL: Long, str: String?, zpos: Long, flags: Long, type: SixModelObject?, tc: ThreadContext): SixModelObject {
         var zvalue = BigInteger.ZERO
-        var chars_converted = 0
+        var charsConverted = 0
         var thePos = zpos
         val chars = str!!.length
         var value = zvalue
-        var chars_really_converted = chars_converted
+        var charsReallyConverted = charsConverted
         var pos: Long = -1
         var ch: Char
-        var char_value: Int
+        var charValue: Int
         var neg = false
-        val radix = BigInteger.valueOf(radix_l)
+        val radix = BigInteger.valueOf(radixL)
 
-        if (radix_l > 36) {
-            throw ExceptionHandling.dieInternal(tc, "Cannot convert radix of " + radix_l + " (max 36)")
+        if (radixL > 36) {
+            throw ExceptionHandling.dieInternal(tc, "Cannot convert radix of " + radixL + " (max 36)")
         }
 
         ch = if (thePos < chars) str[thePos.toInt()] else '\u0000'
@@ -8253,12 +8604,12 @@ object Ops {
         }
 
         while (thePos < chars) {
-            char_value = Character.digit(ch, radix_l.toInt())
-            if (char_value == -1) break
-            zvalue = zvalue.multiply(radix).add(BigInteger.valueOf(char_value.toLong()))
-            chars_converted++
+            charValue = Character.digit(ch, radixL.toInt())
+            if (charValue == -1) break
+            zvalue = zvalue.multiply(radix).add(BigInteger.valueOf(charValue.toLong()))
+            charsConverted++
             thePos++; pos = thePos
-            if (char_value != 0 || (flags and 0x04L) == 0L) { value = zvalue; chars_really_converted = chars_converted }
+            if (charValue != 0 || (flags and 0x04L) == 0L) { value = zvalue; charsReallyConverted = charsConverted }
             if (thePos >= chars) break
             ch = str[thePos.toInt()]
             if (ch != '_') continue
@@ -8274,7 +8625,7 @@ object Ops {
                 hllConfig.slurpyArrayType!!.st)
 
         result.push_boxed(tc, makeBI(tc, type, value))
-        result.push_boxed(tc, makeBI(tc, type, BigInteger.valueOf(chars_really_converted.toLong())))
+        result.push_boxed(tc, makeBI(tc, type, BigInteger.valueOf(charsReallyConverted.toLong())))
         result.push_boxed(tc, makeBI(tc, type, BigInteger.valueOf(pos)))
 
         return result
@@ -8317,6 +8668,74 @@ object Ops {
         res.jc = JASTCompiler.buildClass(jast!!, jastNodes!!, false, tc)
         return res
     }
+    /** The class an in-memory compiled block belongs to, when one was
+     * retained for nested-unit persistence; empty string otherwise. */
+    @JvmStatic
+    fun jvmclassofcuid(cuid: String?, tc: ThreadContext): String =
+        if (cuid == null) "" else tc.gc.inMemoryUnitOfCuid[cuid] ?: ""
+
+    /**
+     * Loads a nested compilation unit embedded in the current unit's jar
+     * and installs its code refs into the current unit's qbid table at the
+     * given slots, matched by cuid, so deserialization finds the code refs
+     * the serialized graph points into. The MoarVM backend has no need of
+     * this: it assembles nested units' frames into the enclosing bytecode.
+     */
+    @JvmStatic
+    fun jvmclaimnested(className: String?, idxs: SixModelObject?, cuids: SixModelObject?, tc: ThreadContext): SixModelObject? {
+        val cu = tc.frame.codeRef.staticInfo.compUnit
+        try {
+            val klass = Class.forName(className, true, cu.javaClass.classLoader)
+            val nested = klass.getDeclaredConstructor().newInstance() as CompilationUnit
+            nested.shared = tc.gc.sharingHint
+            /* The enclosing SC is still empty at this point; the nested
+             * unit's own deserialization code (static block lexical values
+             * and the like) runs via jvm-finish-nested afterwards. */
+            nested.initializeCompilationUnit(tc, false)
+            tc.gc.claimedNestedUnits[className!!] = nested
+            val byCuid = HashMap<String, CodeRef>()
+            nested.codeRefs?.let { crs ->
+                for (cr in crs) {
+                    val cuid = cr.staticInfo.uniqueId
+                    if (!cuid.isNullOrEmpty())
+                        byCuid[cuid] = cr
+                }
+            }
+            val n = idxs!!.elems(tc).toInt()
+            var table = cu.qbidToCodeRef!!
+            for (k in 0 until n) {
+                idxs.at_pos_native(tc, k.toLong())
+                val idx = tc.nativeI.toInt()
+                cuids!!.at_pos_native(tc, k.toLong())
+                val cuid = tc.nativeS!!
+                val cr = byCuid[cuid]
+                    ?: throw ExceptionHandling.dieInternal(tc,
+                        "Nested unit $className carries no block with cuid '$cuid'")
+                if (idx >= table.size) {
+                    table = table.copyOf(idx + 1)
+                    cu.qbidToCodeRef = table
+                }
+                table[idx] = cr
+            }
+        }
+        catch (e: ReflectiveOperationException) {
+            throw ExceptionHandling.dieInternal(tc,
+                "Could not load nested compilation unit $className: $e")
+        }
+        return null
+    }
+
+    /** Runs a claimed nested unit's deserialization code, once the
+     * enclosing unit's own deserialization has populated the SC. */
+    @JvmStatic
+    fun jvmfinishnested(className: String?, tc: ThreadContext): SixModelObject? {
+        val nested = tc.gc.claimedNestedUnits.remove(className)
+            ?: throw ExceptionHandling.dieInternal(tc,
+                "No claimed nested compilation unit named $className")
+        nested.runDeserializeIfAvailable(tc)
+        return null
+    }
+
     @JvmStatic
     fun compilejasttofile(jast: SixModelObject?, jastNodes: SixModelObject?, filename: String?, tc: ThreadContext): SixModelObject? {
         JASTCompiler.writeClass(jast!!, jastNodes!!, filename!!, tc)
@@ -8333,6 +8752,20 @@ object Ops {
             res.cu!!.initializeCompilationUnit(tc)
             if (compileeHLL != 0L)
                 usecompilerhllconfig(tc)
+            /* A unit compiled while a compilation is under way may be a
+             * nested unit whose code refs the enclosing serialization
+             * points into; retain what embedding it later needs. */
+            if (!tc.compilingSCs.isNullOrEmpty()) {
+                val unitName = res.jc!!.name!!
+                tc.gc.inMemoryUnitBytes[unitName] = res.jc!!.bytes!!
+                res.cu!!.codeRefs?.let { crs ->
+                    for (cr in crs) {
+                        val cuid = cr.staticInfo.uniqueId
+                        if (!cuid.isNullOrEmpty())
+                            tc.gc.inMemoryUnitOfCuid[cuid] = unitName
+                    }
+                }
+            }
             res.jc = null
             return obj
         }
@@ -8388,7 +8821,7 @@ object Ops {
         return 1
     }
 
-    private val reset_reenter: MethodHandle = try {
+    private val resetReenter: MethodHandle = try {
         MethodHandles.insertArguments(
                 MethodHandles.publicLookup().findStatic(Ops::class.java, "continuationreset",
                     MethodType.methodType(Void.TYPE, SixModelObject::class.java, SixModelObject::class.java, ThreadContext::class.java, ResumeStatus.Frame::class.java)),
@@ -8405,7 +8838,7 @@ object Ops {
     @JvmStatic
     @Throws(Throwable::class)
     fun continuationreset(key: SixModelObject?, run: SixModelObject?, tc: ThreadContext?, resume: ResumeStatus.Frame?) {
-        /* tc is nullable here: the reset_reenter MethodHandle binds null
+        /* tc is nullable here: the resetReenter MethodHandle binds null
          * for key/run/tc and the real tc is reloaded from the resume
          * frame below. */
         var theKey = key
@@ -8445,8 +8878,13 @@ object Ops {
                 return
             } catch (sse: SaveStackException) {
                 if (isnull(sse.key) == 0L && sse.key !== theKey) {
+                    if (System.getenv("NQP_DEBUG_CONT") != null)
+                        System.err.println("reset key mismatch: have " +
+                            (if (theKey == null) "null" else theKey.javaClass.simpleName + "@" +
+                                Integer.toHexString(System.identityHashCode(theKey))) +
+                            " want " + sse)
                     // This is intended for an outer scope, so just append ourself
-                    throw sse.pushFrame(0, reset_reenter, arrayOf<Any?>(theKey), null)
+                    throw sse.pushFrame(0, resetReenter, arrayOf<Any?>(theKey), null)
                 }
                 // Ooo!  This is ours!
                 theResume = null
@@ -8493,6 +8931,8 @@ object Ops {
 
     @JvmStatic
     fun continuationcontrol(protect: Long, key: SixModelObject?, run: SixModelObject?, tc: ThreadContext) {
+        if (System.getenv("NQP_DEBUG_CONT") != null)
+            Throwable("continuationcontrol on " + Thread.currentThread().name).printStackTrace()
         throw SaveStackException(key, protect != 0L, run)
     }
 
@@ -8611,14 +9051,100 @@ object Ops {
         return name!!
     }
 
-    private const val UNIPROP_NUMERIC_VALUE_NUMERATOR   = 19
-    private const val UNIPROP_NUMERIC_VALUE_DENOMINATOR = 10
+    /* Property codes, numbered as MoarVM numbers them in
+     * src/strings/unicode_gen.h, so that the table here reads as a subset
+     * of the real one. A code is opaque to everything above, but it is
+     * baked into precompiled code (the setting takes nqp::unipropcode at
+     * BEGIN time), so a name must keep its number across a build. */
+    private const val UNIPROP_BLOCK                     = 6
+    private const val UNIPROP_SCRIPT                    = 9
+    private const val UNIPROP_NUMERIC_VALUE_NUMERATOR   = 10
+    private const val UNIPROP_GENERAL_CATEGORY          = 20
+    private const val UNIPROP_NUMERIC_VALUE_DENOMINATOR = 21
+
+    /* Character.getType constants indexed to their Unicode two-letter
+     * general category names. */
+    private val GENERAL_CATEGORY_NAMES = HashMap<Int, String>().apply {
+        put(Character.UPPERCASE_LETTER.toInt(), "Lu")
+        put(Character.LOWERCASE_LETTER.toInt(), "Ll")
+        put(Character.TITLECASE_LETTER.toInt(), "Lt")
+        put(Character.MODIFIER_LETTER.toInt(), "Lm")
+        put(Character.OTHER_LETTER.toInt(), "Lo")
+        put(Character.NON_SPACING_MARK.toInt(), "Mn")
+        put(Character.ENCLOSING_MARK.toInt(), "Me")
+        put(Character.COMBINING_SPACING_MARK.toInt(), "Mc")
+        put(Character.DECIMAL_DIGIT_NUMBER.toInt(), "Nd")
+        put(Character.LETTER_NUMBER.toInt(), "Nl")
+        put(Character.OTHER_NUMBER.toInt(), "No")
+        put(Character.SPACE_SEPARATOR.toInt(), "Zs")
+        put(Character.LINE_SEPARATOR.toInt(), "Zl")
+        put(Character.PARAGRAPH_SEPARATOR.toInt(), "Zp")
+        put(Character.CONTROL.toInt(), "Cc")
+        put(Character.FORMAT.toInt(), "Cf")
+        put(Character.PRIVATE_USE.toInt(), "Co")
+        put(Character.SURROGATE.toInt(), "Cs")
+        put(Character.UNASSIGNED.toInt(), "Cn")
+        put(Character.DASH_PUNCTUATION.toInt(), "Pd")
+        put(Character.START_PUNCTUATION.toInt(), "Ps")
+        put(Character.END_PUNCTUATION.toInt(), "Pe")
+        put(Character.CONNECTOR_PUNCTUATION.toInt(), "Pc")
+        put(Character.OTHER_PUNCTUATION.toInt(), "Po")
+        put(Character.INITIAL_QUOTE_PUNCTUATION.toInt(), "Pi")
+        put(Character.FINAL_QUOTE_PUNCTUATION.toInt(), "Pf")
+        put(Character.MATH_SYMBOL.toInt(), "Sm")
+        put(Character.CURRENCY_SYMBOL.toInt(), "Sc")
+        put(Character.MODIFIER_SYMBOL.toInt(), "Sk")
+        put(Character.OTHER_SYMBOL.toInt(), "So")
+    }
+
+    /* Java names a block or script by its identifier form (BASIC_LATIN,
+     * LATIN), where Unicode names it in prose (Basic Latin, Latin), and
+     * that prose name is what a property value is matched against. Spell
+     * the identifier back out: each part title-cased, a part that is a
+     * lone letter or a run of digits hyphenated onto the part before it
+     * (LATIN_EXTENDED_A is Latin Extended-A, LATIN_1_SUPPLEMENT is
+     * Latin-1 Supplement), and the joining words left lowercase.
+     * A handful of blocks whose Unicode name is not a respelling of the
+     * Java identifier at all still come out wrong; Java exposes no way to
+     * ask for the Unicode name itself. */
+    private val UNIPROP_JOINING_WORDS = setOf("and", "or", "of", "for", "with", "the")
+
+    private fun unicodeNameOf(identifier: String): String {
+        val out = StringBuilder()
+        var first = true
+        for (part in identifier.split("_")) {
+            if (part.isEmpty())
+                continue
+            val attaches = !first
+                && (part.length == 1 && part[0].isLetter() || part.all { it.isDigit() })
+            val lower = part.lowercase()
+            if (!first)
+                out.append(if (attaches) '-' else ' ')
+            if (!first && !attaches && UNIPROP_JOINING_WORDS.contains(lower))
+                out.append(lower)
+            else
+                out.append(part[0].uppercaseChar()).append(lower.substring(1))
+            first = false
+        }
+        return out.toString()
+    }
 
     /* TODO: Make this handle more properties. */
     @JvmStatic
     fun getuniprop_str(codepoint: Long, property: Long, tc: ThreadContext): String {
         var res = ""
-        if (property == UNIPROP_NUMERIC_VALUE_NUMERATOR.toLong() || property == UNIPROP_NUMERIC_VALUE_DENOMINATOR.toLong()) {
+        if (property == UNIPROP_GENERAL_CATEGORY.toLong()) {
+            res = GENERAL_CATEGORY_NAMES[Character.getType(codepoint.toInt())] ?: "Cn"
+        }
+        else if (property == UNIPROP_BLOCK.toLong()) {
+            val block = Character.UnicodeBlock.of(codepoint.toInt())
+            res = if (block == null) "" else unicodeNameOf(block.toString())
+        }
+        else if (property == UNIPROP_SCRIPT.toLong()) {
+            val script = Character.UnicodeScript.of(codepoint.toInt())
+            res = if (script == null) "" else unicodeNameOf(script.name)
+        }
+        else if (property == UNIPROP_NUMERIC_VALUE_NUMERATOR.toLong() || property == UNIPROP_NUMERIC_VALUE_DENOMINATOR.toLong()) {
             /* NFKD will decompose fractions into numerator and denominator,
              * separated by "FRACTION SLASH" (⁄). */
             val fraction = java.util.regex.Pattern.compile("⁄").split(
@@ -8640,9 +9166,30 @@ object Ops {
                 return UNIPROP_NUMERIC_VALUE_NUMERATOR.toLong()
             "Numeric_Value_Denominator" ->
                 return UNIPROP_NUMERIC_VALUE_DENOMINATOR.toLong()
+            "General_Category", "gc" ->
+                return UNIPROP_GENERAL_CATEGORY.toLong()
+            "Block", "blk" ->
+                return UNIPROP_BLOCK.toLong()
+            "Script", "sc" ->
+                return UNIPROP_SCRIPT.toLong()
             else ->
                 return -1
         }
+    }
+
+    /* The properties in the table above all carry string values, so an
+     * integer reading of one is the numeric value it spells, if it spells
+     * one at all. */
+    @JvmStatic
+    fun getuniprop_int(codepoint: Long, property: Long, tc: ThreadContext): Long {
+        val str = getuniprop_str(codepoint, property, tc)
+        return try { java.lang.Long.parseLong(str) } catch (e: NumberFormatException) { 0L }
+    }
+
+    /* No binary property has a code yet, so nothing is ever true. */
+    @JvmStatic
+    fun getuniprop_bool(codepoint: Long, property: Long, tc: ThreadContext): Long {
+        return 0L
     }
 
     @JvmStatic
@@ -8654,31 +9201,6 @@ object Ops {
     @JvmStatic
     fun coerce_si(s: String?, tc: ThreadContext): Long {
         return java.lang.Long.parseLong(s)
-    }
-
-    /* The dispatcher-era boot-syscall surface (nqp::syscall). MoarVM
-     * implements these through new-disp; here they are a plain by-name
-     * dispatch, implemented as rakudo's CORE demands them and rejected
-     * loudly otherwise. */
-    @JvmStatic
-    fun syscall(name: String?, args: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        when (name) {
-            "set-cur-hll-config-key" -> {
-                val key = unbox_s(args!!.at_pos_boxed(tc, 0), tc)
-                val value = args.at_pos_boxed(tc, 1)
-                val hllName = tc.frame.codeRef.staticInfo.compUnit.hllName()
-                val config = tc.gc.getHLLConfigFor(hllName)
-                when (key) {
-                    "uint_box" -> config.uintBoxType = value
-                    else -> throw ExceptionHandling.dieInternal(tc,
-                        "Unsupported config key '" + key + "' for set-cur-hll-config-key on the JVM backend")
-                }
-                return null
-            }
-            else ->
-                throw ExceptionHandling.dieInternal(tc,
-                    "nqp::syscall('" + name + "') is not implemented on the JVM backend")
-        }
     }
 
     /* int<->num and int<->uint coercions, present on MoarVM since long
@@ -8728,17 +9250,17 @@ object Ops {
         // Populate result int array.
         val BOOTIntArray = tc.gc.BOOTIntArray!!
         val result = BOOTIntArray.st.REPR.allocate(tc, BOOTIntArray.st)
-        tc.native_i = c.get(Calendar.SECOND).toLong()
+        tc.nativeI = c.get(Calendar.SECOND).toLong()
         result.bind_pos_native(tc, 0)
-        tc.native_i = c.get(Calendar.MINUTE).toLong()
+        tc.nativeI = c.get(Calendar.MINUTE).toLong()
         result.bind_pos_native(tc, 1)
-        tc.native_i = c.get(Calendar.HOUR_OF_DAY).toLong()
+        tc.nativeI = c.get(Calendar.HOUR_OF_DAY).toLong()
         result.bind_pos_native(tc, 2)
-        tc.native_i = c.get(Calendar.DAY_OF_MONTH).toLong()
+        tc.nativeI = c.get(Calendar.DAY_OF_MONTH).toLong()
         result.bind_pos_native(tc, 3)
-        tc.native_i = (c.get(Calendar.MONTH) + 1).toLong()
+        tc.nativeI = (c.get(Calendar.MONTH) + 1).toLong()
         result.bind_pos_native(tc, 4)
-        tc.native_i = c.get(Calendar.YEAR).toLong()
+        tc.nativeI = c.get(Calendar.YEAR).toLong()
         result.bind_pos_native(tc, 5)
 
         return result

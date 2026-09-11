@@ -27,6 +27,17 @@ class P6int : REPR() {
         const val P6INT_C_TYPE_LONGLONG: Byte = -5
         const val P6INT_C_TYPE_SIZE_T: Byte = -6
         const val P6INT_C_TYPE_BOOL: Byte = -7
+
+        /** Truncate a value to a sized-int storage width, sign- or
+         * zero-extending back to a long, the way MoarVM's sized registers
+         * store. Full-width and unsized specs pass through. */
+        @JvmStatic
+        fun sizedValue(ss: StorageSpec?, value: Long): Long {
+            val bits = ss?.bits?.toInt() ?: return value
+            if (bits <= 0 || bits >= 64) return value
+            return if (ss.isUnsigned) value and ((1L shl bits) - 1)
+                   else (value shl (64 - bits)) shr (64 - bits)
+        }
     }
 
     override fun type_object_for(tc: ThreadContext, HOW: SixModelObject?): SixModelObject {
@@ -38,8 +49,8 @@ class P6int : REPR() {
         return st.WHAT
     }
 
-    override fun compose(tc: ThreadContext, st: STable, repr_info: SixModelObject) {
-        val integerInfo = repr_info.at_key_boxed(tc, "integer")
+    override fun compose(tc: ThreadContext, st: STable, reprInfo: SixModelObject) {
+        val integerInfo = reprInfo.at_key_boxed(tc, "integer")
         if (Ops.isnull(integerInfo) == 0L) {
             val bits = integerInfo!!.at_key_boxed(tc, "bits")
             if (Ops.isnull(bits) == 0L) {
@@ -83,10 +94,26 @@ class P6int : REPR() {
     override fun inlineBind(tc: ThreadContext, st: STable, mv: MethodVisitor, className: String, prefix: String) {
         mv.visitVarInsn(Opcodes.ALOAD, 1)
         mv.visitInsn(Opcodes.ICONST_0 + ThreadContext.NATIVE_INT)
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "native_type", "I")
+        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeType", "I")
         mv.visitVarInsn(Opcodes.ALOAD, 0)
         mv.visitVarInsn(Opcodes.ALOAD, 1)
-        mv.visitFieldInsn(Opcodes.GETFIELD, "org/raku/nqp/runtime/ThreadContext", "native_i", "J")
+        mv.visitFieldInsn(Opcodes.GETFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeI", "J")
+        /* A sized int stores truncated to its width, as MoarVM's sized
+         * registers do; reads then see the wrapped value. */
+        val ss = st.REPRData as? StorageSpec
+        val bits = ss?.bits?.toInt() ?: 64
+        if (bits in 1..63) {
+            if (ss!!.isUnsigned) {
+                mv.visitLdcInsn((1L shl bits) - 1)
+                mv.visitInsn(Opcodes.LAND)
+            }
+            else {
+                mv.visitIntInsn(Opcodes.BIPUSH, 64 - bits)
+                mv.visitInsn(Opcodes.LSHL)
+                mv.visitIntInsn(Opcodes.BIPUSH, 64 - bits)
+                mv.visitInsn(Opcodes.LSHR)
+            }
+        }
         mv.visitFieldInsn(Opcodes.PUTFIELD, className, prefix, "J")
         mv.visitInsn(Opcodes.RETURN)
     }
@@ -95,10 +122,10 @@ class P6int : REPR() {
         mv.visitVarInsn(Opcodes.ALOAD, 1)
         mv.visitInsn(Opcodes.DUP)
         mv.visitInsn(Opcodes.ICONST_0 + ThreadContext.NATIVE_INT)
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "native_type", "I")
+        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeType", "I")
         mv.visitVarInsn(Opcodes.ALOAD, 0)
         mv.visitFieldInsn(Opcodes.GETFIELD, className, prefix, "J")
-        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "native_i", "J")
+        mv.visitFieldInsn(Opcodes.PUTFIELD, "org/raku/nqp/runtime/ThreadContext", "nativeI", "J")
         mv.visitInsn(Opcodes.RETURN)
     }
 
@@ -127,8 +154,16 @@ class P6int : REPR() {
     }
 
     // We don't depend on any details of the STable, so no description is needed
-    override fun inline_description(tc: ThreadContext, st: STable, out: StringBuilder): Boolean = true
-    override fun box_description(tc: ThreadContext, st: STable, out: StringBuilder): Boolean = true
+    /* The generated storage code masks sized ints on store, so the width
+     * and signedness are part of the storage-class cache signature; without
+     * them one cached class would serve every int width. */
+    override fun inline_description(tc: ThreadContext, st: STable, out: StringBuilder): Boolean {
+        val ss = st.REPRData as? StorageSpec
+        out.append(ss?.bits ?: 64).append(if (ss?.isUnsigned == true) 'u' else 's')
+        return true
+    }
+    override fun box_description(tc: ThreadContext, st: STable, out: StringBuilder): Boolean =
+        inline_description(tc, st, out)
 
     override fun deserialize_stub(tc: ThreadContext, st: STable): SixModelObject {
         val obj = P6intInstance()

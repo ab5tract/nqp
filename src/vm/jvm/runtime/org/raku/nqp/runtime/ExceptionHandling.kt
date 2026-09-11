@@ -42,6 +42,8 @@ object ExceptionHandling {
     private val death = ThreadDeath()
 
     private fun dieInternal(tc: ThreadContext, msg: String, t: Throwable?): RuntimeException {
+        if (t != null && System.getenv("NQP_DEBUG_JAVA_STACK") != null)
+            t.printStackTrace()
         val exObj: VMExceptionInstance
         if (tc.gc.noisyExceptions) {
             (t ?: Throwable(msg)).printStackTrace()
@@ -75,10 +77,10 @@ object ExceptionHandling {
         dieInternal(tc, msg, null)
 
     /* Finds and executes a handler, using dynamic scope to find it. */
-    /* die_s_return causes handlerDynamic to return the exception message instead of the exception object. */
+    /* dieSReturn causes handlerDynamic to return the exception message instead of the exception object. */
     @JvmStatic
     fun handlerDynamic(tc: ThreadContext, category: Long,
-                       die_s_return: Boolean, exObj: VMExceptionInstance?) {
+                       dieSReturn: Boolean, exObj: VMExceptionInstance?) {
         if (tc.gc.shuttingDown)
             throw death
 
@@ -118,7 +120,7 @@ object ExceptionHandling {
             f = f.caller
         }
         if (handler != null)
-            invokeHandler(tc, handler, category, f, die_s_return, exObj, null)
+            invokeHandler(tc, handler, category, f, dieSReturn, exObj, null)
         else
             panic(tc, category, exObj)
     }
@@ -170,8 +172,9 @@ object ExceptionHandling {
             }
             f = f.outer
         }
-        if (handler != null)
+        if (handler != null) {
             invokeHandler(tc, handler, category, f, false, exObj, null)
+        }
         else if (tc.frame.codeRef.staticInfo.compUnit.hllConfig.lexicalHandlerNotFoundError != null) {
             Ops.invokeDirect(tc, tc.frame.codeRef.staticInfo.compUnit.hllConfig.lexicalHandlerNotFoundError,
                 Ops.intIntCallSite, false, arrayOf<Any?>(category, 0L))
@@ -194,23 +197,26 @@ object ExceptionHandling {
 
     @JvmStatic
     private fun invokeHandler(tc0: ThreadContext, handlerInfo0: LongArray?,
-                              category: Long, handlerFrame0: CallFrame?, die_s_return0: Boolean,
+                              category: Long, handlerFrame0: CallFrame?, dieSReturn0: Boolean,
                               exObj0: VMExceptionInstance?, resume: ResumeStatus.Frame?) {
         var tc = tc0
         var handlerInfo = handlerInfo0
         var handlerFrame = handlerFrame0
-        var die_s_return = die_s_return0
+        var dieSReturn = dieSReturn0
         var exObj = exObj0
         if (resume != null) {
             val bits = resume.saveSpace
             tc = resume.tc
             handlerInfo = bits[0] as LongArray
             handlerFrame = bits[1] as CallFrame
-            die_s_return = bits[2] as Boolean
+            dieSReturn = bits[2] as Boolean
             exObj = bits[3] as VMExceptionInstance?
         }
 
-        if (tc.gc.noisyExceptions) tc.unwinder = UnwindException() // capture stack
+        /* A fresh unwinder per throw: the unwind may pass through frames whose
+         * exit paths throw and recover their own unwinds, and a shared
+         * instance would have its target and result clobbered mid-flight. */
+        tc.unwinder = UnwindException()
         when (handlerInfo!![3].toInt()) {
             EX_UNWIND_SIMPLE -> {
                 tc.unwinder.unwindTarget = handlerInfo[0]
@@ -226,6 +232,13 @@ object ExceptionHandling {
                 tc.unwinder.payload =
                     if (Ops.isnull(exObj) == 0L) exObj!!.payload as SixModelObject?
                     else null
+                /* The payload this handler is about to read belongs to the
+                 * throw being handled now, so publish it now rather than at
+                 * throw time, as MoarVM's run_handler does. A handler that
+                 * runs arbitrary code before rethrowing -- a CONTROL block
+                 * seeing a return go by, say -- would otherwise leave the
+                 * thread's slot holding whatever that code threw last. */
+                tc.lastPayload = tc.unwinder.payload
                 throw tc.unwinder
             }
             EX_BLOCK -> {
@@ -238,8 +251,8 @@ object ExceptionHandling {
                             Ops.emptyCallSite, false, Ops.emptyArgList)
                 }
                 catch (e: ResumeException) {
-                    tc.frame.retType = (if (die_s_return) CallFrame.RET_STR else CallFrame.RET_OBJ).toByte()
-                    if (die_s_return)
+                    tc.frame.retType = (if (dieSReturn) CallFrame.RET_STR else CallFrame.RET_OBJ).toByte()
+                    if (dieSReturn)
                         tc.frame.sRet = exObj!!.message
                     else
                         tc.frame.oRet = exObj
@@ -247,7 +260,7 @@ object ExceptionHandling {
                 }
                 catch (sse: SaveStackException) {
                     throw sse.pushFrame(0, invokeHandlerReenter,
-                        arrayOf<Any?>(handlerInfo, handlerFrame, die_s_return, exObj), null)
+                        arrayOf<Any?>(handlerInfo, handlerFrame, dieSReturn, exObj), null)
                 }
                 catch (re: RuntimeException) {
                     throw re
@@ -301,9 +314,11 @@ object ExceptionHandling {
             if (name == null || name == "")
                 name = "<anon>"
 
+            val file = e.mappedFile
+            val line = e.mappedLine
             result.add("  in " + name +
-                (if (e.file == null) ""
-                 else " (" + e.file + (if (e.line >= 0) ":" + e.line else "") + ")"))
+                (if (file == null) ""
+                 else " (" + file + (if (line >= 0) ":" + line else "") + ")"))
         }
         return result
     }
@@ -312,7 +327,37 @@ object ExceptionHandling {
         @JvmField val frame: CallFrame,
         @JvmField val file: String?,
         @JvmField val line: Int,
-    )
+    ) {
+        /* The declared source file of the frame's code, when the compiler
+         * recorded one; #line-directive-mapped (SETTING::src/... for
+         * setting code). */
+        val mappedFile: String?
+            get() {
+                val si = frame.codeRef.staticInfo
+                if (line >= 0) {
+                    val section = si.sourceSectionFor(line)
+                    if (section >= 0)
+                        return si.sourceSectionFile!![section]
+                }
+                return si.sourceFile ?: file
+            }
+        /* The line in mappedFile's numbering: the raw LineNumberTable line
+         * shifted by the raw-to-mapped offset of whichever directive
+         * section it falls in (the block-level one when none). */
+        val mappedLine: Int
+            get() {
+                val si = frame.codeRef.staticInfo
+                if (line >= 0) {
+                    val section = si.sourceSectionFor(line)
+                    if (section >= 0)
+                        return line -
+                            (si.sourceSectionRaw!![section] - si.sourceSectionLine!![section])
+                }
+                return if (si.sourceFile != null && line >= 0)
+                    line - si.sourceLineDelta
+                else line
+            }
+    }
 
     @JvmStatic
     fun backtrace(ex: VMExceptionInstance): List<TraceElement> {
