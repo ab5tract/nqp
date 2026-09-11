@@ -406,7 +406,14 @@ object NqpTypeOps {
         } catch (sse: SaveStackException) {
             /* A Proxy FETCH captured a continuation: finish by re-running
              * the whole op on the FETCHED value, which is no longer a
-             * container -- so this decont cannot suspend a second time. */
+             * container -- so THIS decont, of the object operand, cannot
+             * suspend a second time. The re-run's other steps still can:
+             * the type operand's decont and istypeSlow are reached again,
+             * and a capture there arrives while the finisher is running,
+             * which resumeEngine hands to the guest as a Rethrow. That
+             * shape (a Proxy as the type operand of istype) is the open
+             * gap the ledger records, not something this comment claims
+             * away. */
             throw suspendedIn(sse,
                 java.util.function.Function { fetched -> istype(site, fetched, type, tc) })
         }

@@ -1482,7 +1482,10 @@ final class NqpOps {
 
     static Object bindattr(AttrSite site, Object o, Object ch, String name, Object value,
                            ThreadContext tc) {
-        if (Ops.DO_TRACE) Ops.traceDoBind(smo(o), name, smo(value), tc);
+        /* NQP_DO_TRACE belongs to whichever road actually binds: the slow
+         * road below reaches Ops.bindattr, which traces there, so a gate
+         * here as well printed every slow bind twice. The sited road below
+         * traces for itself. */
         if (!site.resolved) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             resolveAttr(site, o, ch, name, tc);
@@ -1492,6 +1495,7 @@ final class NqpOps {
                 && ((org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance) o).delegate == null) {
             SixModelObject obj = (SixModelObject) o;
             SixModelObject v = smo(value);
+            if (Ops.DO_TRACE) Ops.traceDoBind(obj, name, v, tc);
             try {
                 setter.invokeExact(obj, v);
             } catch (Throwable t) {

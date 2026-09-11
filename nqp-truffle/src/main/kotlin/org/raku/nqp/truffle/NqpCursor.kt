@@ -64,7 +64,7 @@ class NqpCursor(
      * buys is specializing the interpreter loop against a program it can see
      * is constant, and it does that across calls too -- when the callee is
      * more Truffle nodes, PE inlines through and specializes the pair. The
-     * callee here is an NQP `CodeRef`: bytecode the JAST backend emitted,
+     * callee here is an NQP `CodeRef`, entered through the invoke road,
      * which PE cannot see into. Hence the `@TruffleBoundary` on the wrapper
      * in [RxVmNode]. A rule's specialized region therefore ends at every
      * `<foo>`, and a grammar is mostly `<foo>`, so the stretch PE gets to
