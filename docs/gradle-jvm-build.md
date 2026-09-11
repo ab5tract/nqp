@@ -98,15 +98,20 @@ The JVM backend was modernized off its 2012-era pins:
 
 - **ASM 4.1 → 9.10.1** (Maven Central + vendored copies in `3rdparty/asm/`,
   paths updated in `tools/lib/NQP/Config/NQP.pm`). Two behavioral fixes were
-  required: `JASTCompiler.processType` now parses the JAST type language
+  required at the time, both in code that no longer exists (the JAST
+  compiler and its autosplitter went with the class road in 2026-09):
+  `JASTCompiler.processType` parsed the JAST type language
   ("Long", "Byte", "[Byte", …) explicitly — ASM 4 accepted those names only
   because it inspected just the leading character — and the
-  autosplit-on-oversized-method retry matches the typed
+  autosplit-on-oversized-method retry matched the typed
   `MethodTooLargeException` instead of ASM 4's exception message string.
+  ASM itself stays, for `P6Opaque`'s generated attribute-storage classes
+  and the Java-interop adaptors.
 - **`javac --release 9` → `--release 25`**; Kotlin `jvmTarget` 25.
-- **Emitted bytecode V1_7 → V25**, centralized in
-  `org.raku.nqp.jast2bc.BytecodeVersion` (used by the JAST compiler,
-  BootJavaInterop, NativeCallOps and the P6Opaque/C-struct REPRs).
+- **Emitted bytecode V1_7 → V25**, centralized in `BytecodeVersion`
+  (2026-08 it lived in `org.raku.nqp.jast2bc`; since the class road went it
+  is `org.raku.nqp.runtime.BytecodeVersion`, and its only readers are
+  `BootJavaInterop` and the P6Opaque/C-struct REPRs).
 - **`sun.misc.Unsafe` eliminated from NQP's runtime**: P6Opaque atomic
   attribute ops use `VarHandle`; the obsolete `Ops.disableWarning` hack
   (targeting a class removed in JDK 17) was deleted. Remaining Unsafe noise
