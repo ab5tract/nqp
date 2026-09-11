@@ -343,6 +343,53 @@ object Syscalls {
             val code = args.obj(0)
             bool(code is CodeRef && code.isCompilerStub)
         }
+        /* The capture-lex family works on the bare code handle, the way the
+         * raku-capture-lex(-callers) dispatchers hand it over after they
+         * unwrap the Code object. Frames are matched the way CallFrame's
+         * own outer hunt does: by method handle and compilation unit, which
+         * holds across CodeRef clones. */
+        define("try-capture-lex", OBJ) { args ->
+            val code = args.obj(0) as? CodeRef
+                ?: throw ExceptionHandling.dieInternal(args.tc,
+                    "try-capture-lex requires a code handle")
+            val wanted = code.staticInfo.outerStaticInfo
+            val cur = args.tc.curFrame
+            if (wanted != null && cur != null
+                    && cur.codeRef.staticInfo.mh === wanted.mh
+                    && cur.codeRef.staticInfo.compUnit === wanted.compUnit)
+                code.outer = cur
+            obj(null)
+        }
+        define("try-capture-lex-callers", OBJ) { args ->
+            val code = args.obj(0) as? CodeRef
+                ?: throw ExceptionHandling.dieInternal(args.tc,
+                    "try-capture-lex-callers requires a code handle")
+            val wanted = code.staticInfo.outerStaticInfo
+            if (wanted != null) {
+                var frame = args.tc.curFrame
+                while (frame != null) {
+                    if (frame.codeRef.staticInfo.mh === wanted.mh
+                            && frame.codeRef.staticInfo.compUnit === wanted.compUnit) {
+                        code.outer = frame
+                        break
+                    }
+                    frame = frame.caller
+                }
+            }
+            obj(null)
+        }
+        define("get-code-outer-ctx", OBJ) { args ->
+            val code = args.obj(0) as? CodeRef
+                ?: throw ExceptionHandling.dieInternal(args.tc,
+                    "get-code-outer-ctx requires a code handle")
+            val outer = code.outer
+                ?: throw ExceptionHandling.dieInternal(args.tc,
+                    "Specified code ref has no outer")
+            val contextRef = args.tc.gc.ContextRef!!
+            val wrap = contextRef.st.REPR.allocate(args.tc, contextRef.st)
+            (wrap as org.raku.nqp.sixmodel.reprs.ContextRefInstance).context = outer
+            obj(wrap)
+        }
         define("set-cur-hll-config-key", STR, OBJ) { args ->
             val config = args.tc.gc.getHLLConfigFor(
                 args.tc.frame.codeRef.staticInfo.compUnit.hllName())
@@ -375,6 +422,42 @@ object Syscalls {
          * enclosing deserialization has populated the SC. */
         define("jvm-finish-nested", STR) { args ->
             Ops.jvmfinishnested(args.str(0), args.tc)
+            void
+        }
+
+        /* Re-points code objects that a BEGIN-time dynamic compilation
+         * bound to its nested unit's code refs at the invoking unit's own
+         * emission of the same cuids. The registry maps cuid to a list of
+         * [original-code-object-or-null, clone...]; the original takes the
+         * unit's code ref itself, each clone a fresh clone of it whose
+         * outer is then captured from the live frames at invocation. Run
+         * from a unit's post-deserialize fixups, so the current frame
+         * belongs to the unit whose code refs are wanted. */
+        define("jvm-repoint-dynamic-code", OBJ, OBJ) { args ->
+            val registry = args.obj(0)
+            val codeType = args.obj(1)
+            val tc = args.tc
+            val cu = tc.curFrame!!.codeRef.staticInfo.compUnit
+            if (registry is org.raku.nqp.sixmodel.reprs.VMHashInstance) {
+                for ((cuid, entries) in registry.storage) {
+                    val target = cu.lookupCodeRef(cuid) ?: continue
+                    if (entries == null) continue
+                    val n = entries.elems(tc)
+                    var i = 0L
+                    while (i < n) {
+                        val codeObj = entries.at_pos_boxed(tc, i)
+                        if (codeObj != null && Ops.isnull(codeObj) == 0L) {
+                            val newDo = if (i == 0L) target else target.clone(tc)
+                            codeObj.bind_attribute_boxed(tc, codeType, "${'$'}!do",
+                                org.raku.nqp.sixmodel.STable.NO_HINT, newDo)
+                            if (codeObj.sc != null)
+                                Ops.scwbObject(tc, codeObj)
+                            Ops.setcodeobj(newDo, codeObj, tc)
+                        }
+                        i++
+                    }
+                }
+            }
             void
         }
     }

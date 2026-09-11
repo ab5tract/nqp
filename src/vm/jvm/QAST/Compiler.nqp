@@ -46,12 +46,26 @@ my $TYPE_CU         := 'Lorg/raku/nqp/runtime/CompilationUnit;';
 my $TYPE_CR         := 'Lorg/raku/nqp/runtime/CodeRef;';
 my $TYPE_CF         := 'Lorg/raku/nqp/runtime/CallFrame;';
 my $TYPE_OPS        := 'Lorg/raku/nqp/runtime/Ops;';
+my $TYPE_RXENGINE   := 'Lorg/raku/nqp/runtime/GrammarEngines;';
 my $TYPE_NATIVE_OPS := 'Lorg/raku/nqp/runtime/NativeCallOps;';
 my $TYPE_IO_OPS     := 'Lorg/raku/nqp/runtime/IOOps;';
 my $TYPE_CSD        := 'Lorg/raku/nqp/runtime/CallSiteDescriptor;';
 my $TYPE_SMO        := 'Lorg/raku/nqp/sixmodel/SixModelObject;';
 my $TYPE_STR        := 'Ljava/lang/String;';
 my $TYPE_OBJ        := 'Ljava/lang/Object;';
+
+# How many invokedynamic instructions one compilation unit's class may hold.
+# HotSpot gives a class a single resolved-references array and indexes it with
+# a 16-bit field. It holds one entry per invokedynamic INSTRUCTION -- not per
+# constant pool entry, so sites sharing a bootstrap still take one each -- plus
+# one per string, class, method-handle and method-type constant. Past 65535 the
+# index wraps and entries alias: a string constant reads back as some other
+# site's CallSite, and a bootstrap slot reads back as something that is not a
+# MethodHandle, which the VM reports as "classfile must supply a valid BSM" or
+# dies on outright. Nothing downstream can detect that, so leave room for the
+# constants and put the dispatches that do not fit on the uncached invokestatic
+# path, which needs no resolved reference at all.
+my int $INDY_SITE_BUDGET := 48000;
 my $TYPE_MATH       := 'Ljava/lang/Math;';
 my $TYPE_MH         := 'Ljava/lang/invoke/MethodHandle;';
 my $TYPE_MT         := 'Ljava/lang/invoke/MethodType;';
@@ -583,13 +597,34 @@ my $chain_codegen := sub ($qastcomp, $op) {
         $il.append(JAST::PushSVal.new( :value('lang-call') ));
         $il.append(JAST::PushIndex.new( :value($cs_idx) ));
         $il.append($ALOAD_1);
-        $il.append(JAST::Instruction.new( :op('aload'), $calltmp ));
-        $il.append(JAST::Instruction.new( :op('aload'), $atmp ));
-        $il.append(JAST::Instruction.new( :op('aload'), $btmp ));
-        $il.append(savesite(JAST::InvokeDynamic.new(
-            'dispatch_noa', 'V', [$TYPE_STR, 'I', $TYPE_TC, $TYPE_SMO, $TYPE_SMO, $TYPE_SMO],
-            'org/raku/nqp/dispatch/DispatchBootstrap', 'dispatch_noa'
-        )));
+        if $*CODEREFS.take_indy_site() {
+            $il.append(JAST::Instruction.new( :op('aload'), $calltmp ));
+            $il.append(JAST::Instruction.new( :op('aload'), $atmp ));
+            $il.append(JAST::Instruction.new( :op('aload'), $btmp ));
+            $il.append(savesite(JAST::InvokeDynamic.new(
+                'dispatch_noa', 'V', [$TYPE_STR, 'I', $TYPE_TC, $TYPE_SMO, $TYPE_SMO, $TYPE_SMO],
+                'org/raku/nqp/dispatch/DispatchBootstrap', 'dispatch_noa'
+            )));
+        }
+        else {
+            # Out of resolved-reference budget; see $INDY_SITE_BUDGET. All three
+            # arguments are objects already in locals, so the array needs no
+            # boxing and the stack tracker is not involved.
+            my @tmps := [$calltmp, $atmp, $btmp];
+            $il.append(JAST::PushIndex.new( :value(3) ));
+            $il.append(JAST::Instruction.new( :op('anewarray'), $TYPE_OBJ ));
+            my int $ti := 0;
+            while $ti < 3 {
+                $il.append($DUP);
+                $il.append(JAST::PushIndex.new( :value($ti) ));
+                $il.append(JAST::Instruction.new( :op('aload'), @tmps[$ti] ));
+                $il.append($AASTORE);
+                $ti := $ti + 1;
+            }
+            $il.append(savesite(JAST::Instruction.new( :op('invokestatic'),
+                'Lorg/raku/nqp/dispatch/Dispatch;', 'dispatchWide', 'Void',
+                $TYPE_STR, 'Integer', $TYPE_TC, "[$TYPE_OBJ" )));
+        }
         $il.append(JAST::Instruction.new( :op('aload'), 'cf' ));
         $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_OPS,
             'result_o', $TYPE_SMO, $TYPE_CF ));
@@ -1623,7 +1658,7 @@ sub emit_dispatch($qastcomp, $node, str $dispatcher, @args, :$str_second) {
     my $cs_idx := @argstuff[0];
     $*STACK.spill_to_locals($il);
 
-    if dispatch_arg_slots(@argstuff[1]) > 250 {
+    if dispatch_arg_slots(@argstuff[1]) > 250 || !$*CODEREFS.take_indy_site() {
         emit_wide_dispatch($il, $dispatcher, $cs_idx, @argstuff[1]);
         return result_from_cf($il, rttype_from_typeobj($node.returns));
     }
@@ -1847,7 +1882,7 @@ sub add_dispatcher_op($qastcomp, $op, str $prefix) {
     my $cs_idx := @argstuff[0];
     $*STACK.spill_to_locals($il);
 
-    if dispatch_arg_slots(@argstuff[1]) > 250 {
+    if dispatch_arg_slots(@argstuff[1]) > 250 || !$*CODEREFS.take_indy_site() {
         emit_wide_dispatch($il, $name_qast.value, $cs_idx, @argstuff[1]);
         return result_from_cf($il, rttype_from_typeobj($op.returns));
     }
@@ -3543,6 +3578,7 @@ class QAST::CompilerJAST {
         has @!cuids;
         has @!callsites;
         has %!callsite_map;
+        has int $!indy_sites;
 
         method BUILD() {
             $!cur_idx := 0;
@@ -3552,7 +3588,18 @@ class QAST::CompilerJAST {
             @!cuids := [];
             @!callsites := [];
             %!callsite_map := {};
+            $!indy_sites := 0;
         }
+
+        # Claims one of this class's invokedynamic sites, or returns false when
+        # the budget is spent and the caller must emit the uncached form.
+        method take_indy_site() {
+            return 0 if $!indy_sites >= $INDY_SITE_BUDGET;
+            $!indy_sites := $!indy_sites + 1;
+            1
+        }
+
+        method indy_sites() { $!indy_sites }
 
         method register_method($jastmeth, $cuid) {
             %!cuid_to_idx{$cuid} := $!cur_idx;
@@ -5969,6 +6016,13 @@ class QAST::CompilerJAST {
     }
 
     multi method as_jast(QAST::Regex $node, :$want) {
+        # A rule the engine covers is handed to it whole, and no matcher is
+        # emitted for it at all. The choice is made here, at compile time,
+        # because the descriptor either describes the rule faithfully or does
+        # not exist -- there is no half of a rule to fall back to.
+        my $desc := self.rx_descriptor($node);
+        return self.engine_jast($node, $desc) unless nqp::isnull($desc);
+
         # build the list of (unique) locals we need
         my %*REG;
         my $prefix := self.unique('rx') ~ '_';
@@ -6242,6 +6296,299 @@ class QAST::CompilerJAST {
     method regex_jast($node) {
         my $rxtype := $node.rxtype() || 'concat';
         self."$rxtype"($node);
+    }
+
+    # The descriptor for this rule, or null to keep the bytecode path.
+    #
+    # There is no whole-engine toggle: every rule the descriptor can encode
+    # runs on the engine, and the bytecode path exists only for the rules
+    # that still bail (NQP_RX_SURVEY names them). The NQP_RX_* triage knobs
+    # below narrow the encodable set per rule or per feature for bisection.
+    method rx_descriptor($node) {
+        my $desc := QAST::RxDescriptor.encode($node);
+        return nqp::null() if nqp::isnull($desc);
+
+        # Triage knobs. Which rules the engine takes over is otherwise decided
+        # entirely by what it can encode, and when one of them is wrong the
+        # only symptom is a grammar that parses the wrong language somewhere
+        # far away. These narrow the set by hand so the wrong one can be found
+        # by bisection rather than by staring.
+        #
+        #   NQP_RX_SKIP=a,b   refuse these rules by name
+        #   NQP_RX_SKIP_ANON  refuse rules that do not reduce (no pass name)
+        #   NQP_RX_ONLY=a,b   refuse everything except these
+        my %env := nqp::getenvhash();
+        my str $name := $desc.pass_name;
+        if nqp::existskey(%env, 'NQP_RX_SKIP_ANON') && $name eq '' {
+            return nqp::null();
+        }
+        if nqp::existskey(%env, 'NQP_RX_SKIP') {
+            for nqp::split(',', %env<NQP_RX_SKIP>) {
+                return nqp::null() if $_ eq $name;
+            }
+        }
+        if nqp::existskey(%env, 'NQP_RX_ONLY') {
+            my int $found := 0;
+            for nqp::split(',', %env<NQP_RX_ONLY>) {
+                $found := 1 if $_ eq $name;
+            }
+            return nqp::null() unless $found;
+        }
+        if nqp::existskey(%env, 'NQP_RX_ENCODED') {
+            nqp::say('rx engine: ' ~ ($name eq '' ?? '<anon>' !! $name));
+        }
+
+        # The descriptor travels as a string constant, and the class file
+        # format caps those at 65535 bytes of UTF-8. A rule that big is rare
+        # and matters little; refusing it here beats emitting a class that
+        # will not load.
+        my str $encoded := $desc.encoded;
+        return nqp::null() if nqp::chars($encoded) > 20000;
+
+        $desc
+    }
+
+    # Hands the whole rule to the grammar engine.
+    #
+    # The prologue is the bytecode path's, cut down to what the engine needs:
+    # !cursor_start_all answers the new cursor, the target, and the position
+    # to start from. The position has to come from that list rather than from
+    # the cursor, whose $!pos is -3 until the rule finishes -- reading it
+    # there would start every match at a negative offset.
+    #
+    # The restart slot IS consulted, though the engine cannot honor it: a
+    # rule that passed with :backtrack can be resumed for its next match,
+    # and the engine's choice points were gone when the first match
+    # returned. rxmatch answers a restart by failing the cursor -- "no
+    # further match" -- which keeps a resumption from re-answering the
+    # first match forever.
+    method engine_jast($node, $desc) {
+        my %*REG;
+        my $prefix := self.unique('rxe') ~ '_';
+        my $reglist := nqp::split(' ',
+            'start o cur o curclass o tgt s pos i selffrom i restart i callback o');
+        while $reglist {
+            my $reg := nqp::shift($reglist);
+            my $rt  := nqp::shift($reglist);
+            my $type := $rt eq 'i' ?? int !! $rt eq 's' ?? str !! NQPMu;
+            %*REG{$reg} := $prefix ~ $reg;
+            $*BLOCK.add_local(QAST::Var.new(
+                :name($prefix ~ $reg), :scope('local'), :returns($type), :decl('var') ));
+        }
+
+        my $il := JAST::InstructionList.new();
+        my $pro := self.as_jast(QAST::Stmts.new(
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name(%*REG<start>), :scope('local') ),
+                QAST::Op.new(
+                    :op('callmethod'), :name('!cursor_start_all'),
+                    QAST::Var.new( :name('self'), :scope('local') )
+                )),
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name("\$\xa2"), :scope('lexical') ),
+                QAST::Op.new(
+                    :op('bind'),
+                    QAST::Var.new( :name(%*REG<cur>), :scope('local') ),
+                    QAST::Op.new(
+                        :op('atpos'),
+                        QAST::Var.new( :name(%*REG<start>), :scope('local') ),
+                        QAST::IVal.new( :value(0) )
+                    ))),
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name(%*REG<tgt>), :scope('local'), :returns(str) ),
+                QAST::Op.new(
+                    :op('unbox_s'),
+                    QAST::Op.new(
+                        :op('atpos'),
+                        QAST::Var.new( :name(%*REG<start>), :scope('local') ),
+                        QAST::IVal.new( :value(1) )
+                    ))),
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name(%*REG<pos>), :scope('local'), :returns(int) ),
+                QAST::Op.new(
+                    :op('unbox_i'),
+                    QAST::Op.new(
+                        :op('atpos'),
+                        QAST::Var.new( :name(%*REG<start>), :scope('local') ),
+                        QAST::IVal.new( :value(2) )
+                    ))),
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name(%*REG<curclass>), :scope('local') ),
+                QAST::Op.new(
+                    :op('atpos'),
+                    QAST::Var.new( :name(%*REG<start>), :scope('local') ),
+                    QAST::IVal.new( :value(3) )
+                )),
+            # The INVOCANT's $!from, which is what decides whether a scanning
+            # rule may scan: -1 means a top-level parse looking for its first
+            # match, anything else means a subrule called at a position.
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name(%*REG<selffrom>), :scope('local'), :returns(int) ),
+                QAST::Op.new(
+                    :op('getattr_i'),
+                    QAST::Var.new( :name('self'), :scope('local') ),
+                    QAST::Var.new( :name(%*REG<curclass>), :scope('local') ),
+                    QAST::SVal.new( :value('$!from') )
+                )),
+            QAST::Op.new(
+                :op('bind'),
+                QAST::Var.new( :name(%*REG<restart>), :scope('local'), :returns(int) ),
+                QAST::Op.new(
+                    :op('unbox_i'),
+                    QAST::Op.new(
+                        :op('atpos'),
+                        QAST::Var.new( :name(%*REG<start>), :scope('local') ),
+                        QAST::IVal.new( :value(5) )
+                    )))
+        ), :want($RT_VOID));
+        $il.append($pro.jast);
+        $*STACK.obtain(NQPMu, $pro);
+
+        # The block the engine comes back into for anything it cannot express
+        # itself. It is a value here, not a call: what is pushed is the static
+        # code object, so a rule that never reaches a callback pays a constant
+        # load and nothing else. The engine closes it over this frame at the
+        # moment a callback actually fires, which is the only moment the frame
+        # is known to be the right one.
+        if nqp::elems($desc.callbacks) {
+            my $cb := self.as_jast(self.rx_callback_block($desc), :want($RT_OBJ));
+            $il.append($cb.jast);
+            $*STACK.obtain($il, $cb);
+        }
+        else {
+            $il.append($ACONST_NULL);
+        }
+        $il.append(JAST::Instruction.new( :op('astore'), %*REG<callback> ));
+
+        $il.append(JAST::PushSVal.new( :value($desc.encoded) ));
+        $il.append(JAST::Instruction.new( :op('aload'), %*REG<cur> ));
+        $il.append(JAST::Instruction.new( :op('aload'), %*REG<curclass> ));
+        $il.append(JAST::Instruction.new( :op('aload'), %*REG<tgt> ));
+        $il.append(JAST::Instruction.new( :op('lload'), %*REG<pos> ));
+        $il.append(JAST::Instruction.new( :op('lload'), %*REG<selffrom> ));
+        $il.append(JAST::Instruction.new( :op('lload'), %*REG<restart> ));
+        $il.append(JAST::Instruction.new( :op('aload'), 'self' ));
+        $il.append(JAST::Instruction.new( :op('aload'), %*REG<callback> ));
+        $il.append($ALOAD_1);
+        $il.append(JAST::Instruction.new( :op('invokestatic'), $TYPE_RXENGINE,
+            'rxmatch', $TYPE_SMO, $TYPE_STR, $TYPE_SMO, $TYPE_SMO, $TYPE_STR,
+            'Long', 'Long', 'Long', $TYPE_SMO, $TYPE_SMO, $TYPE_TC ));
+
+        result($il, $RT_OBJ)
+    }
+
+    # One block holding every piece of the rule the engine has to come back
+    # for, chosen by index.
+    #
+    # One block rather than one per callback: a block used as a value is a
+    # closure, and building a list of them would allocate per rule call --
+    # where a grammar calls its rules millions of times. This way the rule
+    # pushes a constant and only a callback that actually fires costs
+    # anything.
+    #
+    # The cursor and its declaring class are parameters rather than lexicals
+    # because they are LOCALS of the rule's frame, which a nested block cannot
+    # see -- the same reason a rule whose code reads a lowered local is
+    # refused outright.
+    method rx_callback_block($desc) {
+        self.rx_callback_block_for($desc.callbacks, 0)
+    }
+
+    # A rule with very many pieces cannot dispatch them all in one block:
+    # each generated method is capped at 64KB of bytecode, and comp_unit's
+    # sixty-odd `:my` pieces broke emission outright. Above the group size
+    # the pieces split into nested blocks of at most that many, the outer
+    # block dispatching on index range and forwarding its arguments. The
+    # pieces then run one frame deeper, which is safe for the same reason
+    # the callback block itself is: compile-time nesting and run-time frame
+    # nesting gain the same level in the same place, and the ops that could
+    # tell the difference already refuse the rule (reads_frame_ops).
+    method rx_callback_block_for(@bodies, int $base) {
+        my int $GROUP := 12;
+        my $idx   := QAST::Node.unique('rxcb_idx');
+        my $cur   := QAST::Node.unique('rxcb_cur');
+        my $class := QAST::Node.unique('rxcb_class');
+        my $pos   := QAST::Node.unique('rxcb_pos');
+
+        my sub local($name, *%opts) {
+            QAST::Var.new( :name($name), :scope('local'), |%opts )
+        }
+
+        my $dispatch;
+        if nqp::elems(@bodies) > $GROUP {
+            # Range dispatch over groups. Built LOW to HIGH so the highest
+            # range test lands outermost -- with the nesting the other way,
+            # every index above the first group's floor would take the first
+            # branch and dispatch to nothing.
+            $dispatch := QAST::Op.new( :op('null') );
+            my int $start := 0;
+            while $start < nqp::elems(@bodies) {
+                my @group;
+                my int $g := $start;
+                while $g < nqp::elems(@bodies) && $g < $start + $GROUP {
+                    nqp::push(@group, @bodies[$g]);
+                    $g := $g + 1;
+                }
+                $dispatch := QAST::Op.new(
+                    :op('if'),
+                    QAST::Op.new( :op('isge_i'), local($idx),
+                        QAST::IVal.new( :value($base + $start) ) ),
+                    QAST::Op.new(
+                        :op('call'),
+                        self.rx_callback_block_for(@group, $base + $start),
+                        local($idx), local($cur), local($class), local($pos)
+                    ),
+                    $dispatch
+                );
+                $start := $start + $GROUP;
+            }
+        }
+        else {
+            # Chosen from the last back, so each `if` wraps the ones after it.
+            $dispatch := QAST::Op.new( :op('null') );
+            my int $i := nqp::elems(@bodies);
+            while $i > 0 {
+                $i := $i - 1;
+                $dispatch := QAST::Op.new(
+                    :op('if'),
+                    QAST::Op.new( :op('iseq_i'), local($idx),
+                        QAST::IVal.new( :value($base + $i) ) ),
+                    # What the bytecode path does before the code runs: the
+                    # position it is looking at goes on the cursor, and $¢
+                    # names the cursor, because the code is written to read
+                    # both.
+                    QAST::Stmts.new(
+                        QAST::Op.new(
+                            :op('bindattr_i'),
+                            local($cur), local($class),
+                            QAST::SVal.new( :value('$!pos') ),
+                            local($pos)
+                        ),
+                        QAST::Op.new(
+                            :op('bind'),
+                            QAST::Var.new( :name("\$\xa2"), :scope('lexical') ),
+                            local($cur)
+                        ),
+                        @bodies[$i]
+                    ),
+                    $dispatch
+                );
+            }
+        }
+
+        QAST::Block.new(
+            local($idx,   :decl('param'), :returns(int)),
+            local($cur,   :decl('param')),
+            local($class, :decl('param')),
+            local($pos,   :decl('param'), :returns(int)),
+            $dispatch
+        )
     }
 
     method alt($node) {
@@ -7199,7 +7546,7 @@ class QAST::CompilerJAST {
         $il.append($LADD);
         $il.append($DUP2);
         $il.append(JAST::Instruction.new( :op('lstore'), %*REG<pos> ));
-        if nqp::elems($node.list) {
+        if nqp::elems($node) {
             # Pick the index variant matching the literal's semantics, the
             # same way the MoarVM backend does.
             my str $subtype := $node.subtype;

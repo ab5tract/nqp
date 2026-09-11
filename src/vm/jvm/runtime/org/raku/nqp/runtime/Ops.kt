@@ -1151,7 +1151,7 @@ object Ops {
     @JvmStatic
     fun getlex_s(cf: CallFrame, i: Int): String? { return cf.sLex!![i] }
     @JvmStatic
-    fun getlex_o(cf: CallFrame, i: Int): SixModelObject? { return cf.oLex!![i] }
+    fun getlex_o(cf: CallFrame, i: Int): SixModelObject? { return cf.oLexOrVivify(i) }
 
     /* Lexical binding in current scope. */
     @JvmStatic
@@ -1204,7 +1204,7 @@ object Ops {
         var s = si
         while (s-- > 0)
             frame = frame.outer!!
-        return frame.oLex!![i]
+        return frame.oLexOrVivify(i)
     }
 
     /* Lexical binding in outer scope. */
@@ -1261,7 +1261,7 @@ object Ops {
         while (curFrame != null) {
             val found = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (found != -1)
-                return curFrame.oLex!![found]
+                return curFrame.oLexOrVivify(found)
             curFrame = curFrame.outer
         }
         return createNull(tc)
@@ -1316,7 +1316,7 @@ object Ops {
         while (curFrame != null) {
             val found = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (found != -1)
-                return curFrame.oLex!![found]
+                return curFrame.oLexOrVivify(found)
             curFrame = curFrame.outer
         }
         throw ExceptionHandling.dieInternal(tc, "Lexical '" + name + "' not found")
@@ -1610,7 +1610,7 @@ object Ops {
         while (curFrame != null) {
             val idx = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (idx != -1)
-                return curFrame.oLex!![idx]
+                return curFrame.oLexOrVivify(idx)
             curFrame = curFrame.caller
         }
         return createNull(tc)
@@ -1623,7 +1623,7 @@ object Ops {
             while (curFrame != null) {
                 val found = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
                 if (found != -1)
-                    return curFrame.oLex!![found]
+                    return curFrame.oLexOrVivify(found)
                 curFrame = curFrame.outer
             }
             curCallerFrame = curCallerFrame.caller
@@ -1639,7 +1639,7 @@ object Ops {
             while (curFrame != null) {
                 val found = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
                 if (found != -1)
-                    return curFrame.oLex!![found]
+                    return curFrame.oLexOrVivify(found)
                 curFrame = curFrame.outer
             }
             return createNull(tc)
@@ -1655,7 +1655,7 @@ object Ops {
             while (curFrame != null) {
                 val idx = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
                 if (idx != -1)
-                    return curFrame.oLex!![idx]
+                    return curFrame.oLexOrVivify(idx)
                 curFrame = curFrame.caller
             }
             return createNull(tc)
@@ -1673,7 +1673,7 @@ object Ops {
                 while (curFrame != null) {
                     val found = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
                     if (found != -1)
-                        return curFrame.oLex!![found]
+                        return curFrame.oLexOrVivify(found)
                     curFrame = curFrame.outer
                 }
                 curCallerFrame = curCallerFrame.caller
@@ -2500,7 +2500,14 @@ object Ops {
         if (obj is CallCaptureInstance) {
             val i = idx.toInt()
             if (obj.descriptor!!.argFlags[i] == CallSiteDescriptor.ARG_STR) {
-                return obj.args!![i] as String?
+                val v = obj.args!![i]
+                if (v != null && v !is String) {
+                    System.err.println("CAPTURE CORRUPT: captureposarg_s(" + i + ") flags=" +
+                        obj.descriptor!!.argFlags.joinToString(",") + " nargs=" + obj.args!!.size +
+                        " types=" + obj.args!!.joinToString(",") { a -> a?.javaClass?.simpleName ?: "null" })
+                    Throwable("capture corrupt").printStackTrace()
+                }
+                return v as String?
             }
             else {
                 throw ExceptionHandling.dieInternal(tc, "Expected native str argument")
@@ -2633,7 +2640,17 @@ object Ops {
      * cached per method, so this stays a replay rather than recording a
      * dispatch program on every boolification or stringification. */
     private val helperDispatchSites =
-        java.util.concurrent.ConcurrentHashMap<SixModelObject, org.raku.nqp.dispatch.DispatchCallSite>()
+        java.util.concurrent.ConcurrentHashMap<Pair<SixModelObject, String>, org.raku.nqp.dispatch.DispatchCallSite>()
+
+    /* These are keyed by the method object, which belongs to one
+     * GlobalContext, so a process running unrelated programs in turn must drop
+     * them along with the instruction callsites; see
+     * DispatchBootstrap.resetAll. */
+    @JvmStatic
+    fun resetHelperDispatchSites() {
+        helperDispatchSites.clear()
+        resetLangCallSites()
+    }
     private val helperDispatchSiteType =
         java.lang.invoke.MethodType.methodType(Void.TYPE)
 
@@ -2657,13 +2674,21 @@ object Ops {
             invokeDirect(tc, method, csd, args)
             return
         }
-        val site = helperDispatchSites.computeIfAbsent(method!!) {
-            org.raku.nqp.dispatch.DispatchCallSite(helperDispatchSiteType)
-        }
         val flags = ByteArray(csd.argFlags.size + 1)
         flags[0] = CallSiteDescriptor.ARG_OBJ
         csd.argFlags.copyInto(flags, 1)
         val fullCsd = CallSiteDescriptor(flags, csd.names)
+        /* Keyed by the argument SHAPE as well as the method. A DispatchCallSite
+         * caches the program recorded against the shape it first saw, so one
+         * site per method replays that program for a call of different arity --
+         * and the arguments then land in the wrong slots, which surfaces far
+         * away as a DispatchCallSite where a string was expected. */
+        val shapeKey = StringBuilder(flags.size + 8)
+        for (f in flags) shapeKey.append(f.toInt()).append(',')
+        fullCsd.names?.let { for (n in it) shapeKey.append(n).append(';') }
+        val site = helperDispatchSites.computeIfAbsent(Pair(method!!, shapeKey.toString())) {
+            org.raku.nqp.dispatch.DispatchCallSite(helperDispatchSiteType)
+        }
         val fullArgs = arrayOfNulls<Any>(args.size + 1)
         fullArgs[0] = method
         args.copyInto(fullArgs, 1)
@@ -2709,6 +2734,38 @@ object Ops {
         /* Invoke with the descriptor and arg list. */
         invokeDirect(tc, invokee, CallSiteDescriptor(callsite, null), args)
     }
+    /* Dispatch sites for invocations routed through the HLL's registered
+     * call dispatcher (lang-call -> raku-invoke on Raku). Keyed by the code
+     * object and callsite descriptor identity, so each shape records its own
+     * program; the map drops with the rest of the dispatch state between
+     * eval-server runs (see resetHelperDispatchSites' registration). */
+    private val langCallSites =
+        java.util.concurrent.ConcurrentHashMap<Pair<SixModelObject, CallSiteDescriptor>, org.raku.nqp.dispatch.DispatchCallSite>()
+
+    /* Invoke an HLL code object through its language's registered call
+     * dispatcher, as MoarVM's lang-call does for every call site. This is
+     * what runs raku-invoke on the JVM: custom dispatchers, CALL-ME, wrapper
+     * handling and revision gating all live in the dispatcher, none of which
+     * the InvocationSpec shortcut below can see. */
+    private fun invokeViaCallDispatcher(tc: ThreadContext, invokee: SixModelObject,
+                                        csd: CallSiteDescriptor, args: Array<Any?>) {
+        val flags = ByteArray(csd.argFlags.size + 1)
+        flags[0] = CallSiteDescriptor.ARG_OBJ
+        csd.argFlags.copyInto(flags, 1)
+        val fullCsd = CallSiteDescriptor(flags, csd.names)
+        val site = langCallSites.computeIfAbsent(Pair(invokee, csd)) {
+            org.raku.nqp.dispatch.DispatchCallSite(helperDispatchSiteType)
+        }
+        val fullArgs = arrayOfNulls<Any>(args.size + 1)
+        fullArgs[0] = invokee
+        args.copyInto(fullArgs, 1)
+        org.raku.nqp.dispatch.Dispatch.dispatchWithDescriptor(site, "lang-call",
+            fullCsd, tc, fullArgs)
+    }
+
+    @JvmStatic
+    fun resetLangCallSites() = langCallSites.clear()
+
     @JvmStatic
     fun invokeDirect(tc: ThreadContext, invokee: SixModelObject?, csd: CallSiteDescriptor, args: Array<Any?>) {
         invokeDirect(tc, invokee, csd, true, args)
@@ -2723,6 +2780,11 @@ object Ops {
             cr = invokee
         }
         else {
+            if (invokee != null && invokee.stInitialized
+                    && invokee.st.hllOwner?.callDispatcher != null) {
+                invokeViaCallDispatcher(tc, invokee, callSite, argList)
+                return
+            }
             val invSpec = invokee!!.st.InvocationSpec
                 ?: throw ExceptionHandling.dieInternal(tc, "Cannot invoke this object")
             if (isnull(invSpec.ClassHandle) == 0L)
@@ -4605,8 +4667,12 @@ object Ops {
         // If it has a Str method, that wins.
         // We could put this in the generated code, but it's here to avoid the
         // bulk.
-        val strMeth = if (o.st.MethodCache == null) null else o.st.MethodCache!!.get("Str")
-        if (isnull(strMeth) == 0L) {
+        // Full resolution, not just the published cache: a HOW that answers
+        // find_method itself (the cache un-authoritative or absent) supplies
+        // Str here on MoarVM, so it must on the JVM too. The concreteness
+        // test is the dispatcher's as well.
+        val strMeth = findmethodNonFatal(o, "Str", tc)
+        if (isnull(strMeth) == 0L && isconcrete(strMeth, tc) == 1L) {
             invokeMethodViaDispatch(tc, strMeth, o)
             return result_s(tc.frame)
         }
@@ -4634,56 +4700,54 @@ object Ops {
     fun smart_numify(obj: SixModelObject?, tc: ThreadContext): Double {
         val o = decont(obj, tc)
 
-        // If it's null, it's 0.0
+        // The nqp-numify dispatcher's case order, so the backends agree:
+        // null, concrete num unbox, Num method, type object, elems,
+        // boxed str, boxed int.
         if (isnull(o) == 1L)
             return 0.0
 
-        // If it can unbox as an int or a num, that wins right off.
         val ss = o!!.st.REPR.get_storage_spec(tc, o.st)
-        if (Boxable.INT in ss.canBox)
-            return o.get_int(tc).toDouble()
-        if (Boxable.NUM in ss.canBox)
+        if (Boxable.NUM in ss.canBox && o !is TypeObject)
             return o.get_num(tc)
 
-        // Otherwise, look for a Num method.
-        val numMeth = o.st.MethodCache!!.get("Num")
-        if (isnull(numMeth) == 0L) {
+        val numMeth = findmethodNonFatal(o, "Num", tc)
+        if (isnull(numMeth) == 0L && isconcrete(numMeth, tc) == 1L) {
             invokeMethodViaDispatch(tc, numMeth, o)
             return result_n(tc.frame)
         }
 
-        // If it's a type object, zero.
         if (o is TypeObject)
             return 0.0
 
-        // See if it can unbox to a primitive we can numify.
-        if (Boxable.STR in ss.canBox)
-            return coerce_s2n(o.get_str(tc))
         if (o is VMArrayInstance || o is VMHashInstance)
             return o.elems(tc).toDouble()
+        if (Boxable.STR in ss.canBox)
+            return coerce_s2n(o.get_str(tc))
+        if (Boxable.INT in ss.canBox)
+            return o.get_int(tc).toDouble()
 
-        // If anything else, we can't do it.
         throw ExceptionHandling.dieInternal(tc, "Cannot numify this")
     }
     @JvmStatic
     fun smart_intify(obj: SixModelObject?, tc: ThreadContext): Long {
         val o = decont(obj, tc)
 
-        // If it's null, it's 0
+        // The nqp-intify dispatcher's case order, so the backends agree:
+        // null, concrete int unbox, Int method, type object, elems,
+        // boxed str, boxed num.
         if (isnull(o) == 1L)
             return 0
 
-        // If it can unbox as an int or a num, that wins right off.
         val ss = o!!.st.REPR.get_storage_spec(tc, o.st)
-        if (Boxable.INT in ss.canBox)
+        if (Boxable.INT in ss.canBox && o !is TypeObject)
             return o.get_int(tc)
-        if (Boxable.NUM in ss.canBox)
-            return o.get_num(tc).toLong()
 
-        // Otherwise, look for an Int method.
-        val intMeth = o.st.MethodCache!!.get("Int")
-        if (isnull(intMeth) == 0L) {
-            invokeDirect(tc, intMeth, invocantCallSite, arrayOf<Any?>(o))
+        // Through the dispatcher: a raw invocation of an onlystar proto's
+        // {*} would resume whatever unrelated dispatch is innermost (see
+        // invokeMethodViaDispatch).
+        val intMeth = findmethodNonFatal(o, "Int", tc)
+        if (isnull(intMeth) == 0L && isconcrete(intMeth, tc) == 1L) {
+            invokeMethodViaDispatch(tc, intMeth, o)
             return result_i(tc.frame)
         }
 
@@ -4691,13 +4755,13 @@ object Ops {
         if (o is TypeObject)
             return 0
 
-        // See if it can unbox to a primitive we can numify.
-        if (Boxable.STR in ss.canBox)
-            return coerce_s2i(o.get_str(tc))
         if (o is VMArrayInstance || o is VMHashInstance)
             return o.elems(tc)
+        if (Boxable.STR in ss.canBox)
+            return coerce_s2i(o.get_str(tc))
+        if (Boxable.NUM in ss.canBox)
+            return o.get_num(tc).toLong()
 
-        // If anything else, we can't do it.
         throw ExceptionHandling.dieInternal(tc, "Cannot intify this")
     }
 

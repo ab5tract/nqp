@@ -86,15 +86,12 @@ class SerializationWriter(
         for (buffer in outputs)
             buffer.order(ByteOrder.LITTLE_ENDIAN)
 
-        /* NOTE: faithful port of an upstream instance-initializer block:
-         * every SerializationWriter constructed registers its own shutdown
-         * hook. The hooks are harmless in practice — Accumulator.start is
-         * never called, so the map stays empty and nothing is printed — but
-         * this is debug leftover, not intent. */
-        Runtime.getRuntime().addShutdownHook(Thread {
-            for ((name, a) in Accumulator.all)
-                System.err.println("$name: ${a.totalTime} ms (${a.count} calls)")
-        })
+        /* Upstream's instance-initializer here registered a shutdown hook
+         * per writer to print Accumulator timings -- debug leftover, and
+         * never active (Accumulator.start has no callers). Each hook parks
+         * a Thread in ApplicationShutdownHooks for the life of the JVM,
+         * which in the eval server meant one per compilation, forever;
+         * dropped rather than ported. */
     }
 
     fun serialize(): ByteBuffer {
@@ -801,7 +798,10 @@ class SerializationWriter(
             val names = cf.codeRef.staticInfo.oLexicalNames!!
             for (i in oLex.indices) {
                 writeStr(names[i])
-                writeRef(oLex[i])
+                /* Vivify before writing: a clone-flagged lexical the frame
+                 * never read must serialize as this frame's own clone, not
+                 * as the vivification marker. */
+                writeRef(cf.oLexOrVivify(i))
             }
         }
         if (iLex != null) {

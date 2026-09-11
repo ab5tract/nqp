@@ -54,4 +54,7 @@ package-lock.json
 /buildSrc/.gradle/
 /buildSrc/build/
 /nqp-runtime/build/
+/nqp-truffle/build/
 /nqp-j-gradle
+.idea/
+*.iml
