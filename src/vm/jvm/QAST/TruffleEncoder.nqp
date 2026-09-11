@@ -46,13 +46,21 @@ class QAST::TruffleEncoder {
     # shape still bail), so the survey stays an upper bound and the honest
     # yield of a tag group still wants an NQP_CODE_ALSO run.
     #
-    # It is also what supports_op answers from, so every name encode_op
-    # handles in its `$name eq` chain and does NOT have in %emit_ops
-    # belongs here: an op missing from both makes the backend's
-    # supports-op say "no" for an op the encoder compiles, and HLL code
-    # picks a worse implementation for it. The list is derived by
-    # comparing `$name eq '...'` in this file against the op3 table; when
-    # a hand row is added, add its name here.
+    # THREE consumers read this list, so a name missing from it is wrong
+    # three ways at once. Every name encode_op handles in its `$name eq`
+    # chain and does NOT have in %emit_ops belongs here:
+    #   1. the coverage survey, which counts it as encoded;
+    #   2. supports_op, and through it the backend's supports-op -- an op
+    #      absent from both this list and %emit_ops makes supports-op say
+    #      "no" for an op the encoder compiles, and HLL code then picks a
+    #      worse implementation for it;
+    #   3. QAST::OperationsJVM.is_inlinable, whose last resort is
+    #      supports_op (Compiler.nqp): an op the encoder compiles is one
+    #      an HLL may inline unless something says otherwise, so a name
+    #      missing here also silently stops inlining at its call sites.
+    # The list is derived by comparing `$name eq '...'` in this file
+    # against the op3 table; when a hand row is added, add its name here.
+    # nqp/t/jvm/16-op-registry.t pins all three answers.
     #
     # Deliberately absent, with no row on either side (no encoding, no
     # classlib mapping) -- the encoder refuses them and supports-op must
@@ -424,11 +432,10 @@ class QAST::TruffleEncoder {
         # Always on since milestone 3 (2026-09-09): the engine build is the
         # build and the unit road needs every block encoded, so NQP_CODE_RUN
         # is not a knob -- do not set it at all. Compiler.nqp dies on
-        # NQP_CODE_RUN=0 / NQP_CODE_PRECOMP=0, and stage0's class-road
-        # bootstrap compiler reads the mere PRESENCE of NQP_CODE_RUN (even
-        # '=0') as "encode", so exporting it into a gradle build builds
-        # stage1 differently. The surviving switches are the diagnostics:
-        # NQP_CODE_ENCODED, NQP_CODE_BAIL, NQP_CODE_WHY, NQP_CODE_STRICT.
+        # NQP_CODE_RUN=0 / NQP_CODE_PRECOMP=0; there is no class road left
+        # to opt out to, in the compiler, the runtime or stage0. The
+        # surviving switches are the diagnostics: NQP_CODE_ENCODED,
+        # NQP_CODE_BAIL, NQP_CODE_WHY, NQP_CODE_STRICT.
         $code_run := nqp::existskey(%env, 'NQP_CODE_RUN')
             ?? (nqp::atkey(%env, 'NQP_CODE_RUN') ne '0' ?? 1 !! 0)
             !! 1;
@@ -527,6 +534,10 @@ class QAST::TruffleEncoder {
     # rest: Rakudo publishes CODE_OP_DESUGARS and then keeps GROWING it
     # (register_op_desugar, src/vm/jvm/Raku/Ops.nqp), so a probe that ran
     # before a later registration would otherwise cache a "no" forever.
+    #
+    # Two callers, not one: supports-op, and is_inlinable's last resort
+    # (see $extra_ops above). Answering "no" here therefore both picks a
+    # worse HLL implementation and stops the op being inlined.
     method supports_op(str $name) {
         unless $op_table_built {
             $op_table_built := 1;
@@ -1181,18 +1192,23 @@ class QAST::TruffleEncoder {
         %e<nested> := @nested_save;
         nqp::bindkey(%e, 'inparams', 0);
         splice_code(%e, @p, $params_at + 1);
-        # The prologue can record deferred slots of its own: a QAST::BVal
-        # in a parameter default or in a param task (a `where`
-        # constraint's ParamTypeCheck carries one whenever the constrained
-        # code was compiled dynamically, which is every BEGIN-time
-        # routine). They were recorded against the scratch array, so they
-        # move to where that array has just landed. Appending them AFTER
-        # the splice is what keeps them right: splice_code shifts the
-        # slots it finds at or past its mark, and these already sit at
-        # their final positions. Dropping them left the placeholder qbid
-        # 0 in the CODEREF cell -- the unit's MAINLINE -- so a BEGIN-time
-        # `where` bound its WhateverCode's $!do to the dynamic unit's
-        # mainline and calling the constraint ran the whole unit.
+        # The prologue can record deferred code-ref slots of its own --
+        # positions in the code stream whose qbid is patched in once the
+        # nested block is encoded. Any nested block reached from the
+        # prologue makes one: a QAST::Block in a parameter default, and a
+        # QAST::BVal in a param task (a `where` constraint's
+        # ParamTypeCheck carries one whenever the constrained code was
+        # compiled dynamically, which is every BEGIN-time routine).
+        # They were recorded against the scratch array @p, which has just
+        # landed at $params_at + 1, so each slot's position shifts by that
+        # much -- the rebinding below. The order matters: splice_code has
+        # already run and shifted every slot it found at or past its mark,
+        # and these were not in %e<nested> at the time, so appending them
+        # afterwards is what keeps them from being shifted twice.
+        # Dropping them left the placeholder qbid 0 in the CODEREF cell --
+        # the unit's MAINLINE -- so a BEGIN-time `where` bound its
+        # WhateverCode's $!do to the dynamic unit's mainline and calling
+        # the constraint ran the whole unit.
         for @nested_params -> $nb {
             nqp::bindpos($nb, 0, $nb[0] + $params_at + 1);
             nqp::push(%e<nested>, $nb);
@@ -1931,8 +1947,8 @@ class QAST::TruffleEncoder {
     # The tail of encode_op's op dispatch, split out so neither half grows
     # past what one block can hold comfortably.
     # $name is the op name already computed by encode_op.
-    # nqp::for(list, block): the iterator loop Compiler.nqp's add_core_op('for')
-    # builds. The list, its iterator and the block ride scratch locals; each
+    # nqp::for(list, block): the iterator loop the deleted class road's
+    # handler for 'for' built. The list, its iterator and the block ride scratch locals; each
     # iteration fetches the block's arity values (shift) into locals and
     # calls the block with them. The handled form is its own wire op,
     # W_FORLOOP: the same LAST / NEXT|REDO regions a handled while has, but
@@ -2150,8 +2166,8 @@ class QAST::TruffleEncoder {
             epush(%e, $W_NULLC);
             return $T_OBJ;
         }
-        # ord/rindex/index are arity-based desugars, exactly as
-        # Compiler.nqp's add_core_op builds them: a fresh tree over the same
+        # ord/rindex/index are arity-based desugars, exactly as the
+        # deleted class road built them: a fresh tree over the same
         # children (ordfirst/ordat, rindexfromend/rindexfrom, indexfrom --
         # all already in the table), so a later bail leaves the op untouched.
         if $name eq 'ord' {
