@@ -116,6 +116,20 @@ class P6bigint : REPR() {
         setMeth.visitFieldInsn(Opcodes.PUTFIELD, className, prefix, bigIntegerType)
         setMeth.visitInsn(Opcodes.RETURN)
         setMeth.visitMaxs(0, 0)
+
+        /* The unsigned writing: a native uint's long is the bit pattern of
+         * 0..2^64-1, so a negative pattern is the large value, never the
+         * negative one (2^64-1 arrives as -1). Without this the box fell to
+         * the signed default and Flat's -1 levels sentinel boxed as Int -1. */
+        val setUMeth = cw.visitMethod(Opcodes.ACC_PUBLIC, "set_uint", setDesc, null, null)
+        setUMeth.visitVarInsn(Opcodes.ALOAD, 0)
+        setUMeth.visitVarInsn(Opcodes.LLOAD, 2)
+        setUMeth.visitMethodInsn(Opcodes.INVOKESTATIC,
+            "org/raku/nqp/sixmodel/reprs/P6bigint", "unsignedValueOf",
+            "(J)Ljava/math/BigInteger;")
+        setUMeth.visitFieldInsn(Opcodes.PUTFIELD, className, prefix, bigIntegerType)
+        setUMeth.visitInsn(Opcodes.RETURN)
+        setUMeth.visitMaxs(0, 0)
     }
 
     // We don't depend on any details of the STable, so no description is needed
@@ -150,6 +164,11 @@ class P6bigint : REPR() {
     }
 
     companion object {
+        /* The unsigned reading of a native long: 0..2^64-1. */
+        @JvmStatic
+        fun unsignedValueOf(v: Long): BigInteger =
+            if (v >= 0L) BigInteger.valueOf(v) else BigInteger.valueOf(v).add(BigInteger.ONE.shiftLeft(64))
+
         /** The unsigned reading of a flattened bigint: 64 bits is a value
          * an unsigned native holds, so only wider than that is refused. */
         @JvmStatic

@@ -32,6 +32,11 @@ final class NqpProgramBuilder {
 
     private final NqpWire.Program program;
 
+    /** NQP_CODE_NO_SUSPEND=1: measurement only -- emit no suspension tail
+     *  after table ops and dispatches (continuations through engine frames
+     *  then break), to size what the tail costs in compiled code. */
+    static final boolean NO_SUSPEND = System.getenv("NQP_CODE_NO_SUSPEND") != null;
+
     private NqpProgramBuilder(NqpRootNodeGen.Builder b, NqpWire.Program p) {
         this.b = b;
         this.code = p.code();
@@ -103,6 +108,15 @@ final class NqpProgramBuilder {
             case NqpWire.JNULL:
                 if (emit) b.emitLoadNull();
                 return at + 1;
+            case NqpWire.CURLEXPAD:
+                if (emit) b.emitCurLexpad();
+                return at + 1;
+            case NqpWire.P6ARGVMARRAY:
+                if (emit) b.emitP6ArgVmArray();
+                return at + 1;
+            case NqpWire.USECAPTURE:
+                if (emit) b.emitUseCapture();
+                return at + 1;
             case NqpWire.IVAL:
                 if (emit) b.emitLoadConstant(Long.parseLong(pool[code[at + 1]]));
                 return at + 2;
@@ -113,19 +127,23 @@ final class NqpProgramBuilder {
                 if (emit) b.emitLoadConstant(pool[code[at + 1]]);
                 return at + 2;
             case NqpWire.WVAL:
-                if (emit) b.emitWvalGet(pool[code[at + 1]], code[at + 2]);
+                if (emit) b.emitWvalGet(pool[code[at + 1]], code[at + 2], new NqpOps.WvalSite());
                 return at + 3;
             case NqpWire.LEXGET:
-                if (emit) b.emitLexGet(code[at + 1], pool[code[at + 2]]);
+                if (emit) b.emitLexGet(code[at + 1], pool[code[at + 2]], new NqpOps.LexSite());
                 return at + 3;
             case NqpWire.LEXBIND: {
                 int type = code[at + 1];
                 String name = pool[code[at + 2]];
-                if (emit) b.beginLexBind(type, name);
+                if (emit) b.beginLexBind(type, name, new NqpOps.LexSite());
                 at = walk(at + 3, emit);
                 if (emit) b.endLexBind();
                 return at;
             }
+            case NqpWire.LEXREF:
+                if (emit) b.emitLexRef(code[at + 1], pool[code[at + 2]], code[at + 3],
+                    new NqpOps.LexSite());
+                return at + 4;
             case NqpWire.LOCGET:
                 if (emit) b.emitLoadLocal(locals[code[at + 2]]);
                 return at + 3;
@@ -181,25 +199,34 @@ final class NqpProgramBuilder {
             case NqpWire.LOOP: {
                 int until = code[at + 1];
                 int repeat = code[at + 2];
-                int condType = code[at + 3];
-                int condAt = at + 4;
+                int hasNext = code[at + 3];
+                int condType = code[at + 4];
+                int condAt = at + 5;
                 int bodyAt = walk(condAt, false);
+                int nextAt = walk(bodyAt, false);
+                // The whole region ends after the "next" expr if it is present.
+                int endAt = hasNext != 0 ? walk(nextAt, false) : nextAt;
                 if (repeat != 0 && emit) {
                     // Run the body once ahead: repeat_while == body; while.
+                    // (repeat + a next-expr is refused by the encoder.)
                     beginSink();
                     walk(bodyAt, true);
                     endSink();
                 }
-                if (emit) b.beginBlock();
-                if (emit) b.beginWhile();
-                walkCond(condAt, condType, until, emit);
-                if (emit) beginSink();
-                at = walk(bodyAt, emit);
-                if (emit) endSink();
-                if (emit) b.endWhile();
-                if (emit) b.emitLoadNull();
-                if (emit) b.endBlock();
-                return at;
+                if (emit) {
+                    b.beginBlock();
+                    b.beginWhile();
+                    walkCond(condAt, condType, until, true);
+                    beginSink();
+                    walk(bodyAt, true);
+                    // The "next" expr runs after the body, before the re-test.
+                    if (hasNext != 0) walk(nextAt, true);
+                    endSink();
+                    b.endWhile();
+                    b.emitLoadNull();
+                    b.endBlock();
+                }
+                return endAt;
             }
             case NqpWire.LOOPH: {
                 // A loop with last/next/redo handlers: the bytecode shape
@@ -210,62 +237,44 @@ final class NqpProgramBuilder {
                 // curHandler delimiting, unwind_check, category routing --
                 // matches the emitted bytecode exactly.
                 int until = code[at + 1];
-                int condType = code[at + 2];
-                int lastId = code[at + 3];
-                int nrId = code[at + 4];
-                int outerIdx = code[at + 5];
-                int condAt = at + 6;
+                int repeat = code[at + 2];
+                int hasNext = code[at + 3];
+                int hasLabel = code[at + 4];
+                int labelLocalIdx = code[at + 5];
+                int condType = code[at + 6];
+                int lastId = code[at + 7];
+                int nrId = code[at + 8];
+                int outerIdx = code[at + 9];
+                int labelAt = at + 10;
+                int condAt = hasLabel != 0 ? walk(labelAt, false) : labelAt;
                 int bodyAt = walk(condAt, false);
-                if (!emit) return walk(bodyAt, false);
+                int nextAt = walk(bodyAt, false);
+                int endAt = hasNext != 0 ? walk(nextAt, false) : nextAt;
+                if (!emit) return endAt;
 
+                // A labeled loop keeps its label object in a block local, read
+                // by the unwind arms as the `where` for _is_same_label; an
+                // unlabeled loop passes null (-> _rethrow_label).
+                BytecodeLocal labelLocal = hasLabel != 0 ? locals[labelLocalIdx] : null;
                 BytecodeLocal redoL = b.createLocal();
                 b.beginBlock();
+                if (hasLabel != 0) {
+                    b.beginStoreLocal(labelLocal);
+                    walk(labelAt, true);
+                    b.endStoreLocal();
+                }
                 b.beginTryCatch();
                 {   // try: the loop itself, cond and all, under lastId.
                     b.beginBlock();
                     b.emitSetCurHandler(lastId);
+                    // repeat_: run the body once ahead of the first cond test,
+                    // inside these same regions (Compiler.nqp's goto redo_lbl).
+                    if (repeat != 0) {
+                        emitLoophBody(redoL, bodyAt, nextAt, hasNext != 0, nrId, lastId, labelLocal);
+                    }
                     b.beginWhile();
                     walkCond(condAt, condType, until, true);
-                    {   // body: run-once-with-redo under nrId.
-                        b.beginBlock();
-                        b.beginStoreLocal(redoL);
-                        b.emitLoadConstant(1L);
-                        b.endStoreLocal();
-                        b.beginWhile();
-                        b.beginNonZero();
-                        b.emitLoadLocal(redoL);
-                        b.endNonZero();
-                        {
-                            b.beginBlock();
-                            b.beginStoreLocal(redoL);
-                            b.emitLoadConstant(0L);
-                            b.endStoreLocal();
-                            b.beginTryCatch();
-                            {
-                                b.beginBlock();
-                                b.emitSetCurHandler(nrId);
-                                beginSink();
-                                walk(bodyAt, true);
-                                endSink();
-                                b.emitSetCurHandler(lastId);
-                                b.endBlock();
-                            }
-                            {   // catch: route NEXT/REDO, rethrow the rest.
-                                b.beginBlock();
-                                b.emitSetCurHandler(lastId);
-                                b.beginStoreLocal(redoL);
-                                b.beginLoopBodyUnwind(nrId, lastId);
-                                b.emitLoadException();
-                                b.endLoopBodyUnwind();
-                                b.endStoreLocal();
-                                b.endBlock();
-                            }
-                            b.endTryCatch();
-                            b.endBlock();
-                        }
-                        b.endWhile();
-                        b.endBlock();
-                    }
+                    emitLoophBody(redoL, bodyAt, nextAt, hasNext != 0, nrId, lastId, labelLocal);
                     b.endWhile();
                     b.emitSetCurHandler(outerIdx);
                     b.endBlock();
@@ -274,6 +283,7 @@ final class NqpProgramBuilder {
                     b.beginBlock();
                     b.emitSetCurHandler(outerIdx);
                     b.beginLoopLastUnwind(lastId, outerIdx);
+                    if (labelLocal != null) b.emitLoadLocal(labelLocal); else b.emitLoadNull();
                     b.emitLoadException();
                     b.endLoopLastUnwind();
                     b.endBlock();
@@ -281,7 +291,7 @@ final class NqpProgramBuilder {
                 b.endTryCatch();
                 b.emitLoadNull();
                 b.endBlock();
-                return walk(bodyAt, false);
+                return endAt;
             }
             case NqpWire.HANDLE: {
                 // The handle op's nesting, reconstructed: an inner TryCatch
@@ -400,7 +410,11 @@ final class NqpProgramBuilder {
                     };
                     if ((flag & 4) != 0) {
                         csFlag |= CallSiteDescriptor.ARG_NAMED;
-                        names.add(pool[code[at++]]);
+                        // A flat named arg (`|%h`) sets the named bit but
+                        // carries no name string -- explodeFlattening reads
+                        // the hash keys. Only a non-flat named arg names a
+                        // slot, matching the encoder and the bytecode path.
+                        if ((flag & 8) == 0) names.add(pool[code[at++]]);
                     }
                     if ((flag & 8) != 0) csFlag |= CallSiteDescriptor.ARG_FLAT;
                     flags[i] = csFlag;
@@ -422,7 +436,7 @@ final class NqpProgramBuilder {
                 if (emit) {
                     b.endDispatchOp();
                     b.endStoreLocal();
-                    emitSuspendCheck(dres);
+                    if (!NO_SUSPEND) emitSuspendCheck(dres);
                     b.emitLoadLocal(dres);
                     b.endBlock();
                 }
@@ -437,16 +451,53 @@ final class NqpProgramBuilder {
                 // a Proxy FETCH, a handler); all sites carry the suspension
                 // tail, and the token check speculates to false in compiled
                 // code.
-                boolean suspendable = true;
+                boolean suspendable = !NO_SUSPEND;
                 BytecodeLocal ores = emit && suspendable ? b.createLocal() : null;
                 if (emit && suspendable) {
                     b.beginBlock();
                     b.beginStoreLocal(ores);
                 }
-                if (emit) b.beginRunOp(id);
+                // getattr/bindattr get a per-instruction slot cache; see
+                // NqpOps.AttrSite. Same suspension wrapper as any table op.
+                boolean attrGet = id == NqpOps.OP_GETATTR && nargs == 3;
+                boolean attrBind = id == NqpOps.OP_BINDATTR && nargs == 4;
+                if (emit) {
+                    if (attrGet) b.beginGetAttrOp(new NqpOps.AttrSite());
+                    else if (attrBind) b.beginBindAttrOp(new NqpOps.AttrSite());
+                    else b.beginRunOp(id);
+                }
                 at += 3;
                 for (int i = 0; i < nargs; i++) at = walk(at, emit);
-                if (emit) b.endRunOp();
+                if (emit) {
+                    if (attrGet) b.endGetAttrOp();
+                    else if (attrBind) b.endBindAttrOp();
+                    else b.endRunOp();
+                }
+                if (emit && suspendable) {
+                    b.endStoreLocal();
+                    emitSuspendCheck(ores);
+                    b.emitLoadLocal(ores);
+                    b.endBlock();
+                }
+                return at;
+            }
+            case NqpWire.CLASSLIB: {
+                int rtype = code[at + 1];
+                String cls = pool[code[at + 2]];
+                String meth = pool[code[at + 3]];
+                String desc = pool[code[at + 4]];
+                boolean tcArg = code[at + 5] != 0;
+                int nargs = code[at + 6];
+                at += 7 + nargs;   // the arg types are informational here
+                boolean suspendable = !NO_SUSPEND;
+                BytecodeLocal ores = emit && suspendable ? b.createLocal() : null;
+                if (emit && suspendable) {
+                    b.beginBlock();
+                    b.beginStoreLocal(ores);
+                }
+                if (emit) b.beginClassLibOp(rtype, new NqpOps.ClassLibSite(cls, meth, desc, tcArg, nargs));
+                for (int i = 0; i < nargs; i++) at = walk(at, emit);
+                if (emit) b.endClassLibOp();
                 if (emit && suspendable) {
                     b.endStoreLocal();
                     emitSuspendCheck(ores);
@@ -470,8 +521,16 @@ final class NqpProgramBuilder {
             case NqpWire.CODEREF:
                 if (emit) b.emitCodeRefGet(code[at + 1]);
                 return at + 2;
-            default:
-                throw new IllegalStateException("nqpp: unknown tag " + tag + " at " + at);
+            default: {
+                // Name the neighbourhood: a bad tag is an encoder layout
+                // bug, and the words around it are what locates it.
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < code.length; i++)
+                    sb.append(i == at ? " [" : " ").append(code[i]).append(i == at ? "]" : "");
+                throw new IllegalStateException("nqpp: unknown tag " + tag + " at " + at
+                    + " of " + code.length + " words; program:" + sb
+                    + "; pool=" + java.util.Arrays.toString(pool));
+            }
         }
     }
 
@@ -520,10 +579,11 @@ final class NqpProgramBuilder {
             if (kind == 2) namedAllowed.add(named);
             if (kind == 3) namedSlurpy = true;
             int hasDefault = code[at++];
-            if (type != NqpWire.T_OBJ)
-                throw new IllegalStateException("nqpp: typed parameters not yet encoded");
+            if (type != NqpWire.T_OBJ && kind != 0 && kind != 2)
+                throw new IllegalStateException("nqpp: a slurpy parameter is always an object");
 
-            if (emit) beginBindTarget(scope, target);
+            if (emit) beginBindTarget(scope, target,
+                    type == NqpWire.T_UINT ? NqpWire.T_INT : type);
             if (hasDefault != 0) {
                 // v = fetched-if-existed else default; the existed flag is
                 // read before anything can clobber it.
@@ -531,7 +591,7 @@ final class NqpProgramBuilder {
                     b.beginBlock();
                     b.beginStoreLocal(tmp);
                 }
-                emitFetch(kind, named, posIdx, 1, csdL, argsL, emit);
+                emitFetch(kind, named, posIdx, 1, csdL, argsL, emit, type);
                 if (emit) {
                     b.endStoreLocal();
                     b.beginConditional();
@@ -544,7 +604,7 @@ final class NqpProgramBuilder {
                     b.endBlock();
                 }
             } else {
-                emitFetch(kind, named, posIdx, 0, csdL, argsL, emit);
+                emitFetch(kind, named, posIdx, 0, csdL, argsL, emit, type);
             }
             if (emit) endBindTarget(scope);
             if (kind == 0) posIdx++;
@@ -574,12 +634,12 @@ final class NqpProgramBuilder {
     }
 
     private void emitFetch(int kind, String named, int posIdx, int opt,
-                           BytecodeLocal csdL, BytecodeLocal argsL, boolean emit) {
+                           BytecodeLocal csdL, BytecodeLocal argsL, boolean emit, int type) {
         if (!emit) return;
         switch (kind) {
-            case 0 -> b.beginPosParam(posIdx, opt);
+            case 0 -> b.beginPosParam(posIdx, opt, type);
             case 1 -> b.beginPosSlurpy(posIdx);
-            case 2 -> b.beginNamedParam(named, opt);
+            case 2 -> b.beginNamedParam(named, opt, type);
             case 3 -> b.beginNamedSlurpy();
             default -> throw new IllegalStateException("nqpp: bad param kind " + kind);
         }
@@ -593,10 +653,10 @@ final class NqpProgramBuilder {
         }
     }
 
-    private void beginBindTarget(int scope, int target) {
+    private void beginBindTarget(int scope, int target, int type) {
         if (scope == 0) {
             beginSink();
-            b.beginLexBind(NqpWire.T_OBJ, pool[target]);
+            b.beginLexBind(type, pool[target], new NqpOps.LexSite());
         } else {
             b.beginStoreLocal(locals[target]);
         }
@@ -631,6 +691,66 @@ final class NqpProgramBuilder {
         b.endUnpackResumed();
         b.endStoreLocal();
         b.endIfThen();
+    }
+
+    /**
+     * The body of a handled loop (W_LOOPH): the run-once-with-redo block under
+     * nrId, followed by the optional "next" expr under lastId. Emitted once
+     * per iteration by the outer while, and once more ahead of the first cond
+     * test for a repeat_ loop -- so the two call sites duplicate the body, as
+     * the nohandler W_LOOP builder duplicates its body for repeat. redoL is a
+     * shared scratch flag, reset to 1 at the start of each emission.
+     */
+    private void emitLoophBody(BytecodeLocal redoL, int bodyAt, int nextAt,
+                              boolean hasNext, int nrId, int lastId,
+                              BytecodeLocal labelLocal) {
+        b.beginBlock();
+        b.beginStoreLocal(redoL);
+        b.emitLoadConstant(1L);
+        b.endStoreLocal();
+        b.beginWhile();
+        b.beginNonZero();
+        b.emitLoadLocal(redoL);
+        b.endNonZero();
+        {
+            b.beginBlock();
+            b.beginStoreLocal(redoL);
+            b.emitLoadConstant(0L);
+            b.endStoreLocal();
+            b.beginTryCatch();
+            {
+                b.beginBlock();
+                b.emitSetCurHandler(nrId);
+                beginSink();
+                walk(bodyAt, true);
+                endSink();
+                b.emitSetCurHandler(lastId);
+                b.endBlock();
+            }
+            {   // catch: route NEXT/REDO, rethrow the rest.
+                b.beginBlock();
+                b.emitSetCurHandler(lastId);
+                b.beginStoreLocal(redoL);
+                b.beginLoopBodyUnwind(nrId, lastId);
+                if (labelLocal != null) b.emitLoadLocal(labelLocal); else b.emitLoadNull();
+                b.emitLoadException();
+                b.endLoopBodyUnwind();
+                b.endStoreLocal();
+                b.endBlock();
+            }
+            b.endTryCatch();
+            b.endBlock();
+        }
+        b.endWhile();
+        // The "next" expr, under lastId: after the body's redo loop drains
+        // (normal completion or a NEXT unwind routed to redo=0), before the
+        // outer while re-tests the condition.
+        if (hasNext) {
+            beginSink();
+            walk(nextAt, true);
+            endSink();
+        }
+        b.endBlock();
     }
 
     /** Discards the value the wrapped child leaves. */

@@ -49,6 +49,29 @@ class StaticCodeInfo(
     @JvmField var mhResume: MethodHandle? = null
 
     /**
+     * How many invocations of this block are live right now (entered and
+     * not yet left), across all threads. A code ref with no outer searches
+     * the caller chain for a live invocation of its outer block on every
+     * frame construction; when that block has no live invocation the search
+     * can only fail, and this count lets it be skipped -- a JFR profile of
+     * the CORE.c compile put the always-failing search at 14% of all
+     * samples. Only ever an overestimate: a frame that leaves without
+     * leave() (the dieInternal-in-the-catch-arm road) stays counted and
+     * keeps the search, which is the old behaviour, never a wrong skip.
+     */
+    @JvmField val liveInvocations = java.util.concurrent.atomic.AtomicInteger()
+
+    /**
+     * The code engine's compiled program for this block, once it has run
+     * once through [CodeEngines.codeRun]; null for a bytecode body or a
+     * block not yet entered. Typed loosely because nqp-runtime cannot see
+     * the engine's classes; it is a Truffle CallTarget. An engine-side
+     * dispatch that resolves to this code enters the target directly,
+     * building the frame the emitted stub would have built.
+     */
+    @JvmField @Volatile var engineTarget: Any? = null
+
+    /**
      * Method name for correlation with stack traces.
      */
     @JvmField var methodName: String? = null

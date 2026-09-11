@@ -116,6 +116,24 @@ my $RT_NUM  := 2;
 my $RT_STR  := 3;
 my $RT_UINT := 10;
 my $RT_VOID := -1;
+
+# The classlib op registry, published for the Truffle encoder: every op a
+# map_classlib_*_op call maps to a static method is recorded here as
+# [class, method, JVM descriptor, arg RT types, result RT type, tc], so
+# the encoder derives its table from the same declarations the bytecode
+# path compiles to an invokestatic -- no hand-written twin per op.
+my %CODE_CLASSLIB_OPS;
+my %CODE_CLASSLIB_HLL_OPS;
+nqp::bindhllsym('nqp', 'CODE_CLASSLIB_OPS', %CODE_CLASSLIB_OPS);
+nqp::bindhllsym('nqp', 'CODE_CLASSLIB_HLL_OPS', %CODE_CLASSLIB_HLL_OPS);
+sub jdesc($jt) { $jt eq 'Long' ?? 'J' !! $jt eq 'Double' ?? 'D' !! $jt eq 'Void' ?? 'V' !! $jt }
+sub classlib_record($class, $method, @stack_in, $stack_out, $tc, $cont) {
+    my str $desc := '(';
+    for @stack_in { $desc := $desc ~ jdesc(jtype($_)) }
+    $desc := $desc ~ jdesc($TYPE_TC) if $tc;
+    $desc := $desc ~ ')' ~ ($cont ?? 'V' !! jdesc(jtype($stack_out)));
+    [$class, $method, $desc, nqp::clone(@stack_in), $stack_out, $tc ?? 1 !! 0, $cont ?? 1 !! 0]
+}
 my class Result {
     has $!jast;         # The JAST
     has int $!type;     # Result type (obj/int/num/str)
@@ -341,6 +359,7 @@ class QAST::OperationsJAST {
         self.add_core_op($op, op_mapper($op, $ins, @stack_in, $stack_out, :$tc, :$cont));
         self.set_core_op_inlinability($op, $inlinable);
         self.set_core_op_result_type($op, $stack_out);
+        %CODE_CLASSLIB_OPS{$op} := classlib_record($class, $method, @stack_in, $stack_out, $tc, $cont);
     }
 
     # Adds a HLL nqp:: op provided by a static method in the
@@ -356,6 +375,8 @@ class QAST::OperationsJAST {
         self.add_hll_op($hll, $op, op_mapper($op, $ins, @stack_in, $stack_out, :$tc, :$cont));
         self.set_core_op_inlinability($op, $inlinable);
         self.set_hll_op_result_type($hll, $op, $stack_out);
+        %CODE_CLASSLIB_HLL_OPS{$hll} := nqp::hash() unless nqp::existskey(%CODE_CLASSLIB_HLL_OPS, $hll);
+        %CODE_CLASSLIB_HLL_OPS{$hll}{$op} := classlib_record($class, $method, @stack_in, $stack_out, $tc, $cont);
     }
 
     # Generates an operation mapper. Covers a range of operations,
@@ -2627,6 +2648,9 @@ nqp::bindkey(%const_map, 'BIND_VAL_NUM',   2);
 nqp::bindkey(%const_map, 'BIND_VAL_STR',   3);
 nqp::bindkey(%const_map, 'BIND_VAL_UINT', 10);
 
+# Published for the code engine's encoder, which lives in its own file
+# and resolves nqp::const names to the same values (QAST::TruffleEncoder).
+nqp::bindhllsym('nqp', 'CODE_CONST_MAP', %const_map);
 QAST::OperationsJAST.add_core_op('const', -> $qastcomp, $op {
     if nqp::existskey(%const_map, $op.name) {
         $qastcomp.as_jast(QAST::IVal.new( :value(%const_map{$op.name}) ))
@@ -3799,7 +3823,13 @@ class QAST::CompilerJAST {
             my $name := $var.name;
             my $type := rttype_from_typeobj($var.returns);
             if nqp::existskey(%!lexical_types, $name) || nqp::existskey(%!lexicalref_types, $name) {
-                nqp::die("Lexical '$name' already declared");
+                # Name the block: "already declared" with no scope named is
+                # unchaseable when the first declaration came from another
+                # compilation road (the code engine commits a block's
+                # lexicals itself when it encodes the block).
+                nqp::die("Lexical '$name' already declared in block '"
+                    ~ ($!qast.name eq '' ?? '<anon>' !! $!qast.name)
+                    ~ "' (cuid " ~ $!qast.cuid ~ ")");
             }
             %!lexical_returns{$name} := $var.returns;
             %!lexical_types{$name} := $type;
@@ -3812,7 +3842,13 @@ class QAST::CompilerJAST {
             my $name := $var.name;
             my $type := rttype_from_typeobj($var.returns);
             if nqp::existskey(%!lexical_types, $name) || nqp::existskey(%!lexicalref_types, $name) {
-                nqp::die("Lexical '$name' already declared");
+                # Name the block: "already declared" with no scope named is
+                # unchaseable when the first declaration came from another
+                # compilation road (the code engine commits a block's
+                # lexicals itself when it encodes the block).
+                nqp::die("Lexical '$name' already declared in block '"
+                    ~ ($!qast.name eq '' ?? '<anon>' !! $!qast.name)
+                    ~ "' (cuid " ~ $!qast.cuid ~ ")");
             }
             %!lexicalref_types{$name} := $type;
             %!lexical_idxs{$name}     := nqp::elems(@!lexical_names[$RT_OBJ]);
