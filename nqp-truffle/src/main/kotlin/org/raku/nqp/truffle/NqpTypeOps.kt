@@ -18,9 +18,10 @@ import org.raku.nqp.sixmodel.REPR
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.TypeObject
-import org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance
-import org.raku.nqp.sixmodel.reprs.P6OpaqueDelegateInstance
-import org.raku.nqp.sixmodel.reprs.P6OpaqueREPRData
+import org.raku.nqp.sixmodel.reprs.RakuObject
+import org.raku.nqp.sixmodel.reprs.RakuObjectLayout
+import org.raku.nqp.sixmodel.reprs.RakuObjectREPRData
+import org.raku.nqp.sixmodel.reprs.SlotKind
 
 /**
  * jesp diamond 3: the type-check family as PE-visible operations.
@@ -214,16 +215,16 @@ object NqpTypeOps {
     /**
      * Speculates on one STable: a non-container (the value is its own
      * decont), or a container whose fetch is a plain attribute read
-     * (Raku's Scalar), read through the slot's field getter.
+     * (Raku's Scalar), read through the slot's getter.
      */
     class DecontSite : Site() {
         @JvmField @field:CompilationFinal var st: STable? = null
         @JvmField @field:CompilationFinal var container: Boolean = false
-        @JvmField @field:CompilationFinal var storage: Class<*>? = null
+        @JvmField @field:CompilationFinal var layout: RakuObjectLayout? = null
         @JvmField @field:CompilationFinal var getter: MethodHandle? = null
 
         override fun reset() {
-            st = null; container = false; storage = null; getter = null; misses = 0
+            st = null; container = false; layout = null; getter = null; misses = 0
         }
     }
 
@@ -249,15 +250,12 @@ object NqpTypeOps {
             if (st != null) {
                 if (ost === st) {
                     if (o is TypeObject) return o
-                    /* A deserialized container is a delegating wrapper; read
-                     * the delegate's field, as the fold's AttrSrc does. */
-                    val target = if (o is P6OpaqueDelegateInstance) o.delegate else o
-                    if (target != null && target.javaClass === site.storage
-                            && (target as P6OpaqueBaseInstance).delegate == null) {
+                    val layout = site.layout
+                    if (o is RakuObject && layout != null && o.layout === layout) {
                         val getter = site.getter
                         if (getter != null) {
                             val v: SixModelObject? = try {
-                                getter.invokeExact(target as SixModelObject) as SixModelObject?
+                                getter.invokeExact(o as SixModelObject) as SixModelObject?
                             } catch (t: Throwable) {
                                 throw CompilerDirectives.shouldNotReachHere(t)
                             }
@@ -278,15 +276,15 @@ object NqpTypeOps {
         val cs = st.ContainerSpec ?: run { site.pin(); return }   // handled inline; never reached
         val fetch = cs.fetchAttribute(tc)
         val rd = st.REPRData
-        if (fetch != null && rd is P6OpaqueREPRData) {
-            val storage = rd.jvmClass
-            if (storage != null) {
+        if (fetch != null && rd is RakuObjectREPRData) {
+            val layout = rd.layout
+            if (layout != null) {
                 val hint = st.REPR.hint_for(tc, st, fetch.classHandle, fetch.name)
                 if (hint != STable.NO_HINT) {
-                    val hs = NqpDispatch.fieldHandles(storage, hint.toInt())
+                    val hs = NqpDispatch.layoutHandles(layout, hint.toInt())
                     if (hs != null) {
                         site.container = true
-                        site.storage = storage
+                        site.layout = layout
                         site.getter = hs[0]
                         site.st = st
                         return
@@ -609,17 +607,16 @@ object NqpTypeOps {
     /* ----- create ----- */
 
     /**
-     * Speculates on the type's STable. A P6opaque allocates by cloning
-     * its prototype instance: with the prototype a constant, the clone's
-     * class is exact and the allocation is one Graal can see. Any other
-     * REPR allocates through its (constant) REPR.
+     * Speculates on the type's STable. A RakuObject allocates through its
+     * layout: with the layout a constant, `newInstance` is one `new` of an
+     * exact class. Any other REPR allocates through its (constant) REPR.
      */
     class CreateSite : Site() {
         @JvmField @field:CompilationFinal var st: STable? = null
         @JvmField @field:CompilationFinal var repr: REPR? = null
-        @JvmField @field:CompilationFinal var proto: P6OpaqueBaseInstance? = null
+        @JvmField @field:CompilationFinal var layout: RakuObjectLayout? = null
 
-        override fun reset() { st = null; repr = null; proto = null; misses = 0 }
+        override fun reset() { st = null; repr = null; layout = null; misses = 0 }
     }
 
     @JvmStatic
@@ -633,10 +630,10 @@ object NqpTypeOps {
             }
             if (st != null) {
                 if (NqpRaw.st(type) === st) {
-                    val proto = site.proto
-                    if (proto != null) {
+                    val layout = site.layout
+                    if (layout != null) {
                         val rd = st.REPRData
-                        if (rd is P6OpaqueREPRData && rd.instance === proto) return proto.instClone()
+                        if (rd is RakuObjectREPRData && rd.layout === layout) return layout.newInstance()
                     }
                     else {
                         val repr = site.repr
@@ -653,10 +650,10 @@ object NqpTypeOps {
     private fun resolveCreate(site: CreateSite, type: SixModelObject) {
         val st = type.st ?: run { site.pin(); return }
         val rd = st.REPRData
-        if (rd is P6OpaqueREPRData) {
-            val proto = rd.instance
-            if (proto == null) { site.pin(); return }
-            site.proto = proto
+        if (rd is RakuObjectREPRData) {
+            val layout = rd.layout
+            if (layout == null) { site.pin(); return }
+            site.layout = layout
         }
         else site.repr = st.REPR
         site.st = st
@@ -671,24 +668,23 @@ object NqpTypeOps {
     /**
      * Speculates that both operands and the result type are one P6opaque
      * type whose box target is a flattened bigint (Raku's Int): its
-     * storage class, the BigInteger slot's getter and setter, and the
-     * prototype to clone for a result. Two operands that fit in 63 bits
-     * are added in a long; the result is boxed by cloning the prototype
-     * (or, with JESP_INTCACHE set, taken from the type's shared cache of
-     * small values -- MoarVM's intcache, gated so its worth can be
-     * measured). Anything else -- a large value, an overflow, a
-     * P6bigintInstance operand, a mixed type -- is Ops.add_I as before.
+     * layout, and the BigInteger slot's getter and setter on it. Two
+     * operands that fit in 63 bits are added in a long; the result is
+     * boxed by allocating through the layout (or, with JESP_INTCACHE set,
+     * taken from the type's shared cache of small values -- MoarVM's
+     * intcache, gated so its worth can be measured). Anything else -- a
+     * large value, an overflow, a P6bigintInstance operand, a mixed
+     * type -- is Ops.add_I as before.
      */
     class BigIntSite : Site() {
         @JvmField @field:CompilationFinal var st: STable? = null
-        @JvmField @field:CompilationFinal var storage: Class<*>? = null
+        @JvmField @field:CompilationFinal var layout: RakuObjectLayout? = null
         @JvmField @field:CompilationFinal var getter: MethodHandle? = null
         @JvmField @field:CompilationFinal var setter: MethodHandle? = null
-        @JvmField @field:CompilationFinal var proto: P6OpaqueBaseInstance? = null
         @JvmField @field:CompilationFinal var cache: Array<SixModelObject?>? = null
 
         override fun reset() {
-            st = null; storage = null; getter = null; setter = null; proto = null; cache = null; misses = 0
+            st = null; layout = null; getter = null; setter = null; cache = null; misses = 0
         }
     }
 
@@ -707,23 +703,15 @@ object NqpTypeOps {
                 st = site.st
             }
             if (st != null) {
-                /* A deserialized constant is a delegating wrapper around
-                 * the real instance (the fold's AttrSrc looks through it
-                 * the same way); the STable is the wrapper's, the storage
-                 * class the delegate's. */
-                val ra = if (a is P6OpaqueDelegateInstance) a.delegate else a
-                val rb = if (b is P6OpaqueDelegateInstance) b.delegate else b
+                val layout = site.layout
                 if (NqpRaw.st(a) === st && NqpRaw.st(b) === st && NqpRaw.st(type) === st
-                        && ra != null && rb != null
-                        && ra.javaClass === site.storage && rb.javaClass === site.storage
-                        && (ra as P6OpaqueBaseInstance).delegate == null
-                        && (rb as P6OpaqueBaseInstance).delegate == null) {
+                        && layout != null && a is RakuObject && b is RakuObject
+                        && a.layout === layout && b.layout === layout) {
                     val getter = site.getter
                     val setter = site.setter
-                    val proto = site.proto
-                    if (getter != null && setter != null && proto != null) {
-                        val x = NqpRaw.getBig(getter, ra)
-                        val y = NqpRaw.getBig(getter, rb)
+                    if (getter != null && setter != null) {
+                        val x = NqpRaw.getBig(getter, a)
+                        val y = NqpRaw.getBig(getter, b)
                         if (x != null && y != null && x.bitLength() < 63 && y.bitLength() < 63) {
                             val xl = x.toLong()
                             val yl = y.toLong()
@@ -737,7 +725,7 @@ object NqpTypeOps {
                                     fits = xl == 0L || (r / xl == yl && !(xl == -1L && yl == Long.MIN_VALUE))
                                 }
                             }
-                            if (fits) return boxSmall(site, r, proto, setter)
+                            if (fits) return boxSmall(site, r, layout, setter)
                         }
                     }
                 }
@@ -750,23 +738,23 @@ object NqpTypeOps {
         return bigintSlow(kind, a, b, type, tc)
     }
 
-    private fun boxSmall(site: BigIntSite, r: Long, proto: P6OpaqueBaseInstance, setter: MethodHandle): SixModelObject {
+    private fun boxSmall(site: BigIntSite, r: Long, layout: RakuObjectLayout, setter: MethodHandle): SixModelObject {
         if (INT_CACHE && r >= CACHE_MIN && r <= CACHE_MAX) {
             val cache = site.cache
             if (cache != null) {
                 val idx = (r - CACHE_MIN).toInt()
                 val hit = cache[idx]
                 if (hit != null) return hit
-                val made = allocateBig(proto, r, setter)
+                val made = allocateBig(layout, r, setter)
                 cache[idx] = made
                 return made
             }
         }
-        return allocateBig(proto, r, setter)
+        return allocateBig(layout, r, setter)
     }
 
-    private fun allocateBig(proto: P6OpaqueBaseInstance, r: Long, setter: MethodHandle): SixModelObject {
-        val res = proto.instClone()
+    private fun allocateBig(layout: RakuObjectLayout, r: Long, setter: MethodHandle): SixModelObject {
+        val res = layout.newInstance()
         NqpRaw.setBig(setter, res, java.math.BigInteger.valueOf(r))
         return res
     }
@@ -774,10 +762,10 @@ object NqpTypeOps {
     @TruffleBoundary
     private fun debugBigMiss(site: BigIntSite, a: SixModelObject, b: SixModelObject, type: SixModelObject, st: STable) {
         debug("bigint guard: a.st=" + (a.st === st) + " b.st=" + (b.st === st) + " type.st=" + (type.st === st)
-            + " a.class=" + (a.javaClass === site.storage) + " b.class=" + (b.javaClass === site.storage)
-            + " a.delegate=" + ((a as? P6OpaqueBaseInstance)?.delegate == null)
-            + " classes=" + a.javaClass.name + "@" + System.identityHashCode(a.javaClass)
-            + " vs " + site.storage?.name + "@" + System.identityHashCode(site.storage)
+            + " a.layout=" + ((a as? RakuObject)?.layout === site.layout)
+            + " b.layout=" + ((b as? RakuObject)?.layout === site.layout)
+            + " layouts=" + (a as? RakuObject)?.layout?.st?.debugName
+            + " vs " + site.layout?.st?.debugName
             + " typeclass=" + type.javaClass.name)
     }
 
@@ -790,29 +778,18 @@ object NqpTypeOps {
                 + " same-ab=" + (b.st === st) + " same-type=" + (type.st === st))
             site.pin(); return
         }
-        val rd = st.REPRData as? P6OpaqueREPRData ?: run { if (DEBUG) debug("bigint pin: not P6opaque"); site.pin(); return }
-        val storage = rd.jvmClass
-        val proto = rd.instance
-        val slot = rd.unboxIntSlot
-        if (storage == null || proto == null || slot < 0) {
-            if (DEBUG) debug("bigint pin: storage=$storage proto=$proto slot=$slot")
+        val rd = st.REPRData as? RakuObjectREPRData ?: run { if (DEBUG) debug("bigint pin: not P6opaque"); site.pin(); return }
+        val layout = rd.layout
+        val slot = layout?.unboxIntSlot ?: -1
+        if (layout == null || slot < 0 || layout.kinds[slot] != SlotKind.BIGINT) {
+            if (DEBUG) debug("bigint pin: layout=$layout slot=$slot")
             site.pin(); return
         }
-        try {
-            val f = storage.getField("field_$slot")
-            if (f.type != java.math.BigInteger::class.java) {
-                if (DEBUG) debug("bigint pin: field type " + f.type.name)
-                site.pin(); return
-            }
-            if (DEBUG) debug("bigint resolved: storage=" + storage.name + " slot=$slot cache=$INT_CACHE")
-            val lookup = MethodHandles.lookup()
-            site.getter = lookup.unreflectGetter(f)
-                .asType(MethodType.methodType(java.math.BigInteger::class.java, SixModelObject::class.java))
-            site.setter = lookup.unreflectSetter(f)
-                .asType(MethodType.methodType(Void.TYPE, SixModelObject::class.java, java.math.BigInteger::class.java))
-        } catch (e: ReflectiveOperationException) {
-            site.pin(); return
-        }
+        if (DEBUG) debug("bigint resolved: " + layout.st.debugName + " slot=$slot cache=$INT_CACHE")
+        site.getter = layout.refGetter(slot)
+            .asType(MethodType.methodType(java.math.BigInteger::class.java, SixModelObject::class.java))
+        site.setter = layout.refSetter(slot)
+            .asType(MethodType.methodType(Void.TYPE, SixModelObject::class.java, java.math.BigInteger::class.java))
         if (INT_CACHE) {
             var cache = rd.intCache
             if (cache == null) {
@@ -821,8 +798,7 @@ object NqpTypeOps {
             }
             site.cache = cache
         }
-        site.storage = storage
-        site.proto = proto
+        site.layout = layout
         site.st = st
     }
 

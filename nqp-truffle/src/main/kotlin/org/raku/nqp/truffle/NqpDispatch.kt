@@ -12,7 +12,6 @@ import com.oracle.truffle.api.nodes.DirectCallNode
 import com.oracle.truffle.api.nodes.ExplodeLoop
 import com.oracle.truffle.api.nodes.Node
 import java.lang.invoke.MethodHandle
-import java.lang.invoke.MethodHandles
 import java.lang.invoke.MethodType
 import java.util.Objects
 import java.util.concurrent.ConcurrentHashMap
@@ -46,9 +45,10 @@ import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.TypeObject
-import org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance
-import org.raku.nqp.sixmodel.reprs.P6OpaqueDelegateInstance
-import org.raku.nqp.sixmodel.reprs.P6OpaqueREPRData
+import org.raku.nqp.sixmodel.reprs.RakuObject
+import org.raku.nqp.sixmodel.reprs.RakuObjectLayout
+import org.raku.nqp.sixmodel.reprs.RakuObjectREPRData
+import org.raku.nqp.sixmodel.reprs.SlotKind
 
 /**
  * The Truffle side of a dispatch instruction's inline cache.
@@ -128,21 +128,15 @@ object NqpDispatch {
     }
 
     /**
-     * An attribute read whose object's storage class is known from the
-     * guards. The generated accessor is NOT called: its delegation branch
-     * calls the same accessor on the delegate, which PE follows as
-     * recursion until Graal bails out of the whole compilation ("too deep
-     * inlining", seen). Instead the slot's field is read through a
-     * constant MethodHandle getter, which PE folds to the field load. The
-     * class check is a speculation, not a proof: an object whose type a
-     * mixin changed keeps its original storage class and delegates, so
-     * its class is not its new type's; a delegating instance of the right
-     * class, a deserialized wrapper's delegate, and a null all take the
-     * generic accessor.
+     * An attribute read whose object's layout is known from the guards: the
+     * slot's field (or overflow element) through a constant MethodHandle
+     * getter, which PE folds to the load. The layout check is a
+     * speculation: an object reblessed while on a smaller class carries a
+     * variant layout of the same type and takes the generic road here.
      */
     class AttrSrc(
         @JvmField val from: Src,
-        @JvmField val storage: Class<*>,
+        @JvmField val layout: RakuObjectLayout,
         @JvmField val getter: MethodHandle,
         @JvmField val classHandle: SixModelObject?,
         @JvmField val name: String,
@@ -150,11 +144,9 @@ object NqpDispatch {
     ) : Src() {
         override fun eval(tc: ThreadContext, args: Array<Any?>): Any? {
             val o = from.eval(tc, args)
-            val target = if (o is P6OpaqueDelegateInstance) o.delegate else o
-            if (target != null && target.javaClass === storage
-                    && (target as P6OpaqueBaseInstance).delegate == null) {
+            if (o is RakuObject && o.layout === layout) {
                 val v: SixModelObject? = try {
-                    getter.invokeExact(target as SixModelObject) as SixModelObject?
+                    getter.invokeExact(o as SixModelObject) as SixModelObject?
                 } catch (t: Throwable) {
                     throw CompilerDirectives.shouldNotReachHere(t)
                 }
@@ -169,12 +161,8 @@ object NqpDispatch {
         private fun slow(tc: ThreadContext, o: Any?): Any? {
             if (STATS) {
                 count(slowEvals)
-                val target = if (o is P6OpaqueDelegateInstance) o.delegate else o
-                val key = "slow attr " + name + " of " +
-                    (if (o == null) "null" else o.javaClass.name) + "/" +
-                    (if (target == null) "null" else target.javaClass.name) +
-                    " vs " + storage.name +
-                    (if (target is P6OpaqueBaseInstance && target.delegate != null) " (delegating)" else "")
+                val key = "slow attr " + name + " of " + (if (o == null) "null" else o.javaClass.name) +
+                    " layout=" + (if (o is RakuObject) o.layout?.st?.debugName else "-") + " vs " + layout.st.debugName
                 if (seenSlow.add(key)) System.err.println("dispatch $key")
             }
             if (o == null)
@@ -184,17 +172,16 @@ object NqpDispatch {
         }
     }
 
-    /** An unbox of an object whose storage class is known, likewise. */
+    /** An unbox of an object whose layout is known, likewise. */
     class UnboxSrc(
         @JvmField val from: Src,
-        @JvmField val storage: Class<*>,
+        @JvmField val layout: RakuObjectLayout,
         @JvmField val kind: ArgKind,
     ) : Src() {
         override fun eval(tc: ThreadContext, args: Array<Any?>): Any? {
             val o = from.eval(tc, args)
-            val target = if (o is P6OpaqueDelegateInstance) o.delegate else o
-            if (target != null && target.javaClass === storage) {
-                val smo = CompilerDirectives.castExact(target, storage) as SixModelObject
+            if (o is RakuObject && o.layout === layout) {
+                val smo = CompilerDirectives.castExact(o, layout.storage) as SixModelObject
                 return when (kind) {
                     ArgKind.INT, ArgKind.UINT -> smo.get_int(tc)
                     ArgKind.NUM -> smo.get_num(tc)
@@ -209,7 +196,7 @@ object NqpDispatch {
             if (STATS) {
                 count(slowEvals)
                 val key = "slow unbox " + kind + " of " + (if (o == null) "null" else o.javaClass.name) +
-                    " vs " + storage.name
+                    " vs " + layout.st.debugName
                 if (seenSlow.add(key)) System.err.println("dispatch $key")
             }
             return ValueSource.unbox(tc, o as SixModelObject?, kind)
@@ -438,29 +425,29 @@ object NqpDispatch {
             if (s is ValueSource.Literal) return LitSrc(s.value)
             if (s is ValueSource.How) return HowSrc(fold(s.from))
             if (s is ValueSource.Attribute && s.kind == ArgKind.OBJ) {
-                val storage = storageOf(s.from)
-                if (storage != null) {
+                val layout = layoutOf(s.from)
+                if (layout != null) {
                     val st = known[s.from]!!
                     val hint = st.REPR.hint_for(tc, st, s.classHandle, s.name)
-                    val getter = if (hint == STable.NO_HINT) null else getterFor(storage, hint.toInt())
+                    val getter = if (hint == STable.NO_HINT) null else getterFor(layout, hint.toInt())
                     if (getter != null)
-                        return AttrSrc(fold(s.from), storage, getter, s.classHandle, s.name, s.kind)
+                        return AttrSrc(fold(s.from), layout, getter, s.classHandle, s.name, s.kind)
                 }
             }
             if (s is ValueSource.Unbox) {
-                val storage = storageOf(s.from)
-                if (storage != null && s.kind != ArgKind.OBJ)
-                    return UnboxSrc(fold(s.from), storage, s.kind)
+                val layout = layoutOf(s.from)
+                if (layout != null && s.kind != ArgKind.OBJ)
+                    return UnboxSrc(fold(s.from), layout, s.kind)
             }
             if (STATS) dumpSlow(s, known)
             return SlowSrc(s)
         }
 
-        /** The exact storage class of a source a type guard has fixed. */
-        private fun storageOf(from: ValueSource): Class<*>? {
+        /** The canonical layout of a source a type guard has fixed. */
+        private fun layoutOf(from: ValueSource): RakuObjectLayout? {
             val st = known[from] ?: return null
-            val rd = st.REPRData as? P6OpaqueREPRData ?: return null
-            return rd.jvmClass
+            val rd = st.REPRData as? RakuObjectREPRData ?: return null
+            return rd.layout
         }
 
         /** The kind a source produces, which the callsite shape fixes. */
@@ -479,13 +466,11 @@ object NqpDispatch {
             }
 
             /**
-             * A (SixModelObject)SixModelObject getter for the slot's field, or
-             * null when the slot is not a reference field.
+             * A (SixModelObject)SixModelObject getter for the slot, or
+             * null when the slot is not a reference slot.
              */
-            private fun getterFor(storage: Class<*>, slot: Int): MethodHandle? {
-                val hs = fieldHandles(storage, slot)
-                return hs?.get(0)
-            }
+            private fun getterFor(layout: RakuObjectLayout, slot: Int): MethodHandle? =
+                layoutHandles(layout, slot)?.get(0)
         }
     }
 
@@ -549,32 +534,21 @@ object NqpDispatch {
     }
 
     /**
-     * The slot's field of a P6Opaque storage class as a getter
-     * (SixModelObject)SixModelObject and a setter
-     * (SixModelObject,SixModelObject)void, or null when the slot is not a
-     * reference field. Auto-vivification (every `$` attribute of a Raku
-     * class has a container prototype) only matters when the field is
-     * null -- the accessor clones the prototype in and stores it -- so a
-     * caller reads the field and sends a null to the accessor, and a
-     * vivified attribute, the steady state, is a plain load.
+     * The slot's getter (SixModelObject)SixModelObject and setter
+     * (SixModelObject,SixModelObject)void on the layout, or null when the
+     * slot is not a reference slot. Auto-vivification (every `$` attribute
+     * of a Raku class has a container prototype) only matters when the slot
+     * is null -- the accessor clones the prototype in and stores it -- so a
+     * caller reads the slot and sends a null to the accessor, and a vivified
+     * attribute, the steady state, is a plain load.
      */
     @JvmStatic
-    fun fieldHandles(storage: Class<*>, slot: Int): Array<MethodHandle>? {
-        try {
-            val f = storage.getField("field_$slot")
-            if (f.type != SixModelObject::class.java) return null
-            val lookup = MethodHandles.lookup()
-            return arrayOf(
-                lookup.unreflectGetter(f)
-                    .asType(MethodType.methodType(SixModelObject::class.java, SixModelObject::class.java)),
-                lookup.unreflectSetter(f)
-                    .asType(MethodType.methodType(Void.TYPE, SixModelObject::class.java, SixModelObject::class.java)),
-            )
-        } catch (e: ReflectiveOperationException) {
-            return null
-        } catch (e: RuntimeException) {
-            return null
-        }
+    fun layoutHandles(layout: RakuObjectLayout, slot: Int): Array<MethodHandle>? {
+        if (slot < 0 || slot >= layout.kinds.size || layout.kinds[slot] != SlotKind.REF) return null
+        return arrayOf(
+            layout.refGetter(slot).asType(MethodType.methodType(SixModelObject::class.java, SixModelObject::class.java)),
+            layout.refSetter(slot).asType(MethodType.methodType(Void.TYPE, SixModelObject::class.java, SixModelObject::class.java)),
+        )
     }
 
     /* ----- counters (NQP_DISPATCH_STATS=1 prints them at exit) ----- */
