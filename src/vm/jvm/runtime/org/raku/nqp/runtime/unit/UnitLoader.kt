@@ -92,6 +92,11 @@ object UnitLoader {
             loadAndRun(tc, filename, tc.gc.sharingHint)
             loaded = true
         } catch (e: ControlException) {
+            /* A continuation capture crossing the load block is not a
+             * failed load: the unit's mainline is packed away and resumes,
+             * so the unit stays recorded -- un-marking it here made a later
+             * loadbytecode of the same path load it a second time. */
+            loaded = true
             throw e
         } catch (e: Exception) {
             if (e is RuntimeException && e.javaClass.name.startsWith("org.raku.nqp")) throw e
