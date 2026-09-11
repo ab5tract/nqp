@@ -761,12 +761,12 @@ final class NqpOps {
     /* ---- Per-eval-server-run reset of the resolution inline caches --------
      *
      * WvalSite/LexSite/AttrSite each cache a run-owned object: a resolved
-     * WVal with its GlobalContext, a StaticCodeInfo, a generated P6Opaque
-     * class. The parsed CallTargets that embed them are cached process-wide
-     * by source (NqpLanguage.PARSED, kept so warm-up survives a run), so a
-     * site last written by one run pins that whole run -- its GlobalContext,
-     * and through it the serialization-context graph and the run's byte
-     * class loader (~180MB) -- until some later run happens to re-execute the
+     * WVal with its GlobalContext, a StaticCodeInfo, a RakuObject layout
+     * (per STable, per run). The parsed CallTargets that embed them are
+     * cached process-wide by source (NqpLanguage.PARSED, kept so warm-up
+     * survives a run), so a site last written by one run pins that whole
+     * run -- its GlobalContext, and through it the serialization-context
+     * graph -- until some later run happens to re-execute the
      * same instruction. Distinct programs, which is the eval server's whole
      * point, touch distinct cold sites, so each program leaks its run: this
      * is the eval-server leak. (Repeating the SAME files hides it -- every
@@ -776,7 +776,7 @@ final class NqpOps {
      * Every site registers here and goes cold with the dispatch caches at
      * the start of each run (DispatchBootstrap.resetAll -> this resettable).
      * The identity checks these caches already make -- site.gc == tc.gc, the
-     * sci compare, o.getClass() == site.storage -- mean clearing is pure
+     * sci compare, r.layout == site.layout -- mean clearing is pure
      * retention hygiene: a live run never matches a cleared entry, and
      * re-resolving a cold site is exactly what its first execution pays
      * anyway. The dispatch programs (EngineSite reset separately) and the
@@ -801,7 +801,9 @@ final class NqpOps {
         for (WvalSite s : WVAL_SITES) { s.value = null; s.gc = null; }
         for (LexSite s : LEX_SITES)   { s.sci = null; s.depth = 0; s.idx = 0; }
         for (AttrSite s : ATTR_SITES) {
-            s.getter = null; s.setter = null; s.storage = null; s.resolved = false;
+            s.layout = null; s.getter = null; s.setter = null;
+            s.layout2 = null; s.getter2 = null; s.setter2 = null;
+            s.resolved = false; s.pinned = false;
         }
     }
 
@@ -957,8 +959,8 @@ final class NqpOps {
              * resume reads the suspended call's value out of the return
              * registers by it (resumeEngine -> readResult), so an int-typed
              * classlib op resumed as T_OBJ handed a Raku object to the next
-             * int-typed argument ("P6OpaqueDelegateInstance cannot be cast
-             * to Number" out of a MethodHandle's unboxLong, 2026-09-10).
+             * int-typed argument ("RakuObject cannot be cast to Number"
+             * out of a MethodHandle's unboxLong, 2026-09-10).
              * A uint site (wire type 4) reads from the int register. */
             return new NqpCont.Suspend(sse,
                 rtype == NqpWire.T_UINT ? NqpWire.T_INT : rtype);
@@ -1050,7 +1052,7 @@ final class NqpOps {
      * registers by this type ({@link NqpCodeEngine#resumeEngine} ->
      * readResult), so an int-typed site must say so: resuming istype as
      * T_OBJ handed a Raku Bool to code expecting a long
-     * ("P6OpaqueDelegateInstance cannot be cast to Number").
+     * ("RakuObject cannot be cast to Number").
      */
     static Object suspendToken(org.raku.nqp.runtime.SaveStackException sse, int rtype) {
         return new NqpCont.Suspend(sse, rtype);
@@ -1431,26 +1433,28 @@ final class NqpOps {
     }
 
     /**
-     * One getattr/bindattr instruction's cache: the storage class and the
-     * slot's field handles for the first object type seen, so the read or
-     * write is a field access after PE (the generated accessor is not
-     * called: its delegation branch is PE-recursive, see NqpDispatch). A
-     * type with no plain-field road (a non-P6Opaque, a natively stored
-     * slot, an unknown attribute) marks the site unusable and the runtime
-     * op is taken; so does any other object type at the site.
+     * One getattr/bindattr instruction's cache: up to two layouts and the
+     * slot's handles for each, so the read or write is a field access after
+     * PE. A type with no plain-slot road (a non-RakuObject, a natively
+     * stored slot, an unknown attribute), or a third layout, marks the site
+     * unusable and the runtime op is taken.
      */
     static final class AttrSite {
-        @CompilationFinal Class<?> storage;
+        @CompilationFinal org.raku.nqp.sixmodel.reprs.RakuObjectLayout layout;
         @CompilationFinal java.lang.invoke.MethodHandle getter;
         @CompilationFinal java.lang.invoke.MethodHandle setter;
+        @CompilationFinal org.raku.nqp.sixmodel.reprs.RakuObjectLayout layout2;
+        @CompilationFinal java.lang.invoke.MethodHandle getter2;
+        @CompilationFinal java.lang.invoke.MethodHandle setter2;
         @CompilationFinal boolean resolved;
+        @CompilationFinal boolean pinned;
         /* The (class handle, name) the handles were resolved for. A site is
          * usually a literal access, so both are the same objects every time
          * and the guard is two reference compares; a computed name or class
          * handle at one site -- BUILDALL's bindattr over every attribute of
          * an object -- must not reuse handles resolved for another attribute
-         * of the same storage class (2026-09-08: it bound @!spill_locals's
-         * list into the @!stack field). */
+         * of the same layout (2026-09-08: it bound @!spill_locals's list
+         * into the @!stack slot). */
         @CompilationFinal Object ch;
         @CompilationFinal String name;
         AttrSite() { ATTR_SITES.add(this); }
@@ -1458,24 +1462,35 @@ final class NqpOps {
         boolean sameKey(Object ch, String name) {
             return ch == this.ch && (name == this.name || name.equals(this.name));
         }
+
+        /** The key check that also lets the first resolution through. */
+        boolean sameKeyOrUnset(Object ch, String name) {
+            return !resolved || sameKey(ch, name);
+        }
     }
 
     static Object getattr(AttrSite site, Object o, Object ch, String name, ThreadContext tc, CompilationUnit cu) {
-        if (!site.resolved) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            resolveAttr(site, o, ch, name, tc);
-        }
-        java.lang.invoke.MethodHandle getter = site.getter;
-        if (getter != null && o != null && o.getClass() == site.storage && site.sameKey(ch, name)
-                && ((org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance) o).delegate == null) {
-            SixModelObject v;
-            try {
-                v = (SixModelObject) getter.invokeExact((SixModelObject) o);
-            } catch (Throwable t) {
-                throw CompilerDirectives.shouldNotReachHere(t);
+        if (o instanceof org.raku.nqp.sixmodel.reprs.RakuObject r && site.sameKeyOrUnset(ch, name)) {
+            org.raku.nqp.sixmodel.reprs.RakuObjectLayout l = r.layout;
+            java.lang.invoke.MethodHandle getter = null;
+            if (l != null) {
+                if (l == site.layout) getter = site.getter;
+                else if (l == site.layout2) getter = site.getter2;
+                else if (!site.pinned) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
+                    getter = resolveAttr(site, r, l, ch, name, tc, false);
+                }
             }
-            /* A null slot may still auto-vivify; the op decides. */
-            if (v != null) return v;
+            if (getter != null) {
+                SixModelObject v;
+                try {
+                    v = (SixModelObject) getter.invokeExact((SixModelObject) o);
+                } catch (Throwable t) {
+                    throw CompilerDirectives.shouldNotReachHere(t);
+                }
+                /* A null slot may still auto-vivify; the op decides. */
+                if (v != null) return v;
+            }
         }
         return getattrSlow(o, ch, name, tc, cu);
     }
@@ -1486,46 +1501,46 @@ final class NqpOps {
          * road below reaches Ops.bindattr, which traces there, so a gate
          * here as well printed every slow bind twice. The sited road below
          * traces for itself. */
-        if (!site.resolved) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            resolveAttr(site, o, ch, name, tc);
-        }
-        java.lang.invoke.MethodHandle setter = site.setter;
-        if (setter != null && o != null && o.getClass() == site.storage && site.sameKey(ch, name)
-                && ((org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance) o).delegate == null) {
-            SixModelObject obj = (SixModelObject) o;
-            SixModelObject v = smo(value);
-            if (Ops.DO_TRACE) Ops.traceDoBind(obj, name, v, tc);
-            try {
-                setter.invokeExact(obj, v);
-            } catch (Throwable t) {
-                throw CompilerDirectives.shouldNotReachHere(t);
+        if (o instanceof org.raku.nqp.sixmodel.reprs.RakuObject r && site.sameKeyOrUnset(ch, name)) {
+            org.raku.nqp.sixmodel.reprs.RakuObjectLayout l = r.layout;
+            java.lang.invoke.MethodHandle setter = null;
+            if (l != null) {
+                if (l == site.layout) setter = site.setter;
+                else if (l == site.layout2) setter = site.setter2;
+                else if (!site.pinned) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
+                    setter = resolveAttr(site, r, l, ch, name, tc, true);
+                }
             }
-            if (obj.sc != null) scwb(tc, obj);
-            return v;
+            if (setter != null) {
+                SixModelObject v = smo(value);
+                if (Ops.DO_TRACE) Ops.traceDoBind(r, name, v, tc);
+                try {
+                    setter.invokeExact((SixModelObject) r, v);
+                } catch (Throwable t) {
+                    throw CompilerDirectives.shouldNotReachHere(t);
+                }
+                if (r.sc != null) scwb(tc, r);
+                return v;
+            }
         }
         return bindattrSlow(o, ch, name, value, tc);
     }
 
+    /** Resolves the slot for this layout into the first free entry; answers
+     *  the handle asked for, or null (and pins) when there is no plain road. */
     @TruffleBoundary
-    private static void resolveAttr(AttrSite site, Object o, Object ch, String name, ThreadContext tc) {
-        site.ch = ch;
-        site.name = name;
-        if (o instanceof SixModelObject obj && obj.st != null
-                && obj.st.REPRData instanceof org.raku.nqp.sixmodel.reprs.P6OpaqueREPRData rd
-                && rd.jvmClass != null) {
-            SixModelObject chd = Ops.decont(smo(ch), tc);
-            long hint = obj.st.REPR.hint_for(tc, obj.st, chd, name);
-            if (hint != org.raku.nqp.sixmodel.STable.NO_HINT) {
-                java.lang.invoke.MethodHandle[] hs = NqpDispatch.fieldHandles(rd.jvmClass, (int) hint);
-                if (hs != null) {
-                    site.storage = rd.jvmClass;
-                    site.getter = hs[0];
-                    site.setter = hs[1];
-                }
-            }
-        }
-        site.resolved = true;
+    private static java.lang.invoke.MethodHandle resolveAttr(AttrSite site, org.raku.nqp.sixmodel.reprs.RakuObject r,
+            org.raku.nqp.sixmodel.reprs.RakuObjectLayout l, Object ch, String name, ThreadContext tc, boolean wantSetter) {
+        if (!site.resolved) { site.ch = ch; site.name = name; site.resolved = true; }
+        if (site.layout != null && site.layout2 != null) { site.pinned = true; return null; }
+        SixModelObject chd = Ops.decont(smo(ch), tc);
+        int slot = l.slotFor(chd, name);
+        java.lang.invoke.MethodHandle[] hs = slot < 0 ? null : NqpDispatch.layoutHandles(l, slot);
+        if (hs == null) { site.pinned = true; return null; }
+        if (site.layout == null) { site.layout = l; site.getter = hs[0]; site.setter = hs[1]; }
+        else { site.layout2 = l; site.getter2 = hs[0]; site.setter2 = hs[1]; }
+        return wantSetter ? hs[1] : hs[0];
     }
 
     @TruffleBoundary
@@ -1539,10 +1554,10 @@ final class NqpOps {
             String cls = so == null ? "null" : so.getClass().getName();
             String av = "?";
             if (so != null && so.st != null
-                    && so.st.REPRData instanceof org.raku.nqp.sixmodel.reprs.P6OpaqueREPRData rd
-                    && rd.autoVivContainers != null) {
+                    && so.st.REPRData instanceof org.raku.nqp.sixmodel.reprs.RakuObjectREPRData rd
+                    && rd.layout != null) {
                 StringBuilder sb = new StringBuilder();
-                for (SixModelObject c : rd.autoVivContainers)
+                for (SixModelObject c : rd.layout.autoViv)
                     sb.append(c == null ? 'J' : Ops.isnull(c) == 1L ? '0' : c instanceof org.raku.nqp.sixmodel.TypeObject ? 'T' : 'C');
                 av = sb.toString();
             }
