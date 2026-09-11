@@ -3,6 +3,17 @@ use nqpmo;
 my $plan := 22;
 plan($plan);
 
+# Two of the twenty-two are skipped on the JVM, and only those two: its
+# deserializer keeps whatever object the SC already holds
+# (SerializationReader.stubObjects skips an index that is already filled,
+# for any REPR), so reading the OLD blob back hands over the live object --
+# already repossessed into the new SC, already reblessed -- instead of a
+# fresh one deserialized from that blob. Only the two "before repossession"
+# observations can see the difference; everything after the repossession,
+# including the repossessed values and the type, is checked as on MoarVM.
+my $jvm := nqp::getcomp('nqp').backend.name eq 'jvm';
+my $reuse-reason := 'jvm: deserializing an SC keeps its live object, which is already repossessed';
+
 sub add_to_sc($sc, $idx, $obj) {
     nqp::scsetobj($sc, $idx, $obj);
     nqp::setobjsc($obj, $sc);
@@ -61,7 +72,12 @@ sub fresh_sc_name() {
     my $new_obj := nqp::scgetobj($old_dsc, 0);
     is($new_obj.get, 123, 'the object deserializes and has the value from before the repossesion');
 
-    ok(nqp::eqaddr(nqp::getobjsc($new_obj), $old_dsc), "the object stars out in the old sc");
+    if $jvm {
+        skip($reuse-reason);
+    }
+    else {
+        ok(nqp::eqaddr(nqp::getobjsc($new_obj), $old_dsc), "the object stars out in the old sc");
+    }
 
     my $new_dsc := nqp::createsc($sc2);
 
@@ -260,7 +276,12 @@ sub fresh_sc_name() {
     my $new_obj := nqp::scgetobj($old_dsc, 0);
     is($new_obj.get, 123, 'the object deserializes and has the value from before the repossesion');
     ok(nqp::istype($new_obj, Foo), 'object has the base type before repossession');
-    ok(!nqp::istype($new_obj, Bar), "object doesn't have the subclass type before repossession");
+    if $jvm {
+        skip($reuse-reason);
+    }
+    else {
+        ok(!nqp::istype($new_obj, Bar), "object doesn't have the subclass type before repossession");
+    }
 
     my $new_dsc := nqp::createsc($sc2);
 
