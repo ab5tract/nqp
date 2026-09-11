@@ -484,24 +484,39 @@ class CallFrame : Cloneable {
     }
 
     /**
-     * The frame is being packed into a continuation, not exited: give the
-     * live-invocation count back (once -- a frame can be saved, resumed and
-     * saved again) and restore tc.curFrame, exactly as leave() does, but do
-     * NOT run the exit handler. The save road is not an exit: Raku's LEAVE,
-     * KEEP and UNDO belong to the frame's real exit, with the real result,
-     * which comes later on the resume road (leave()) or when the unwinder
-     * tears the frame past (leaveTorn()). Calling leave() here instead --
-     * as the engine's save sites did -- consumed the frame's single handler
-     * run at the first `take`, with the caller's stale return register as
-     * the resultish, and left the real exit silent.
+     * The frame is being packed into a continuation. It is NOT exiting, so
+     * the only thing the save road owes anyone is tc.curFrame: the frame
+     * has left the caller chain (the resume road puts it back), and the
+     * unit that resolves dispatch descriptors reads tc.curFrame.
+     *
+     * Everything leave() does beyond that would be a lie about a frame
+     * that is coming back, and each lie had a symptom:
+     *
+     *  - the exit handler. Raku's LEAVE, KEEP and UNDO belong to the real
+     *    exit, with the real result. Running it here consumed the frame's
+     *    single handler run at the first `take`, with the caller's stale
+     *    return register as the resultish, and left the real exit silent.
+     *
+     *  - `left` / liveInvocations, and priorInvocation. A suspended frame
+     *    is still live, and giving its count back makes it look exited to
+     *    outerFor: with liveInvocations back at 0 the caller-chain search
+     *    is skipped and the block's outer resolves to priorInvocation --
+     *    which the save road had just pointed at THIS frame. That is
+     *    invisible while a static frame has one invocation at a time, and
+     *    wrong the moment it has two. `("aa".."ac")` is that moment:
+     *    SEQUENCE's multi-character branch builds each character's range
+     *    with the sequence operator, i.e. with SEQUENCE, so the inner
+     *    invocation runs while the outer one is packed into a
+     *    continuation. The inner gather's blocks then bound to the OUTER
+     *    invocation's frame, its `$stop = 1` landed in the wrong frame's
+     *    lexicals, its `until $stop` never saw it, and every
+     *    multi-character Str range hung.
+     *
+     * The real exit (leave() on the resume road, leaveTorn() when the
+     * unwinder tears the frame past) still gives the count back exactly
+     * once and still sets priorInvocation, because by then it is true.
      */
     fun leaveSuspended() {
-        val sci = this.codeRef.staticInfo
-        sci.priorInvocation = this
-        if (!left) {
-            left = true
-            sci.liveInvocations.decrementAndGet()
-        }
         this.tc.curFrame = this.caller
     }
 
