@@ -2,6 +2,8 @@ package org.raku.nqp.runtime
 
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap
 
+import org.raku.nqp.dispatch.DispatchCallSite
+import org.raku.nqp.dispatch.DispatchProgram
 import org.raku.nqp.dispatch.DispatchRecord
 import org.raku.nqp.sixmodel.SerializationContext
 import org.raku.nqp.sixmodel.SixModelObject
@@ -13,6 +15,37 @@ import org.raku.nqp.sixmodel.SixModelObject
  */
 class CallFrame : Cloneable {
     companion object {
+        /**
+         * The frame a code ref's block reads its outer lexicals from: the
+         * captured outer when the code ref has one, else -- while the outer
+         * block has a live invocation somewhere -- the nearest such frame on
+         * the caller chain, else the outer block's prior invocation. The
+         * constructor uses this (and auto-closes when it answers null); a
+         * frame-free block's outer lexical read uses it directly, having no
+         * frame of its own to walk from.
+         *
+         * The caller-chain search can only succeed while the outer block has
+         * a live invocation; see StaticCodeInfo.liveInvocations. Measured
+         * over a module compile: ~1.1 million searches, 77 callers deep on
+         * average, zero successes -- the code refs are methods of precompiled
+         * classes whose outer mainline exited long ago.
+         */
+        @JvmStatic
+        fun outerFor(tc: ThreadContext, cr: CodeRef): CallFrame? {
+            cr.outer?.let { return it }
+            val wanted = cr.staticInfo.outerStaticInfo ?: return null
+            if (wanted.liveInvocations.get() > 0) {
+                var checkFrame = tc.curFrame
+                while (checkFrame != null) {
+                    if (checkFrame.codeRef.staticInfo.mh === wanted.mh &&
+                            checkFrame.codeRef.staticInfo.compUnit === wanted.compUnit)
+                        return checkFrame
+                    checkFrame = checkFrame.caller
+                }
+            }
+            return wanted.priorInvocation
+        }
+
         /**
          * A frame that holds a scope but was never invoked, whose outer is
          * the nearest live instance of the static frame it belongs inside
@@ -134,6 +167,43 @@ class CallFrame : Cloneable {
      */
     @JvmField var dispatchRecord: DispatchRecord? = null
 
+    /**
+     * The same dispatch, carried lazily: a settled program replayed by the
+     * engine or the compiled chain leaves these on ThreadContext for the
+     * frame it invokes, and no DispatchRecord exists until invokingDispatch()
+     * is asked for one. See ThreadContext.pendingProgram.
+     */
+    @JvmField var dispatchProgram: DispatchProgram? = null
+    @JvmField var dispatchArgs: Array<Any?>? = null
+    @JvmField var dispatchSite: DispatchCallSite? = null
+
+    /**
+     * The program of the dispatch that invoked this frame, if a settled one
+     * did; null for no dispatch and for one still recording. Answers what
+     * the bind-control questions ask without materializing a record.
+     */
+    fun invokingProgram(): DispatchProgram? {
+        val record = dispatchRecord
+        return if (record != null) record.program else dispatchProgram
+    }
+
+    /**
+     * The dispatch that invoked this frame as a record, materialized from
+     * the carried program on first need and kept, so that the resume states
+     * a resumption creates on it survive for the next resumption.
+     */
+    fun invokingDispatch(): DispatchRecord? {
+        var record = dispatchRecord
+        if (record == null) {
+            val program = dispatchProgram ?: return null
+            record = DispatchRecord(tc, null, program.descriptor, dispatchArgs!!, caller, dispatchSite)
+            record.program = program
+            record.endRecording()
+            dispatchRecord = record
+        }
+        return record
+    }
+
     // Empty constructor for things that want to fake one up.
     constructor()
 
@@ -149,38 +219,25 @@ class CallFrame : Cloneable {
             this.dispatchRecord = pendingDispatch
             tc.pendingDispatch = null
         }
+        else {
+            val pendingProgram = tc.pendingProgram
+            if (pendingProgram != null) {
+                this.dispatchProgram = pendingProgram
+                this.dispatchArgs = tc.pendingArgs
+                this.dispatchSite = tc.pendingSite
+                tc.pendingProgram = null
+                tc.pendingArgs = null
+                tc.pendingSite = null
+            }
+        }
 
         // Set outer; if it's explicitly in the code ref, use that. If not,
         // go hunting for one. Fall back to outer's prior invocation.
         val sci = cr.staticInfo
-        if (cr.outer != null) {
-            this.outer = cr.outer
-        }
-        else {
+        this.outer = outerFor(tc, cr)
+        if (this.outer == null) {
             val wanted = sci.outerStaticInfo
-            if (wanted != null) {
-                /* The caller-chain search can only succeed while the outer
-                 * block has a live invocation somewhere; see
-                 * StaticCodeInfo.liveInvocations. Measured over a module
-                 * compile: ~1.1 million searches, 77 callers deep on
-                 * average, zero successes -- the code refs are methods of
-                 * precompiled classes whose outer mainline exited long ago. */
-                if (wanted.liveInvocations.get() > 0) {
-                    var checkFrame = tc.curFrame
-                    while (checkFrame != null) {
-                        if (checkFrame.codeRef.staticInfo.mh === wanted.mh &&
-                                checkFrame.codeRef.staticInfo.compUnit === wanted.compUnit) {
-                            this.outer = checkFrame
-                            break
-                        }
-                        checkFrame = checkFrame.caller
-                    }
-                }
-                if (this.outer == null)
-                    this.outer = wanted.priorInvocation
-                if (this.outer == null)
-                    this.autoClose(wanted)
-            }
+            if (wanted != null) this.autoClose(wanted)
         }
 
         // Set up lexical storage.

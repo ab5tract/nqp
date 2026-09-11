@@ -6,6 +6,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import org.raku.nqp.runtime.CallFrame;
 import org.raku.nqp.runtime.CallSiteDescriptor;
+import org.raku.nqp.runtime.CodeRef;
 import org.raku.nqp.runtime.CompilationUnit;
 import org.raku.nqp.runtime.ExceptionHandling;
 import org.raku.nqp.runtime.Ops;
@@ -236,13 +237,18 @@ final class NqpOps {
             case OP_SHIFT: return Ops.shift(smo(a[0]), tc);
             case OP_UNSHIFT: return Ops.unshift(smo(a[0]), smo(a[1]), tc);
             case OP_ATPOS: return Ops.atpos(smo(a[0]), lng(a[1]), tc);
-            case OP_BINDPOS: return Ops.bindpos(smo(a[0]), lng(a[1]), smo(a[2]), tc);
+            case OP_BINDPOS: {
+                if (a[0] == null)
+                    throw ExceptionHandling.dieInternal(tc, "bindpos on a null array in block '"
+                        + (cf.codeRef == null ? "" : cf.codeRef.name) + "' (index " + lng(a[1]) + ")");
+                return Ops.bindpos(smo(a[0]), lng(a[1]), smo(a[2]), tc);
+            }
             case OP_ATKEY: return Ops.atkey(smo(a[0]), str(a[1]), tc);
             case OP_BINDKEY: return Ops.bindkey(smo(a[0]), str(a[1]), smo(a[2]), tc);
             case OP_EXISTSKEY: return Ops.existskey(smo(a[0]), str(a[1]), tc);
             case OP_DELETEKEY: return Ops.deletekey(smo(a[0]), str(a[1]), tc);
             case OP_ISCONT: return Ops.iscont(smo(a[0]));
-            case OP_HLLIZE: return Ops.hllize(smo(a[0]), tc);
+            case OP_HLLIZE: return Ops.hllizeIn(smo(a[0]), NqpRaw.hll(cu), tc);   // the block's language, not the frame's
             case OP_ISLIST: return Ops.islist(smo(a[0]), tc);
             case OP_ISHASH: return Ops.ishash(smo(a[0]), tc);
             case OP_UNBOX_I: return Ops.unbox_i(smo(a[0]), tc);
@@ -251,7 +257,7 @@ final class NqpOps {
             case OP_BOX_I: return Ops.box_i(lng(a[0]), cu.hllConfig.intBoxType, tc);
             case OP_BOX_N: return Ops.box_n(dbl(a[0]), cu.hllConfig.numBoxType, tc);
             case OP_BOX_S: return Ops.box_s(str(a[0]), cu.hllConfig.strBoxType, tc);
-            case OP_GETATTR: return Ops.getattr(smo(a[0]), smo(a[1]), str(a[2]), tc);
+            case OP_GETATTR: return Ops.getattrIn(smo(a[0]), smo(a[1]), str(a[2]), tc, NqpRaw.hll(cu));
             case OP_BINDATTR: return Ops.bindattr(smo(a[0]), smo(a[1]), str(a[2]), smo(a[3]), tc);
             case OP_ORD: return Ops.ordfirst(str(a[0]));
             case OP_NULL_S: return null;   // the null str, which isnull_s sees
@@ -667,8 +673,16 @@ final class NqpOps {
     static long loopBodyUnwind(Object ex, int target, int outer, Object where,
                                CompilationUnit cu, ThreadContext tc) {
         UnwindException u = checkedUnwind(ex, target, outer, where, cu, tc);
-        return (u.category & ExceptionHandling.EX_CAT_REDO) != 0 ? 1L : 0L;
+        long redo = (u.category & ExceptionHandling.EX_CAT_REDO) != 0 ? 1L : 0L;
+        if (UNWIND_TRACE) System.err.println("loopBodyUnwind cat=" + u.category
+            + " target=" + target + " outer=" + outer + " -> redo=" + redo);
+        return redo;
     }
+
+    /** NQP_UNWIND_TRACE=1: trace the loop unwind arms (category, target). */
+    private static final boolean UNWIND_TRACE = System.getenv("NQP_UNWIND_TRACE") != null;
+    /** NQP_ATTR_TRACE=1: trace slow-road reads of @/% attributes (value, auto-viv slots). */
+    private static final boolean ATTR_TRACE = System.getenv("NQP_ATTR_TRACE") != null;
 
     @TruffleBoundary
     static void loopLastUnwind(Object ex, int target, int outer, Object where,
@@ -684,11 +698,6 @@ final class NqpOps {
     @TruffleBoundary
     static Object handleUnwind(Object ex, int target, int outer, boolean cares,
                                CompilationUnit cu, ThreadContext tc) {
-        if (System.getenv("NQP_EH_DEBUG") != null)
-            System.err.println("handleUnwind ex=" + ex.getClass().getSimpleName()
-                + " target=" + target
-                + " uTarget=" + (ex instanceof NqpUnwind nu2 ? nu2.unwind.unwindTarget : -1)
-                + " curFrame=" + (tc.curFrame == null ? "?" : tc.curFrame.codeRef.name));
         UnwindException u = unwindOf(ex);
         if (u.unwindTarget != target || u.unwindCompUnit != cu) throw u;
         if (!cares) Ops._rethrow_label(u, outer, tc);
@@ -703,17 +712,7 @@ final class NqpOps {
      */
     @TruffleBoundary
     static void hostErrToUnwind(Object ex, ThreadContext tc) {
-        if (System.getenv("NQP_EH_DEBUG") != null)
-            System.err.println("hostErrToUnwind ex=" + ex.getClass().getSimpleName()
-                + " curFrame=" + (tc.curFrame == null ? "?" : tc.curFrame.codeRef.name));
         if (ex instanceof NqpHostError he) {
-            if (System.getenv("NQP_EH_DEBUG") != null) {
-                StringBuilder sb = new StringBuilder("hostErrToUnwind curFrame chain:");
-                org.raku.nqp.runtime.CallFrame f = tc.curFrame;
-                for (int i = 0; f != null && i < 6; i++, f = f.caller)
-                    sb.append(" ").append(f.codeRef == null ? "?" : f.codeRef.name);
-                System.err.println(sb);
-            }
             throw ExceptionHandling.dieInternal(tc, he.original);
         }
         // NqpUnwind (headed for the enclosing unwind region) and anything
@@ -823,11 +822,6 @@ final class NqpOps {
         }
     }
 
-    /** NQP_CODE_UNCACHED: every engine dispatch records afresh (debugging). */
-    private static final boolean DISPATCH_UNCACHED = System.getenv("NQP_CODE_UNCACHED") != null;
-    /** NQP_CODE_DISPATCH_OLD: the bytecode-side inline cache (MethodHandle
-     *  chain behind a boundary) instead of the folded replay -- the A/B. */
-    private static final boolean DISPATCH_OLD = System.getenv("NQP_CODE_DISPATCH_OLD") != null;
 
     /**
      * One dispatch instruction. The replay of the site's folded programs
@@ -835,13 +829,12 @@ final class NqpOps {
      * invocation cross into the bytecode world.
      */
     static Object dispatch(int rtype, String name, EngineSite es, Object[] args,
-                           ThreadContext tc, CallFrame cf, com.oracle.truffle.api.nodes.Node node) {
+                           ThreadContext tc, CallFrame cf, com.oracle.truffle.api.nodes.Node node,
+                           CompilationUnit cu) {
         try {
-            if (DISPATCH_UNCACHED)
-                NqpDispatch.dispatchUncached(name, es.csd, tc, args);
-            else if (DISPATCH_OLD || es.csd.hasFlattening)
+            if (es.csd.hasFlattening)
                 NqpDispatch.dispatchFlattening(es.site, name, es.csd, tc, args);
-            else if (!NqpDispatch.replay(es.cache, tc, args, node))
+            else if (!NqpDispatch.replay(es.cache, tc, args, node, NqpRaw.hll(cu)))
                 NqpDispatch.miss(es.cache, name, tc, args);
         } catch (org.raku.nqp.runtime.SaveStackException sse) {
             /* A continuation is being captured through this frame: hand a
@@ -921,7 +914,24 @@ final class NqpOps {
         }
     }
 
+    /** JESP_TRACE_CLASSLIB=meth: name, once per distinct current frame, the
+     *  code running that classlib op (the caller's frame when frame-free). */
+    private static final String TRACE_CLASSLIB = System.getenv("JESP_TRACE_CLASSLIB");
+    private static final java.util.Set<String> tracedClasslib = new java.util.HashSet<>();
+
+    @TruffleBoundary
+    private static void traceClasslib(ClassLibSite site, ThreadContext tc, CallFrame cf) {
+        CallFrame f = cf != null ? cf : tc.curFrame;
+        String where = f == null ? "<no frame>" : f.codeRef.name
+            + (cf == null ? " (frame-free callee, caller's frame)" : "");
+        synchronized (tracedClasslib) {
+            if (tracedClasslib.add(site.meth + "@" + where))
+                System.err.println("classlib " + site.meth + " in " + where);
+        }
+    }
+
     static Object classlib(int rtype, ClassLibSite site, Object[] a, ThreadContext tc, CallFrame cf) {
+        if (TRACE_CLASSLIB != null && TRACE_CLASSLIB.equals(site.meth)) traceClasslib(site, tc, cf);
         Object[] full = a;
         if (site.tcArg) {
             full = new Object[a.length + 1];
@@ -944,20 +954,7 @@ final class NqpOps {
         if (t instanceof UnwindException u) return new NqpUnwind(u);
         if (t instanceof org.raku.nqp.runtime.ControlException) throw sneaky(t);
         if (t instanceof ThreadDeath) throw sneaky(t);
-        if (HOSTERR) hostErr(t);
         return new NqpHostError(t);
-    }
-
-    /* NQP_CODE_HOSTERR=1 prints the Java stack of every host exception
-     * an operation converts; the nqp-level trace names only the message
-     * ("java.lang.NullPointerException"), and the frames are what
-     * locate the operation at fault. */
-    static final boolean HOSTERR = System.getenv("NQP_CODE_HOSTERR") != null;
-
-    @TruffleBoundary
-    private static void hostErr(Throwable t) {
-        System.err.println("code engine: host exception " + t);
-        t.printStackTrace(System.err);
     }
 
     /** The typed read of a call's result off the frame's return registers. */
@@ -993,14 +990,19 @@ final class NqpOps {
         }
     }
 
-    @TruffleBoundary
+    /* Natives inline; an object's truth may run its boolification. */
     static boolean truthy(int type, Object v, ThreadContext tc) {
         switch (type) {
             case NqpWire.T_INT: return lng(v) != 0;
             case NqpWire.T_NUM: return dbl(v) != 0.0;
             case NqpWire.T_STR: return Ops.istrue_s(str(v)) != 0;
-            default: return Ops.istrue(smo(v), tc) != 0;
+            default: return truthyObj(v, tc);
         }
+    }
+
+    @TruffleBoundary
+    private static boolean truthyObj(Object v, ThreadContext tc) {
+        return Ops.istrue(smo(v), tc) != 0;
     }
 
     /*
@@ -1027,6 +1029,36 @@ final class NqpOps {
         @CompilationFinal int depth;
         @CompilationFinal int idx;
         LexSite() { LEX_SITES.add(this); }
+    }
+
+    /* An OUTER lexical read or bind from a block that has no frame of its
+     * own (jesp: arguments in registers, part two). The walk a framed
+     * callee would start at cf.outer starts at the frame the code ref
+     * resolves its outer to -- the captured outer, else the outer block's
+     * live or prior invocation, exactly as the CallFrame constructor
+     * decides -- so a block whose only lexical traffic is with its outers
+     * needs no CallFrame. The site's depth counts from that frame. */
+    static Object getlexOuter(int type, String name, LexSite site, ThreadContext tc, CodeRef cr) {
+        return getlex(type, name, site, tc, outerOf(tc, cr));
+    }
+
+    static Object bindlexOuter(int type, String name, Object v, LexSite site, ThreadContext tc, CodeRef cr) {
+        return bindlex(type, name, v, site, tc, outerOf(tc, cr));
+    }
+
+    private static CallFrame outerOf(ThreadContext tc, CodeRef cr) {
+        CallFrame o = cr.outer;
+        if (o != null) return o;
+        return outerOfSlow(tc, cr);
+    }
+
+    @TruffleBoundary
+    private static CallFrame outerOfSlow(ThreadContext tc, CodeRef cr) {
+        CallFrame o = CallFrame.outerFor(tc, cr);
+        if (o == null)
+            throw ExceptionHandling.dieInternal(tc, "No outer frame for a frame-free lexical read in "
+                + (cr.name == null ? "<anon>" : cr.name));
+        return o;
     }
 
     static Object getlex(int type, String name, LexSite site, ThreadContext tc, CallFrame cf) {
@@ -1287,16 +1319,29 @@ final class NqpOps {
         @CompilationFinal java.lang.invoke.MethodHandle getter;
         @CompilationFinal java.lang.invoke.MethodHandle setter;
         @CompilationFinal boolean resolved;
+        /* The (class handle, name) the handles were resolved for. A site is
+         * usually a literal access, so both are the same objects every time
+         * and the guard is two reference compares; a computed name or class
+         * handle at one site -- BUILDALL's bindattr over every attribute of
+         * an object -- must not reuse handles resolved for another attribute
+         * of the same storage class (2026-09-08: it bound @!spill_locals's
+         * list into the @!stack field). */
+        @CompilationFinal Object ch;
+        @CompilationFinal String name;
         AttrSite() { ATTR_SITES.add(this); }
+
+        boolean sameKey(Object ch, String name) {
+            return ch == this.ch && (name == this.name || name.equals(this.name));
+        }
     }
 
-    static Object getattr(AttrSite site, Object o, Object ch, String name, ThreadContext tc) {
+    static Object getattr(AttrSite site, Object o, Object ch, String name, ThreadContext tc, CompilationUnit cu) {
         if (!site.resolved) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             resolveAttr(site, o, ch, name, tc);
         }
         java.lang.invoke.MethodHandle getter = site.getter;
-        if (getter != null && o != null && o.getClass() == site.storage
+        if (getter != null && o != null && o.getClass() == site.storage && site.sameKey(ch, name)
                 && ((org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance) o).delegate == null) {
             SixModelObject v;
             try {
@@ -1307,7 +1352,7 @@ final class NqpOps {
             /* A null slot may still auto-vivify; the op decides. */
             if (v != null) return v;
         }
-        return getattrSlow(o, ch, name, tc);
+        return getattrSlow(o, ch, name, tc, cu);
     }
 
     static Object bindattr(AttrSite site, Object o, Object ch, String name, Object value,
@@ -1317,7 +1362,7 @@ final class NqpOps {
             resolveAttr(site, o, ch, name, tc);
         }
         java.lang.invoke.MethodHandle setter = site.setter;
-        if (setter != null && o != null && o.getClass() == site.storage
+        if (setter != null && o != null && o.getClass() == site.storage && site.sameKey(ch, name)
                 && ((org.raku.nqp.sixmodel.reprs.P6OpaqueBaseInstance) o).delegate == null) {
             SixModelObject obj = (SixModelObject) o;
             SixModelObject v = smo(value);
@@ -1334,6 +1379,8 @@ final class NqpOps {
 
     @TruffleBoundary
     private static void resolveAttr(AttrSite site, Object o, Object ch, String name, ThreadContext tc) {
+        site.ch = ch;
+        site.name = name;
         if (o instanceof SixModelObject obj && obj.st != null
                 && obj.st.REPRData instanceof org.raku.nqp.sixmodel.reprs.P6OpaqueREPRData rd
                 && rd.jvmClass != null) {
@@ -1352,8 +1399,28 @@ final class NqpOps {
     }
 
     @TruffleBoundary
-    private static Object getattrSlow(Object o, Object ch, String name, ThreadContext tc) {
-        return Ops.getattr(smo(o), smo(ch), name, tc);
+    /* A native slot read in object context boxes with the BLOCK's language
+     * (cu), never the current frame's: a frame-free callee entered across
+     * languages has its caller's frame on tc. */
+    private static Object getattrSlow(Object o, Object ch, String name, ThreadContext tc, CompilationUnit cu) {
+        Object r = Ops.getattrIn(smo(o), smo(ch), name, tc, NqpRaw.hll(cu));
+        if (ATTR_TRACE && name != null && (name.startsWith("@") || name.startsWith("%"))) {
+            SixModelObject so = smo(o);
+            String cls = so == null ? "null" : so.getClass().getName();
+            String av = "?";
+            if (so != null && so.st != null
+                    && so.st.REPRData instanceof org.raku.nqp.sixmodel.reprs.P6OpaqueREPRData rd
+                    && rd.autoVivContainers != null) {
+                StringBuilder sb = new StringBuilder();
+                for (SixModelObject c : rd.autoVivContainers)
+                    sb.append(c == null ? 'J' : Ops.isnull(c) == 1L ? '0' : c instanceof org.raku.nqp.sixmodel.TypeObject ? 'T' : 'C');
+                av = sb.toString();
+            }
+            System.err.println("getattr " + name + " -> " + (r == null ? "null" : r.getClass().getSimpleName())
+                + " on " + cls + " autoViv=" + av
+                + " in " + (tc.curFrame != null && tc.curFrame.codeRef != null ? tc.curFrame.codeRef.name : "?"));
+        }
+        return r;
     }
 
     @TruffleBoundary
@@ -1368,9 +1435,29 @@ final class NqpOps {
 
     /* ----- parameter binding, mirroring the emitted prologue ----- */
 
-    @TruffleBoundary
+    /** The common case -- no flattening, arity in range -- is a few field
+     *  reads and writes, kept inlinable; a boundary call per entry was
+     *  measurable. Only flattening and the failure go to the slow road.
+     *  spesh drops the check outright once the callsite is known. */
     static CallSiteDescriptor checkarity(CallFrame cf, ThreadContext tc, CallSiteDescriptor csd,
                                          Object[] args, int required, int accepted) {
+        if (!csd.hasFlattening) {
+            int positionals = csd.numPositionals;
+            if (positionals >= required && (positionals <= accepted || accepted == -1)) {
+                /* No tc.flatArgs store: FlatArgs reads the frame's own array
+                 * when the csd comes back unchanged, and a heap store here
+                 * would make every argument array escape. A framed block
+                 * keeps csd/args on its frame for a later bind error. */
+                if (cf != null) { cf.csd = csd; cf.args = args; }
+                return csd;
+            }
+        }
+        return checkaritySlow(cf, tc, csd, args, required, accepted);
+    }
+
+    @TruffleBoundary
+    private static CallSiteDescriptor checkaritySlow(CallFrame cf, ThreadContext tc, CallSiteDescriptor csd,
+                                                     Object[] args, int required, int accepted) {
         if (cf != null)
             return Ops.checkarity(cf, csd, args, required, accepted);
         /* Frame-free: Ops.checkarity keeps csd/args on the frame (for a
@@ -1391,7 +1478,6 @@ final class NqpOps {
         return cs;
     }
 
-    @TruffleBoundary
     static Object[] flatArgs(ThreadContext tc) {
         return tc.flatArgs;
     }
@@ -1399,12 +1485,41 @@ final class NqpOps {
     /* Parameter fetches by the declared type, the bytecode path's
      * posparam_<t>/namedparam_<t> (and their opt_ forms): a native
      * parameter unboxes on the way in and binds into the typed slot. */
-    @TruffleBoundary
+    /* The common road -- a required parameter whose argument already has
+     * the parameter's kind -- is one flag read and one array read, inline
+     * for framed and frame-free blocks alike; optional parameters and every
+     * conversion (decont, box, arity error) keep the runtime bodies behind
+     * a boundary. The argument value is returned as it sits in the array:
+     * a Long/Double/String/SixModelObject, which is what the operation's
+     * Object result carries anyway. */
     static Object posparam(CallFrame cf, ThreadContext tc, CompilationUnit cu, Object csd,
                            Object[] args, int idx, boolean opt, int type) {
-        if (cf == null)
-            return posparamFree(tc, cu, (CallSiteDescriptor) csd, args, idx, opt, type);
         CallSiteDescriptor cs = (CallSiteDescriptor) csd;
+        if (!opt) {
+            byte flag = cs.argFlags[idx];
+            switch (type) {
+                case NqpWire.T_INT: case NqpWire.T_UINT:
+                    if (flag == CallSiteDescriptor.ARG_INT || flag == CallSiteDescriptor.ARG_UINT) return args[idx];
+                    break;
+                case NqpWire.T_NUM:
+                    if (flag == CallSiteDescriptor.ARG_NUM) return args[idx];
+                    break;
+                case NqpWire.T_STR:
+                    if (flag == CallSiteDescriptor.ARG_STR) return args[idx];
+                    break;
+                default:
+                    if (flag == CallSiteDescriptor.ARG_OBJ) return args[idx];
+                    break;
+            }
+        }
+        return posparamSlow(cf, tc, cu, cs, args, idx, opt, type);
+    }
+
+    @TruffleBoundary
+    private static Object posparamSlow(CallFrame cf, ThreadContext tc, CompilationUnit cu, CallSiteDescriptor cs,
+                                       Object[] args, int idx, boolean opt, int type) {
+        if (cf == null)
+            return posparamFree(tc, cu, cs, args, idx, opt, type);
         switch (type) {
             case NqpWire.T_INT:
                 return opt ? Ops.posparam_opt_i(cf, cs, args, idx) : Ops.posparam_i(cf, cs, args, idx);
@@ -1517,7 +1632,8 @@ final class NqpOps {
 
     /* ----- the typed return-register store the program ends with ----- */
 
-    @TruffleBoundary
+    /* Plain code: four field writes on the common road (every framed
+     * block's return); only the caller-less case goes to the runtime. */
     static void storeReturnTyped(int type, Object v, CallFrame cf) {
         /* Ops.return_* write the caller's registers (cf.caller); done here
          * as field writes for the reason lexO gives. */
@@ -1587,6 +1703,8 @@ final class NqpOps {
         static final java.lang.invoke.MethodHandle P6TYPECHECKRV;
         static final java.lang.invoke.MethodHandle P6DECONTRV_RT;
         static final java.lang.invoke.MethodHandle P6ARGVMARRAY;
+        static final java.lang.invoke.MethodHandle P6BINDSIG;
+        static final java.lang.invoke.MethodHandle P6TRYBINDSIG;
         static {
             try {
                 Class<?> c = Class.forName("org.raku.rakudo.RakOps");
@@ -1617,6 +1735,12 @@ final class NqpOps {
                 P6ARGVMARRAY = l.findStatic(c, "p6argvmarray",
                     java.lang.invoke.MethodType.methodType(SMO, TC, CallSiteDescriptor.class,
                         Object[].class));
+                P6BINDSIG = l.findStatic(c, "p6bindsig",
+                    java.lang.invoke.MethodType.methodType(CallSiteDescriptor.class, TC,
+                        CallSiteDescriptor.class, Object[].class));
+                P6TRYBINDSIG = l.findStatic(c, "p6trybindsig",
+                    java.lang.invoke.MethodType.methodType(long.class, TC,
+                        CallSiteDescriptor.class, Object[].class));
             } catch (ReflectiveOperationException e) {
                 throw new ExceptionInInitializerError(e);
             }
@@ -1636,10 +1760,48 @@ final class NqpOps {
         return Ops.usecapture(tc, cf.csd, cf.args);
     }
 
+    /** savecapture: the frame's own csd+args saved into a capture. */
+    static Object savecapture(ThreadContext tc, CallFrame cf) {
+        return Ops.savecapture(tc, cf.csd, cf.args);
+    }
+
     /** rakudo's p6argvmarray: the frame's raw arguments as a BOOTArray. */
     @TruffleBoundary
     static Object p6argvmarray(ThreadContext tc, CallFrame cf) {
         try { return Rak.P6ARGVMARRAY.invoke(tc, cf.csd, cf.args); }
+        catch (Throwable t) { throw sneaky(t); }
+    }
+
+    /** rakudo's p6bindsig, the full-binder prologue of a custom_args block,
+     *  over the frame's own csd/args (the header's arity check put them
+     *  there). Answers true when the binder auto-threaded a Junction: the
+     *  autothreader's result is already stored on the caller and the program
+     *  must return at once. Otherwise the arguments are bound into the frame's
+     *  lexicals and the (possibly flattened) csd/args are back on the frame,
+     *  exactly what the emitted prologue reloads its locals from. */
+    @TruffleBoundary
+    static boolean p6bindsig(ThreadContext tc, CallFrame cf) {
+        try {
+            Object r = Rak.P6BINDSIG.invoke(tc, cf.csd, cf.args);
+            if (r == null) return true;
+            cf.csd = (CallSiteDescriptor) r;
+            cf.args = tc.flatArgs;
+            return false;
+        }
+        catch (Throwable t) { throw sneaky(t); }
+    }
+
+    /** rakudo's p6trybindsig over the frame's own csd/args: 1 bound, 0 not
+     *  (assertparamcheck turns the 0 into the bind failure the invoking
+     *  dispatch resumes on). The runtime leaves the flattened csd on the
+     *  frame; the matching args are in tc.flatArgs. */
+    @TruffleBoundary
+    static long p6trybindsig(ThreadContext tc, CallFrame cf) {
+        try {
+            long ok = (long) Rak.P6TRYBINDSIG.invoke(tc, cf.csd, cf.args);
+            cf.args = tc.flatArgs;
+            return ok;
+        }
         catch (Throwable t) { throw sneaky(t); }
     }
 

@@ -4,6 +4,8 @@ import java.util.Random
 
 import it.unimi.dsi.fastutil.ints.IntArrayList
 
+import org.raku.nqp.dispatch.DispatchCallSite
+import org.raku.nqp.dispatch.DispatchProgram
 import org.raku.nqp.dispatch.DispatchRecord
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.reprs.CallCaptureInstance
@@ -97,6 +99,20 @@ class ThreadContext(
      * the invocation creates can note which dispatch it came from.
      */
     @JvmField var pendingDispatch: DispatchRecord? = null
+
+    /**
+     * The lazy form of pendingDispatch, for a settled program a replay road
+     * runs: the three things a record for it would be made of. The frame the
+     * invocation creates carries them (CallFrame.dispatchProgram and
+     * friends) and materializes a DispatchRecord only when a bind failure or
+     * a resumption search asks for one -- MoarVM's sp_resumption, which
+     * keeps the resume-init values live in the frame and allocates nothing
+     * per call. Cleared by the frame that takes them, and by the replay road
+     * after the call in case no frame did.
+     */
+    @JvmField var pendingProgram: DispatchProgram? = null
+    @JvmField var pendingArgs: Array<Any?>? = null
+    @JvmField var pendingSite: DispatchCallSite? = null
 
     /**
      * The currently set dispatcher, for the next interested call (or the

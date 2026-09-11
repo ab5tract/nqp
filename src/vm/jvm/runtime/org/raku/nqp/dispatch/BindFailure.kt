@@ -39,7 +39,7 @@ object BindFailure {
     @JvmStatic
     fun failed(tc: ThreadContext) {
         val frame = tc.frame
-        val record = frame.dispatchRecord
+        val record = frame.invokingDispatch()
         val control = record?.program?.bindControl
         if (record == null || control == null)
             reportToHLL(tc)
@@ -60,10 +60,10 @@ object BindFailure {
      */
     @JvmStatic
     fun complete(tc: ThreadContext) {
-        val record = tc.frame.dispatchRecord ?: return
-        val control = record.program?.bindControl ?: return
+        val frame = tc.frame
+        val control = frame.invokingProgram()?.bindControl ?: return
         if (control.onSuccessToo)
-            throw BindFailureException(record, control.successFlag!!)
+            throw BindFailureException(frame.invokingDispatch()!!, control.successFlag!!)
     }
 
     /**
@@ -73,6 +73,29 @@ object BindFailure {
      * frames that take an args array keep their arguments, which is why a
      * parameter that can fail a check forces that route.
      */
+    /**
+     * As reportToHLL, for a frame-free callee: it has no frame to read the
+     * callsite, arguments and code object from, so the direct road that
+     * entered it passes them (jesp diamond 5). Answers the value the
+     * handler produced in place of the call (a Junction autothread), which
+     * the caller stores as the call's result; throws otherwise.
+     */
+    @JvmStatic
+    fun reportFrameFree(tc: ThreadContext, cr: org.raku.nqp.runtime.CodeRef,
+                        csd: CallSiteDescriptor?, args: Array<Any?>?): org.raku.nqp.sixmodel.SixModelObject? {
+        val config = cr.staticInfo.compUnit.hllConfig
+        val handler = config.bindError
+        val code = cr.codeObject
+        if (handler != null && csd != null && args != null && code != null) {
+            Ops.invokeDirect(tc, handler, captureCallSite,
+                arrayOf<Any?>(Ops.savecapture(tc, csd, args), code))
+            val produced = Ops.result_o(tc.frame)
+            if (produced != null)
+                return produced
+        }
+        throw ExceptionHandling.dieInternal(tc, "Bind check failed")
+    }
+
     private fun reportToHLL(tc: ThreadContext): Nothing {
         val frame = tc.frame
         val config = frame.codeRef.staticInfo.compUnit.hllConfig

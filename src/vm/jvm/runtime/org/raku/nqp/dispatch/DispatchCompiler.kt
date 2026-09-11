@@ -27,12 +27,9 @@ import org.raku.nqp.sixmodel.SixModelObject
  * per-dispatch shape check the interpreted path does is settled here once.
  *
  * Only initial dispatches compile; a resuming program needs the resumption
- * levels walked against the live callstack and stays interpreted. Set
- * NQP_JVM_NO_DISPATCH_MH to keep every callsite on the interpreted path.
+ * levels walked against the live callstack and stays interpreted.
  */
 object DispatchCompiler {
-    @JvmField val disabled = System.getenv("NQP_JVM_NO_DISPATCH_MH") != null
-
     /**
      * How many interpreted dispatches a site must see before its programs are
      * compiled. Building a chain is not free — the combinators spin
@@ -41,8 +38,7 @@ object DispatchCompiler {
      * sites never do: a setting compile records ~39k programs, nearly all at
      * sites dispatched a handful of times.
      */
-    @JvmField val threshold =
-        System.getenv("NQP_JVM_DISPATCH_MH_THRESHOLD")?.toIntOrNull() ?: 256
+    const val threshold = 256
 
     /**
      * How many programs may go into a compiled chain. A callsite hot enough
@@ -388,26 +384,24 @@ object DispatchCompiler {
                         tc: ThreadContext, args: Array<Any?>) {
         val calleeObj = evalRaw(callee, tc, args) as SixModelObject?
         val out = evalPlan(plan, tc, args)
-        val record = DispatchRecord(tc, null, program.descriptor, args, tc.curFrame, site)
-        record.program = program
-        record.endRecording()
-        val records = tc.dispatchRecords
-        records.add(record)
+        /* No record and no list entry: the callee's frame carries the
+         * program, arguments and site, and materializes the record if a
+         * bind failure or a resumption ever asks (ThreadContext.pendingProgram). */
+        tc.pendingProgram = program
+        tc.pendingArgs = args
+        tc.pendingSite = site
         try {
-            tc.pendingDispatch = record
-            try {
-                Ops.invokeDirect(tc, calleeObj, descriptor, out)
-            }
-            catch (failure: BindFailureException) {
-                if (failure.record !== record) throw failure
-                Dispatch.resumeAfterBindFailure(tc, record, failure.flag)
-            }
-            finally {
-                tc.pendingDispatch = null
-            }
+            Ops.invokeDirect(tc, calleeObj, descriptor, out)
+        }
+        catch (failure: BindFailureException) {
+            val failed = failure.record
+            if (failed.args !== args || failed.program !== program) throw failure
+            Dispatch.resumeAfterBindFailure(tc, failed, failure.flag)
         }
         finally {
-            records.removeAt(records.size - 1)
+            tc.pendingProgram = null
+            tc.pendingArgs = null
+            tc.pendingSite = null
         }
     }
 }

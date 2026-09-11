@@ -38,7 +38,7 @@ package org.raku.nqp.truffle;
  * 13 LOOP until repeat hasNext condType cond body [next]  value null
  *    hasNext=1 adds a 3rd operand (C-style loop incr / NEXT-expr), run in
  *    void after the body, before the cond re-test.
- * 14 DISPATCH rtype pName nargs (flag [pName])* child*  dispatchUncached
+ * 14 DISPATCH rtype pName nargs (flag [pName])* child*
  *    flag bits: 0-1 arg type (obj/str used), 2 named, 3 flat
  * 15 OPCALL opId nargs child*  the NqpOps table
  * 16 COERCE kind child         kinds in NqpOps
@@ -126,6 +126,33 @@ public final class NqpWire {
     public static final int CLASSLIB = 27;
     /** usecapture: the frame's own args, captured for a re-dispatch. */
     public static final int USECAPTURE = 28;
+    /** 29 LEXGET_OUTER type name / 30 LEXBIND_OUTER type name child: a read or
+     *  bind of an OUTER lexical, resolved from the program's code ref rather
+     *  than its frame, so the block needs no frame for it. */
+    public static final int LEXGET_OUTER = 29;
+    public static final int LEXBIND_OUTER = 30;
+    /** savecapture: the frame's own args saved into a capture (like usecapture). */
+    public static final int SAVECAPTURE = 31;
+    /** 32 FORLOOP condType lastId nrId outerIdx cond pre body: nqp::for's
+     *  handled loop. LOOPH's regions (lastId around cond+loop, nrId around
+     *  each iteration), but the iteration is [pre; body] with only `body`
+     *  inside the redo loop: `redo` re-runs the call with the values `pre`
+     *  fetched, `next` falls through to the cond re-test and re-fetches
+     *  (Compiler.nqp's redo label sits between the fetch and the call).
+     *  Unlabeled; value null, like LOOP. Additive (stage0 programs predate it). */
+    public static final int FORLOOP = 32;
+    /** 33 P6BINDSIG: rakudo's p6bindsig, the full-binder prologue of a
+     *  custom_args block. Binds the frame's own csd/args through the runtime
+     *  Binder (which leaves the flattened pair back on the frame); when the
+     *  binder auto-threaded a Junction instead, the call's result is already
+     *  on the caller and the program returns at once. Value null (a statement,
+     *  like LOOP). Additive. */
+    public static final int P6BINDSIG = 33;
+    /** 34 P6TRYBINDSIG: rakudo's p6trybindsig over the frame's own csd/args;
+     *  answers int 1 bound / 0 failed (a bind the invoking dispatch resumes
+     *  on, through assertparamcheck). Leaves the flattened pair on the frame.
+     *  Additive. */
+    public static final int P6TRYBINDSIG = 34;
 
     public static final int T_OBJ = 0;
     public static final int T_INT = 1;
@@ -141,8 +168,13 @@ public final class NqpWire {
          *  types. */
         public int treeStart() { return 4 + nlocals; }
         public int resultType() { return code[1]; }
-        /** false for a frame-free block (runs with cf==null); true otherwise. */
-        public boolean needsFrame() { return needsFrameWord != 0; }
+        /** Bit 0: false for a frame-free block (runs with cf==null); true otherwise. */
+        public boolean needsFrame() { return (needsFrameWord & 1) != 0; }
+        /** Bit 1: the block runs no op that reads the current language
+         *  (spesh's :useshll), so a frame-free entry may cross languages.
+         *  A program encoded before the bit existed reads as not free:
+         *  the conservative side. */
+        public boolean hllFree() { return (needsFrameWord & 2) != 0; }
         public int localType(int i) { return code[4 + i]; }
     }
 

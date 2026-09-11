@@ -56,6 +56,9 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     static final int ARG_CF = 2;
     static final int ARG_CSD = 3;
     static final int ARG_ARGS = 4;
+    /** The program's own code ref: what a frame-free block reaches its
+     *  outer through (LexGetOuter/LexBindOuter), having no frame to walk. */
+    static final int ARG_CR = 5;
 
     protected NqpRootNode(NqpLanguage language, FrameDescriptor frameDescriptor) {
         super(language, frameDescriptor);
@@ -79,6 +82,9 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
      *  frame-reading op, positional local-scope params only). Set at parse
      *  from the wire header; default (framed) is the safe value. */
     boolean needsFrame = true;
+    /** No op in the block reads the current language: a frame-free entry
+     *  may cross languages (the wire's bit 1; jesp diamond 7). */
+    boolean hllFree = false;
 
     @Override
     public String getName() {
@@ -148,29 +154,36 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
 
     // NQP's int is 64-bit throughout; these mirror nqp::add_i and friends.
 
+    /* The native int/num table ops, by op id (a constant, so the switch in
+     * NqpNativeOps folds to the one instruction); jesp diamond 3. */
+
     @Operation
-    public static final class AddI {
-        @Specialization static long doLong(long a, long b) { return a + b; }
+    @ConstantOperand(type = int.class, name = "kind")
+    public static final class IntBinOp {
+        @Specialization static long doLong(int kind, long a, long b) { return NqpNativeOps.intBin(kind, a, b); }
     }
 
     @Operation
-    public static final class SubI {
-        @Specialization static long doLong(long a, long b) { return a - b; }
+    @ConstantOperand(type = int.class, name = "kind")
+    public static final class IntUnOp {
+        @Specialization static long doLong(int kind, long a) { return NqpNativeOps.intUn(kind, a); }
     }
 
     @Operation
-    public static final class MulI {
-        @Specialization static long doLong(long a, long b) { return a * b; }
+    @ConstantOperand(type = int.class, name = "kind")
+    public static final class NumBinOp {
+        @Specialization static double doNum(int kind, double a, double b) { return NqpNativeOps.numBin(kind, a, b); }
     }
 
     @Operation
-    public static final class LtI {
-        @Specialization static boolean doLong(long a, long b) { return a < b; }
+    @ConstantOperand(type = int.class, name = "kind")
+    public static final class NumCmpOp {
+        @Specialization static long doNum(int kind, double a, double b) { return NqpNativeOps.numCmp(kind, a, b); }
     }
 
     @Operation
-    public static final class GtI {
-        @Specialization static boolean doLong(long a, long b) { return a > b; }
+    public static final class NumNegOp {
+        @Specialization static double doNum(double a) { return -a; }
     }
 
     /** nqp truth over a native int: nonzero is true. */
@@ -257,6 +270,40 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         }
     }
 
+    /** A read of an OUTER lexical from a block with no frame of its own:
+     *  the walk starts at the code ref's resolved outer. */
+    @Operation
+    @ConstantOperand(type = int.class, name = "type")
+    @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class LexGetOuter {
+        @Specialization
+        static Object doGet(VirtualFrame f, int type, String name, Object site) {
+            try {
+                return NqpOps.getlexOuter(type, name, (NqpOps.LexSite) site, tc(f),
+                    (org.raku.nqp.runtime.CodeRef) f.getArguments()[ARG_CR]);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = int.class, name = "type")
+    @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class LexBindOuter {
+        @Specialization
+        static Object doBind(VirtualFrame f, int type, String name, Object site, Object v) {
+            try {
+                return NqpOps.bindlexOuter(type, name, v, (NqpOps.LexSite) site, tc(f),
+                    (org.raku.nqp.runtime.CodeRef) f.getArguments()[ARG_CR]);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
     @Operation
     @ConstantOperand(type = int.class, name = "type")
     @ConstantOperand(type = String.class, name = "name")
@@ -313,11 +360,50 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     }
 
     @Operation
+    public static final class SaveCapture {
+        @Specialization
+        static Object doSave(VirtualFrame f) {
+            try {
+                return NqpOps.savecapture(tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
     public static final class P6ArgVmArray {
         @Specialization
         static Object doArgs(VirtualFrame f) {
             try {
                 return NqpOps.p6argvmarray(tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    /** rakudo's p6bindsig over the program's own frame: true when the
+     *  binder auto-threaded and the program must return now. */
+    @Operation
+    public static final class P6BindSig {
+        @Specialization
+        static boolean doBind(VirtualFrame f) {
+            try {
+                return NqpOps.p6bindsig(tc(f), cf(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    /** rakudo's p6trybindsig over the program's own frame: 1 bound, 0 not. */
+    @Operation
+    public static final class P6TryBindSig {
+        @Specialization
+        static long doTry(VirtualFrame f) {
+            try {
+                return NqpOps.p6trybindsig(tc(f), cf(f));
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -384,7 +470,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doGet(VirtualFrame f, Object site, Object obj, Object ch, Object name) {
             try {
-                return NqpOps.getattr((NqpOps.AttrSite) site, obj, ch, (String) name, tc(f));
+                return NqpOps.getattr((NqpOps.AttrSite) site, obj, ch, (String) name, tc(f), cu(f));
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -415,6 +501,144 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
      * null (fresh object locals, valueless else branches) use the
      * builder's LoadNull instead.
      */
+    /* ----- the type-check family with per-instruction sites (jesp diamond 3;
+     * see NqpTypeOps). The builder emits these for the table ops of the same
+     * name; the generic RunOp road remains for everything else. ----- */
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class DecontOp {
+        @Specialization
+        static Object doDecont(VirtualFrame f, Object site, Object o) {
+            try {
+                return NqpTypeOps.decont((NqpTypeOps.DecontSite) site, o, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    public static final class IsNullOp {
+        @Specialization
+        static long doIsNull(Object o) {
+            return NqpTypeOps.isnull(o);
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class IsConcreteOp {
+        @Specialization
+        static long doIsConcrete(VirtualFrame f, Object site, Object o) {
+            try {
+                return NqpTypeOps.isconcrete((NqpTypeOps.IsConcreteSite) site, o, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class IsTypeOp {
+        @Specialization
+        static long doIsType(VirtualFrame f, Object site, Object o, Object type) {
+            try {
+                return NqpTypeOps.istype((NqpTypeOps.IsTypeSite) site, o, type, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class P6SinkOp {
+        @Specialization
+        static Object doSink(VirtualFrame f, Object site, Object o) {
+            try {
+                return NqpTypeOps.p6sink((NqpTypeOps.SinkSite) site, o, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class HllizeOp {
+        @Specialization
+        static Object doHllize(VirtualFrame f, Object site, Object o) {
+            try {
+                return NqpTypeOps.hllize((NqpTypeOps.HllizeSite) site, o, cu(f), tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    public static final class AssertParamCheckOp {
+        @Specialization
+        static Object doLong(VirtualFrame f, long ok) {
+            try {
+                return NqpTypeOps.assertparamcheck(ok, cf(f), tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+        @Specialization
+        static Object doObject(VirtualFrame f, Object ok) {
+            try {
+                return NqpTypeOps.assertparamcheck(((Number) ok).longValue(), cf(f), tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class P6TypeCheckRvOp {
+        @Specialization
+        static Object doCheck(VirtualFrame f, Object site, Object rv, Object routine, Object bypass) {
+            try {
+                return NqpTypeOps.p6typecheckrv((NqpTypeOps.RvCheckSite) site, rv, routine, bypass, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class CreateOp {
+        @Specialization
+        static Object doCreate(VirtualFrame f, Object site, Object type) {
+            try {
+                return NqpTypeOps.create((NqpTypeOps.CreateSite) site, type, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    /** add_I/sub_I/mul_I with a site (jesp diamond 4); kind is the op id. */
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    @ConstantOperand(type = int.class, name = "kind")
+    public static final class BigIntArithOp {
+        @Specialization
+        static Object doArith(VirtualFrame f, Object site, int kind, Object a, Object b, Object type) {
+            try {
+                return NqpTypeOps.bigintArith((NqpTypeOps.BigIntSite) site, kind, a, b, type, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
     @Operation
     public static final class NullC {
         @Specialization
@@ -456,7 +680,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
                                  @Variadic Object[] args,
                                  @com.oracle.truffle.api.dsl.Bind com.oracle.truffle.api.nodes.Node node) {
             try {
-                return NqpOps.dispatch(rtype, name, (NqpOps.EngineSite) site, args, tc(f), cf(f), node);
+                return NqpOps.dispatch(rtype, name, (NqpOps.EngineSite) site, args, tc(f), cf(f), node, cu(f));
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -482,13 +706,21 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         }
     }
 
-    /** The flattened argument array checkarity left on the thread context. */
+    /** The argument array the parameter fetches read. When the arity check
+     *  answered the callsite it was given, nothing flattened and the array
+     *  is the frame's own argument -- read from the frame, never parked on
+     *  the thread context: a heap store is what kept every argument array
+     *  alive through escape analysis after the callee was inlined (jesp:
+     *  spesh keeps arguments in registers). Only an exploded callsite has
+     *  a new array, left on the thread context by the slow road. */
     @Operation
     public static final class FlatArgs {
         @Specialization
-        static Object doGet(VirtualFrame f) {
+        static Object doGet(VirtualFrame f, Object csd) {
+            Object[] fa = f.getArguments();
+            if (csd == fa[ARG_CSD]) return fa[ARG_ARGS];
             try {
-                return NqpOps.flatArgs(tc(f));
+                return NqpOps.flatArgs((ThreadContext) fa[ARG_TC]);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }

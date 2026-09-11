@@ -87,8 +87,17 @@ class DispatchRecord(
     /** The state of each resumption our program set up; created on first use. */
     private var states: MutableList<ResumeState>? = null
 
-    /** The resumption levels we are working through, innermost first. */
-    val levels = ArrayList<ResumptionLevelState>()
+    /** The resumption levels we are working through, innermost first; created on first use. */
+    private var levelsList: ArrayList<ResumptionLevelState>? = null
+    val levels: ArrayList<ResumptionLevelState>
+        get() {
+            var list = levelsList
+            if (list == null) {
+                list = ArrayList()
+                levelsList = list
+            }
+            return list
+        }
 
     /** How we found the dispatch we are resuming, if we are resuming one. */
     var resumeKind = ResumeKind.NONE
@@ -217,16 +226,6 @@ class DispatchRecord(
     fun shapeOf(capture: SixModelObject?): CaptureShape =
         captures?.get(capture)
             ?: run {
-                if (System.getenv("NQP_DISPATCH_DEBUG") != null) {
-                    System.err.println("BAD CAPTURE on " + Thread.currentThread().name +
-                        " thisRecord=" + (currentDispatcher?.id ?: "?") + "@" +
-                        Integer.toHexString(System.identityHashCode(this)) +
-                        " records=" + tc.dispatchRecords.joinToString(",") { r ->
-                            (r.currentDispatcher?.id ?: "?") + "@" +
-                            Integer.toHexString(System.identityHashCode(r)) +
-                            (if (r.recording) "/rec" else "/done") })
-                    Throwable("bad capture").printStackTrace()
-                }
                 throw ExceptionHandling.dieInternal(tc,
                     "Dispatch operation received a capture that is not part of this dispatch")
             }
@@ -259,17 +258,6 @@ class DispatchRecord(
                 "Dispatch operation expected a tracked value")
         val source = trackedValue.source
         if (source == null || tracked?.get(source) !== trackedValue) {
-            if (System.getenv("NQP_DISPATCH_DEBUG") != null) {
-                System.err.println("BAD TRACKED on " + Thread.currentThread().name +
-                    " thisRecord=" + (currentDispatcher?.id ?: "?") + "@" +
-                    Integer.toHexString(System.identityHashCode(this)) +
-                    " source=" + source +
-                    " records=" + tc.dispatchRecords.joinToString(",") { r ->
-                        (r.currentDispatcher?.id ?: "?") + "@" +
-                        Integer.toHexString(System.identityHashCode(r)) +
-                        (if (r.recording) "/rec" else "/done") })
-                Throwable("bad tracked").printStackTrace()
-            }
             throw ExceptionHandling.dieInternal(tc,
                 "Dispatch operation received a tracked value from another dispatch")
         }

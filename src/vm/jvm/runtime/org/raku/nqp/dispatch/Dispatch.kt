@@ -244,13 +244,9 @@ object Dispatch {
                 as org.raku.nqp.runtime.CompilationUnit).getCallSites()
     }
 
-    private val oldDescRoad = System.getenv("NQP_DISPATCH_OLDDESC") != null
-
     private fun descriptorForClass(siteClass: Class<*>, csIdx: Int, tc: ThreadContext): CallSiteDescriptor =
         if (csIdx < 0)
             Ops.emptyCallSite
-        else if (oldDescRoad)
-            tc.frame.codeRef.staticInfo.compUnit.callSites!![csIdx]
         else
             siteTables.get(siteClass)[csIdx]
 
@@ -338,12 +334,6 @@ object Dispatch {
                  * would hold captures of a dead recording and die far
                  * away in a dispatcher syscall. Refuse here, loudly, the
                  * way MoarVM refuses captures across a dispatch. */
-                if (System.getenv("NQP_DISPATCH_DEBUG") != null) {
-                    System.err.println("CAPTURE ACROSS RECORDING of " +
-                        (record.currentDispatcher?.id ?: dispatcher?.id ?: "?") +
-                        " on " + Thread.currentThread().name)
-                    Throwable("capture across recording").printStackTrace()
-                }
                 throw ExceptionHandling.dieInternal(tc,
                     "Cannot capture a continuation across a dispatch recording (" +
                     (record.currentDispatcher?.id ?: dispatcher?.id ?: "?") + ")")
@@ -561,6 +551,14 @@ object Dispatch {
      *
      * The frame we are in is never a place to resume from, and asking for the
      * caller's resumption passes over one frame more.
+     *
+     * Two things hold the records: the list, for a dispatch being recorded
+     * and for the interpreted replay road, and the frames themselves, each
+     * carrying the dispatch that invoked it (CallFrame.invokingDispatch). A
+     * settled program replayed by the engine or the compiled chain is only
+     * ever carried -- no record exists for it until this walk, or a bind
+     * failure, materializes one -- which is what makes a resumable call cost
+     * no allocation (MoarVM's sp_resumption and frame walker).
      */
     @JvmStatic
     fun findResumption(tc: ThreadContext, kind: ResumeKind, exhausted: Int): FoundResumption? {
@@ -569,9 +567,30 @@ object Dispatch {
         var toSkip = kind.framesToSkip
         var remaining = exhausted
         var frame = tc.curFrame
+        var left: CallFrame? = null
         while (frame != null) {
+            /* The dispatches made from this frame, innermost first. The
+             * innermost is the one that invoked the frame we just left, and
+             * that frame carries it (a replay road's lazily, the recording
+             * road's as the record itself, which is then also on the list
+             * and is skipped there by identity). */
+            if (left != null && toSkip == 0) {
+                val program = left.invokingProgram()
+                if (program != null) {
+                    if (program.resumptions.size > remaining) {
+                        val record = left.invokingDispatch()!!
+                        return FoundResumption(record, program.resumptions[remaining],
+                            record.ensureResumeStates()[remaining])
+                    }
+                    remaining -= program.resumptions.size
+                    if (!(program.resumptions.isEmpty() || program.isResuming))
+                        return null
+                }
+            }
+            val carried = left?.dispatchRecord
             while (next >= 0 && records[next].callerFrame === frame) {
                 val record = records[next--]
+                if (record === carried) continue
                 if (toSkip == 0) {
                     val program = record.program
                     if (program != null) {
@@ -589,6 +608,7 @@ object Dispatch {
                 }
             }
             if (toSkip > 0) toSkip--
+            left = frame
             frame = frame.caller
         }
         return null

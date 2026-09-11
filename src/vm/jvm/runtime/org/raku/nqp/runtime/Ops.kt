@@ -160,6 +160,33 @@ object Ops {
         return v
     }
 
+    /* MoarVM's note/sayfh/printfh, which this backend lacked (2026-09-07):
+     * a line on stderr, and a string or line written through a handle's
+     * writable (the same road writefh takes for bytes). */
+    @JvmStatic
+    fun note(v: String?, tc: ThreadContext): String? {
+        tc.gc.err.println(v)
+        return v
+    }
+
+    @JvmStatic
+    fun printfh(fh: SixModelObject?, v: String?, tc: ThreadContext): String? {
+        writableOf(fh, tc).print(tc, v ?: "")
+        return v
+    }
+
+    @JvmStatic
+    fun sayfh(fh: SixModelObject?, v: String?, tc: ThreadContext): String? {
+        writableOf(fh, tc).say(tc, v ?: "")
+        return v
+    }
+
+    private fun writableOf(fh: SixModelObject?, tc: ThreadContext): IIOSyncWritable {
+        val handle = (fh as? IOHandleInstance)?.handle
+        return handle as? IIOSyncWritable
+            ?: throw ExceptionHandling.dieInternal(tc, "This handle is not writable")
+    }
+
     const val STAT_EXISTS             =  0
     const val STAT_FILESIZE           =  1
     const val STAT_ISDIR              =  2
@@ -1276,28 +1303,6 @@ object Ops {
                 return curFrame.iLex!![found]
             curFrame = curFrame.outer
         }
-        if (System.getenv("NQP_EH_DEBUG") != null) {
-            val sb = StringBuilder("getlex_i MISS '$name' outer chain:")
-            var f = tc.curFrame
-            var i = 0
-            while (f != null && i < 8) {
-                sb.append(" [").append(f.codeRef.name).append("]")
-                f = f.outer
-                i++
-            }
-            System.err.println(sb)
-            var s: StaticCodeInfo? = tc.curFrame?.codeRef?.staticInfo
-            val sb2 = StringBuilder("static chain:")
-            var j = 0
-            while (s != null && j < 8) {
-                sb2.append(" [").append(s.oLexicalNames?.joinToString(",") ?: "-")
-                   .append(if (s.iTryGetLexicalIdx(name) != -1) " HAS-$name" else "")
-                   .append("]")
-                s = s.outerStaticInfo
-                j++
-            }
-            System.err.println(sb2)
-        }
         throw ExceptionHandling.dieInternal(tc, "Lexical '" + name + "' not found")
     }
     @JvmStatic
@@ -1662,9 +1667,17 @@ object Ops {
     }
 
     /* Dynamic lexicals. */
+    /* The walk starts at the CURRENT frame, as MoarVM's MVM_frame_getdynlex
+     * does (interp.c hands it tc->cur_frame). It used to start at the
+     * caller, which is one frame too far for a frame-free engine block:
+     * such a block runs on its caller's frame, so tc.frame IS its caller,
+     * and the declaring frame right above it was skipped ("Dynamic variable
+     * '$*NEXT_QBID' not found", 2026-09-08). A framed block never has the
+     * contextual in its own frame -- a statically visible one takes the
+     * lexical road -- so including it costs one miss. */
     @JvmStatic
     fun bindlexdyn(name: String, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        var curFrame = tc.frame.caller
+        var curFrame: CallFrame? = tc.frame
         while (curFrame != null) {
             val idx = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (idx != -1) {
@@ -1673,11 +1686,23 @@ object Ops {
             }
             curFrame = curFrame.caller
         }
-        throw ExceptionHandling.dieInternal(tc, "Dynamic variable '" + name + "' not found")
+        /* Name the frames walked: a missing dynamic is nearly always a frame
+         * that is not on the caller chain (or has no static lexical table),
+         * and the bare message hides which. */
+        val walked = StringBuilder()
+        var f: CallFrame? = tc.frame
+        var n = 0
+        while (f != null && n < 12) {
+            if (n > 0) walked.append(" <- ")
+            walked.append(f.codeRef?.name ?: "?")
+            f = f.caller
+            n++
+        }
+        throw ExceptionHandling.dieInternal(tc, "Dynamic variable '" + name + "' not found (frames: " + walked + ")")
     }
     @JvmStatic
     fun getlexdyn(name: String, tc: ThreadContext): SixModelObject? {
-        var curFrame = tc.frame.caller
+        var curFrame: CallFrame? = tc.frame   // current frame first: see bindlexdyn
         while (curFrame != null) {
             val idx = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (idx != -1)
@@ -3224,8 +3249,11 @@ object Ops {
      * an invokedynamic per prologue eats into the per-class indy budget. */
     @JvmStatic
     fun bindWillResumeOnFailure(tc: ThreadContext): Long {
-        val record = tc.frame.dispatchRecord ?: return 0
-        return if ((record.program?.bindControl ?: record.bindControl) != null) 1 else 0
+        val frame = tc.frame
+        val record = frame.dispatchRecord
+        val control = if (record != null) record.program?.bindControl ?: record.bindControl
+                      else frame.dispatchProgram?.bindControl
+        return if (control != null) 1 else 0
     }
 
     /* The role a type plays in its language: one of the HLL_ROLE_*
@@ -3403,21 +3431,33 @@ object Ops {
 
     /* Attribute operations. */
     @JvmStatic
-    fun getattr(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext): SixModelObject? {
+    fun getattr(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext): SixModelObject? =
+        getattrIn(obj, ch, name, tc, null)
+
+    /** getattr boxing a native slot with an explicit language: the code
+     *  engine passes the block's own unit's, since a frame-free callee
+     *  entered across languages has its caller's frame on tc. Null means
+     *  the frame's, resolved ONLY on the boxing branch: the current frame
+     *  is a dummy without a code ref while a unit deserializes, and an
+     *  eager read there took the bootstrap down as "Missing or wrong
+     *  version of dependency". */
+    @JvmStatic
+    fun getattrIn(obj: SixModelObject?, ch: SixModelObject?, name: String?, tc: ThreadContext, hllIn: HLLConfig?): SixModelObject? {
         try {
             return obj!!.get_attribute_boxed(tc, decont(ch, tc), name, STable.NO_HINT)
         }
         catch (badRef: P6OpaqueBaseInstance.BadReferenceRuntimeException) {
             var retval: SixModelObject? = createNull(tc)
             obj!!.get_attribute_native(tc, decont(ch, tc), name, STable.NO_HINT)
+            val hll = hllIn ?: tc.frame.codeRef.staticInfo.compUnit.hllConfig
             if (tc.nativeType == ThreadContext.NATIVE_INT) {
-                retval = box_i(tc.nativeI, tc.frame.codeRef.staticInfo.compUnit.hllConfig.intBoxType, tc)
+                retval = box_i(tc.nativeI, hll.intBoxType, tc)
             }
             else if (tc.nativeType == ThreadContext.NATIVE_NUM) {
-                retval = box_n(tc.nativeN, tc.frame.codeRef.staticInfo.compUnit.hllConfig.numBoxType, tc)
+                retval = box_n(tc.nativeN, hll.numBoxType, tc)
             }
             else if (tc.nativeType == ThreadContext.NATIVE_STR) {
-                retval = box_s(tc.nativeS, tc.frame.codeRef.staticInfo.compUnit.hllConfig.strBoxType, tc)
+                retval = box_s(tc.nativeS, hll.strBoxType, tc)
             }
             else if (tc.nativeType == ThreadContext.NATIVE_JVM_OBJ) {
                 /* Resolve through the class handle the access named, not
@@ -7905,6 +7945,19 @@ object Ops {
         else
             return hllizeInternal(obj, wanted, tc)
     }
+    /** hllize into an explicit language: the code engine passes its block's
+     *  own unit's, since a frame-free callee entered across languages has
+     *  its CALLER's frame on tc -- reading the frame there hllized a Raku
+     *  method's NQP array into nqp, i.e. not at all (2026-09-09, the
+     *  `List:D` return check on Parameter.constraint_list called from
+     *  RakuAST). The getattrIn twin of this. */
+    @JvmStatic
+    fun hllizeIn(obj: SixModelObject?, wanted: HLLConfig, tc: ThreadContext): SixModelObject? {
+        if (isnull(obj) == 0L && obj!!.stInitialized && obj.st.hllOwner === wanted)
+            return obj
+        else
+            return hllizeInternal(obj, wanted, tc)
+    }
     @JvmStatic
     fun hllizefor(obj: SixModelObject?, language: String, tc: ThreadContext): SixModelObject? {
         val wanted = tc.gc.getHLLConfigFor(language)
@@ -9100,11 +9153,6 @@ object Ops {
                 return
             } catch (sse: SaveStackException) {
                 if (isnull(sse.key) == 0L && sse.key !== theKey) {
-                    if (System.getenv("NQP_DEBUG_CONT") != null)
-                        System.err.println("reset key mismatch: have " +
-                            (if (theKey == null) "null" else theKey.javaClass.simpleName + "@" +
-                                Integer.toHexString(System.identityHashCode(theKey))) +
-                            " want " + sse)
                     // This is intended for an outer scope, so just append ourself
                     throw sse.pushFrame(0, resetReenter, arrayOf<Any?>(theKey), null)
                 }
@@ -9153,8 +9201,6 @@ object Ops {
 
     @JvmStatic
     fun continuationcontrol(protect: Long, key: SixModelObject?, run: SixModelObject?, tc: ThreadContext) {
-        if (System.getenv("NQP_DEBUG_CONT") != null)
-            Throwable("continuationcontrol on " + Thread.currentThread().name).printStackTrace()
         throw SaveStackException(key, protect != 0L, run)
     }
 

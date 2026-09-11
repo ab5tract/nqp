@@ -32,11 +32,6 @@ final class NqpProgramBuilder {
 
     private final NqpWire.Program program;
 
-    /** NQP_CODE_NO_SUSPEND=1: measurement only -- emit no suspension tail
-     *  after table ops and dispatches (continuations through engine frames
-     *  then break), to size what the tail costs in compiled code. */
-    static final boolean NO_SUSPEND = System.getenv("NQP_CODE_NO_SUSPEND") != null;
-
     private NqpProgramBuilder(NqpRootNodeGen.Builder b, NqpWire.Program p) {
         this.b = b;
         this.code = p.code();
@@ -114,8 +109,31 @@ final class NqpProgramBuilder {
             case NqpWire.P6ARGVMARRAY:
                 if (emit) b.emitP6ArgVmArray();
                 return at + 1;
+            case NqpWire.SAVECAPTURE:
+                if (emit) b.emitSaveCapture();
+                return at + 1;
             case NqpWire.USECAPTURE:
                 if (emit) b.emitUseCapture();
+                return at + 1;
+            case NqpWire.P6BINDSIG:
+                // The full-binder prologue: bind, or -- when the binder
+                // auto-threaded a Junction and already stored the result on
+                // the caller -- return from the program at once. A Block whose
+                // value is null, LOOP's shape, so a sinking parent is happy.
+                if (emit) {
+                    b.beginBlock();
+                    b.beginIfThen();
+                    b.emitP6BindSig();
+                    b.beginReturn();
+                    b.emitLoadNull();
+                    b.endReturn();
+                    b.endIfThen();
+                    b.emitLoadNull();
+                    b.endBlock();
+                }
+                return at + 1;
+            case NqpWire.P6TRYBINDSIG:
+                if (emit) b.emitP6TryBindSig();
                 return at + 1;
             case NqpWire.IVAL:
                 if (emit) b.emitLoadConstant(Long.parseLong(pool[code[at + 1]]));
@@ -138,6 +156,17 @@ final class NqpProgramBuilder {
                 if (emit) b.beginLexBind(type, name, new NqpOps.LexSite());
                 at = walk(at + 3, emit);
                 if (emit) b.endLexBind();
+                return at;
+            }
+            case NqpWire.LEXGET_OUTER:
+                if (emit) b.emitLexGetOuter(code[at + 1], pool[code[at + 2]], new NqpOps.LexSite());
+                return at + 3;
+            case NqpWire.LEXBIND_OUTER: {
+                int type = code[at + 1];
+                String name = pool[code[at + 2]];
+                if (emit) b.beginLexBindOuter(type, name, new NqpOps.LexSite());
+                at = walk(at + 3, emit);
+                if (emit) b.endLexBindOuter();
                 return at;
             }
             case NqpWire.LEXREF:
@@ -206,15 +235,20 @@ final class NqpProgramBuilder {
                 int nextAt = walk(bodyAt, false);
                 // The whole region ends after the "next" expr if it is present.
                 int endAt = hasNext != 0 ? walk(nextAt, false) : nextAt;
-                if (repeat != 0 && emit) {
-                    // Run the body once ahead: repeat_while == body; while.
-                    // (repeat + a next-expr is refused by the encoder.)
-                    beginSink();
-                    walk(bodyAt, true);
-                    endSink();
-                }
                 if (emit) {
                     b.beginBlock();
+                    if (repeat != 0) {
+                        // Run the body once ahead: repeat_while == body; while.
+                        // (repeat + a next-expr is refused by the encoder.)
+                        // INSIDE the Block: emitted before it, the pre-run
+                        // was a second, void operation where the parent
+                        // expected the loop's single value child ("StoreLocal
+                        // expected a value-producing child", every
+                        // `repeat {} while` in t/nqp/014-while.t, 2026-09-08).
+                        beginSink();
+                        walk(bodyAt, true);
+                        endSink();
+                    }
                     b.beginWhile();
                     walkCond(condAt, condType, until, true);
                     beginSink();
@@ -284,6 +318,47 @@ final class NqpProgramBuilder {
                     b.emitSetCurHandler(outerIdx);
                     b.beginLoopLastUnwind(lastId, outerIdx);
                     if (labelLocal != null) b.emitLoadLocal(labelLocal); else b.emitLoadNull();
+                    b.emitLoadException();
+                    b.endLoopLastUnwind();
+                    b.endBlock();
+                }
+                b.endTryCatch();
+                b.emitLoadNull();
+                b.endBlock();
+                return endAt;
+            }
+            case NqpWire.FORLOOP: {
+                // nqp::for: LOOPH's shape (unlabeled, no repeat, no next-expr)
+                // with the iteration split into a fetch (pre) that runs once
+                // per iteration and a call (body) that the redo loop re-runs.
+                int condType = code[at + 1];
+                int lastId = code[at + 2];
+                int nrId = code[at + 3];
+                int outerIdx = code[at + 4];
+                int condAt = at + 5;
+                int preAt = walk(condAt, false);
+                int bodyAt = walk(preAt, false);
+                int endAt = walk(bodyAt, false);
+                if (!emit) return endAt;
+
+                BytecodeLocal redoL = b.createLocal();
+                b.beginBlock();
+                b.beginTryCatch();
+                {   // try: the loop itself, cond and all, under lastId.
+                    b.beginBlock();
+                    b.emitSetCurHandler(lastId);
+                    b.beginWhile();
+                    walkCond(condAt, condType, 0, true);
+                    emitForBody(redoL, preAt, bodyAt, nrId, lastId);
+                    b.endWhile();
+                    b.emitSetCurHandler(outerIdx);
+                    b.endBlock();
+                }
+                {   // catch: a LAST aimed here ends the loop quietly.
+                    b.beginBlock();
+                    b.emitSetCurHandler(outerIdx);
+                    b.beginLoopLastUnwind(lastId, outerIdx);
+                    b.emitLoadNull();
                     b.emitLoadException();
                     b.endLoopLastUnwind();
                     b.endBlock();
@@ -436,7 +511,7 @@ final class NqpProgramBuilder {
                 if (emit) {
                     b.endDispatchOp();
                     b.endStoreLocal();
-                    if (!NO_SUSPEND) emitSuspendCheck(dres);
+                    emitSuspendCheck(dres);
                     b.emitLoadLocal(dres);
                     b.endBlock();
                 }
@@ -451,29 +526,22 @@ final class NqpProgramBuilder {
                 // a Proxy FETCH, a handler); all sites carry the suspension
                 // tail, and the token check speculates to false in compiled
                 // code.
-                boolean suspendable = !NO_SUSPEND;
-                BytecodeLocal ores = emit && suspendable ? b.createLocal() : null;
-                if (emit && suspendable) {
+                BytecodeLocal ores = emit ? b.createLocal() : null;
+                if (emit) {
                     b.beginBlock();
                     b.beginStoreLocal(ores);
                 }
-                // getattr/bindattr get a per-instruction slot cache; see
-                // NqpOps.AttrSite. Same suspension wrapper as any table op.
-                boolean attrGet = id == NqpOps.OP_GETATTR && nargs == 3;
-                boolean attrBind = id == NqpOps.OP_BINDATTR && nargs == 4;
-                if (emit) {
-                    if (attrGet) b.beginGetAttrOp(new NqpOps.AttrSite());
-                    else if (attrBind) b.beginBindAttrOp(new NqpOps.AttrSite());
-                    else b.beginRunOp(id);
-                }
+                // The ops with a per-instruction site: getattr/bindattr
+                // (NqpOps.AttrSite) and the type-check family (NqpTypeOps,
+                // jesp diamond 3). Chosen here, at load: no wire format or
+                // setting recompile is involved. Same suspension wrapper as
+                // any table op.
+                Op op = dedicatedOp(id, nargs);
+                if (emit) beginOp(op, id);
                 at += 3;
                 for (int i = 0; i < nargs; i++) at = walk(at, emit);
+                if (emit) endOp(op);
                 if (emit) {
-                    if (attrGet) b.endGetAttrOp();
-                    else if (attrBind) b.endBindAttrOp();
-                    else b.endRunOp();
-                }
-                if (emit && suspendable) {
                     b.endStoreLocal();
                     emitSuspendCheck(ores);
                     b.emitLoadLocal(ores);
@@ -489,16 +557,25 @@ final class NqpProgramBuilder {
                 boolean tcArg = code[at + 5] != 0;
                 int nargs = code[at + 6];
                 at += 7 + nargs;   // the arg types are informational here
-                boolean suspendable = !NO_SUSPEND;
-                BytecodeLocal ores = emit && suspendable ? b.createLocal() : null;
-                if (emit && suspendable) {
+                BytecodeLocal ores = emit ? b.createLocal() : null;
+                if (emit) {
                     b.beginBlock();
                     b.beginStoreLocal(ores);
                 }
-                if (emit) b.beginClassLibOp(rtype, new NqpOps.ClassLibSite(cls, meth, desc, tcArg, nargs));
+                // A classlib op with a per-instruction site (jesp diamond 6:
+                // hllize). The JVM compiler maps these by name onto Ops, so
+                // the choice is by name too, again at load.
+                Op cop = dedicatedClasslib(cls, meth, nargs);
+                if (emit) {
+                    if (cop != null) beginOp(cop, -1);
+                    else b.beginClassLibOp(rtype, new NqpOps.ClassLibSite(cls, meth, desc, tcArg, nargs));
+                }
                 for (int i = 0; i < nargs; i++) at = walk(at, emit);
-                if (emit) b.endClassLibOp();
-                if (emit && suspendable) {
+                if (emit) {
+                    if (cop != null) endOp(cop);
+                    else b.endClassLibOp();
+                }
+                if (emit) {
                     b.endStoreLocal();
                     emitSuspendCheck(ores);
                     b.emitLoadLocal(ores);
@@ -534,6 +611,89 @@ final class NqpProgramBuilder {
         }
     }
 
+    /* ----- table ops with a dedicated operation ----- */
+
+    private enum Op { RUN, GETATTR, BINDATTR, DECONT, ISNULL, ISCONCRETE, ISTYPE, HLLIZE, P6SINK, ASSERTPARAMCHECK, P6TYPECHECKRV, CREATE,
+                      INT_BIN, INT_UN, NUM_BIN, NUM_CMP, NUM_NEG, BIGINT_ARITH }
+
+    /** Which operation a classlib op becomes; null is the method-handle road. */
+    private static Op dedicatedClasslib(String cls, String meth, int nargs) {
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("hllize") && nargs == 1) return Op.HLLIZE;
+        return null;
+    }
+
+    /** Which operation a table op becomes; RUN is the generic road. */
+    private static Op dedicatedOp(int id, int nargs) {
+        switch (NqpNativeOps.kindOf(id, nargs)) {
+            case NqpNativeOps.INT_BIN: return Op.INT_BIN;
+            case NqpNativeOps.INT_UN: return Op.INT_UN;
+            case NqpNativeOps.NUM_BIN: return Op.NUM_BIN;
+            case NqpNativeOps.NUM_CMP: return Op.NUM_CMP;
+            case NqpNativeOps.NUM_NEG: return Op.NUM_NEG;
+            default: break;
+        }
+        if (id == NqpOps.OP_GETATTR && nargs == 3) return Op.GETATTR;
+        if (id == NqpOps.OP_BINDATTR && nargs == 4) return Op.BINDATTR;
+        if (id == NqpOps.OP_DECONT && nargs == 1) return Op.DECONT;
+        if (id == NqpOps.OP_ISNULL && nargs == 1) return Op.ISNULL;
+        if (id == NqpOps.OP_ISCONCRETE && nargs == 1) return Op.ISCONCRETE;
+        if (id == NqpOps.OP_ISTYPE && nargs == 2) return Op.ISTYPE;
+        if (id == NqpOps.OP_HLLIZE && nargs == 1) return Op.HLLIZE;
+        if (id == NqpOps.OP_P6SINK && nargs == 1) return Op.P6SINK;
+        if (id == NqpOps.OP_ASSERTPARAMCHECK && nargs == 1) return Op.ASSERTPARAMCHECK;
+        if (id == NqpOps.OP_P6TYPECHECKRV && nargs == 3) return Op.P6TYPECHECKRV;
+        if (id == NqpOps.OP_CREATE && nargs == 1) return Op.CREATE;
+        if ((id == NqpOps.OP_ADD_I_BIG || id == NqpOps.OP_SUB_I_BIG || id == NqpOps.OP_MUL_I_BIG) && nargs == 3)
+            return Op.BIGINT_ARITH;
+        return Op.RUN;
+    }
+
+    private void beginOp(Op op, int id) {
+        switch (op) {
+            case RUN -> b.beginRunOp(id);
+            case GETATTR -> b.beginGetAttrOp(new NqpOps.AttrSite());
+            case BINDATTR -> b.beginBindAttrOp(new NqpOps.AttrSite());
+            case DECONT -> b.beginDecontOp(new NqpTypeOps.DecontSite());
+            case ISNULL -> b.beginIsNullOp();
+            case ISCONCRETE -> b.beginIsConcreteOp(new NqpTypeOps.IsConcreteSite());
+            case ISTYPE -> b.beginIsTypeOp(new NqpTypeOps.IsTypeSite());
+            case HLLIZE -> b.beginHllizeOp(new NqpTypeOps.HllizeSite());
+            case P6SINK -> b.beginP6SinkOp(new NqpTypeOps.SinkSite());
+            case ASSERTPARAMCHECK -> b.beginAssertParamCheckOp();
+            case P6TYPECHECKRV -> b.beginP6TypeCheckRvOp(new NqpTypeOps.RvCheckSite());
+            case CREATE -> b.beginCreateOp(new NqpTypeOps.CreateSite());
+            case INT_BIN -> b.beginIntBinOp(id);
+            case INT_UN -> b.beginIntUnOp(id);
+            case NUM_BIN -> b.beginNumBinOp(id);
+            case NUM_CMP -> b.beginNumCmpOp(id);
+            case NUM_NEG -> b.beginNumNegOp();
+            case BIGINT_ARITH -> b.beginBigIntArithOp(new NqpTypeOps.BigIntSite(), id);
+        }
+    }
+
+    private void endOp(Op op) {
+        switch (op) {
+            case RUN -> b.endRunOp();
+            case GETATTR -> b.endGetAttrOp();
+            case BINDATTR -> b.endBindAttrOp();
+            case DECONT -> b.endDecontOp();
+            case ISNULL -> b.endIsNullOp();
+            case ISCONCRETE -> b.endIsConcreteOp();
+            case ISTYPE -> b.endIsTypeOp();
+            case HLLIZE -> b.endHllizeOp();
+            case P6SINK -> b.endP6SinkOp();
+            case ASSERTPARAMCHECK -> b.endAssertParamCheckOp();
+            case P6TYPECHECKRV -> b.endP6TypeCheckRvOp();
+            case CREATE -> b.endCreateOp();
+            case INT_BIN -> b.endIntBinOp();
+            case INT_UN -> b.endIntUnOp();
+            case NUM_BIN -> b.endNumBinOp();
+            case NUM_CMP -> b.endNumCmpOp();
+            case NUM_NEG -> b.endNumNegOp();
+            case BIGINT_ARITH -> b.endBigIntArithOp();
+        }
+    }
+
     /** A condition child, wrapped in typed truthiness (negated for until). */
     private int walkCond(int at, int condType, int negate, boolean emit) {
         if (emit) b.beginTruthy(condType, negate);
@@ -562,7 +722,9 @@ final class NqpProgramBuilder {
             b.emitCheckArity(required, accepted);
             b.endStoreLocal();
             b.beginStoreLocal(argsL);
-            b.emitFlatArgs();
+            b.beginFlatArgs();
+            b.emitLoadLocal(csdL);
+            b.endFlatArgs();
             b.endStoreLocal();
         }
         int posIdx = 0;
@@ -759,6 +921,67 @@ final class NqpProgramBuilder {
             endSink();
         }
         b.endBlock();
+    }
+
+    /**
+     * One iteration of a for loop (W_FORLOOP): [pre; body] under nrId once,
+     * then body alone for as long as a REDO unwind keeps re-arming it. The
+     * first pass sets the flag to 0 ahead and lets the catch arm overwrite
+     * it (1 for REDO, 0 for NEXT), so a normal iteration never enters the
+     * redo loop; `body` is walked twice, once per emission site, as the
+     * repeat_ loops duplicate theirs.
+     */
+    private void emitForBody(BytecodeLocal redoL, int preAt, int bodyAt, int nrId, int lastId) {
+        b.beginBlock();
+        b.beginStoreLocal(redoL);
+        b.emitLoadConstant(0L);
+        b.endStoreLocal();
+        emitForPass(redoL, preAt, bodyAt, nrId, lastId);
+        b.beginWhile();
+        b.beginNonZero();
+        b.emitLoadLocal(redoL);
+        b.endNonZero();
+        {
+            b.beginBlock();
+            b.beginStoreLocal(redoL);
+            b.emitLoadConstant(0L);
+            b.endStoreLocal();
+            emitForPass(redoL, -1, bodyAt, nrId, lastId);
+            b.endBlock();
+        }
+        b.endWhile();
+        b.endBlock();
+    }
+
+    /** A guarded [pre;] body run under nrId; the catch arm routes NEXT/REDO into redoL. */
+    private void emitForPass(BytecodeLocal redoL, int preAt, int bodyAt, int nrId, int lastId) {
+        b.beginTryCatch();
+        {
+            b.beginBlock();
+            b.emitSetCurHandler(nrId);
+            if (preAt >= 0) {
+                beginSink();
+                walk(preAt, true);
+                endSink();
+            }
+            beginSink();
+            walk(bodyAt, true);
+            endSink();
+            b.emitSetCurHandler(lastId);
+            b.endBlock();
+        }
+        {   // catch: route NEXT/REDO, rethrow the rest.
+            b.beginBlock();
+            b.emitSetCurHandler(lastId);
+            b.beginStoreLocal(redoL);
+            b.beginLoopBodyUnwind(nrId, lastId);
+            b.emitLoadNull();
+            b.emitLoadException();
+            b.endLoopBodyUnwind();
+            b.endStoreLocal();
+            b.endBlock();
+        }
+        b.endTryCatch();
     }
 
     /** Discards the value the wrapped child leaves. */
