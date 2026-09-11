@@ -12,8 +12,9 @@ import com.oracle.truffle.api.library.ExportLibrary;
 import com.oracle.truffle.api.library.ExportMessage;
 
 /**
- * The Truffle language general NQP/Raku code runs in — the target of the
- * jast2bc-to-Truffle migration (docs/jvm-truffle-migration.md in rakudo).
+ * The Truffle language general NQP/Raku code runs in — and, since the
+ * class road was deleted, the only road it runs on (the migration that
+ * got it here is history: docs/jvm-truffle-migration.md in rakudo).
  * The grammar engine's {@link RxLanguage} stays its own language: its parse
  * builds matchers, and the two coverage stories grow independently.
  *
