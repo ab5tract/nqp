@@ -285,11 +285,14 @@ The three standalone `main()` harnesses (`RxCheck`, `RxBench`,
 `RxDescriptorCheck`) stay Java as well, for no better reason than that they
 are test scaffolding and moving them would risk the tests to gain nothing.
 
-Gradle handles the mix (Kotlin compiles first, Java against its output), but
-note the harness tasks need `kotlin-stdlib` on their classpath explicitly —
-it cannot come from `runtimeClasspath` wholesale, because that also carries
-the Truffle jars, which have to resolve as *modules*. In a real run the
-stdlib is already on nqp's boot classpath next to `nqp-runtime`.
+Gradle handles the mix (Kotlin compiles first, Java against its output). The
+harness tasks' class path is `runtimeClasspath` minus the jars
+`truffleModules` resolves, so the Truffle jars stay module-path-only (on the
+class path Truffle silently runs interpreted) while `nqp-runtime` and the
+Kotlin stdlib — which a real run has on nqp's boot classpath — stay on the
+class path. An allow-list of `kotlin-stdlib` used to stand here; it rotted
+the first time the engine's class initialisers reached into `nqp-runtime`
+(the NFG commit) and three harnesses died silently for weeks.
 
 ## Semantics that must match NQP exactly
 
