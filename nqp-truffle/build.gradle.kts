@@ -16,10 +16,12 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
  * a kapt round trip on every build plus `allopen` to defeat Kotlin's
  * final-by-default.
  *
- * What stays Java is `RxLanguage`, and only because
- * `@TruffleLanguage.Registration` and `@ExportLibrary` genuinely are
- * annotation-processed: the polyglot machinery finds a language through a
- * generated provider, so that one file earns its processor.
+ * What stays Java is `NqpLanguage` -- the one registered language, code
+ * and regexes alike -- and only because `@TruffleLanguage.Registration`
+ * and `@ExportLibrary` genuinely are annotation-processed: the polyglot
+ * machinery finds a language through a generated provider, so that one
+ * file earns its processor. (`NqpRootNode` is Java for the Bytecode DSL,
+ * the same reason.)
  */
 plugins {
     java

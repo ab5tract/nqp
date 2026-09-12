@@ -17,8 +17,10 @@ interface CodeEngine {
     /**
      * Turns one encoded block program into something runnable. Called once
      * per program; the result is opaque here and handed back to [run].
+     * [name] is the block's name -- what the program's Source is called in
+     * compilation traces and statistics.
      */
-    fun compile(encoded: String): Any
+    fun compile(encoded: String, name: String): Any
 
     /**
      * Runs one compiled block body inside the frame the caller built.
@@ -95,7 +97,7 @@ object CodeEngines {
         val engine = engine ?: throw IllegalStateException(
             "this code was compiled with the code engine, which is not available at run time:" +
             " the truffle module is missing from the class path.")
-        val program = programs.computeIfAbsent(encoded) { engine.compile(it) }
+        val program = programs.computeIfAbsent(encoded) { engine.compile(it, cf.codeRef?.name ?: "<anon>") }
         if (trace) System.err.println("code> " + (cf.codeRef?.name ?: "<anon>"))
         /* Let a dispatch that resolves to this block skip the stub next
          * time (see StaticCodeInfo.engineTarget). One program per encoded
@@ -121,7 +123,9 @@ object CodeEngines {
         val engine = engine ?: return null
         synchronized(sci) {
             sci.engineTarget?.let { return it }
-            val program = programs.computeIfAbsent(sci.compUnit.engineProgram(sci.programIndex)) { engine.compile(it) }
+            val program = programs.computeIfAbsent(sci.compUnit.engineProgram(sci.programIndex)) {
+                engine.compile(it, sci.methodName ?: "<anon>")
+            }
             sci.engineTarget = program
             return program
         }

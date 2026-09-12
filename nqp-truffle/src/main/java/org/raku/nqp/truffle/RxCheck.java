@@ -37,10 +37,10 @@ public final class RxCheck {
 
     public static void main(String[] args) {
         int bad = 0;
-        try (Context ctx = Context.newBuilder(RxLanguage.ID).build()) {
+        try (Context ctx = Context.newBuilder(NqpLanguage.ID).build()) {
             for (Case c : CASES) {
                 Value matcher = ctx.eval(
-                    Source.newBuilder(RxLanguage.ID, c.pattern(), "rx").buildLiteral());
+                    Source.newBuilder(NqpLanguage.ID, c.pattern(), "rx").buildLiteral());
                 int got = matcher.execute(c.input(), 0).asInt();
 
                 var m = Pattern.compile(c.pattern()).matcher(c.input());
