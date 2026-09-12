@@ -14,7 +14,7 @@ import java.util.regex.Pattern;
  * more than it sounds: the matcher root currently fails compilation with
  * "Too deep inlining" because quantifier repetition is recursive, so the
  * numbers below are of interpreted code. A trace line saying "opt failed"
- * for MatchRootNode means the measurement is not of the compiled engine.
+ * for RxMatchRootNode means the measurement is not of the compiled engine.
  *
  * <p>It asserts that the run is actually optimized before reporting a
  * number. Both ways this can silently not be true -- the fallback
@@ -45,14 +45,14 @@ public final class RxBench {
         for (int i = 0; i < 4000; i++) sb.append("abcbcd xyz42 hello world ");
         String input = sb.toString();
 
-        try (Context ctx = Context.newBuilder(RxLanguage.ID)
+        try (Context ctx = Context.newBuilder(NqpLanguage.ID)
                 .allowExperimentalOptions(true)
                 .option("engine.CompileImmediately", "true")
                 .option("engine.TraceCompilation", System.getenv("RX_TRACE") != null ? "true" : "false")
                 .build()) {
             System.out.println("-- per position from the host, one interop call each --");
             for (String pattern : PATTERNS) {
-                Value matcher = ctx.eval(Source.newBuilder(RxLanguage.ID, pattern, "rx").buildLiteral());
+                Value matcher = ctx.eval(Source.newBuilder(NqpLanguage.ID, pattern, "rx").buildLiteral());
                 long truffle = bestOf(() -> scan(matcher, input));
                 long java = bestOf(() -> scanJava(Pattern.compile(pattern), input));
                 System.out.printf("%-18s truffle %6.2f ms   java.util.regex %6.2f ms   ratio %.2fx%n",
@@ -72,7 +72,7 @@ public final class RxBench {
                  * it at once and the measurement is of nothing. */
                 String haystack = "-".repeat(200_000) + tailFor(pattern);
                 Value matcher = ctx.eval(
-                    Source.newBuilder(RxLanguage.ID, "(?scan)" + pattern, "rx").buildLiteral());
+                    Source.newBuilder(NqpLanguage.ID, "(?scan)" + pattern, "rx").buildLiteral());
                 Pattern compiled = Pattern.compile(pattern);
                 long truffle = bestOf(() -> matcher.execute(haystack, 0));
                 long java = bestOf(() -> compiled.matcher(haystack).find());

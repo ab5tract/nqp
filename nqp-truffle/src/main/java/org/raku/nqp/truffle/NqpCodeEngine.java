@@ -1,15 +1,11 @@
 package org.raku.nqp.truffle;
 
 import com.oracle.truffle.api.CallTarget;
-import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.bytecode.ContinuationResult;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
-
-import org.graalvm.polyglot.Context;
-import org.graalvm.polyglot.Source;
 
 import org.raku.nqp.runtime.CallFrame;
 import org.raku.nqp.runtime.CallSiteDescriptor;
@@ -19,22 +15,16 @@ import org.raku.nqp.runtime.ThreadContext;
 
 /**
  * The code engine as the rest of NQP sees it — the general-code analog of
- * {@link TruffleGrammarEngine}, looked up by name from {@code CodeEngines}
+ * {@code NqpGrammarEngine}, looked up by name from {@code CodeEngines}
  * in nqp-runtime; the class name is load-bearing and must not move
- * package. One polyglot context for the process, created on first use,
- * shared shape with the grammar engine's for the same reasons (a root
- * node outside a context is never queued for compilation).
+ * package. Programs are parsed in the process's one polyglot context
+ * ({@link NqpPolyglot}), the same one the grammar engine's matchers live in.
  */
 public final class NqpCodeEngine implements CodeEngine {
 
     @Override
-    public Object compile(String encoded) {
-        Holder.CONTEXT.eval(Source.newBuilder(NqpLanguage.ID, encoded, "nqp-code").buildLiteral());
-        CallTarget target = NqpLanguage.PARSED.get(encoded);
-        if (target == null)
-            throw new IllegalStateException("the language parsed no program for: "
-                + encoded.substring(0, Math.min(encoded.length(), 60)));
-        return target;
+    public Object compile(String encoded, String name) {
+        return NqpPolyglot.compile(encoded, name);
     }
 
     @Override
@@ -248,27 +238,5 @@ public final class NqpCodeEngine implements CodeEngine {
                 new Object[] { cr2, token.rtype, token.finish }, cf);
         }
         cf.leave();
-    }
-
-    private static final class Holder {
-        static final Context CONTEXT = Context.newBuilder(NqpLanguage.ID)
-            .allowExperimentalOptions(true)
-            .build();
-
-        static {
-            /* NQP_CODE_CLOSE_AT_EXIT=1: close the context at JVM exit so
-             * engine-close reports (engine.CompilationStatistics) print. */
-            if (System.getenv("NQP_CODE_CLOSE_AT_EXIT") != null)
-                Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                    try { CONTEXT.close(true); } catch (Throwable t) { t.printStackTrace(); }
-                }));
-            String runtime = Truffle.getRuntime().getName();
-            if (!runtime.contains("GraalVM")) {
-                System.err.println(
-                    "nqp: Truffle runtime is '" + runtime + "', not an optimizing one;"
-                    + " engine-run code will be slow."
-                    + " Check --module-path and --add-modules on the runner.");
-            }
-        }
     }
 }
