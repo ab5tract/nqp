@@ -1,34 +1,22 @@
 package org.raku.nqp.runtime
 
 import java.lang.invoke.MethodHandles
-import java.lang.invoke.MethodType
 
 /**
- * The unit behind a generated Java-interop adaptor class: one code ref per
- * static qb_N callout, built from a method handle bound to this unit (the
- * callouts take the unit as their first argument, as every block entry
- * does). No reflection over annotations, no generated subclass of
- * CompilationUnit: the same road KnowHOWMethods takes.
+ * The unit behind a Java-interop adaptor: one code ref per plan, built from
+ * JavaCallout.INVOKE with the plan bound in. No generated class, no
+ * reflection over annotations: the same road KnowHOWMethods takes.
  */
 class AdaptorUnit(
-    private val cls: Class<*>,
-    private val descriptors: List<String>,
+    private val plans: List<CalloutPlan>,
     private val target: String,
 ) : CompilationUnit() {
     override fun getCodeRefs(): Array<CodeRef> {
-        val l = MethodHandles.lookup()
         val snull: Array<String>? = null
         val hnull = arrayOf<LongArray>()
-        val mt = MethodType.methodType(Void.TYPE, CompilationUnit::class.java,
-            ThreadContext::class.java, CodeRef::class.java,
-            CallSiteDescriptor::class.java, Array<Any?>::class.java)
-        return Array(descriptors.size) { i ->
-            val name = "callout $target ${descriptors[i]}"
-            val mh = try {
-                l.findStatic(cls, "qb_$i", mt).bindTo(this)
-            } catch (e: ReflectiveOperationException) {
-                throw RuntimeException(e)
-            }
+        return Array(plans.size) { i ->
+            val name = "callout $target ${plans[i].descriptor}"
+            val mh = MethodHandles.insertArguments(JavaCallout.INVOKE, 0, plans[i])
             CodeRef(this, mh, name, name, snull, snull, snull, snull, hnull, 0.toShort())
         }
     }
@@ -37,5 +25,5 @@ class AdaptorUnit(
 
     override fun hllName(): String = ""
 
-    override fun unitId(): String = cls.name
+    override fun unitId(): String = "adaptor:$target"
 }
