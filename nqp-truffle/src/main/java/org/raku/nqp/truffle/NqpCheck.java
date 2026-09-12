@@ -8,9 +8,10 @@ import com.oracle.truffle.api.Truffle;
 
 /**
  * Smoke-checks the Bytecode DSL interpreter: the generated tiers execute,
- * locals and loops answer right, and a program survives the
- * serialize/deserialize round trip. Run via the {@code nqpcheck} Gradle
- * task, which stages the Truffle jars as modules the way a real run does.
+ * locals and loops answer right, and an encoded program off the wire runs
+ * through its raw call target the way the code engine runs one. Run via the
+ * {@code nqpcheck} Gradle task, which stages the Truffle jars as modules the
+ * way a real run does.
  */
 public final class NqpCheck {
 
@@ -39,8 +40,6 @@ public final class NqpCheck {
                 sum += add.execute(i, 1).asLong();
             }
             check("warm add", sum, 200_000L * 199_999 / 2 + 200_000);
-            Value serial = ctx.eval(Source.create(NqpLanguage.ID, "code-test:serial"));
-            check("serialized fib", serial.execute(30).asLong(), 832040);
 
             // The wire road: the same fib arriving as an encoded program,
             // the way the QAST encoder sends one, run through the raw call
@@ -68,12 +67,17 @@ public final class NqpCheck {
         c.add(NqpWire.VERSION);
         c.add(NqpWire.T_INT);                       // result type
         c.add(4);                                   // locals: a c i t
+        /* needsFrame: pure int ops over locals, so the block is frame-free
+         * (and language-free). The word joined the header in 00eaa1690. */
+        c.add(0);
         for (int i = 0; i < 4; i++) c.add(NqpWire.T_INT);
         c.add(NqpWire.STMTS); c.add(5);
         locbind(c, 0, NqpWire.IVAL, 0);             // a := 0
         locbind(c, 1, NqpWire.IVAL, 1);             // c := 1
         locbind(c, 2, NqpWire.IVAL, 2);             // i := 30
-        c.add(NqpWire.LOOP); c.add(0); c.add(0); c.add(NqpWire.T_INT);
+        // LOOP until repeat hasNext condType cond body: a while loop with
+        // no NEXT-expr, so hasNext is 0.
+        c.add(NqpWire.LOOP); c.add(0); c.add(0); c.add(0); c.add(NqpWire.T_INT);
         opcall2(c, NqpOps.OP_ISGT_I);               // while i > 0
         locget(c, 2);
         c.add(NqpWire.IVAL); c.add(0);

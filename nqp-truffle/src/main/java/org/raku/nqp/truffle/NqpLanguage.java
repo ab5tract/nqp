@@ -99,39 +99,12 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
     private CallTarget canned(String which) {
         BytecodeParser<NqpRootNodeGen.Builder> parser = switch (which) {
             case "add" -> NqpLanguage::buildAdd;
-            case "fib", "serial" -> NqpLanguage::buildFib;
+            case "fib" -> NqpLanguage::buildFib;
             default -> throw new IllegalArgumentException("no canned program " + which);
         };
         BytecodeRootNodes<NqpRootNode> nodes =
             NqpRootNodeGen.create(this, BytecodeConfig.DEFAULT, parser);
-        if (which.equals("serial")) {
-            nodes = roundTrip(nodes);
-        }
         return nodes.getNode(0).getCallTarget();
-    }
-
-    /**
-     * Serializes a program and reads it back, which is the whole of the
-     * precompilation story in miniature: what travels in a jar in Phase 4
-     * is exactly this byte stream. Constants are longs today; the encoder's
-     * wire format decides the real tag set when it lands.
-     */
-    private BytecodeRootNodes<NqpRootNode> roundTrip(BytecodeRootNodes<NqpRootNode> nodes) {
-        try {
-            var bytes = new java.io.ByteArrayOutputStream();
-            nodes.serialize(new java.io.DataOutputStream(bytes), (ctx, out, obj) -> {
-                if (obj instanceof Long l) {
-                    out.writeLong(l);
-                } else {
-                    throw new java.io.IOException("unserializable constant: " + obj);
-                }
-            });
-            var in = new java.io.DataInputStream(new java.io.ByteArrayInputStream(bytes.toByteArray()));
-            return NqpRootNodeGen.deserialize(this, BytecodeConfig.DEFAULT,
-                () -> in, (ctx, input) -> input.readLong());
-        } catch (java.io.IOException e) {
-            throw new RuntimeException(e);
-        }
     }
 
     /** arg0 + arg1 */
