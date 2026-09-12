@@ -36,6 +36,19 @@ abstract class VarArityPlan(descriptor: String) : CalloutPlan(descriptor) {
     abstract fun run(tc: ThreadContext, cf: CallFrame, csd: CallSiteDescriptor, args: Array<Any?>)
 }
 
+/** The stand-in for a member whose handle could not be unreflected -- a
+ *  public member of a class the lookup may not reach (a non-public or
+ *  unexported declaring class). The plan exists so that one such member
+ *  does not cost its whole class its interop: every other member keeps its
+ *  road, and this one dies when it is actually called, naming itself. Any
+ *  arity is accepted, so the failure is the access one and not a confusing
+ *  arity mismatch. */
+class UnusablePlan(descriptor: String, private val why: String) : VarArityPlan(descriptor) {
+    override fun run(tc: ThreadContext, cf: CallFrame, csd: CallSiteDescriptor, args: Array<Any?>) {
+        throw ExceptionHandling.dieInternal(tc, "Java interop: cannot access " + descriptor + " (" + why + ")")
+    }
+}
+
 /** How one Java parameter is read out of the Raku argument list. The cases
  *  are BootJavaInterop.marshalOut's, one class each. */
 sealed class ArgMarshal {
