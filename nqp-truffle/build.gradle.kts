@@ -106,22 +106,26 @@ tasks.compileJava {
 
 /*
  * Running needs the Truffle jars as MODULES, with the engine's own classes
- * on the classpath. On the classpath Truffle finds no compiler and falls
- * back to its interpreter, which measures as "Truffle is slow" rather than
- * failing outright, so the harness also asserts the runtime name.
+ * and everything they call on the class path. On the class path Truffle
+ * finds no compiler and falls back to its interpreter, which measures as
+ * "Truffle is slow" rather than failing outright, so the harness also
+ * asserts the runtime name; and a jar on BOTH paths becomes a second,
+ * unrelated copy of every class it holds.
  *
- * The engine is Kotlin, so running any of the harnesses below needs the
- * Kotlin runtime. It cannot come from `runtimeClasspath` wholesale: that
- * carries the Truffle jars, which have to resolve as MODULES and become a
- * second unrelated copy of every class if they are also on the class path.
- * In a real run the stdlib is already on nqp's boot classpath, next to
- * nqp-runtime, which is Kotlin too.
+ * So the harness class path is `runtimeClasspath` minus exactly the jars
+ * `truffleModules` resolves -- a deny-list of the one thing that must not
+ * be there, rather than an allow-list of what is wanted. It was an
+ * allow-list (kotlin-stdlib and its annotations) until 2026-09-11, which
+ * silently stopped being enough when the engine grew a call into
+ * nqp-runtime's NFG synthetics at class-initialization time: every
+ * harness then died in `RxProgram.<clinit>` on a NoClassDefFoundError.
+ * What the deny-list leaves in is what a real run has on nqp's boot
+ * classpath anyway -- nqp-runtime, the Kotlin stdlib, and the third-party
+ * jars they need.
  */
-val kotlinRuntime: FileCollection = configurations.runtimeClasspath.get().filter {
-    it.name.startsWith("kotlin-stdlib") || it.name.startsWith("annotations-")
-}
+val harnessRuntime: FileCollection = configurations.runtimeClasspath.get().minus(truffleModules)
 
-fun harnessClasspath(): FileCollection = sourceSets["main"].output + kotlinRuntime
+fun harnessClasspath(): FileCollection = sourceSets["main"].output + harnessRuntime
 
 tasks.register<JavaExec>("bench") {
     group = "verification"
