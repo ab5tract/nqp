@@ -11,8 +11,6 @@
  */
 object NqpDeps {
     val thirdParty = listOf(
-        "org.ow2.asm:asm:9.10.1",
-        "org.ow2.asm:asm-tree:9.10.1",
         "it.unimi.dsi:fastutil:8.5.19",
         "org.jline:jline:4.3.1",
         "org.lz4:lz4-java:1.8.0",
@@ -24,7 +22,7 @@ object NqpDeps {
     /** Module-name order for sorting resolved jar files back into
      *  THIRDPARTY_JARS order (Gradle resolution orders dependencies first). */
     val moduleOrder = listOf(
-        "asm", "asm-tree", "fastutil", "jline", "lz4-java",
+        "fastutil", "jline", "lz4-java",
         "kotlin-stdlib", "annotations",
     )
 
@@ -36,12 +34,8 @@ object NqpDeps {
         return idx
     }
 
-    /** The runner bootclasspath omits asm-tree, mirroring
+    /** The runner bootclasspath, in THIRDPARTY_JARS order; it mirrors
      *  tools/templates/jvm/nqp-j.in. */
-    /* asm-tree IS included, unlike the Makefile runner's jar list. It was
-     * needed by the >64KB-method fallback of the deleted bytecode writer;
-     * no runtime class reads the ASM tree API any more, so the entry is
-     * vestigial and a later cleanup can drop it. */
     fun runnerJars(fileNames: List<String>): List<String> =
         fileNames.sortedBy(::orderKey)
 }

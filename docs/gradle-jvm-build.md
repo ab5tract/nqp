@@ -105,13 +105,9 @@ The JVM backend was modernized off its 2012-era pins:
   because it inspected just the leading character — and the
   autosplit-on-oversized-method retry matched the typed
   `MethodTooLargeException` instead of ASM 4's exception message string.
-  ASM itself stays, for `P6Opaque`'s generated attribute-storage classes
-  and the Java-interop adaptors.
+  No runtime class generation remains; ASM is not a dependency
+  (milestone 5, 2026-09).
 - **`javac --release 9` → `--release 25`**; Kotlin `jvmTarget` 25.
-- **Emitted bytecode V1_7 → V25**, centralized in `BytecodeVersion`
-  (2026-08 it lived in `org.raku.nqp.jast2bc`; since the class road went it
-  is `org.raku.nqp.runtime.BytecodeVersion`, and its only readers are
-  `BootJavaInterop` and the P6Opaque/C-struct REPRs).
 - **`sun.misc.Unsafe` eliminated from NQP's runtime**: P6Opaque atomic
   attribute ops use `VarHandle`; the obsolete `Ops.disableWarning` hack
   (targeting a class removed in JDK 17) was deleted. Remaining Unsafe noise

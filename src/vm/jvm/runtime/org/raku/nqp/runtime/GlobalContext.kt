@@ -194,12 +194,6 @@ class GlobalContext {
      */
     @JvmField var noisyExceptions = false
 
-    /**
-     * The global ByteClassLoader instance, used to load classes generated at
-     * runtime.
-     */
-    @JvmField var byteClassLoader: ByteClassLoader
-
     /** Redirected output for eval-server. */
     @JvmField var out: PrintStream
     /** Redirected error for eval-server. */
@@ -296,8 +290,6 @@ class GlobalContext {
         hllGlobalAllLock = Any()
 
         neverRepossess = WeakHashMap<SixModelObject, Any>()
-
-        byteClassLoader = ByteClassLoader(javaClass.getClassLoader())
     }
 
     /**
