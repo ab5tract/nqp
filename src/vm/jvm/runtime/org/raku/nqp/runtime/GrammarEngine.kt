@@ -65,7 +65,7 @@ interface GrammarEngine {
  * measure the engine should set.
  */
 object GrammarEngines {
-    private const val IMPL = "org.raku.nqp.truffle.TruffleGrammarEngine"
+    private const val IMPL = "org.raku.nqp.truffle.NqpGrammarEngine"
 
     private val required: Boolean = System.getenv("NQP_JVM_TRUFFLE") == "require"
 

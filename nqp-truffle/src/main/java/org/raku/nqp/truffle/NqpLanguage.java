@@ -8,28 +8,34 @@ import com.oracle.truffle.api.bytecode.BytecodeRootNodes;
 import com.oracle.truffle.api.interop.ArityException;
 import com.oracle.truffle.api.interop.InteropLibrary;
 import com.oracle.truffle.api.interop.TruffleObject;
+import com.oracle.truffle.api.interop.UnsupportedTypeException;
 import com.oracle.truffle.api.library.ExportLibrary;
 import com.oracle.truffle.api.library.ExportMessage;
 
 /**
- * The Truffle language general NQP/Raku code runs in — and, since the
- * class road was deleted, the only road it runs on (the migration that
- * got it here is history: docs/jvm-truffle-migration.md in rakudo).
- * The grammar engine's {@link RxLanguage} stays its own language: its parse
- * builds matchers, and the two coverage stories grow independently.
+ * The one Truffle language of NQP: general code and regexes both live in
+ * it. Code arrives already compiled -- the QAST backend encodes a block
+ * into a program at compile time ({@link NqpWire}) and a regex into a
+ * descriptor ({@code RxWire}) -- and parse only decodes and builds: a
+ * Bytecode DSL root for a program, an {@code RxMatchRootNode} for a
+ * descriptor. Nothing parses source text, except the harnesses' pattern
+ * road ({@link RxCheck}, {@link RxBench}), which hands a bare pattern to
+ * the regex parser.
  *
- * <p>Like the regex engine, code arrives here already compiled: the QAST
- * backend encodes a code object into a program at compile time, and this
- * language only decodes and runs it. Nothing parses source text.
+ * <p>Until 2026-09-11 the regex engine was a second registered language
+ * ({@code RxLanguage}, id {@code nqp-rx}) with its own polyglot context,
+ * so its matchers and the blocks calling them compiled in separate
+ * Engines. One language in one context ({@link NqpPolyglot}) makes the
+ * whole program one compilation world -- and is one language fewer for a
+ * native image to carry.
  *
- * <p>What parse accepts today is only the {@code code-test:} scaffolding the
- * skeleton harness ({@link NqpCheck}) drives; the encoder's wire form joins
- * it when Phase 2 puts real code on this road.
+ * <p>{@code code-test:} sources are the {@link NqpCheck} harness's canned
+ * programs.
  */
-@TruffleLanguage.Registration(id = NqpLanguage.ID, name = "NQP Code", version = "0.1")
+@TruffleLanguage.Registration(id = NqpLanguage.ID, name = "NQP", version = "0.1")
 public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
 
-    public static final String ID = "nqp-code";
+    public static final String ID = "nqp";
 
     public static final class Ctx { }
 
@@ -50,10 +56,11 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
     }
 
     /**
-     * The program call target for each source parsed, by source text —
-     * the same raw-CallTarget handoff the rx engine uses: eval answers a
-     * polyglot Value, and calling through one boxes everything, so the
-     * embedder ({@link NqpCodeEngine}) collects the target from here.
+     * The call target for each source parsed, by source text -- programs
+     * and matchers alike; their wire magics never collide. eval answers
+     * a polyglot Value, and calling through one boxes everything, so the
+     * embedders ({@link NqpCodeEngine}, {@code NqpGrammarEngine}, both
+     * through {@link NqpPolyglot}) collect the bare target from here.
      */
     static final java.util.concurrent.ConcurrentHashMap<String, CallTarget> PARSED =
         new java.util.concurrent.ConcurrentHashMap<>();
@@ -71,14 +78,17 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
             root.hllFree = p.hllFree();
             CallTarget target = root.getCallTarget();
             PARSED.put(source, target);
-            return new RxLanguage.ConstantRootNode(this, new Program(target)).getCallTarget();
+            return new ConstantRootNode(this, new Program(target)).getCallTarget();
         }
-        if (!source.startsWith("code-test:")) {
-            throw new IllegalArgumentException(
-                "nqp-code runs encoded programs (nqpp ...) and code-test: harness sources");
+        if (source.startsWith("code-test:")) {
+            CallTarget target = canned(source.substring("code-test:".length()));
+            return new ConstantRootNode(this, new Program(target)).getCallTarget();
         }
-        CallTarget target = canned(source.substring("code-test:".length()));
-        return new RxLanguage.ConstantRootNode(this, new Program(target)).getCallTarget();
+        /* Everything else is a regex: a descriptor the backend flattened,
+         * or a pattern for the harnesses (RxMatchRootNode tells them apart). */
+        CallTarget match = RxMatchRootNode.create(this, source);
+        PARSED.put(source, match);
+        return new ConstantRootNode(this, new Matcher(match)).getCallTarget();
     }
 
     /**
@@ -208,6 +218,36 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
                 widened[i] = args[i] instanceof Number n ? n.longValue() : args[i];
             }
             return target.call(widened);
+        }
+    }
+
+    /**
+     * What eval hands back for a regex source: an executable the harnesses
+     * call per target ({@code matcher.execute(input, pos)}). The engines
+     * never go through it -- they take the bare target from PARSED.
+     */
+    @ExportLibrary(InteropLibrary.class)
+    public static final class Matcher implements TruffleObject {
+        private final CallTarget target;
+
+        Matcher(CallTarget target) { this.target = target; }
+
+        public CallTarget callTarget() { return target; }
+
+        @ExportMessage boolean isExecutable() { return true; }
+
+        @ExportMessage Object execute(Object[] args) throws ArityException, UnsupportedTypeException {
+            if (args.length < 1 || args.length > 3) {
+                throw ArityException.create(1, 3, args.length);
+            }
+            if (!(args[0] instanceof String s)) {
+                throw UnsupportedTypeException.create(args, "target must be a string");
+            }
+            return switch (args.length) {
+                case 1 -> target.call(s);
+                case 2 -> target.call(s, args[1]);
+                default -> target.call(s, args[1], args[2]);
+            };
         }
     }
 }

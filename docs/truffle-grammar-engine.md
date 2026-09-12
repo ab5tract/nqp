@@ -275,9 +275,12 @@ generation of specializations this engine does not have.
 
 So the engine proper is Kotlin — nodes, program, descriptor, wire format,
 cursor, and the pattern parser the harnesses use — next to the Kotlin runtime
-it calls into. `RxLanguage` stays Java because
-`@TruffleLanguage.Registration` and `@ExportLibrary` genuinely are
-annotation-processed: polyglot finds a language through a generated provider.
+it calls into. The match root (`RxMatchRootNode.kt`) is Kotlin too. The
+registered language it runs in is `NqpLanguage.java` — since 2026-09-11 the
+one language for regexes and general code alike, in one polyglot context
+(`NqpPolyglot.kt`) — and stays Java because `@TruffleLanguage.Registration`
+and `@ExportLibrary` genuinely are annotation-processed: polyglot finds a
+language through a generated provider.
 The three standalone `main()` harnesses (`RxCheck`, `RxBench`,
 `RxDescriptorCheck`) stay Java as well, for no better reason than that they
 are test scaffolding and moving them would risk the tests to gain nothing.

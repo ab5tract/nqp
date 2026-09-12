@@ -1,10 +1,6 @@
 package org.raku.nqp.truffle
 
 import com.oracle.truffle.api.CallTarget
-import com.oracle.truffle.api.Truffle
-
-import org.graalvm.polyglot.Context
-import org.graalvm.polyglot.Source
 
 import org.raku.nqp.runtime.CallSiteDescriptor
 import org.raku.nqp.runtime.GrammarEngine
@@ -13,19 +9,18 @@ import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.SixModelObject
 
 /**
- * The engine as the rest of NQP sees it.
+ * The grammar engine as the rest of NQP sees it -- the regex analog of
+ * [NqpCodeEngine].
  *
  * This is the class `GrammarEngines` looks up by name, and the only one it
  * needs to know about: everything below here is free to change without the
  * boot-classpath side being able to name any of it. The name is load-bearing
  * -- it is a string in `GrammarEngine.kt` -- so it must not move package.
  *
- * One polyglot context is created for the process and never closed. It has to
- * be a context rather than loose RootNodes -- outside one, a root node runs
- * correctly and is never queued for compilation, so the partial evaluation
- * this whole design exists for silently does not happen.
+ * Matchers are parsed in the process's one polyglot context ([NqpPolyglot]),
+ * the same one the code engine's programs live in.
  */
-class TruffleGrammarEngine : GrammarEngine {
+class NqpGrammarEngine : GrammarEngine {
 
     /**
      * A compiled regex.
@@ -42,15 +37,13 @@ class TruffleGrammarEngine : GrammarEngine {
     )
 
     override fun compile(encoded: String): Any {
-        /* The eval is what makes the language parse the descriptor; its
-         * result is a polyglot Value, and calling through one would box every
-         * argument of every match, so the call target is collected from where
-         * parse left it instead. */
-        Holder.CONTEXT.eval(Source.newBuilder(RxLanguage.ID, encoded, "rx").buildLiteral())
-        val target = RxLanguage.PARSED[encoded]
-            ?: throw IllegalStateException("the language parsed no matcher for: $encoded")
         val d = RxWire.decode(encoded)
-        return Program(target, d.passName, d.scan, d.resumable)
+        /* The Source is named after the rule where it has a plain name, so
+         * compilation traces and statistics say which rule they mean; a
+         * computed name (the NUL-prefixed callback marker) or none at all
+         * gets the generic label. */
+        val name = if (d.passName.isEmpty() || d.passName.startsWith("\u0000")) "rx" else d.passName
+        return Program(NqpPolyglot.compile(encoded, name), d.passName, d.scan, d.resumable)
     }
 
     override fun match(
@@ -198,31 +191,6 @@ class TruffleGrammarEngine : GrammarEngine {
                     Ops.create(Ops.bootintarray(tc), tc), tc)
             }
             STATES[cursor] = state
-        }
-    }
-
-    /**
-     * Built on first use rather than in the constructor: the runtime looks
-     * the engine up while deciding whether there is one at all, and starting
-     * a polyglot context is far too much to do just to answer that.
-     */
-    private object Holder {
-        val CONTEXT: Context = Context.newBuilder(RxLanguage.ID)
-            .allowExperimentalOptions(true)
-            .build()
-
-        init {
-            val runtime = Truffle.getRuntime().name
-            if (!runtime.contains("GraalVM")) {
-                /* The fallback interpreter does no partial evaluation, so the
-                 * engine would be a slower bytecode path with extra steps.
-                 * Saying so beats measuring it later and blaming Truffle. */
-                System.err.println(
-                    "nqp: Truffle runtime is '$runtime', not an optimizing one;" +
-                        " grammar matching will be slow." +
-                        " Check --module-path and --add-modules on the runner.",
-                )
-            }
         }
     }
 
