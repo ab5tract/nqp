@@ -2995,6 +2995,12 @@ class QAST::TruffleEncoder {
             # uint ARGUMENT and as a uint lexical already does; only a uint
             # RESULT stays $T_UINT, where the unsignedness reaches the box.
             my int $flag := $t == $T_UINT ?? $T_INT !! $t;
+            # Only the four callsite types fit below the NAMED bit: anything
+            # else here would be silently read as a named or flat argument
+            # and slip the stream by a word, which is exactly how the uint
+            # bug hid. Die at encode time instead, naming the flag.
+            nqp::die('encode_args: argument flag ' ~ $flag ~ ' out of range')
+                if $flag < 0 || $flag > 3;
             $flag := $flag + 4 if $named;
             $flag := $flag + 8 if $flat;
             nqp::bindpos(%e<code>, @flagpos[$i], $flag);
