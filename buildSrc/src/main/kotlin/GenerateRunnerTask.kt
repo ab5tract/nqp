@@ -23,7 +23,7 @@ abstract class GenerateRunnerTask : DefaultTask() {
     @get:Input
     abstract val libDir: Property<String>
 
-    /** Third-party jar file names, in runner bootclasspath order (no asm-tree). */
+    /** Third-party jar file names, in runner bootclasspath order. */
     @get:Input
     abstract val runnerJarNames: ListProperty<String>
 

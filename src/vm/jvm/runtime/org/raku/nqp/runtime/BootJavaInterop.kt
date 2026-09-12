@@ -11,7 +11,6 @@ import java.lang.reflect.Modifier
 import java.util.ArrayList
 import java.util.HashMap
 
-import org.raku.nqp.sixmodel.BoxedPrimitive
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.reprs.JavaObjectWrapper
@@ -279,22 +278,6 @@ open class BootJavaInterop(gc: GlobalContext) {
          * STableCache defers to getSTableForClass, which answers
          * commonSTable when one is set. */
         else -> RetMarshal.BoxRet(STableCache(what))
-    }
-
-    /**
-     * The primitive a given Java type marshals as. Override this to
-     * customize marshalling. You will probably only need to change this if
-     * you want to make char or boolean come in as objects.
-     */
-    protected open fun storageForType(what: Class<*>): BoxedPrimitive {
-        return if (what == String::class.java || what == Character.TYPE)
-            BoxedPrimitive.STR
-        else if (what == java.lang.Float.TYPE || what == java.lang.Double.TYPE)
-            BoxedPrimitive.NUM
-        else if (what != Void.TYPE && what.isPrimitive())
-            BoxedPrimitive.INT
-        else
-            BoxedPrimitive.NONE
     }
 
     companion object {
