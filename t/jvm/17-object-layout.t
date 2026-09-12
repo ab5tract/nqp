@@ -6,7 +6,7 @@ use nqpmo;
 # inheritance, the four error texts, clone. Written before milestone 5's
 # runtime and green on milestone 4's, so a difference is a regression.
 
-plan(47);
+plan(50);
 
 # --- reference slots across the grid boundaries: 3, 4, 5, 8, 9, 16, 17 ---
 class R3  { has $!a; has $!b; has $!c; }
@@ -136,6 +136,19 @@ nqp::bindattr_i($s8, $S8, '$!v', 300); nqp::bindattr_i($s8, $S8, '$!u', 300);
 ok(nqp::getattr_i($s8, $S8, '$!v') == 44, 'int8 wraps to its width');
 ok(nqp::getattr_i($s8, $S8, '$!u') == 44, 'uint8 masks to its width');
 
+# --- an unsigned attribute through the _u ops and through the box ---
+my $U32 := NQPClassHOW.new_type(:name('U32'), :repr('P6opaque'));
+$U32.HOW.add_attribute($U32, NQPAttribute.new(:name('$!u'), :type(uint32)));
+$U32.HOW.add_parent($U32, NQPMu);
+$U32.HOW.compose($U32);
+my $u32 := nqp::create($U32);
+nqp::bindattr_u($u32, $U32, '$!u', 4294967295);
+ok(nqp::getattr_u($u32, $U32, '$!u') == 4294967295, 'a uint32 attribute holds its whole unsigned range');
+nqp::bindattr_u($u32, $U32, '$!u', 4294967296);
+ok(nqp::getattr_u($u32, $U32, '$!u') == 0, 'a uint32 store masks to its width');
+nqp::bindattr_u($u32, $U32, '$!u', 4294967295);
+ok(nqp::getattr($u32, $U32, '$!u') == 4294967295, 'a boxed read of a uint slot is unsigned');
+
 # --- type objects ---
 # Milestone 4 words this one "Cannot look up attributes in a type object".
 dies_with({ nqp::getattr(I, I, '$!x') }, 'Cannot look up attributes in a type object', 'attribute read on a type object');
@@ -151,7 +164,7 @@ ok(nqp::atkey($pd, 'k') eq 'v' && nqp::existskey($pd, 'k'), 'associative delegat
 nqp::push($pd, 4);
 ok(nqp::elems($pd) == 4, 'push through the delegate');
 
-# --- 47 planned; the remaining ok()s pin auto-viv ---
+# --- 50 planned; the remaining ok()s pin auto-viv ---
 class AV { has @!a; has %!h; has $!s; }
 my $av := AV.new;
 ok(nqp::islist(nqp::getattr($av, AV, '@!a')), 'an @ attribute auto-vivifies a list');

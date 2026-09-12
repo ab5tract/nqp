@@ -2985,7 +2985,16 @@ class QAST::TruffleEncoder {
             else {
                 $t := self.encode_node($a, %e, $T_ANY);
             }
-            my int $flag := $t;
+            # The flag is a CALLSITE argument type, not a wire result type:
+            # its low two bits are the type and bit 2 (4) is NAMED, bit 3 (8)
+            # FLAT. $T_UINT is 4, so writing it raw made the reader see a
+            # named object argument and read the next word as a name pool
+            # index -- an out-of-range pool read, or (once the stream had
+            # slipped by a word) "nqpp: unknown tag" on some later word.
+            # A uint travels in the INT slot, exactly as rt_of says for a
+            # uint ARGUMENT and as a uint lexical already does; only a uint
+            # RESULT stays $T_UINT, where the unsignedness reaches the box.
+            my int $flag := $t == $T_UINT ?? $T_INT !! $t;
             $flag := $flag + 4 if $named;
             $flag := $flag + 8 if $flat;
             nqp::bindpos(%e<code>, @flagpos[$i], $flag);
