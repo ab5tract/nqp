@@ -172,15 +172,40 @@ open class BootJavaInterop(gc: GlobalContext) {
      *  multi-dispatchers. */
     protected open fun createPlans(target: Class<*>): MutableList<CalloutPlan> {
         val plans = ArrayList<CalloutPlan>()
-        for (m in target.getMethods()) plans.add(methodPlan(m))
-        for (f in target.getFields()) {
-            plans.add(fieldGetPlan(f))
-            if (!Modifier.isFinal(f.getModifiers())) plans.add(fieldSetPlan(f))
+        for (m in target.getMethods()) {
+            try { plans.add(methodPlan(m)) }
+            catch (e: ReflectiveOperationException) {
+                plans.add(unusablePlan("method/" + m.getName() + "/" + jvmDescriptor(m), e))
+            }
         }
-        for (c in target.getConstructors()) plans.add(constructorPlan(c))
+        for (f in target.getFields()) {
+            try { plans.add(fieldGetPlan(f)) }
+            catch (e: ReflectiveOperationException) {
+                plans.add(unusablePlan("field/get_" + f.getName() + "/" + f.getType().descriptorString(), e))
+            }
+            if (!Modifier.isFinal(f.getModifiers())) {
+                try { plans.add(fieldSetPlan(f)) }
+                catch (e: ReflectiveOperationException) {
+                    plans.add(unusablePlan("field/set_" + f.getName() + "/" + f.getType().descriptorString(), e))
+                }
+            }
+        }
+        for (c in target.getConstructors()) {
+            try { plans.add(constructorPlan(c)) }
+            catch (e: ReflectiveOperationException) {
+                plans.add(unusablePlan("constructor/new/" + jvmDescriptor(c), e))
+            }
+        }
         plans.addAll(specialPlans(target))
         return plans
     }
+
+    /** A member whose handle the lookup refused (`unreflect` throws
+     *  IllegalAccessException for a public member of a class this module
+     *  may not reach) gets a plan that dies at call time naming it, instead
+     *  of failing the interop of every other member of its class. */
+    protected fun unusablePlan(descriptor: String, e: ReflectiveOperationException): CalloutPlan =
+        UnusablePlan(descriptor, e.toString())
 
     private val lookup = MethodHandles.lookup()
     private val SPREAD = MethodType.methodType(Any::class.java, Array<Any?>::class.java)
