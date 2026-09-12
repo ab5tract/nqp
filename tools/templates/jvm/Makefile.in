@@ -93,4 +93,15 @@ THIRDPARTY_JARS = $(FASTUTIL)@cpsep@$(JLINE)@cpsep@$(LZ4)
 	$(NOECHO)$(CP) @nfpq($(DESTDIR)$(BIN_DIR)/@bpm(BUILD_RUNNER)@)@ @nfpq($(DESTDIR)$(BIN_DIR)/@bpm(NQP)@)@
 	$(NOECHO)$(CHMOD) 755 @nfpq($(DESTDIR)$(BIN_DIR)/@bpm(NQP)@)@
 
+# Gradle owns the JVM backend build. The shared @backend_prefix@-clean rule
+# in Makefile-backend-common.in only removes the legacy gen/jvm stage tree,
+# which leaves build/ -- nqp.jar, nqp-runtime.jar, nqp-truffle.jar -- fully
+# intact, so `make clean` was very nearly a no-op for the build that
+# actually runs. A second double-colon rule adds Gradle's own clean: it
+# composes with the common recipe rather than overriding it, and it stays
+# jvm-only, since moar and js have no Gradle build to clean.
+@backend_prefix@-clean::
+	@echo(+++ Cleaning the Gradle build)@
+	$(NOECHO)@nfp($(BASE_DIR)/gradlew)@ --console=plain clean
+
 # vim: ft=make noexpandtab ts=4 sw=4
