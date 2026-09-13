@@ -85,24 +85,43 @@ object UnitZip {
         var serialized: ByteArray? = null
         val nestedMeta = HashMap<String, UnitMeta>()
         val nestedProgs = HashMap<String, Array<String>>()
+        // Phase-0 stage times (UnitLoadStats), summed over the entries.
+        var tInflate = 0L; var tMeta = 0L; var tPrograms = 0L; var tSc = 0L; var tNested = 0L
+        var inflated = 0L
         ZipInputStream(ByteArrayInputStream(bytes)).use { z ->
             var e = z.nextEntry
             while (e != null) {
+                var t0 = System.nanoTime()
                 val data = z.readAllBytes()
+                tInflate += System.nanoTime() - t0
+                inflated += data.size
+                t0 = System.nanoTime()
                 when {
-                    e.name == META -> meta = UnitFormat.readMeta(ByteBuffer.wrap(data))
-                    e.name == PROGRAMS -> programs = UnitFormat.readPrograms(ByteBuffer.wrap(data))
-                    e.name == SERIALIZED -> serialized = UnitFormat.decompress(data)
-                    e.name.startsWith(NESTED_DIR) && e.name.endsWith(NESTED_META) ->
+                    e.name == META -> { meta = UnitFormat.readMeta(ByteBuffer.wrap(data)); tMeta += System.nanoTime() - t0 }
+                    e.name == PROGRAMS -> { programs = UnitFormat.readPrograms(ByteBuffer.wrap(data)); tPrograms += System.nanoTime() - t0 }
+                    e.name == SERIALIZED -> { serialized = UnitFormat.decompress(data); tSc += System.nanoTime() - t0 }
+                    e.name.startsWith(NESTED_DIR) && e.name.endsWith(NESTED_META) -> {
                         nestedMeta[e.name.removePrefix(NESTED_DIR).removeSuffix(NESTED_META)] = UnitFormat.readMeta(ByteBuffer.wrap(data))
-                    e.name.startsWith(NESTED_DIR) && e.name.endsWith(NESTED_PROGRAMS) ->
+                        tNested += System.nanoTime() - t0
+                    }
+                    e.name.startsWith(NESTED_DIR) && e.name.endsWith(NESTED_PROGRAMS) -> {
                         nestedProgs[e.name.removePrefix(NESTED_DIR).removeSuffix(NESTED_PROGRAMS)] = UnitFormat.readPrograms(ByteBuffer.wrap(data))
+                        tNested += System.nanoTime() - t0
+                    }
                     else -> throw IllegalStateException("unit artifact holds an unexpected entry: ${e.name}")
                 }
                 e = z.nextEntry
             }
         }
         val m = meta ?: throw IllegalStateException("unit artifact lacks $META")
+        if (UnitLoadStats.ON) {
+            val id = m.unitId
+            UnitLoadStats.report(id, "inflate", tInflate, "bytes=$inflated")
+            UnitLoadStats.report(id, "decode-meta", tMeta, "blocks=${m.blocks.size} callsites=${m.callSites.size} staticlex=${m.staticLexValues.size}")
+            UnitLoadStats.report(id, "decode-programs", tPrograms, "programs=${programs?.size ?: 0}")
+            UnitLoadStats.report(id, "decompress-sc", tSc, "bytes=${serialized?.size ?: 0}")
+            UnitLoadStats.report(id, "decode-nested", tNested, "nested=${m.nestedIds.size}")
+        }
         val p = programs ?: throw IllegalStateException("unit artifact ${m.unitId} lacks $PROGRAMS")
         val nested = HashMap<String, UnitRecord>()
         for (id in m.nestedIds) {
