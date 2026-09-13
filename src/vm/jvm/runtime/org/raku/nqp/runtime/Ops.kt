@@ -1717,17 +1717,22 @@ object Ops {
     }
 
     /* Dynamic lexicals. */
-    /* The walk starts at the CURRENT frame, as MoarVM's MVM_frame_getdynlex
-     * does (interp.c hands it tc->cur_frame). It used to start at the
-     * caller, which is one frame too far for a frame-free engine block:
-     * such a block runs on its caller's frame, so tc.frame IS its caller,
-     * and the declaring frame right above it was skipped ("Dynamic variable
-     * '$*NEXT_QBID' not found", 2026-09-08). A framed block never has the
-     * contextual in its own frame -- a statically visible one takes the
-     * lexical road -- so including it costs one miss. */
+    /* The walk starts at the CALLER of the block doing the lookup, as
+     * MoarVM's getdynlex/binddynlex do (interp.c hands MVM_frame_getdynlex
+     * tc->cur_frame->caller): a block's own declaration of the name is
+     * never what nqp::getlexdyn answers. The engine op site picks the start
+     * (NqpOps OP_GETLEXDYN/OP_BINDLEXDYN): a framed block's caller, or, for a
+     * frame-free block, tc.frame -- such a block runs on its caller's frame,
+     * so tc.frame already IS its caller ("Dynamic variable '$*NEXT_QBID' not
+     * found", 2026-09-08, came from skipping one frame too many there).
+     * These two entry points start at tc.frame, for runtime callers. */
     @JvmStatic
-    fun bindlexdyn(name: String, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        var curFrame: CallFrame? = tc.frame
+    fun bindlexdyn(name: String, value: SixModelObject?, tc: ThreadContext): SixModelObject? =
+        bindlexdynFrom(name, value, tc.frame, tc)
+
+    @JvmStatic
+    fun bindlexdynFrom(name: String, value: SixModelObject?, start: CallFrame?, tc: ThreadContext): SixModelObject? {
+        var curFrame: CallFrame? = start
         while (curFrame != null) {
             val idx = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (idx != -1) {
@@ -1740,7 +1745,7 @@ object Ops {
          * that is not on the caller chain (or has no static lexical table),
          * and the bare message hides which. */
         val walked = StringBuilder()
-        var f: CallFrame? = tc.frame
+        var f: CallFrame? = start
         var n = 0
         while (f != null && n < 12) {
             if (n > 0) walked.append(" <- ")
@@ -1751,8 +1756,12 @@ object Ops {
         throw ExceptionHandling.dieInternal(tc, "Dynamic variable '" + name + "' not found (frames: " + walked + ")")
     }
     @JvmStatic
-    fun getlexdyn(name: String, tc: ThreadContext): SixModelObject? {
-        var curFrame: CallFrame? = tc.frame   // current frame first: see bindlexdyn
+    fun getlexdyn(name: String, tc: ThreadContext): SixModelObject? =
+        getlexdynFrom(name, tc.frame, tc)
+
+    @JvmStatic
+    fun getlexdynFrom(name: String, start: CallFrame?, tc: ThreadContext): SixModelObject? {
+        var curFrame: CallFrame? = start   // where to start: see bindlexdyn
         while (curFrame != null) {
             val idx = curFrame.codeRef.staticInfo.oTryGetLexicalIdx(name)
             if (idx != -1)
