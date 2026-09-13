@@ -36,6 +36,16 @@ interface CodeEngine {
         csd: CallSiteDescriptor,
         args: Array<Any?>,
     )
+
+    /**
+     * The save space of one suspended frame, for a cloned continuation.
+     * An engine frame suspends into a mutable Truffle frame that resuming
+     * writes to, so a clone sharing it would corrupt the original (and every
+     * other clone): the engine answers a save space of its own, bound to
+     * [clone] where it referred to [original]. Anything it does not own
+     * comes back unchanged.
+     */
+    fun cloneSuspended(saveSpace: Array<Any?>, original: CallFrame?, clone: CallFrame?): Array<Any?>
 }
 
 /**
@@ -68,6 +78,11 @@ object CodeEngines {
 
     @JvmStatic
     fun get(): CodeEngine? = engine
+
+    /** See [CodeEngine.cloneSuspended]; without an engine nothing is engine-owned. */
+    @JvmStatic
+    fun cloneSuspended(saveSpace: Array<Any?>, original: CallFrame?, clone: CallFrame?): Array<Any?> =
+        engine?.cloneSuspended(saveSpace, original, clone) ?: saveSpace
 
     /**
      * The entry point for jar-bound bodies: the program travels in the
