@@ -298,10 +298,9 @@ val syncLib = tasks.register<Sync>("syncLib") {
     stageTargets.forEach { from(jvmDir.dir("stage2").file(it.jar)) }
     into(shareLibDir)
     stage2.values.forEach { dependsOn(it) }
-    // NQPP5QRegex.jar and jvmconfig.properties are produced into this
-    // directory by their own tasks; don't delete them.
+    // jvmconfig.properties is produced into this directory by its own task;
+    // don't delete it.
     preserve {
-        include("NQPP5QRegex.jar")
         include("jvmconfig.properties")
     }
 }
@@ -313,46 +312,16 @@ val generateRunner = tasks.register<GenerateRunnerTask>("generateRunner") {
     truffleModuleDir = shareTruffleDir.asFile.absolutePath
     engineJar = shareRuntimeDir.file(engineJarFile.name).asFile.absolutePath
     output = layout.projectDirectory.file("nqp-j-gradle")
+    evalServerOutput = layout.projectDirectory.file("nqp-eval-server-gradle")
     dependsOn(syncRuntimeJars, syncTruffleModules, syncLib, generateLocalJvmConfig)
 }
 
-val stage2CatP5qregex = tasks.register<GenCatTask>("stage2CatP5qregex") {
-    backend = "jvm"
-    stage = "stage2"
-    rootDir = projectDir.absolutePath
-    sourcePaths = NqpSources.P5QREGEX
-    sourceFiles.from(NqpSources.P5QREGEX.map { File(projectDir, it) })
-    output = jvmDir.dir("stage2").file("NQPP5QRegex.nqp")
-}
-
-val compileP5qregex = tasks.register("compileP5qregex") {
-    group = "nqp jvm"
-    description = "Compiles NQPP5QRegex.jar with the freshly built runner"
-    dependsOn(generateRunner, stage2CatP5qregex)
-    val input = jvmDir.dir("stage2").file("NQPP5QRegex.nqp").asFile
-    val outputJar = shareLibDir.file("NQPP5QRegex.jar").asFile
-    inputs.file(input)
-    // The compile records dependency versions against the module set it
-    // loads (QAST.nqp et al.), so a stage2 rebuild must invalidate this
-    // jar too — otherwise consumers die with "Missing or wrong version
-    // of dependency .../stage2/QAST.nqp" (bitten by rakudo-j's
-    // Perl6::Grammar, which loads NQPP5QRegex).
-    inputs.files(fileTree(shareLibDir) { include("*.jar"); exclude("NQPP5QRegex.jar") })
-    outputs.file(outputJar)
-    doLast {
-        val proc = ProcessBuilder(
-            File(projectDir, "nqp-j-gradle").absolutePath,
-            "--target=jar", "--output=${outputJar.absolutePath}", input.absolutePath,
-        ).directory(projectDir).redirectErrorStream(true).start()
-        val out = proc.inputStream.readBytes().toString(Charsets.UTF_8)
-        check(proc.waitFor() == 0) { "NQPP5QRegex compilation failed:\n$out" }
-    }
-}
-
+// The JVM backend has no Perl 5 regex support: NQPP5QRegex is not built,
+// and rakudo's frontend guards its P5Regex slang off on JVM.
 tasks.register("buildJvm") {
     group = "nqp jvm"
     description = "Builds the complete JVM backend (runtime, stage1+2 bootstrap, runner)"
-    dependsOn(compileP5qregex)
+    dependsOn(generateRunner)
 }
 
 fun registerProveTask(name: String, testDirs: List<String>) =
@@ -366,7 +335,7 @@ fun registerProveTask(name: String, testDirs: List<String>) =
 
 registerProveTask("testNqpCore", listOf("t/nqp"))
 registerProveTask("testNqp",
-    listOf("t/nqp", "t/hll", "t/qregex", "t/p5regex", "t/qast", "t/jvm", "t/serialization",
+    listOf("t/nqp", "t/hll", "t/qregex", "t/qast", "t/jvm", "t/serialization",
         "t/nativecall"))
 
 // Explicit, never part of buildJvm: install into the configured prefix,
@@ -435,7 +404,7 @@ tasks.register("syncToGen") {
 tasks.register<Copy>("jBootstrapFiles") {
     group = "nqp jvm"
     description = "Copies the stage2 output over src/vm/jvm/stage0 (bootstrap refresh)"
-    stageTargets.filter { it.jar != "NQPP5QRegex.jar" }.forEach {
+    stageTargets.forEach {
         from(jvmDir.dir("stage2").file(it.jar))
     }
     into("src/vm/jvm/stage0")

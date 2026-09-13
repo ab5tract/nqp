@@ -56,5 +56,6 @@ package-lock.json
 /nqp-runtime/build/
 /nqp-truffle/build/
 /nqp-j-gradle
+/nqp-eval-server-gradle
 .idea/
 *.iml
