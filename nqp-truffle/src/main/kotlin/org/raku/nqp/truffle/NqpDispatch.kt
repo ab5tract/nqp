@@ -743,13 +743,15 @@ object NqpDispatch {
      */
     @TruffleBoundary
     private fun invoke(tc: ThreadContext, callee: SixModelObject?,
-                       descriptor: CallSiteDescriptor?, out: Array<Any?>) {
+                       descriptor: CallSiteDescriptor?, out: Array<Any?>,
+                       resumable: Program? = null, site: DispatchCallSite? = null,
+                       dispatchArgs: Array<Any?>? = null) {
         if (STATS) count(invokes)
         if (callee is CodeRef) {
             val target = CodeEngines.materialize(callee.staticInfo)
             if (target != null && callee.staticInfo.argsExpectation == ArgsExpectation.USE_BINDER) {
                 if (STATS) count(directs)
-                enterEngine(tc, callee, target as CallTarget, descriptor, out)
+                enterEngine(tc, callee, target as CallTarget, descriptor, out, resumable, site, dispatchArgs)
                 return
             }
             if (STATS) countRefused(callee, target == null)
@@ -793,7 +795,9 @@ object NqpDispatch {
                                         args: Array<Any?>, callee: SixModelObject?, out: Array<Any?>) {
         leavePending(p, site, tc, args)
         try {
-            invoke(tc, callee, p.descriptor, out)
+            // The program rides along: a frame-free callee has no frame for a
+            // bind failure to find this dispatch on, so its entry resumes it.
+            invoke(tc, callee, p.descriptor, out, p, site, args)
         }
         catch (failure: BindFailureException) {
             if (!owns(failure, p, args)) throw failure
@@ -1008,7 +1012,9 @@ object NqpDispatch {
      * call's result in the caller's registers.
      */
     private fun enterEngine(tc: ThreadContext, cr: CodeRef, target: CallTarget,
-                            csd: CallSiteDescriptor?, args: Array<Any?>) {
+                            csd: CallSiteDescriptor?, args: Array<Any?>,
+                            resumable: Program? = null, site: DispatchCallSite? = null,
+                            dispatchArgs: Array<Any?>? = null) {
         val ffRoot = engineRootOf(target)
         if (ffRoot != null && !ffRoot.needsFrame && frameFreeEntryOk(ffRoot, cr, currentHll(tc))) {
             /* No CallFrame: the block proved frame-free. Its own StoreRet
@@ -1021,7 +1027,16 @@ object NqpDispatch {
             catch (sse: SaveStackException) { throw frameFreeSuspend(cr) }
             catch (u: NqpUnwind) { throw u.unwind }
             catch (h: NqpHostError) { throw dieInternal(tc, h.original) }
-            catch (failure: NqpFrameFreeBindFailure) { reportFrameFree(tc, cr, csd, args); return }
+            catch (failure: NqpFrameFreeBindFailure) {
+                /* Entered for a resumable dispatch: that dispatch owns the
+                 * failure (a resumption if it asked for one), as on the
+                 * direct road; otherwise the language's bind_error. */
+                if (resumable != null && site != null && dispatchArgs != null)
+                    frameFreeBindFailed(resumable, site, tc, dispatchArgs, cr, args)
+                else
+                    reportFrameFree(tc, cr, csd, args)
+                return
+            }
             catch (ce: ControlException) { throw ce }
             catch (t: Throwable) { throw dieInternal(tc, t) }
             if (r is ContinuationResult) throw frameFreeSuspend(cr)
