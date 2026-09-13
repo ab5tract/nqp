@@ -124,6 +124,12 @@ is_qast(
         'the missing block error says the block has not appeared');
 }
 
+# backend.start and backend.mast, and the frame list a nested compilation
+# writes back into, belong to the MoarVM backend; the JVM has no counterpart.
+if nqp::getcomp('nqp').backend.name eq 'jvm' {
+    skip('backend.start and written-back frames are MoarVM-only', 3);
+}
+else {
 {
     # A compilation run while a unit is being compiled writes its frames
     # back into that unit's frame list. Code the unit adds after its own
@@ -204,6 +210,7 @@ is_qast(
     }
     ok(nqp::index($error, "'foreign' referenced from") >= 0 && nqp::index($error, 'has not appeared') >= 0,
         'a BVal after the unit tree for a frame this unit does not hold fails to compile');
+}
 }
 
 is_qast(
