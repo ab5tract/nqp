@@ -113,11 +113,12 @@ object CodeEngines {
             "this code was compiled with the code engine, which is not available at run time:" +
             " the truffle module is missing from the class path.")
         val program = programs.computeIfAbsent(encoded) { engine.compile(it, cf.codeRef?.name ?: "<anon>") }
-        if (trace) System.err.println("code> " + (cf.codeRef?.name ?: "<anon>"))
+        val sci = cf.codeRef?.staticInfo
+        if (trace) System.err.println("code> " + (cf.codeRef?.name ?: "<anon>") + " cuid=" + (sci?.uniqueId ?: "?") +
+            " outer=" + (sci?.outerStaticInfo?.uniqueId ?: "?") + " unit=" + (sci?.compUnit?.unitId() ?: "?"))
         /* Let a dispatch that resolves to this block skip the stub next
          * time (see StaticCodeInfo.engineTarget). One program per encoded
          * string, so a later run can only write the same value. */
-        val sci = cf.codeRef?.staticInfo
         if (sci != null && sci.engineTarget == null) sci.engineTarget = program
         engine.run(program, cu, tc, cf, csd, args ?: emptyArray())
     }
@@ -161,7 +162,8 @@ object CodeEngines {
             " the truffle module is missing from the class path.")
         val program = materialize(sci) ?: throw IllegalStateException(
             "block ${cf.codeRef?.name ?: "<anon>"} of unit ${cu.unitId()} has no program")
-        if (trace) System.err.println("code> " + (cf.codeRef?.name ?: "<anon>"))
+        if (trace) System.err.println("code> " + (cf.codeRef?.name ?: "<anon>") + " cuid=" + (sci.uniqueId ?: "?") +
+            " method=" + (sci.methodName ?: "?") + " outer=" + (sci.outerStaticInfo?.uniqueId ?: "?") + " unit=" + cu.unitId() + " at=" + sci.sourceFile + ":" + sci.sourceLine)
         engine.run(program, cu, tc, cf, csd, args ?: emptyArray())
     }
 
