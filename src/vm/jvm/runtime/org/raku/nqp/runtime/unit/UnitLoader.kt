@@ -35,8 +35,14 @@ object UnitLoader {
     @JvmStatic
     @Throws(IOException::class)
     fun record(fn: String, shared: Boolean): UnitRecord =
-        if (shared) sharedRecords.computeIfAbsent(fn) { UnitZip.read(File(it).readBytes()) }
-        else UnitZip.read(File(fn).readBytes())
+        if (shared) sharedRecords.computeIfAbsent(fn) { readRecord(it) }
+        else readRecord(fn)
+
+    private fun readRecord(fn: String): UnitRecord {
+        val name = File(fn).name
+        val bytes = UnitLoadStats.time(name, "read-file", { "bytes=${File(fn).length()}" }) { File(fn).readBytes() }
+        return UnitLoadStats.time(name, "decode-total") { UnitZip.read(bytes) }
+    }
 
     @JvmStatic
     @Throws(IOException::class)
@@ -50,7 +56,10 @@ object UnitLoader {
     @JvmStatic
     @Throws(IOException::class)
     fun loadAndRun(tc: ThreadContext, fn: String, shared: Boolean) {
-        loadUnit(tc, fn, shared).runLoadIfAvailable(tc)
+        UnitLoadStats.load(File(fn).name) {
+            val u = loadUnit(tc, fn, shared)
+            UnitLoadStats.time(File(fn).name, "load-block") { u.runLoadIfAvailable(tc) }
+        }
     }
 
     @JvmStatic
@@ -137,7 +146,7 @@ object UnitLoader {
         if (!isUnitFile(path, shared))
             throw ExceptionHandling.dieInternal(tc, "$path is not a unit artifact")
         return try {
-            loadUnit(tc, path, shared)
+            UnitLoadStats.load(File(path).name) { loadUnit(tc, path, shared) }
         } catch (e: ControlException) {
             throw e
         } catch (e: Exception) {

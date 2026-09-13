@@ -90,6 +90,8 @@ class SerializationReader(
     private var curObject: SixModelObject? = null
 
     fun deserialize() {
+        val stats = org.raku.nqp.runtime.unit.UnitLoadStats.ON
+        val t0 = if (stats) System.nanoTime() else 0L
         // Serialized data is always little endian.
         orig.order(ByteOrder.LITTLE_ENDIAN)
 
@@ -140,6 +142,7 @@ class SerializationReader(
 
         // Do first step of deserializing any closures.
         deserializeClosures()
+        val t1 = if (stats) System.nanoTime() else 0L
 
         // Second passes over STables and objects.
         deserializeSTables()
@@ -150,6 +153,16 @@ class SerializationReader(
         attachClosureOuters(crCount)
         attachContextOuters()
         fixupContextOuters()
+        if (stats) {
+            // Phase 0: the part that stays eager under demand deserialization
+            // (header, heap, dependencies, code refs, repossession, stubs,
+            // closures) against the part phase 2 defers (finishing).
+            val t2 = System.nanoTime()
+            val handle = sc.handle ?: "?"
+            org.raku.nqp.runtime.unit.UnitLoadStats.report(handle, "sc-stub", t1 - t0,
+                "stables=$stTableEntries objects=$objTableEntries coderefs=$crCount")
+            org.raku.nqp.runtime.unit.UnitLoadStats.report(handle, "sc-finish", t2 - t1)
+        }
     }
 
     /* Checks the header looks sane and all of the places it points to make sense.
