@@ -290,6 +290,31 @@ class RxProgram private constructor(
                     if (node.zeroWidth) op(REG_TO_POS, start)
                 }
 
+                is RxTree.Assert -> {
+                    /* The cut drops every choice point the body made, so
+                     * nothing after the group backtracks into it. */
+                    val cut = reg()
+                    op(CUT_MARK, cut)
+                    if (node.negate) {
+                        /* The split's alternative is the way out: it is taken
+                         * only when the body fails, and restores the position
+                         * the split saved. A body that matches cuts the split
+                         * away with everything else and fails the group. */
+                        val split = op(SPLIT, 0, 0)
+                        patch(split + 1, here())
+                        emit(node.body)
+                        op(CUT, cut)
+                        op(ANCHOR, RxTree.Anchor.Kind.FAIL.ordinal)
+                        patch(split + 2, here())
+                    } else {
+                        val start = reg()
+                        op(MARK, start)
+                        emit(node.body)
+                        op(CUT, cut)
+                        op(REG_TO_POS, start)
+                    }
+                }
+
                 is RxTree.Sub -> {
                     /* Zero means the result is not captured; otherwise the
                      * pool index of the name, biased so zero can mean "none". */

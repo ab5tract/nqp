@@ -29,6 +29,7 @@ class QAST::RxDescriptor {
     my int $SUBCB   := 15;
     my int $DYNQUANT := 16;
     my int $CONJ    := 17;
+    my int $ASSERT  := 18;
 
     # Subrule argument kinds, matching RxDescriptor.java.
     my int $ARG_STR := 0;
@@ -581,6 +582,20 @@ class QAST::RxDescriptor {
         # has no reading of either, so the rule keeps the bytecode path.
         return self.bail('non-regex node') unless nqp::istype($node, QAST::Regex);
         my str $rxtype := $node.rxtype // 'concat';
+
+        # A group's own encoding ignores zerowidth and negate, which only leaf
+        # nodes carry as flags. A lookaround over a character class that
+        # became an alt or concat -- <?[\s a]>, <![a] - [b]> -- has them on the
+        # group, so the group is prefixed as an assertion and then encoded as
+        # itself. A conjunction puts the position back on its own, so it is
+        # wrapped only when negated (the MoarVM compiler's zerowidth_group).
+        if $node.subtype eq 'zerowidth'
+          && ($rxtype eq 'alt' || $rxtype eq 'altseq' || $rxtype eq 'concat'
+              || $rxtype eq 'conj' || $rxtype eq 'conjseq')
+          && ($node.negate || $rxtype ne 'conj' && $rxtype ne 'conjseq') {
+            self.emit($ASSERT);
+            self.emit($node.negate ?? 1 !! 0);
+        }
 
         if $rxtype eq 'concat' {
             # pass and dba encode to nothing, so they must not be counted;

@@ -78,6 +78,15 @@ object RxTree {
     data class Conj(val branches: List<Node>, val zeroWidth: Boolean) : Node
 
     /**
+     * A group (alt, concat, conj) carrying the zerowidth subtype, used as an
+     * assertion: `<?[\s a]>`, `<![a] - [b]>`. The position is put back once
+     * the body matched, a negated one succeeds exactly when the body did not
+     * match, and either way nothing later backtracks into the body.
+     */
+    @JvmRecord
+    data class Assert(val body: Node, val negate: Boolean) : Node
+
+    /**
      * rxtype alt WITH a name: longest-token-match.
      *
      * The branch order is not the source order. It comes from an NFA the
