@@ -1,7 +1,9 @@
 package org.raku.nqp.truffle;
 
 import com.oracle.truffle.api.CallTarget;
+import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.bytecode.ContinuationResult;
+import com.oracle.truffle.api.frame.MaterializedFrame;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -21,6 +23,34 @@ import org.raku.nqp.runtime.ThreadContext;
  * ({@link NqpPolyglot}), the same one the grammar engine's matchers live in.
  */
 public final class NqpCodeEngine implements CodeEngine {
+
+    /**
+     * A cloned continuation's copy of one suspended engine frame. Resuming a
+     * ContinuationResult writes into its materialized frame, so a clone gets
+     * a frame of its own: the same slots, its own arguments with the call
+     * frame rebound to the clone, and any slot that held the old frame (the
+     * compiled path's continuation frame) pointing at the new one. A save
+     * space that is not an engine frame's comes back unchanged.
+     */
+    @Override
+    public Object[] cloneSuspended(Object[] saveSpace, CallFrame original, CallFrame clone) {
+        if (saveSpace == null || saveSpace.length == 0 || !(saveSpace[0] instanceof ContinuationResult cr))
+            return saveSpace;
+        MaterializedFrame from = cr.getFrame();
+        Object[] args = from.getArguments().clone();
+        if (clone != null && args.length > NqpRootNode.ARG_CF && args[NqpRootNode.ARG_CF] == original)
+            args[NqpRootNode.ARG_CF] = clone;
+        MaterializedFrame to = Truffle.getRuntime().createMaterializedFrame(args, from.getFrameDescriptor());
+        int slots = from.getFrameDescriptor().getNumberOfSlots();
+        from.copyTo(0, to, 0, slots);
+        for (int i = 0; i < slots; i++) {
+            if (to.isObject(i) && to.getObject(i) == from)
+                to.setObject(i, to);
+        }
+        Object[] copy = saveSpace.clone();
+        copy[0] = new ContinuationResult(cr.getContinuationRootNode(), to, cr.getResult());
+        return copy;
+    }
 
     @Override
     public Object compile(String encoded, String name) {

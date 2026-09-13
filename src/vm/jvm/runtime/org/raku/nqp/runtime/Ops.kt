@@ -9209,7 +9209,10 @@ object Ops {
 
         while (read != null) {
             val cf = if (read.callFrame == null) null else read.callFrame.cloneContinuation()
-            nnew = ResumeStatus.Frame(read.method, read.resumePoint, read.saveSpace, cf, null)
+            /* An engine frame's save space holds the mutable frame resuming
+             * writes to; a clone that shared it would corrupt the original. */
+            val saveSpace = CodeEngines.cloneSuspended(read.saveSpace, read.callFrame, cf)
+            nnew = ResumeStatus.Frame(read.method, read.resumePoint, saveSpace, cf, null)
             if (ntail != null) {
                 ntail.next = nnew
             } else {
