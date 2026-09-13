@@ -1072,13 +1072,18 @@ class QAST::TruffleEncoder {
         for @params -> $p {
             if $p.named { }
             elsif $p.slurpy { $pos_slurpy := 1 }
+            # A misordered signature is a compile error, not a refusal: the
+            # messages are MoarVM's (QASTCompilerMAST), which tests match.
             elsif $p.default {
-                cbail('optional positional after slurpy') if $pos_slurpy;
+                nqp::die('Optional positionals must come before all slurpy positionals')
+                    if $pos_slurpy;
                 $pos_optional++;
             }
             else {
-                cbail('required positional after optional') if $pos_optional;
-                cbail('required positional after slurpy') if $pos_slurpy;
+                nqp::die('Required positionals must come before all optional positionals')
+                    if $pos_optional;
+                nqp::die('Required positionals must come before all slurpy positionals')
+                    if $pos_slurpy;
                 $pos_required++;
             }
         }
