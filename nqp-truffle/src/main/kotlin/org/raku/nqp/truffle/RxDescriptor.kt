@@ -148,6 +148,11 @@ class RxDescriptor private constructor(
                 RxTree.Conj(branches, zeroWidth)
             }
 
+            ASSERT -> {
+                val negate = code[at++] != 0
+                RxTree.Assert(node(), negate)
+            }
+
             else -> throw IllegalArgumentException("unknown descriptor tag $tag")
         }
     }
@@ -222,6 +227,9 @@ class RxDescriptor private constructor(
         /* count, zerowidth, children... -- rxtype conj/conjseq: every
          * branch must match the same span; the first decides it. */
         const val CONJ = 17
+
+        /* negate, child -- a zerowidth group used as an assertion. */
+        const val ASSERT = 18
 
         /* Subrule argument kinds. The pool is strings, so an int argument
          * travels as its decimal text and is read back here, once. */
