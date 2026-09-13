@@ -2506,6 +2506,33 @@ class QAST::TruffleEncoder {
                 }
             }
         }
+        if nqp::isnull($entry) && ($name eq 'getlexdyn' || $name eq 'bindlexdyn') {
+            # Not the classlib road: its Ops.getlexdyn/bindlexdyn start at
+            # tc.frame, which for a framed block is the block's own frame.
+            # The engine op starts where MoarVM's getdynlex does, at the
+            # block's caller (tc.frame itself for a frame-free block, which
+            # runs on its caller's frame) -- see NqpOps OP_GETLEXDYN.
+            my int $bind := $name eq 'bindlexdyn';
+            cbail($name ~ ' arity') unless $nargs == ($bind ?? 2 !! 1);
+            epush(%e, $W_OPCALL);
+            epush(%e, $bind ?? 87 !! 86);
+            epush(%e, $nargs);
+            self.encode_child($op[0], %e, $T_STR);
+            self.encode_child($op[1], %e, $T_OBJ) if $bind;
+            return $T_OBJ;
+        }
+        if nqp::isnull($entry) && $name eq 'assertparamcheck' {
+            # Not the classlib road either: Ops.assertparamcheck finds the
+            # invoking dispatch on tc.frame, which for a frame-free block is
+            # its caller's frame, so a failure that should resume the
+            # dispatch is reported as an error instead. The engine op (the
+            # one ParamTypeCheck compiles to) throws NqpFrameFreeBindFailure
+            # for the dispatch road that entered the block to resume.
+            cbail('assertparamcheck arity') unless $nargs == 1;
+            epush(%e, $W_OPCALL); epush(%e, 112); epush(%e, 1);
+            self.encode_child($op[0], %e, $T_INT);
+            return $T_OBJ;
+        }
         if nqp::isnull($entry) {
             # No hand-written encoding: derive one from the classlib
             # registry the bytecode path compiles to an invokestatic
@@ -3126,9 +3153,12 @@ class QAST::TruffleEncoder {
             return @info[1];
         }
         if $scope eq 'lexical' || $scope eq 'typevar' || $scope eq 'contextual' {
-            if $scope eq 'contextual' && !self.lexical_in_scope($name, %e) {
-                # Not statically visible: the dynamic caller-chain road,
-                # the same rewrite the bytecode path makes.
+            if $scope eq 'contextual' && !nqp::existskey(%e<own>, $name) {
+                # Not declared in THIS block: the dynamic caller-chain road,
+                # as MoarVM's QASTCompilerMAST has it ($*BLOCK.lexical).
+                # Declared in an OUTER block is not enough: a contextual is
+                # found through callers, and a lexical read of an outer
+                # declaration answers the outer's slot, not the caller's.
                 epush(%e, $W_OPCALL);
                 epush(%e, nqp::isnull($bindval) ?? 86 !! 87);
                 epush(%e, nqp::isnull($bindval) ?? 1 !! 2);
@@ -3320,7 +3350,7 @@ class QAST::TruffleEncoder {
             return self.lexical_type_of($name, %e, $scope);
         }
         if $scope eq 'contextual' {
-            return self.lexical_in_scope($name, %e)
+            return nqp::existskey(%e<own>, $name)
                 ?? self.lexical_type_of($name, %e, $scope) !! $T_OBJ;
         }
         if $scope eq 'attribute' {

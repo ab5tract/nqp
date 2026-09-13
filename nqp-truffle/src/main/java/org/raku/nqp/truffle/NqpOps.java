@@ -273,8 +273,11 @@ final class NqpOps {
             case OP_ORD: return Ops.ordfirst(str(a[0]));
             case OP_NULL_S: return null;   // the null str, which isnull_s sees
             case OP_ISTRUE_S: return Ops.istrue_s(str(a[0]));
-            case OP_GETLEXDYN: return Ops.getlexdyn(str(a[0]), tc);
-            case OP_BINDLEXDYN: return Ops.bindlexdyn(str(a[0]), smo(a[1]), tc);
+            // From the block's caller, as MoarVM's getdynlex: a framed block's
+            // own frame is skipped; a frame-free one (cf == null) runs on its
+            // caller's frame, which tc.frame already is. See Ops.bindlexdyn.
+            case OP_GETLEXDYN: return Ops.getlexdynFrom(str(a[0]), cf == null ? tc.getFrame() : cf.caller, tc);
+            case OP_BINDLEXDYN: return Ops.bindlexdynFrom(str(a[0]), smo(a[1]), cf == null ? tc.getFrame() : cf.caller, tc);
             case OP_FORCEOUTERCTX: return Ops.forceouterctx(smo(a[0]), smo(a[1]), tc);
             case OP_CAN: return Ops.can(smo(a[0]), str(a[1]), tc);
             case OP_ISINVOKABLE: return Ops.isinvokable(smo(a[0]), tc);
