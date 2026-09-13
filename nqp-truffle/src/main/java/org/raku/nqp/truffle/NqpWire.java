@@ -220,7 +220,10 @@ public final class NqpWire {
             throw new IllegalArgumentException("nqpp version mismatch: " + (code.length > 0 ? code[0] : -1));
         int npool = parseInt(s, cursor);
         String[] pool = new String[npool];
-        for (int i = 0; i < npool; i++) pool[i] = parsePooled(s, cursor);
+        // One grapheme cursor for the whole program: a fresh BreakIterator
+        // with setText per pooled string was O(pool x length) per program.
+        org.raku.nqp.runtime.GraphemeCursor graphemes = new org.raku.nqp.runtime.GraphemeCursor(s);
+        for (int i = 0; i < npool; i++) pool[i] = parsePooled(s, cursor, graphemes);
         return new Program(code, pool, code[2], code[3]);
     }
 
@@ -243,30 +246,16 @@ public final class NqpWire {
     /** {@code <len>:<chars>}, length-prefixed so any character can travel.
      * NFG: len is a grapheme count (the encoder's nqp::chars), so consume that
      * many graphemes; grapheme count is invariant under NFC. */
-    private static String parsePooled(String s, int[] cursor) {
+    private static String parsePooled(String s, int[] cursor, org.raku.nqp.runtime.GraphemeCursor graphemes) {
         int len = parseInt(s, cursor);
         int at = cursor[0];
         if (at >= s.length() || s.charAt(at) != ':')
             throw new IllegalArgumentException("nqpp: expected ':' at " + at);
         at++;
-        int end = graphemeEnd(s, at, len);
+        int end = graphemes.end(at, len);
         String out = s.substring(at, end);
         cursor[0] = end;
         return out;
-    }
-
-    /** The UTF-16 offset {@code count} graphemes past {@code from}. */
-    private static int graphemeEnd(String s, int from, int count) {
-        if (count <= 0) return from;
-        java.text.BreakIterator bi = java.text.BreakIterator.getCharacterInstance();
-        bi.setText(s);
-        int pos = from;
-        for (int n = count; n > 0; n--) {
-            int next = bi.following(pos);
-            if (next == java.text.BreakIterator.DONE) return s.length();
-            pos = next;
-        }
-        return pos;
     }
 
     private NqpWire() { }
