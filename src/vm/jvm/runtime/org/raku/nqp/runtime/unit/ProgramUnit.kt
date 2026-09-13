@@ -80,7 +80,9 @@ class ProgramUnit(@JvmField val record: UnitRecord) : CompilationUnit() {
     }
 
     override fun initializeCompilationUnit(tc: ThreadContext, runDeserialize: Boolean) {
-        buildTable(tc.gc.BOOTCode?.st)
+        UnitLoadStats.time(meta.unitId, "build-table", { "blocks=${meta.blocks.size}" }) {
+            buildTable(tc.gc.BOOTCode?.st)
+        }
         hllConfig = tc.gc.getHLLConfigFor(hllName())
         if (runDeserialize) runDeserializeIfAvailable(tc)
     }
@@ -88,8 +90,12 @@ class ProgramUnit(@JvmField val record: UnitRecord) : CompilationUnit() {
     /** The deserialize program installs the SC; the static lexical values
      *  point into it, so they follow. */
     override fun runDeserializeIfAvailable(tc: ThreadContext) {
-        super.runDeserializeIfAvailable(tc)
-        applyStaticLexValues(tc)
+        // Includes the dependency loads the program triggers; they print
+        // their own lines one level deeper.
+        UnitLoadStats.time(meta.unitId, "deserialize-program") { super.runDeserializeIfAvailable(tc) }
+        UnitLoadStats.time(meta.unitId, "static-lex-values", { "rows=${meta.staticLexValues.size}" }) {
+            applyStaticLexValues(tc)
+        }
     }
 
     fun applyStaticLexValues(tc: ThreadContext) {
