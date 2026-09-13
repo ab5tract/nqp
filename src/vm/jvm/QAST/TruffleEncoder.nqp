@@ -1359,9 +1359,18 @@ class QAST::TruffleEncoder {
             cbail('block ' ~ $bt);
         }
         if nqp::istype($n, QAST::BVal) {
-            cbail('bval to a block the unit never compiles')
-                unless $*CODEREFS.know_cuid($n.value.cuid)
-                    || block_in_tree(%e<qast>, $n.value.cuid, 1);
+            # A block neither compiled already nor in this block's tree never
+            # appears: a compile error in MoarVM's words (QASTCompilerMAST),
+            # not a refusal -- there is no other road that could compile it.
+            unless $*CODEREFS.know_cuid($n.value.cuid)
+                    || block_in_tree(%e<qast>, $n.value.cuid, 1) {
+                my $blk := $n.value;
+                my str $from := %e<qast>.name;
+                nqp::die('QAST::Block with cuid ' ~ $blk.cuid
+                    ~ ($blk.name ne '' ?? " '" ~ $blk.name ~ "'" !! '')
+                    ~ ($from ne '' ?? " referenced from '" ~ $from ~ "'" !! '')
+                    ~ ' has not appeared');
+            }
             epush(%e, $W_CODEREF);
             nqp::push(%e<nested>, [nqp::elems(%e<code>), $n.value]);
             epush(%e, 0);
