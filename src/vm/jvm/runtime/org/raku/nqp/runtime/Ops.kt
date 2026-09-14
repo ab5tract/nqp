@@ -2934,6 +2934,30 @@ object Ops {
     fun invokeDirect(tc: ThreadContext, invokee: SixModelObject?, csd: CallSiteDescriptor, args: Array<Any?>) {
         invokeDirect(tc, invokee, csd, true, args)
     }
+    /**
+     * Enters a unit-road block the way its bound handle would, without the
+     * handle: every artifact block is USE_BINDER with ProgramEntry.enter as
+     * its body, so nothing invokeByExpectation examines varies between
+     * them. The catches are invokeDirect's, verbatim.
+     */
+    @JvmStatic
+    fun enterUnit(tc: ThreadContext, cr: CodeRef, csd: CallSiteDescriptor, args: Array<Any?>) {
+        val callerFrame = tc.curFrame
+        try {
+            org.raku.nqp.runtime.unit.ProgramEntry.enter(tc, cr, csd, null, args)
+        }
+        catch (r: org.raku.nqp.dispatch.BindReturnException) {
+            val caller = callerFrame ?: tc.dummyCaller
+            caller.oRet = r.value
+            caller.retType = CallFrame.RET_OBJ.toByte()
+        }
+        catch (e: ControlException) {
+            throw e
+        }
+        catch (e: Throwable) {
+            ExceptionHandling.dieInternal(tc, e)
+        }
+    }
     @JvmStatic
     fun invokeDirect(tc: ThreadContext, invokee: SixModelObject?, csd: CallSiteDescriptor, barrier: Boolean, args: Array<Any?>) {
         var callSite = csd
