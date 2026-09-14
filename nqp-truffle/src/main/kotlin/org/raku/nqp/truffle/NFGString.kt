@@ -140,6 +140,7 @@ class NFGString private constructor(
 
         /** The interned (cached) NFGString for [s]. */
         @JvmStatic
+        @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
         fun of(s: String): NFGString {
             if (s.isEmpty()) return EMPTY
             internCache[s]?.let { return it }
