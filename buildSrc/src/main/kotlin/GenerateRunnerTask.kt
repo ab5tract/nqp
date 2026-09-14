@@ -150,9 +150,13 @@ abstract class GenerateRunnerTask : DefaultTask() {
             |exec $launch
             |""".trimMargin()
 
+        // Everything on the class path, as rakudo-j has it: a class on the
+        // boot class path cannot resolve a Truffle annotation type, so a
+        // @TruffleBoundary in the runtime tree was invisible under these
+        // runners (milestone 7, Task 7b).
         val jvmOpts = "--enable-native-access=ALL-UNNAMED${'$'}{TRUFFLE_NATIVE}" +
             " --sun-misc-unsafe-memory-access=allow -Xss64m -XX:+AllowParallelDefineClass" +
-            " ${'$'}TRUFFLE -Xbootclasspath/a:\"${bootEntries.joinToString(":")}\" -cp \"${'$'}CP\""
+            " ${'$'}TRUFFLE -cp \"${bootEntries.joinToString(":")}:${'$'}CP\""
         write(output, render("",
             "java -Dnqp.execname=\"${'$'}EXEC\" -Xmx\"${'$'}{NQP_JVM_MAXHEAP:-4g}\" $jvmOpts" +
                 " org.raku.nqp.runtime.unit.UnitMain \"$lib/nqp.jar\" \"${'$'}@\""))
