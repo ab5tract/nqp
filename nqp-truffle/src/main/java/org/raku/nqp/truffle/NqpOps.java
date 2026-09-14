@@ -1495,31 +1495,48 @@ final class NqpOps {
     static Object getattr(AttrSite site, Object o, Object ch, String name, ThreadContext tc, CompilationUnit cu) {
         if (o instanceof org.raku.nqp.sixmodel.reprs.RakuObject r) {
             org.raku.nqp.sixmodel.reprs.RakuObjectLayout l = r.layout;
-            java.lang.invoke.MethodHandle getter = null;
             if (l != null) {
-                AttrEntry e = site.e1;
-                if (e != null && e.matches(l, ch, name)) getter = e.getter;
-                else {
-                    e = site.e2;
-                    if (e != null && e.matches(l, ch, name)) getter = e.getter;
-                    else if (!site.pinned) {
-                        CompilerDirectives.transferToInterpreterAndInvalidate();
-                        getter = resolveAttr(site, l, ch, name, tc, false);
+                /* One handle per branch. `site` is a constant operand and
+                 * e1/e2 are compilation-final, so the handle each
+                 * invokeExact sees is one constant and its exact-type check
+                 * folds. Merging the two into one variable made a phi, the
+                 * check stayed, and the JDK's wrong-method-type message path
+                 * (a Class.getSimpleName recursion) sat in every getattr
+                 * root: "Too deep inlining" on raku-invoke and every root of
+                 * that shape (milestone 7, Task 8c). */
+                AttrEntry e1 = site.e1;
+                if (e1 != null && e1.matches(l, ch, name)) {
+                    SixModelObject v = readSlot(e1.getter, o);
+                    if (v != null) return v;
+                    return getattrSlow(o, ch, name, tc, cu);
+                }
+                AttrEntry e2 = site.e2;
+                if (e2 != null && e2.matches(l, ch, name)) {
+                    SixModelObject v = readSlot(e2.getter, o);
+                    if (v != null) return v;
+                    return getattrSlow(o, ch, name, tc, cu);
+                }
+                if (!site.pinned) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
+                    java.lang.invoke.MethodHandle getter = resolveAttr(site, l, ch, name, tc, false);
+                    if (getter != null) {
+                        SixModelObject v = readSlot(getter, o);
+                        if (v != null) return v;
                     }
                 }
             }
-            if (getter != null) {
-                SixModelObject v;
-                try {
-                    v = (SixModelObject) getter.invokeExact((SixModelObject) o);
-                } catch (Throwable t) {
-                    throw CompilerDirectives.shouldNotReachHere(t);
-                }
-                /* A null slot may still auto-vivify; the op decides. */
-                if (v != null) return v;
-            }
         }
         return getattrSlow(o, ch, name, tc, cu);
+    }
+
+    /** (SixModelObject)Object through a resolved getter; a null slot may
+     *  still auto-vivify, which the caller's slow road decides. */
+    private static SixModelObject readSlot(java.lang.invoke.MethodHandle getter, Object o) {
+        try {
+            return (SixModelObject) getter.invokeExact((SixModelObject) o);
+        } catch (Throwable t) {
+            throw CompilerDirectives.shouldNotReachHere(t);
+        }
     }
 
     static Object bindattr(AttrSite site, Object o, Object ch, String name, Object value,
@@ -1530,32 +1547,39 @@ final class NqpOps {
          * traces for itself. */
         if (o instanceof org.raku.nqp.sixmodel.reprs.RakuObject r) {
             org.raku.nqp.sixmodel.reprs.RakuObjectLayout l = r.layout;
-            java.lang.invoke.MethodHandle setter = null;
             if (l != null) {
-                AttrEntry e = site.e1;
-                if (e != null && e.matches(l, ch, name)) setter = e.setter;
-                else {
-                    e = site.e2;
-                    if (e != null && e.matches(l, ch, name)) setter = e.setter;
-                    else if (!site.pinned) {
-                        CompilerDirectives.transferToInterpreterAndInvalidate();
-                        setter = resolveAttr(site, l, ch, name, tc, true);
-                    }
+                /* One handle per branch; see getattr. */
+                AttrEntry e1 = site.e1;
+                if (e1 != null && e1.matches(l, ch, name))
+                    return writeSlot(e1.setter, r, name, value, tc);
+                AttrEntry e2 = site.e2;
+                if (e2 != null && e2.matches(l, ch, name))
+                    return writeSlot(e2.setter, r, name, value, tc);
+                if (!site.pinned) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
+                    java.lang.invoke.MethodHandle setter = resolveAttr(site, l, ch, name, tc, true);
+                    if (setter != null)
+                        return writeSlot(setter, r, name, value, tc);
                 }
-            }
-            if (setter != null) {
-                SixModelObject v = smo(value);
-                if (Ops.DO_TRACE) Ops.traceDoBind(r, name, v, tc);
-                try {
-                    setter.invokeExact((SixModelObject) r, v);
-                } catch (Throwable t) {
-                    throw CompilerDirectives.shouldNotReachHere(t);
-                }
-                if (r.sc != null) scwb(tc, r);
-                return v;
             }
         }
         return bindattrSlow(o, ch, name, value, tc);
+    }
+
+    /** (SixModelObject,Object)void through a resolved setter, with the
+     *  trace and the write barrier the sited road always did. */
+    private static SixModelObject writeSlot(java.lang.invoke.MethodHandle setter,
+                                            org.raku.nqp.sixmodel.reprs.RakuObject r,
+                                            String name, Object value, ThreadContext tc) {
+        SixModelObject v = smo(value);
+        if (Ops.DO_TRACE) Ops.traceDoBind(r, name, v, tc);
+        try {
+            setter.invokeExact((SixModelObject) r, v);
+        } catch (Throwable t) {
+            throw CompilerDirectives.shouldNotReachHere(t);
+        }
+        if (r.sc != null) scwb(tc, r);
+        return v;
     }
 
     /** Resolves the slot for this layout and key into the first free entry;
