@@ -153,16 +153,19 @@ object NqpDispatch {
                 /* Null: not yet vivified (or genuinely null); the accessor
                  * decides which and vivifies. */
                 if (v != null) return v
+                return slow(tc, o, nullSlot = true)
             }
-            return slow(tc, o)
+            return slow(tc, o, nullSlot = false)
         }
 
         @TruffleBoundary
-        private fun slow(tc: ThreadContext, o: Any?): Any? {
+        private fun slow(tc: ThreadContext, o: Any?, nullSlot: Boolean): Any? {
             if (STATS) {
                 count(slowEvals)
+                count(if (nullSlot) slowEvalsNull else slowEvalsLayout)
                 val key = "slow attr " + name + " of " + (if (o == null) "null" else o.javaClass.name) +
-                    " layout=" + (if (o is RakuObject) o.layout?.st?.debugName else "-") + " vs " + layout.st.debugName
+                    " layout=" + (if (o is RakuObject) o.layout?.st?.debugName else "-") + " vs " + layout.st.debugName +
+                    (if (nullSlot) " (null slot)" else "")
                 if (seenSlow.add(key)) System.err.println("dispatch $key")
             }
             if (o == null)
@@ -556,6 +559,11 @@ object NqpDispatch {
     @JvmField val seenSlow: MutableSet<String> = ConcurrentHashMap.newKeySet()
     @JvmField val noTargetBy = ConcurrentHashMap<String, AtomicLong>()
 
+    /** Misses by the dispatcher name the instruction was encoded with. */
+    @JvmField val missesBy = ConcurrentHashMap<String, AtomicLong>()
+    @JvmField val slowEvalsLayout = AtomicLong()
+    @JvmField val slowEvalsNull = AtomicLong()
+
     @JvmField val STATS: Boolean = System.getenv("NQP_DISPATCH_STATS") != null
     @JvmField val hits = AtomicLong()
     @JvmField val misses = AtomicLong()
@@ -573,14 +581,22 @@ object NqpDispatch {
             System.err.println("dispatch stats: hits=" + hits + " misses=" + misses +
                 " slowEvals=" + slowEvals + " invokes=" + invokes + " directs=" + directs +
                 " noTarget=" + noTarget + " badExpectation=" + badExpectation + " notCodeRef=" + notCodeRef +
+                " slowLayout=" + slowEvalsLayout + " slowNull=" + slowEvalsNull +
                 " byKind[value,syscall,mapped,invoke,resumable]=" + hitsByKind.contentToString())
             noTargetBy.entries.sortedByDescending { it.value.get() }.take(10)
                 .forEach { System.err.println("  noTarget " + it.value + " " + it.key) }
+            missesBy.entries.sortedByDescending { it.value.get() }.take(20)
+                .forEach { System.err.println("  misses " + it.value + " " + it.key) }
         })
     }
 
     @TruffleBoundary
     private fun count(c: AtomicLong) { c.incrementAndGet() }
+
+    @TruffleBoundary
+    private fun countBy(map: ConcurrentHashMap<String, AtomicLong>, key: String) {
+        map.computeIfAbsent(key) { AtomicLong() }.incrementAndGet()
+    }
 
     /* ----- the fast path ----- */
 
@@ -623,7 +639,7 @@ object NqpDispatch {
     @JvmStatic
     @TruffleBoundary
     fun miss(cache: Cache, name: String, tc: ThreadContext, args: Array<Any?>) {
-        if (STATS) count(misses)
+        if (STATS) { count(misses); countBy(missesBy, name) }
         Dispatch.fallback(cache.site, name, cache.csd, cache.programs.size, tc, args)
         if (cache.programs.isEmpty() || ++cache.missesSinceFold >= REFOLD_AFTER)
             cache.refresh(tc)

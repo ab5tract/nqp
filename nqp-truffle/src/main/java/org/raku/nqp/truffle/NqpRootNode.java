@@ -72,6 +72,10 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     /** The block's name, learned at its first run (the wire carries none). */
     volatile String blockName;
 
+    /** The block's compilation-unit id, learned with its name; it keeps
+     *  two blocks of one name and size apart in traces and statistics. */
+    volatile String blockId;
+
     /** The block's static result type (wire T_OBJ/INT/NUM/STR); set at
      *  parse. For a frame-free block the direct-entry road reads this to
      *  deposit the program's return value into the caller's registers,
@@ -90,7 +94,8 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     @Override
     public String getName() {
         String n = blockName;
-        return (n == null || n.isEmpty() ? "<anon>" : n) + "[" + programSize + "]";
+        String id = blockId;
+        return (n == null || n.isEmpty() ? "<anon>" : n) + (id == null ? "" : "@" + id) + "[" + programSize + "]";
     }
 
     /** What TraceCompilation prints for the call target. */

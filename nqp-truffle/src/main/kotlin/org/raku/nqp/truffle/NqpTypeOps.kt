@@ -251,17 +251,20 @@ object NqpTypeOps {
                 if (ost === st) {
                     if (o is TypeObject) return o
                     val layout = site.layout
-                    if (o is RakuObject && layout != null && o.layout === layout) {
-                        val getter = site.getter
-                        if (getter != null) {
-                            val v: SixModelObject? = try {
-                                getter.invokeExact(o as SixModelObject) as SixModelObject?
-                            } catch (t: Throwable) {
-                                throw CompilerDirectives.shouldNotReachHere(t)
+                    if (o is RakuObject && layout != null) {
+                        if (o.layout === layout) {
+                            val getter = site.getter
+                            if (getter != null) {
+                                val v: SixModelObject? = try {
+                                    getter.invokeExact(o as SixModelObject) as SixModelObject?
+                                } catch (t: Throwable) {
+                                    throw CompilerDirectives.shouldNotReachHere(t)
+                                }
+                                /* Null: not yet vivified; the accessor decides. */
+                                if (v != null) return v
                             }
-                            /* Null: not yet vivified; the accessor decides. */
-                            if (v != null) return v
                         }
+                        else miss(site)   /* same STable, a variant layout: re-resolve or pin */
                     }
                 }
                 else miss(site)
