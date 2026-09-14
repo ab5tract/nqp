@@ -78,6 +78,10 @@ class StaticCodeInfo(
      *  instead of waiting for a first run through a stub. -1 on the class road. */
     @JvmField var programIndex: Int = -1
 
+    /** True when the code ref's body is ProgramEntry.enter (the artifact
+     *  road): callers may enter it directly instead of through the handle. */
+    @JvmField var unitEntry: Boolean = false
+
     /**
      * Method name for correlation with stack traces.
      */

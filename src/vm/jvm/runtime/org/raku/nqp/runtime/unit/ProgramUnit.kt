@@ -39,6 +39,7 @@ class ProgramUnit(@JvmField val record: UnitRecord) : CompilationUnit() {
                 unflatten(b.handlers), ArgsExpectation.USE_BINDER)
             val sci = cr.staticInfo
             sci.programIndex = b.programIndex
+            sci.unitEntry = true
             sci.methodName = "qb_$qbid"
             b.cuid?.let { if (it.isNotEmpty()) byCuid[it] = cr }
             sci.hasExitHandler = b.hasExitHandler
