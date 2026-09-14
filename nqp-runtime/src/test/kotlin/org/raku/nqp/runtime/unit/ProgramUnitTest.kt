@@ -73,6 +73,14 @@ class ProgramUnitTest {
     }
 
     @Test
+    fun everyTableCodeRefIsAUnitEntry() {
+        val u = unit()
+        u.buildTable(null)
+        val cr = u.qbidToCodeRef!![0]!!
+        assertTrue(cr.staticInfo.unitEntry, "buildTable marks the shared entry body")
+    }
+
+    @Test
     fun handlersUnflatten() {
         val u = unit()
         u.buildTable(null)
