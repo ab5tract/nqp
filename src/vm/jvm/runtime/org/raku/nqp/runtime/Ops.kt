@@ -2986,7 +2986,10 @@ object Ops {
 
         val callerFrame = tc.curFrame
         try {
-            ArgsExpectation.invokeByExpectation(tc, cr, callSite, argList)
+            if (cr.staticInfo.unitEntry)
+                org.raku.nqp.runtime.unit.ProgramEntry.enter(tc, cr, callSite, null, argList)
+            else
+                ArgsExpectation.invokeByExpectation(tc, cr, callSite, argList)
         }
         catch (r: org.raku.nqp.dispatch.BindReturnException) {
             /* The callee's signature bind failed on a Junction argument and
