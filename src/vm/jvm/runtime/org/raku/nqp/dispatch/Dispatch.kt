@@ -2,6 +2,7 @@ package org.raku.nqp.dispatch
 
 import org.raku.nqp.runtime.CallFrame
 import org.raku.nqp.runtime.CallSiteDescriptor
+import org.raku.nqp.runtime.CodeRef
 import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
@@ -378,8 +379,11 @@ object Dispatch {
                 val outer = tc.pendingDispatch
                 tc.pendingDispatch = record
                 try {
-                    Ops.invokeDirect(tc, callback.code, Ops.invocantCallSite,
-                        arrayOf<Any?>(capture))
+                    val code = callback.code
+                    if (code is CodeRef && code.staticInfo.unitEntry)
+                        Ops.enterUnit(tc, code, Ops.invocantCallSite, arrayOf<Any?>(capture))
+                    else
+                        Ops.invokeDirect(tc, code, Ops.invocantCallSite, arrayOf<Any?>(capture))
                 }
                 finally {
                     tc.pendingDispatch = outer
