@@ -49,6 +49,16 @@ object NqpPolyglot {
         val ctx = Context.newBuilder(NqpLanguage.ID)
             .allowExperimentalOptions(true)
             .build()
+        /* NQP_BOUNDARY_CHECK=1: whether a @TruffleBoundary placed in the
+         * RUNTIME tree (compileOnly truffle-api, on -cp for rakudo-j but
+         * on -Xbootclasspath/a for nqp-j-gradle) is visible where the
+         * compiler reads it. Milestone 7 A7 depends on the answer. */
+        if (System.getenv("NQP_BOUNDARY_CHECK") != null) {
+            val m = org.raku.nqp.runtime.ExceptionHandling::class.java.declaredMethods
+                .filter { it.name == "dieInternal" }
+            val seen = m.any { it.getAnnotation(com.oracle.truffle.api.CompilerDirectives.TruffleBoundary::class.java) != null }
+            System.err.println("boundary-check: dieInternal TruffleBoundary=$seen (${m.size} overloads)")
+        }
         /* NQP_CODE_CLOSE_AT_EXIT=1: close the context at JVM exit so
          * engine-close reports (engine.CompilationStatistics) print. */
         if (System.getenv("NQP_CODE_CLOSE_AT_EXIT") != null) {
