@@ -38,6 +38,10 @@ class Dispatcher(val id: String, val dispatch: DispatchCallback, val resume: Dis
 class DispatchRegistry {
     private val dispatchers = ConcurrentHashMap<String, Dispatcher>()
 
+    /** Bumped by every register: a site that cached a Dispatcher re-finds
+     *  it when the registry has changed under it. */
+    @Volatile @JvmField var epoch: Int = 0
+
     init {
         for (dispatcher in BootDispatchers.all)
             dispatchers.put(dispatcher.id, dispatcher)
@@ -64,6 +68,7 @@ class DispatchRegistry {
         dispatchers.put(id, Dispatcher(id, DispatchCallback.Code(dispatch!!),
             if (resume != null && Guard.isConcrete(resume)) DispatchCallback.Code(resume)
             else null))
+        epoch++
     }
 
     private fun isInvokable(obj: SixModelObject?): Boolean =

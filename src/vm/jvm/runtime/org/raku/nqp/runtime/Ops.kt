@@ -2803,8 +2803,25 @@ object Ops {
      * such a world has no dispatch-dependent protos either. The callsite is
      * cached per method, so this stays a replay rather than recording a
      * dispatch program on every boolification or stringification. */
+    /** A helper-made dispatch site with the descriptor it dispatches with,
+     *  both built once per (method, caller descriptor). */
+    class HelperSite(@JvmField val site: org.raku.nqp.dispatch.DispatchCallSite,
+                     @JvmField val csd: CallSiteDescriptor)
+
+    private fun withInvokeeSlot(csd: CallSiteDescriptor): CallSiteDescriptor {
+        val flags = ByteArray(csd.argFlags.size + 1)
+        flags[0] = CallSiteDescriptor.ARG_OBJ
+        csd.argFlags.copyInto(flags, 1)
+        return CallSiteDescriptor(flags, csd.names)
+    }
+
+    /* Keyed by the method object and the CALLER'S descriptor by identity:
+     * a descriptor object has one shape, so the shape string the old key
+     * built per call is implied. Two equal-shaped descriptors make two
+     * sites, which only costs a second recording. */
     private val helperDispatchSites =
-        java.util.concurrent.ConcurrentHashMap<Pair<SixModelObject, String>, org.raku.nqp.dispatch.DispatchCallSite>()
+        java.util.concurrent.ConcurrentHashMap<SixModelObject,
+            java.util.concurrent.ConcurrentHashMap<CallSiteDescriptor, HelperSite>>()
 
     /* These are keyed by the method object, which belongs to one
      * GlobalContext, so a process running unrelated programs in turn must drop
@@ -2838,26 +2855,17 @@ object Ops {
             invokeDirect(tc, method, csd, args)
             return
         }
-        val flags = ByteArray(csd.argFlags.size + 1)
-        flags[0] = CallSiteDescriptor.ARG_OBJ
-        csd.argFlags.copyInto(flags, 1)
-        val fullCsd = CallSiteDescriptor(flags, csd.names)
-        /* Keyed by the argument SHAPE as well as the method. A DispatchCallSite
-         * caches the program recorded against the shape it first saw, so one
-         * site per method replays that program for a call of different arity --
-         * and the arguments then land in the wrong slots, which surfaces far
-         * away as a DispatchCallSite where a string was expected. */
-        val shapeKey = StringBuilder(flags.size + 8)
-        for (f in flags) shapeKey.append(f.toInt()).append(',')
-        fullCsd.names?.let { for (n in it) shapeKey.append(n).append(';') }
-        val site = helperDispatchSites.computeIfAbsent(Pair(method!!, shapeKey.toString())) {
-            org.raku.nqp.dispatch.DispatchCallSite(helperDispatchSiteType)
+        val byShape = helperDispatchSites.computeIfAbsent(method!!) {
+            java.util.concurrent.ConcurrentHashMap(4)
+        }
+        val hs = byShape.computeIfAbsent(csd) {
+            HelperSite(org.raku.nqp.dispatch.DispatchCallSite(helperDispatchSiteType), withInvokeeSlot(csd))
         }
         val fullArgs = arrayOfNulls<Any>(args.size + 1)
         fullArgs[0] = method
         args.copyInto(fullArgs, 1)
-        org.raku.nqp.dispatch.Dispatch.dispatchWithDescriptor(site, "lang-call",
-            fullCsd, tc, fullArgs)
+        org.raku.nqp.dispatch.Dispatch.dispatchWithDescriptor(hs.site, "lang-call",
+            hs.csd, tc, fullArgs)
     }
     @JvmField val storeCallSite = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_OBJ), null)
     @JvmField val storeCallSiteI = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ, CallSiteDescriptor.ARG_INT), null)
@@ -2904,7 +2912,7 @@ object Ops {
      * program; the map drops with the rest of the dispatch state between
      * eval-server runs (see resetHelperDispatchSites' registration). */
     private val langCallSites =
-        java.util.concurrent.ConcurrentHashMap<Pair<SixModelObject, CallSiteDescriptor>, org.raku.nqp.dispatch.DispatchCallSite>()
+        java.util.concurrent.ConcurrentHashMap<Pair<SixModelObject, CallSiteDescriptor>, HelperSite>()
 
     /* Invoke an HLL code object through its language's registered call
      * dispatcher, as MoarVM's lang-call does for every call site. This is
@@ -2913,18 +2921,14 @@ object Ops {
      * the InvocationSpec shortcut below can see. */
     private fun invokeViaCallDispatcher(tc: ThreadContext, invokee: SixModelObject,
                                         csd: CallSiteDescriptor, args: Array<Any?>) {
-        val flags = ByteArray(csd.argFlags.size + 1)
-        flags[0] = CallSiteDescriptor.ARG_OBJ
-        csd.argFlags.copyInto(flags, 1)
-        val fullCsd = CallSiteDescriptor(flags, csd.names)
-        val site = langCallSites.computeIfAbsent(Pair(invokee, csd)) {
-            org.raku.nqp.dispatch.DispatchCallSite(helperDispatchSiteType)
+        val hs = langCallSites.computeIfAbsent(Pair(invokee, csd)) {
+            HelperSite(org.raku.nqp.dispatch.DispatchCallSite(helperDispatchSiteType), withInvokeeSlot(csd))
         }
         val fullArgs = arrayOfNulls<Any>(args.size + 1)
         fullArgs[0] = invokee
         args.copyInto(fullArgs, 1)
-        org.raku.nqp.dispatch.Dispatch.dispatchWithDescriptor(site, "lang-call",
-            fullCsd, tc, fullArgs)
+        org.raku.nqp.dispatch.Dispatch.dispatchWithDescriptor(hs.site, "lang-call",
+            hs.csd, tc, fullArgs)
     }
 
     @JvmStatic
