@@ -59,7 +59,7 @@ class SerializationReader(
     /* Per-STable progress, and the way back from an STable to its index, so a
      * REPR can ask for one it depends on out of table order. */
     private var stableState = IntArray(0)
-    private val stableIndex = java.util.IdentityHashMap<STable, Int>()
+    private lateinit var stableIndex: java.util.IdentityHashMap<STable, Int>
 
     /* The version of the serialization format we're currently reading. */
     @JvmField var version = 0
@@ -103,6 +103,7 @@ class SerializationReader(
         resolveDependencies()
 
         // Put code refs in place.
+        sc.initCodeRefList(crCount)
         for (i in 0 until crCount) {
             @Suppress("SENSELESS_COMPARISON")
             if (cr[i] == null) {
@@ -273,6 +274,8 @@ class SerializationReader(
             if (provPos > dataLen)
                 throw RuntimeException("Corruption detected (string table starts after end of data)")
         }
+
+        stableIndex = java.util.IdentityHashMap(stTableEntries)
     }
 
     private fun deserializeStringHeap() {
