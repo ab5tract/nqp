@@ -1,5 +1,7 @@
 package org.raku.nqp.runtime
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+
 import java.lang.invoke.MethodHandle
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.MethodType
@@ -41,6 +43,7 @@ object ExceptionHandling {
     @Suppress("DEPRECATION", "removal")
     private val death = ThreadDeath()
 
+    @TruffleBoundary
     private fun dieInternal(tc: ThreadContext, msg: String, t: Throwable?): RuntimeException {
         val exObj: VMExceptionInstance
         if (tc.gc.noisyExceptions) {
@@ -82,10 +85,12 @@ object ExceptionHandling {
     }
 
     @JvmStatic
+    @TruffleBoundary
     fun dieInternal(tc: ThreadContext, e: Throwable): RuntimeException =
         dieInternal(tc, e.toString(), e)
 
     @JvmStatic
+    @TruffleBoundary
     fun dieInternal(tc: ThreadContext, msg: String): RuntimeException =
         dieInternal(tc, msg, null)
 

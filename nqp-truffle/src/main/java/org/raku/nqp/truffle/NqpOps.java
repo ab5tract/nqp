@@ -943,7 +943,18 @@ final class NqpOps {
         }
     }
 
+    /** NQP_CLASSLIB_INLINE=1 restores the pre-milestone-7 road (op bodies
+     *  visible to PE) for exactly one measurement; the default is the
+     *  boundary, matching the table road's run(). Read once: a static
+     *  final folds in every program built after it. */
+    static final boolean CLASSLIB_INLINE = System.getenv("NQP_CLASSLIB_INLINE") != null;
+
+    @TruffleBoundary
     static Object classlib(int rtype, ClassLibSite site, Object[] a, ThreadContext tc, CallFrame cf) {
+        return classlibInline(rtype, site, a, tc, cf);
+    }
+
+    static Object classlibInline(int rtype, ClassLibSite site, Object[] a, ThreadContext tc, CallFrame cf) {
         if (TRACE_CLASSLIB != null && TRACE_CLASSLIB.equals(site.meth)) traceClasslib(site, tc, cf);
         Object[] full = a;
         if (site.tcArg) {
