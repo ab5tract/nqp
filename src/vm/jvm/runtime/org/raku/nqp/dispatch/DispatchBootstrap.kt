@@ -34,6 +34,11 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
     @JvmField var linkedName: String? = null
     @JvmField var staticDescriptor: CallSiteDescriptor? = null
 
+    /** The dispatcher this site's instruction names, found once per
+     *  registry epoch rather than on every miss. */
+    @JvmField var dispatcher: Dispatcher? = null
+    @JvmField var dispatcherEpoch: Int = -1
+
     /**
      * The compiled guard chain, as (ThreadContext, Object[])void, once the
      * site has proven hot. Helper-made sites run it straight from the
@@ -70,6 +75,8 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
         heat = 0
         linkedName = null
         staticDescriptor = null
+        dispatcher = null
+        dispatcherEpoch = -1
         coldTarget?.let { if (fromIndy) setTarget(it) }
         onReset?.run()
     }
