@@ -72,8 +72,10 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
     /** The block's name, learned at its first run (the wire carries none). */
     volatile String blockName;
 
-    /** The block's compilation-unit id, learned with its name; it keeps
-     *  two blocks of one name and size apart in traces and statistics. */
+    /** What identifies the block within its program: the cuid, or
+     *  unit:qb_N for a jar-bound block (which carries no cuid). Learned
+     *  with the name; it keeps two blocks of one name and size apart in
+     *  traces and statistics. */
     volatile String blockId;
 
     /** The block's static result type (wire T_OBJ/INT/NUM/STR); set at

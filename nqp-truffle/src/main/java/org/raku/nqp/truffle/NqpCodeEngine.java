@@ -74,7 +74,17 @@ public final class NqpCodeEngine implements CodeEngine {
         if (program instanceof com.oracle.truffle.api.RootCallTarget rct
                 && rct.getRootNode() instanceof NqpRootNode root && root.blockName == null) {
             root.blockName = cf.codeRef == null ? "" : cf.codeRef.name;
-            root.blockId = cf.codeRef == null ? null : cf.codeRef.staticInfo.uniqueId;
+            if (cf.codeRef != null) {
+                /* A jar-bound comp-mode unit writes no cuids (see
+                 * ProgramUnit), which is most of the setting: name those
+                 * blocks by their unit and their qb_N method instead, so no
+                 * two roots of one name and size share a trace line. */
+                org.raku.nqp.runtime.StaticCodeInfo sci = cf.codeRef.staticInfo;
+                String cuid = sci.uniqueId;
+                root.blockId = (cuid != null && !cuid.isEmpty())
+                    ? cuid
+                    : sci.compUnit.unitId() + ":" + sci.methodName;
+            }
             /* The one point a CodeRef meets its program root: the wire's
              * exit-handler invariant is checked here, once, rather than on
              * every frame-free entry. Before the overrides, so forcing a
