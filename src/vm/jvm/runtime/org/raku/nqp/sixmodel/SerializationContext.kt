@@ -88,6 +88,7 @@ class SerializationContext(@JvmField var handle: String) {
 
     fun initObjectList(entries: Int) {
         rootObjects.ensureCapacity(entries)
+        objectIndexCache.ensureCapacity(entries)
         for (i in 0 until entries)
             rootObjects.add(null)
     }
@@ -113,11 +114,19 @@ class SerializationContext(@JvmField var handle: String) {
 
     fun initSTableList(entries: Int) {
         rootStables.ensureCapacity(entries)
+        stableIndexCache.ensureCapacity(entries)
         for (i in 0 until entries)
             rootStables.add(null)
     }
 
     private val codeIndexCache = Object2IntOpenHashMap<CodeRef>()
+
+    /** The reader knows the code ref count from the unit before it adds
+     *  them one by one; reserving here spares the cache its rehashes. */
+    fun initCodeRefList(entries: Int) {
+        rootCodes.ensureCapacity(entries)
+        codeIndexCache.ensureCapacity(entries)
+    }
 
     fun addCodeRef(coderef: CodeRef?) {
         val newIndex = rootCodes.size
