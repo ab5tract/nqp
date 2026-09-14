@@ -264,7 +264,12 @@ object NqpTypeOps {
                                 if (v != null) return v
                             }
                         }
-                        else miss(site)   /* same STable, a variant layout: re-resolve or pin */
+                        /* Same STable, a real variant layout: re-resolve or
+                         * pin. A null layout is a deserialization stub
+                         * before its finish, not a variant -- it takes the
+                         * slow road without spending a miss on a good
+                         * site. */
+                        else if (o.layout != null) miss(site)
                     }
                 }
                 else miss(site)
