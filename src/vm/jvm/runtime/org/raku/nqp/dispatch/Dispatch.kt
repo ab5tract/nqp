@@ -138,7 +138,14 @@ object Dispatch {
             for (i in compiled until programs.size)
                 if (run(tc, ctx, programs[i], site)) return
         }
-        record(tc, tc.gc.dispatchers.find(tc, name), descriptor, args, site)
+        val registry = tc.gc.dispatchers
+        var dispatcher = site.dispatcher
+        if (dispatcher == null || site.dispatcherEpoch != registry.epoch) {
+            dispatcher = registry.find(tc, name)
+            site.dispatcher = dispatcher
+            site.dispatcherEpoch = registry.epoch
+        }
+        record(tc, dispatcher, descriptor, args, site)
     }
 
     /** A dispatch at a callsite whose descriptor the caller supplies; used by
