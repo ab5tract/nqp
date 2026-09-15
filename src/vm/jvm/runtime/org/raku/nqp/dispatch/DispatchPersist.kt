@@ -1,11 +1,14 @@
 package org.raku.nqp.dispatch
 
+import java.io.FileOutputStream
+import java.io.PrintStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import org.raku.nqp.runtime.CallSiteDescriptor
 import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.runtime.unit.UnitCodec
 import org.raku.nqp.runtime.unit.UnitStore
+import org.raku.nqp.sixmodel.SixModelObject
 
 /**
  * The persisted miss (milestone 7 Phase C): a site's first miss restores
@@ -13,9 +16,12 @@ import org.raku.nqp.runtime.unit.UnitStore
  *
  * NQP_DISPATCH_PERSIST: unset or "on" consumes slots; "off" ignores them;
  * "verify" restores into DispatchCallSite.verifyPrograms without installing,
- * records fresh, and compares (see verify). NQP_DISPATCH_RECORD ("all" or
- * a comma-separated list of store-name prefixes) makes the process rewrite
- * the selected artifacts' slots at exit (recordAtExit).
+ * records fresh, and compares (see verify). NQP_DISPATCH_VERIFY_LOG=<path>
+ * sends verify's lines to that file instead of stderr, pid-prefixed, so a
+ * TAP run and a stderr-comparing test survive the mode. NQP_DISPATCH_RECORD
+ * ("all" or a comma-separated list of store-name prefixes) makes the process
+ * rewrite the selected artifacts' slots at exit (recordAtExit).
+ * NQP_DISPATCH_PERSIST_TRACE names every program a restore drops.
  *
  * Stores are registered by identity namespace (store name + "!" + unit
  * id) when a ProgramUnit initializes; they are immutable and process-wide,
@@ -30,6 +36,12 @@ object DispatchPersist {
         else -> Mode.ON
     }
 
+    /** Where verify's lines go; null is stderr. */
+    private val verifyLog: String? = System.getenv("NQP_DISPATCH_VERIFY_LOG")
+
+    /** Names each dropped program's reason; a restore is otherwise silent. */
+    private val TRACE = System.getenv("NQP_DISPATCH_PERSIST_TRACE") != null
+
     private val stores = ConcurrentHashMap<String, UnitStore>()
 
     /** NQP_DISPATCH_RECORD: "all", or comma-separated store-name prefixes. */
@@ -43,14 +55,39 @@ object DispatchPersist {
     @JvmField val dropped = AtomicLong()
     @JvmField val recorded = AtomicLong()
     @JvmField val verifyMatched = AtomicLong()
+    @JvmField val verifyByOutcome = AtomicLong()
     @JvmField val verifyMismatched = AtomicLong()
     @JvmField val verifyUnseen = AtomicLong()
 
+    /** The verify log's stream, opened on its first line; stderr needs none. */
+    @Volatile private var logStream: PrintStream? = null
+
+    private fun verifyOut(): PrintStream {
+        val path = verifyLog ?: return System.err
+        logStream?.let { return it }
+        synchronized(this) {
+            logStream?.let { return it }
+            val s = PrintStream(FileOutputStream(path, true), true)
+            logStream = s
+            return s
+        }
+    }
+
+    /** One verify line, pid-prefixed when it goes to the log: several
+     *  processes (the eval server's children, a parallel harness) append to
+     *  one file, so a line has to say who wrote it. */
+    private fun verifySay(text: String) {
+        if (verifyLog == null) System.err.println(text)
+        else verifyOut().println("[" + ProcessHandle.current().pid() + "] " + text)
+    }
+
     init {
         if (mode == Mode.VERIFY) {
-            System.err.println("dispatch-verify: on")
+            verifySay("dispatch-verify: on")
             Runtime.getRuntime().addShutdownHook(Thread {
-                System.err.println("dispatch-verify: matched=$verifyMatched mismatched=$verifyMismatched unseen=$verifyUnseen")
+                verifySay("dispatch-verify: matched=$verifyMatched byOutcome=$verifyByOutcome" +
+                    " mismatched=$verifyMismatched unseen=$verifyUnseen")
+                logStream?.close()
             })
         }
         if (recordSelector != null) Runtime.getRuntime().addShutdownHook(Thread { recordAtExit() })
@@ -69,9 +106,12 @@ object DispatchPersist {
         val bytes = store.dispatchSlot(site.programIndex, site.ordinal) ?: return emptyList()
         val slot = try { UnitCodec.decode(DispatchSlot.serializer(), bytes) }
                    catch (e: Exception) { throw IllegalStateException("unit ${ns}: dispatch slot of program ${site.programIndex} ordinal ${site.ordinal} does not decode: ${e.message}", e) }
+        val onDrop: ((String) -> Unit)? =
+            if (TRACE) { reason -> System.err.println("dispatch-persist: dropped ${site.identity} $reason") }
+            else null
         val out = ArrayList<DispatchProgram>(slot.programs.size)
         for (p in slot.programs) {
-            val r = DispatchSlotCodec.realise(tc, p)
+            val r = DispatchSlotCodec.realise(tc, p, onDrop)
             if (r == null) dropped.incrementAndGet() else out.add(r)
         }
         if (out.isNotEmpty()) { restored.addAndGet(out.size.toLong()); restoredSites.incrementAndGet() }
@@ -79,10 +119,13 @@ object DispatchPersist {
     }
 
     /** verify mode: after a fresh recording, every kept-aside program that
-     *  applies to the recorded call must read the same as the recording. */
+     *  applies to the recorded call must agree with the recording -- by its
+     *  text, or failing that by what its outcome evaluates to (see
+     *  [sameOutcome]). */
     fun verify(tc: ThreadContext, site: DispatchCallSite, recorded: DispatchProgram,
                descriptor: CallSiteDescriptor, args: Array<Any?>) {
         val kept = site.verifyPrograms ?: return
+        if (kept.isEmpty()) { verifyUnseen.incrementAndGet(); return }
         val ctx = Dispatch.guardContext(tc, descriptor, args)
         var applicable = 0
         val text = DispatchDump.describe(recorded)
@@ -91,13 +134,71 @@ object DispatchPersist {
             applicable++
             val theirs = DispatchDump.describe(p)
             if (theirs == text) verifyMatched.incrementAndGet()
+            else if (sameOutcome(ctx, p, recorded)) verifyByOutcome.incrementAndGet()
             else {
                 verifyMismatched.incrementAndGet()
-                System.err.println("dispatch-verify: MISMATCH ${site.identity} ${site.linkedName}\n  persisted: $theirs\n  recorded:  $text")
+                verifySay("dispatch-verify: MISMATCH ${site.identity} ${site.linkedName}\n  persisted: $theirs\n  recorded:  $text")
             }
         }
         if (applicable == 0) verifyUnseen.incrementAndGet()
     }
+
+    /**
+     * Do two programs do the same thing to this call, though they are not
+     * written the same way? A polymorphic site records the FORM its
+     * dispatchers found at the time: nqp's lang-meth-call records a
+     * type-guarded program before a class publishes its method cache and a
+     * method-cache lookup after, and verify mode -- which keeps the restored
+     * programs aside instead of installing them, so the site keeps recording
+     * -- then sees two texts that resolve to one target. Comparing what the
+     * outcome evaluates to on the recorded call's own arguments tells that
+     * apart from a real divergence.
+     *
+     * Resuming programs stay text-only: their sources read resumption state,
+     * which this context does not have, and they are rare. Evaluation itself
+     * only reads attributes and hash entries -- no side effects -- but a
+     * source that cannot be evaluated here (a shape built for another call)
+     * throws rather than answering, and an unanswerable comparison is not an
+     * agreement, so it counts as a difference.
+     */
+    private fun sameOutcome(ctx: DispatchContext, a: DispatchProgram, b: DispatchProgram): Boolean = try {
+        if (a.isResuming || b.isResuming) false
+        else if (a.bindControl != b.bindControl) false
+        else if (a.resumptions.size != b.resumptions.size) false
+        else if (a.resumptions.indices.any { i ->
+                    val x = a.resumptions[i]; val y = b.resumptions[i]
+                    x.dispatcher.id != y.dispatcher.id || !sameCapture(ctx, x.initArgs, y.initArgs) })
+            false
+        else {
+            val ao = a.outcome
+            val bo = b.outcome
+            when {
+                ao is Outcome.Value && bo is Outcome.Value ->
+                    sameValue(ao.source.evaluateRaw(ctx), bo.source.evaluateRaw(ctx))
+                ao is Outcome.InvokeCode && bo is Outcome.InvokeCode ->
+                    sameValue(ao.callee.evaluateRaw(ctx), bo.callee.evaluateRaw(ctx)) &&
+                        sameCapture(ctx, ao.args, bo.args)
+                ao is Outcome.InvokeSyscall && bo is Outcome.InvokeSyscall ->
+                    ao.syscall.name == bo.syscall.name && sameCapture(ctx, ao.args, bo.args)
+                else -> false
+            }
+        }
+    }
+    catch (_: Exception) { false }
+
+    private fun sameCapture(ctx: DispatchContext, a: CaptureShape, b: CaptureShape): Boolean {
+        if (!Captures.sameShape(a.descriptor, b.descriptor)) return false
+        val av = a.evaluate(ctx)
+        val bv = b.evaluate(ctx)
+        if (av.size != bv.size) return false
+        for (i in av.indices) if (!sameValue(av[i], bv[i])) return false
+        return true
+    }
+
+    /** An object is the same only when it IS the same: two type objects of
+     *  one type are distinct values to a dispatch. */
+    private fun sameValue(x: Any?, y: Any?): Boolean =
+        if (x is SixModelObject || y is SixModelObject) x === y else x == y
 
     /** The training run's exit: every recorded site of every selected
      *  store, persisted into its slot; duplicates of one slot (two live
