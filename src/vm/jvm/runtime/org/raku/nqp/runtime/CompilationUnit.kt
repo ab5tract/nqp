@@ -28,11 +28,6 @@ abstract class CompilationUnit {
     @JvmField var codeRefs: Array<CodeRef>? = null
 
     /**
-     * Call site descriptors used in this compilation unit.
-     */
-    @JvmField var callSites: Array<CallSiteDescriptor>? = null
-
-    /**
      * HLL configuration for this compilation unit.
      */
     lateinit var hllConfig: HLLConfig
@@ -58,9 +53,6 @@ abstract class CompilationUnit {
             if (bootSt != null) c.st = bootSt
             c.staticInfo.uniqueId?.let { cuidToCodeRef.put(it, c) }
         }
-
-        /* Build callsite descriptors. */
-        callSites = getCallSites()
 
         /* Get HLL configuration object. */
         hllConfig = tc.gc.getHLLConfigFor(this.hllName())
@@ -131,12 +123,6 @@ abstract class CompilationUnit {
      * this and initializeCompilationUnit fills the tables from it.
      */
     open fun getCodeRefs(): Array<CodeRef> = arrayOf()
-
-    /**
-     * Code generation emits this to build up all the callsite descriptors
-     * that are used by this compilation unit.
-     */
-    abstract fun getCallSites(): Array<CallSiteDescriptor>
 
     /**
      * Code generation emits this to supply the HLL name from QAST::CompUnit.

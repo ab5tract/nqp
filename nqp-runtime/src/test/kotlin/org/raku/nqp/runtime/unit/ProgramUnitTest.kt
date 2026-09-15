@@ -119,9 +119,6 @@ class ProgramUnitTest {
         assertEquals(2, u.serializedCodeRefCount())
         assertEquals("unit-x", u.unitId())
         assertEquals(ProgramUnitTestSupport.PROG2, u.engineProgram(2))
-        // The v1 call-site table was never written: the engine builds its
-        // own descriptors, so a unit carries none.
-        assertEquals(0, u.getCallSites().size)
     }
 
     @Test

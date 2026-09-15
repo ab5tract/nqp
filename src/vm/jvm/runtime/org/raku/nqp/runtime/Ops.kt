@@ -2878,15 +2878,6 @@ object Ops {
     @JvmField val intIntCallSite = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_INT, CallSiteDescriptor.ARG_INT), null)
 
     @JvmStatic
-    @Throws(Exception::class)
-    fun invoke(invokee: SixModelObject?, callsiteIndex: Int, args: Array<Any?>, tc: ThreadContext) {
-        // TODO Find a smarter way to do this without all the pointer chasing.
-        if (callsiteIndex >= 0)
-            invokeDirect(tc, invokee, tc.frame.codeRef.staticInfo.compUnit.callSites!![callsiteIndex], args)
-        else
-            invokeDirect(tc, invokee, emptyCallSite, args)
-    }
-    @JvmStatic
     fun invokeArgless(tc: ThreadContext, invokee: SixModelObject?) {
         invokeDirect(tc, invokee, emptyCallSite, arrayOfNulls<Any>(0))
     }

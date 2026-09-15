@@ -74,52 +74,20 @@ object Dispatch {
     /**
      * A dispatch from a callsite with an inline cache. The result is left in the
      * frame the dispatch instruction is in, the same way a call leaves it.
+     *
+     * The callsite index is a relic of the deleted class road: a compilation
+     * unit carried a table of CallSiteDescriptors and emitted code named a row
+     * of it. Nothing writes that table any more -- the engine builds its own
+     * descriptor from the wire and hands it to [dispatchWithDescriptor] -- so
+     * a non-negative index cannot be resolved and is reported as such.
      */
     @JvmStatic
     fun dispatch(site: DispatchCallSite, siteClass: Class<*>, name: String, csIdx: Int,
                  tc: ThreadContext, args: Array<Any?>) {
-        val d = descriptorForClass(siteClass, csIdx, tc)
-        /* Does the descriptor describe THESE arguments? Arity says the
-         * descriptor is the wrong one; a type clash with matching arity says
-         * the arguments are wrong. Distinguishing those is the whole
-         * question. */
-        if (!d.hasFlattening) {
-            var why: String? = null
-            if (args.size < d.numPositionals) why = "ARITY"
-            else for (i in 0 until d.numPositionals) {
-                val a = args[i]
-                val f = d.argFlags[i]
-                if (f == CallSiteDescriptor.ARG_STR && a != null && a !is String) { why = "TYPE@" + i; break }
-                if (f == CallSiteDescriptor.ARG_OBJ && a is DispatchCallSite) { why = "SITE@" + i; break }
-            }
-            if (why != null && badReports.incrementAndGet() <= 5) {
-                System.err.println("DISPATCH ENTRY BAD[" + why + "] name=" + name +
-                    " csIdx=" + csIdx + " numPos=" + d.numPositionals +
-                    " flags=" + d.argFlags.joinToString(",") + " nargs=" + args.size +
-                    " types=" + args.joinToString(",") { x -> x?.javaClass?.simpleName ?: "null" } +
-                    " cu=" + tc.frame.codeRef.staticInfo.compUnit.javaClass.name)
-                val emitter = Throwable().stackTrace.getOrNull(1)
-                System.err.println("  emitter=" + emitter?.className + "." + emitter?.methodName +
-                    " tcFrame=" + (tc.frame.codeRef?.name ?: "<anon>") +
-                    "/" + tc.frame.codeRef?.staticInfo?.compUnit?.javaClass?.simpleName?.take(8))
-                /* The frame register vs the real Java stack: descriptorFor
-                 * trusts tc.curFrame, so when these disagree, whoever left
-                 * curFrame stale is the actual bug. */
-                var f = tc.curFrame
-                var i = 0
-                val chain = StringBuilder("curFrame chain:")
-                while (f != null && i < 10) {
-                    chain.append(' ').append(f.codeRef?.name ?: "<anon>")
-                        .append('[').append(f.codeRef?.staticInfo?.compUnit?.javaClass?.simpleName?.take(8) ?: "?")
-                        .append(']')
-                    f = f.caller
-                    i += 1
-                }
-                System.err.println(chain)
-                Throwable("dispatch entry bad").printStackTrace()
-            }
-        }
-        dispatchWithDescriptor(site, name, d, tc, args)
+        if (csIdx >= 0)
+            throw ExceptionHandling.dieInternal(tc,
+                "call-site table: the engine builds its own descriptors; index $csIdx is unreachable")
+        dispatchWithDescriptor(site, name, Ops.emptyCallSite, tc, args)
     }
 
     /**
@@ -194,26 +162,6 @@ object Dispatch {
         record(tc, tc.gc.dispatchers.find(tc, name), descriptor, theArgs, site)
     }
 
-    /** A dispatch from a callsite too wide for an invokedynamic MethodType
-     * (the JVM caps a method descriptor at 255 parameter slots): the compiled
-     * code builds the argument array itself, and with no per-instruction
-     * callsite every dispatch records. Sites this wide are giant literal
-     * argument lists that run once, so the missing cache costs nothing. */
-    @JvmStatic
-    fun dispatchWide(name: String, csIdx: Int, tc: ThreadContext, args: Array<Any?>) {
-        dispatchUncached(tc, name, descriptorFor(tc, csIdx), args)
-    }
-
-    /** The wide road with the emitting class passed explicitly (trailing,
-     *  so emission appends one ldc); see [descriptorForClass]. The
-     *  (tc-frame)-trusting overload above stays for classfiles emitted
-     *  before the class argument existed (the bootstrap stage jars). */
-    @JvmStatic
-    fun dispatchWide(name: String, csIdx: Int, tc: ThreadContext, args: Array<Any?>,
-                     siteClass: Class<*>) {
-        dispatchUncached(tc, name, descriptorForClass(siteClass, csIdx, tc), args)
-    }
-
     /** A dispatch with no callsite to install anything at. */
     @JvmStatic
     fun dispatchUncached(tc: ThreadContext, name: String, descriptor: CallSiteDescriptor,
@@ -226,37 +174,6 @@ object Dispatch {
         }
         record(tc, tc.gc.dispatchers.find(tc, name), theCsd, theArgs, null)
     }
-
-    private val badReports = java.util.concurrent.atomic.AtomicInteger()
-
-    private fun descriptorFor(tc: ThreadContext, csIdx: Int): CallSiteDescriptor =
-        if (csIdx >= 0)
-            tc.frame.codeRef.staticInfo.compUnit.callSites!![csIdx]
-        else
-            Ops.emptyCallSite
-
-    /**
-     * The callsite-descriptor table of each compilation-unit class,
-     * resolved from the class itself rather than from tc.curFrame: the
-     * frame register can be stale at a dispatch (a frame that exited
-     * through dieInternal-in-the-catch-arm, or one packed into a
-     * continuation), and a csIdx resolved against the wrong unit's table
-     * yields an unrelated descriptor -- seen as impossible arity/type
-     * skew under race/hyper loads. Descriptors are pure static shape
-     * (flags and names), and getCallSites() builds them from constants
-     * on a bare instance, so caching per Class pins nothing run-owned.
-     */
-    private val siteTables = object : ClassValue<Array<org.raku.nqp.runtime.CallSiteDescriptor>>() {
-        override fun computeValue(type: Class<*>): Array<org.raku.nqp.runtime.CallSiteDescriptor> =
-            (type.getDeclaredConstructor().newInstance()
-                as org.raku.nqp.runtime.CompilationUnit).getCallSites()
-    }
-
-    private fun descriptorForClass(siteClass: Class<*>, csIdx: Int, tc: ThreadContext): CallSiteDescriptor =
-        if (csIdx < 0)
-            Ops.emptyCallSite
-        else
-            siteTables.get(siteClass)[csIdx]
 
     /** The dispatch whose callbacks are currently running. */
     @JvmStatic

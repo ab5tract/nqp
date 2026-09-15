@@ -7,6 +7,11 @@ package org.raku.nqp.runtime
  * setters (which never trigger a fill), calls finishBody(), and then
  * applies or queues the block's static lexical values. It runs once,
  * under the info's monitor, on the first read of any body field.
+ *
+ * A fill that throws leaves bodyReady false with the body part-written,
+ * so a later read runs fill() again and re-applies the same rows; that is
+ * harmless because every setter is idempotent and finishBody()'s own guard
+ * keeps the second pass from publishing twice.
  */
 interface StaticBodySource {
     fun fill(sci: StaticCodeInfo)

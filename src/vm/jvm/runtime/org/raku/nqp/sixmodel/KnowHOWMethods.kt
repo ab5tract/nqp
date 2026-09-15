@@ -356,7 +356,5 @@ class KnowHOWMethods : CompilationUnit() {
     /* Vestigial: CompilationUnit declares no such method (same in the Java). */
     fun getOuterMap(): IntArray = IntArray(0)
 
-    override fun getCallSites(): Array<CallSiteDescriptor> = emptyArray()
-
     override fun hllName(): String = ""
 }
