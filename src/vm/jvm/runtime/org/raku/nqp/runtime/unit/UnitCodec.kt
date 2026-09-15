@@ -17,11 +17,12 @@ import kotlinx.serialization.modules.SerializersModule
 
 /**
  * The unit artifact's record codec: kotlinx.serialization records over a
- * binary layout of our own. Fixed-width little-endian ints, a byte per
- * boolean, an Int byte length before UTF-8 text, a mark byte before a
- * nullable value, an Int size before a collection; no field tags. A
- * record therefore decodes from a slice that starts at its first byte,
- * which is what unit.index's (offset, length) tables address.
+ * binary layout of our own. Fixed-width little-endian ints, a Double as
+ * its raw bits, a byte per boolean, an Int byte length before UTF-8 text,
+ * a mark byte before a nullable value, an Int size before a collection;
+ * no field tags. A record therefore decodes from a slice that starts at
+ * its first byte, which is what unit.index's (offset, length) tables
+ * address.
  *
  * AbstractEncoder/AbstractDecoder are kotlinx's experimental surface for
  * a custom format; nothing else experimental is used, and the format
@@ -52,7 +53,7 @@ object UnitCodec {
         override fun encodeShort(value: Short) = throw UnsupportedOperationException("unit codec: no Short")
         override fun encodeChar(value: Char) = throw UnsupportedOperationException("unit codec: no Char")
         override fun encodeFloat(value: Float) = throw UnsupportedOperationException("unit codec: no Float")
-        override fun encodeDouble(value: Double) = throw UnsupportedOperationException("unit codec: no Double")
+        override fun encodeDouble(value: Double) = encodeLong(value.toRawBits())
         override fun encodeString(value: String) {
             val b = value.toByteArray(StandardCharsets.UTF_8); int(b.size); out.write(b, 0, b.size)
         }
@@ -75,7 +76,7 @@ object UnitCodec {
         override fun decodeShort(): Short = throw UnsupportedOperationException("unit codec: no Short")
         override fun decodeChar(): Char = throw UnsupportedOperationException("unit codec: no Char")
         override fun decodeFloat(): Float = throw UnsupportedOperationException("unit codec: no Float")
-        override fun decodeDouble(): Double = throw UnsupportedOperationException("unit codec: no Double")
+        override fun decodeDouble(): Double = Double.fromBits(buf.getLong())
         override fun decodeString(): String {
             val n = buf.getInt()
             val slice = buf.slice(buf.position(), n)
