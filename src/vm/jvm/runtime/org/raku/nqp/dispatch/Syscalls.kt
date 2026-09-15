@@ -384,8 +384,8 @@ object Syscalls {
         /* The capture-lex family works on the bare code handle, the way the
          * raku-capture-lex(-callers) dispatchers hand it over after they
          * unwrap the Code object. Frames are matched the way CallFrame's
-         * own outer hunt does: by method handle and compilation unit, which
-         * holds across CodeRef clones. */
+         * own outer hunt does: by the identity of the StaticCodeInfo, which
+         * is one per block and holds across CodeRef clones. */
         define("try-capture-lex", OBJ) { args ->
             val code = args.obj(0) as? CodeRef
                 ?: throw ExceptionHandling.dieInternal(args.tc,
@@ -393,8 +393,7 @@ object Syscalls {
             val wanted = code.staticInfo.outerStaticInfo
             val cur = args.tc.curFrame
             if (wanted != null && cur != null
-                    && cur.codeRef.staticInfo.mh === wanted.mh
-                    && cur.codeRef.staticInfo.compUnit === wanted.compUnit)
+                    && cur.codeRef.staticInfo === wanted)
                 code.outer = cur
             obj(null)
         }
@@ -406,8 +405,7 @@ object Syscalls {
             if (wanted != null) {
                 var frame = args.tc.curFrame
                 while (frame != null) {
-                    if (frame.codeRef.staticInfo.mh === wanted.mh
-                            && frame.codeRef.staticInfo.compUnit === wanted.compUnit) {
+                    if (frame.codeRef.staticInfo === wanted) {
                         code.outer = frame
                         break
                     }
