@@ -233,7 +233,7 @@ class GlobalContext {
      * with inMemoryUnitOfCuid indexing into it. Only populated while a
      * compiling SC is on the stack, so ordinary runtime EVALs cost
      * nothing. */
-    @JvmField val inMemoryUnitRecords: java.util.concurrent.ConcurrentHashMap<String, org.raku.nqp.runtime.unit.UnitRecord> = java.util.concurrent.ConcurrentHashMap()
+    @JvmField val inMemoryUnitRecords: java.util.concurrent.ConcurrentHashMap<String, org.raku.nqp.runtime.unit.UnitStore> = java.util.concurrent.ConcurrentHashMap()
     /* Nested units claimed mid-deserialization, awaiting their own
      * deserialization code run (jvm-finish-nested). */
     @JvmField val claimedNestedUnits: java.util.concurrent.ConcurrentHashMap<String, CompilationUnit> = java.util.concurrent.ConcurrentHashMap()

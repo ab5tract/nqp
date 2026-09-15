@@ -1,7 +1,7 @@
 # Compiles a module on the artifact road (--target=jar with an --output)
-# and loads it back with `use`: the jar must carry unit.meta and no class
-# entry, and a sub, a closure over an outer, a handler and a regex from it
-# must run.
+# and loads it back with `use`: the jar must carry unit.index first (the
+# loader's sniff reads that one local header) and no class entry, and a
+# sub, a closure over an outer, a handler and a regex from it must run.
 #
 # Both halves run in child processes: the compile so the jar comes from a
 # compilation of its own, and the load because `use` resolves
@@ -73,17 +73,46 @@ else {
         say('# ' ~ @compiled[2]);
     }
 
-    # A zip keeps its entry names in plain bytes, in the local headers and
-    # again in the central directory, so reading the file as latin-1 shows
-    # every name the jar carries.
+    # A zip keeps its entry names in plain bytes in the local file headers,
+    # each one giving the length of the payload that follows, so the chain
+    # of headers names every entry exactly. Read as bytes, not as decoded
+    # text: a v2 artifact stores its entries uncompressed, so its payload is
+    # arbitrary binary and a search over it would answer for the contents
+    # (the program text names 'ModuleLoader.class'), not for the entries.
     my $buftype := nqp::newtype(nqp::null(), 'VMArray');
     nqp::composetype($buftype, nqp::hash('array', nqp::hash('type', uint8)));
     my $fh := nqp::open($jar, 'r');
     my $bytes := nqp::readfh($fh, nqp::create($buftype), 64 * 1024 * 1024);
     nqp::closefh($fh);
-    my $text := nqp::decode($bytes, 'iso-8859-1');
-    ok(nqp::index($text, 'unit.meta') >= 0, 'the jar carries unit.meta');
-    ok(nqp::index($text, '.class') < 0, 'the jar carries no class entry');
+
+    my @names;
+    my int $nbytes := nqp::elems($bytes);
+    my int $p := 0;
+    while $p + 30 <= $nbytes
+       && nqp::atpos_i($bytes, $p)     == 80 && nqp::atpos_i($bytes, $p + 1) == 75
+       && nqp::atpos_i($bytes, $p + 2) == 3  && nqp::atpos_i($bytes, $p + 3) == 4 {
+        my int $csize := nqp::atpos_i($bytes, $p + 18)
+            + 256 * nqp::atpos_i($bytes, $p + 19)
+            + 65536 * nqp::atpos_i($bytes, $p + 20)
+            + 16777216 * nqp::atpos_i($bytes, $p + 21);
+        my int $nlen := nqp::atpos_i($bytes, $p + 26) + 256 * nqp::atpos_i($bytes, $p + 27);
+        my int $elen := nqp::atpos_i($bytes, $p + 28) + 256 * nqp::atpos_i($bytes, $p + 29);
+        my str $name := '';
+        my int $i := 0;
+        while $i < $nlen {
+            $name := $name ~ nqp::chr(nqp::atpos_i($bytes, $p + 30 + $i));
+            $i := $i + 1;
+        }
+        nqp::push(@names, $name);
+        $p := $p + 30 + $nlen + $elen + $csize;
+    }
+    is(@names[0] // '', 'unit.index', 'the jar carries unit.index first');
+    my int $classes := 0;
+    for @names {
+        $classes := $classes + 1
+            if nqp::chars($_) >= 6 && nqp::substr($_, nqp::chars($_) - 6) eq '.class';
+    }
+    is($classes, 0, 'the jar carries no class entry');
 
     my @ran := sh("$runner --module-path=$dir $driver");
     my @out := nqp::split("\n", @ran[1]);
