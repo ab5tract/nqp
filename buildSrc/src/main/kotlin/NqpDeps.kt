@@ -17,13 +17,16 @@ object NqpDeps {
         // Kotlin runtime for the incrementally converted sources
         // (kotlin-prototype); brings org.jetbrains:annotations transitively.
         "org.jetbrains.kotlin:kotlin-stdlib:2.4.10",
+        // Records of the unit artifact (v2, milestone 7 Phase B) are
+        // kotlinx-serialization records behind a binary codec of our own.
+        "org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0",
     )
 
     /** Module-name order for sorting resolved jar files back into
      *  THIRDPARTY_JARS order (Gradle resolution orders dependencies first). */
     val moduleOrder = listOf(
         "fastutil", "jline", "lz4-java",
-        "kotlin-stdlib", "annotations",
+        "kotlin-stdlib", "kotlinx-serialization-core-jvm", "annotations",
     )
 
     fun orderKey(fileName: String): Int {
