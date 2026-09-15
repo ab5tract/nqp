@@ -1,5 +1,8 @@
 package org.raku.nqp.runtime
 
+import org.raku.nqp.runtime.unit.ProgramUnit
+import org.raku.nqp.runtime.unit.isStoreBacked
+
 /**
  * The bytecode side of the Truffle code engine -- the general-code analog
  * of [GrammarEngine], with the same classloader split and the same
@@ -62,7 +65,9 @@ object CodeEngines {
     private val engine: CodeEngine? by lazy { load() }
 
     /**
-     * The compiled program per encoded string. Programs resolve their
+     * The compiled program, keyed by identity ("unit id, '#', program
+     * index") for a store-backed unit and by the encoded string for
+     * everything else. Programs resolve their
      * run-owned objects (WVals, callees) through the frame at run time
      * rather than holding them, but the cache is still cleared per
      * eval-server run with the other caches -- pinning a finished run is
@@ -139,9 +144,23 @@ object CodeEngines {
         val engine = engine ?: return null
         synchronized(sci) {
             sci.engineTarget?.let { return it }
-            val program = programs.computeIfAbsent(sci.compUnit.engineProgram(sci.programIndex)) {
-                engine.compile(it, sci.methodName ?: "<anon>")
-            }
+            val cu = sci.compUnit
+            /* A store-backed unit's program is keyed by identity, so a hit
+             * never decodes the text and the engine learns which unit and
+             * program it is parsing (site identity, milestone 7 Phase B).
+             * Anything else keeps the text key: since the artifact v2 work
+             * every unit is a ProgramUnit, so only the store name
+             * (isStoreBacked) tells a stored unit from one built for this
+             * process -- and an in-memory unit's id is a fresh sha1 per
+             * compile, so its identical texts must go on sharing a root. */
+            val key = if (cu is ProgramUnit && cu.isStoreBacked())
+                cu.unitId() + "#" + sci.programIndex else null
+            val program = if (key != null)
+                programs.computeIfAbsent(key) { engine.compile(cu.engineProgram(sci.programIndex), key) }
+            else
+                programs.computeIfAbsent(cu.engineProgram(sci.programIndex)) {
+                    engine.compile(it, sci.methodName ?: "<anon>")
+                }
             sci.engineTarget = program
             return program
         }

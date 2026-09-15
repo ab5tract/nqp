@@ -193,3 +193,15 @@ class ProgramUnit(@JvmField val store: UnitStore) : CompilationUnit() {
         }
     }
 }
+
+/**
+ * Whether the unit's programs live in a store on disk -- a unit artifact
+ * loaded by name -- rather than in one built for this process. Only a
+ * stored unit's programs have a stable identity across runs: an in-memory
+ * unit's id is a fresh sha1 per compile, so keying its programs by it
+ * would stop identical texts from sharing a parsed root. The store name
+ * tells them apart: a file-backed store is named after its file, and the
+ * two in-memory makers name theirs "<memory:...>" (UnitWriter.store) and
+ * "<buffer>" (loadbytecodebuffer). A file name never starts with '<'.
+ */
+fun ProgramUnit.isStoreBacked(): Boolean = !store.name.startsWith("<")

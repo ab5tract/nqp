@@ -32,16 +32,31 @@ final class NqpProgramBuilder {
 
     private final NqpWire.Program program;
 
-    private NqpProgramBuilder(NqpRootNodeGen.Builder b, NqpWire.Program p) {
+    /** The unit and program being parsed, or null for an in-memory
+     *  unit's program (no identity, no unit.dispatch slot). */
+    private final ProgramIdentity identity;
+    /** DISPATCH wire offset -> ordinal, in walk order of first visit. A
+     *  repeat/for body is walked twice with emit, so a counter at site
+     *  construction would number one node twice; the offset does not. */
+    private final java.util.HashMap<Integer, Integer> siteOrdinals = new java.util.HashMap<>();
+    private static final boolean SITE_CHECK = System.getenv("NQP_SITE_CHECK") != null;
+
+    private NqpProgramBuilder(NqpRootNodeGen.Builder b, NqpWire.Program p, ProgramIdentity identity) {
         this.b = b;
         this.code = p.code();
         this.pool = p.pool();
         this.program = p;
+        this.identity = identity;
     }
 
-    /** Builds the one root node for a program. */
-    static void build(NqpRootNodeGen.Builder b, NqpWire.Program p) {
-        new NqpProgramBuilder(b, p).root(p.nlocals());
+    /** Builds the one root node for a program. [identity] is null unless the
+     *  program belongs to a store-backed unit, whose dispatch sites are known
+     *  by (unit id, program index, ordinal). */
+    static void build(NqpRootNodeGen.Builder b, NqpWire.Program p, ProgramIdentity identity) {
+        NqpProgramBuilder pb = new NqpProgramBuilder(b, p, identity);
+        pb.root(p.nlocals());
+        if (SITE_CHECK && identity != null)
+            System.err.println("site-check " + identity + " ordinals=" + pb.siteOrdinals.size());
     }
 
     private void root(int nlocals) {
@@ -518,7 +533,12 @@ final class NqpProgramBuilder {
                 int rtype = code[at + 1];
                 String name = pool[code[at + 2]];
                 int nargs = code[at + 3];
+                /* The tag's own offset identifies the node: the two
+                 * emissions of a duplicated body (a repeat loop) share it,
+                 * so they are one site with one ordinal. */
+                int site = at;
                 at += 4;
+                int ordinal = siteOrdinals.computeIfAbsent(site, k -> siteOrdinals.size());
                 byte[] flags = new byte[nargs];
                 java.util.ArrayList<String> names = new java.util.ArrayList<>();
                 for (int i = 0; i < nargs; i++) {
@@ -552,7 +572,8 @@ final class NqpProgramBuilder {
                     b.beginStoreLocal(dres);
                     // The constant is the instruction's inline cache as
                     // well as its shape; see NqpOps.EngineSite.
-                    b.beginDispatchOp(rtype, name, new NqpOps.EngineSite(csd));
+                    b.beginDispatchOp(rtype, name, new NqpOps.EngineSite(csd,
+                        identity == null ? null : identity.siteKey(ordinal)));
                 }
                 for (int i = 0; i < nargs; i++) at = walk(at, emit);
                 if (emit) {

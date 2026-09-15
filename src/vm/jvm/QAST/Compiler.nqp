@@ -81,6 +81,7 @@ class QAST::BlockRecord {
     has int $!rawline;
     has @!sections;              # [rawline, line, file] rows; empty today
     has int $!program;           # index into the unit's programs; -1 = none
+    has int $!dispatches;        # DISPATCH nodes in the block's program: its unit.dispatch slot count
 
     method BUILD(:$qbid!, :$name, :$cuid) {
         $!qbid := $qbid;
@@ -96,6 +97,7 @@ class QAST::BlockRecord {
         $!rawline := 0;
         @!sections := [];
         $!program := -1;
+        $!dispatches := 0;
     }
 
     method qbid() { $!qbid }
@@ -114,6 +116,7 @@ class QAST::BlockRecord {
     method rawline(*@value) { @value ?? ($!rawline := @value[0]) !! $!rawline }
     method sections() { @!sections }
     method program(*@value) { @value ?? ($!program := @value[0]) !! $!program }
+    method dispatches(*@value) { @value ?? ($!dispatches := @value[0]) !! $!dispatches }
 
     # A #line directive section: source at raw line $rawline reads as line
     # $line of $file. Only a change of mapping adds a row (ported from the

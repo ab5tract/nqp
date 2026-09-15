@@ -4,11 +4,11 @@
 # The child runs under /bin/sh so that the env var can be set for it:
 # nqp::shell is not an encodable op (the engine refuses it) and
 # run-command hands the child nqp::getenvhash unchanged.
-plan(5);
+plan(6);
 
 if nqp::getcomp('nqp').backend.name ne 'jvm'
    || nqp::backendconfig()<osname> eq 'MSWin32' {
-    skip('dispatch stats are a JVM/Truffle counter, read through /bin/sh', 5);
+    skip('dispatch stats are a JVM/Truffle counter, read through /bin/sh', 6);
 }
 else {
     my $args := nqp::list('/bin/sh', '-c',
@@ -19,6 +19,7 @@ else {
     ok(nqp::index($text, ' misses=') >= 0,               'it carries the miss total');
     ok(nqp::index($text, "\n  misses ") >= 0,            'a per-dispatcher misses line follows it');
     ok(nqp::index($text, ' slowLayout=') >= 0,           'AttrSrc slow evaluations are split by cause');
+    ok(nqp::index($text, ' sites=') >= 0,                'sites with an identity are counted');
 
     # NQP_CLASSLIB_INLINE=1 restores the pre-boundary classlib road (op
     # bodies inlined into the caller's compilation unit). Nothing else in

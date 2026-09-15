@@ -826,10 +826,11 @@ final class NqpOps {
         final org.raku.nqp.dispatch.DispatchCallSite site;
         /* The folded replay prefix of the site's programs; see NqpDispatch. */
         final NqpDispatch.Cache cache;
-        EngineSite(CallSiteDescriptor csd) {
+        EngineSite(CallSiteDescriptor csd, String identity) {
             this.csd = csd;
             this.site = new org.raku.nqp.dispatch.DispatchCallSite(
                 java.lang.invoke.MethodType.methodType(void.class));
+            this.site.identity = identity;
             org.raku.nqp.dispatch.DispatchBootstrap.registerSite(this.site);
             this.cache = new NqpDispatch.Cache(this.site, csd);
         }
