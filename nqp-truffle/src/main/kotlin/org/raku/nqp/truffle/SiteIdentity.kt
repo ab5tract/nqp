@@ -1,20 +1,23 @@
 package org.raku.nqp.truffle
 
 /** A program of a store-backed unit: the compile key CodeEngines.materialize
- *  hands the engine as the Source name, "<unit id>#<program index>". An
- *  in-memory unit's programs are named "qb_N" and have no identity. */
-data class ProgramIdentity(val unitId: String, val programIndex: Int) {
+ *  hands the engine as the Source name, "<namespace>#<program index>". The
+ *  namespace is the store's name and the unit id together (ProgramUnit
+ *  .identityNamespace); neither alone tells two stores apart. An in-memory
+ *  unit's programs are named "qb_N" and have no identity. */
+data class ProgramIdentity(val namespace: String, val programIndex: Int) {
     fun site(ordinal: Int): SiteIdentity = SiteIdentity(siteKey(ordinal))
 
     /** [site]'s key, for Java callers: a Kotlin value class is its underlying
      *  type there, so SiteIdentity has no getKey() to call from Java. */
-    fun siteKey(ordinal: Int): String = "$unitId#$programIndex#$ordinal"
+    fun siteKey(ordinal: Int): String = "$namespace#$programIndex#$ordinal"
 
-    override fun toString() = "$unitId#$programIndex"
+    override fun toString() = "$namespace#$programIndex"
 
     companion object {
-        /** Null unless [sourceName] has the "<unit id>#<index>" shape. A unit id
-         *  never contains '#': it is a class-like name or a sha1. */
+        /** Null unless [sourceName] has the "<namespace>#<index>" shape. The
+         *  split is at the LAST '#', so a namespace that carries one of its
+         *  own -- a store name is a file path -- still parses. */
         @JvmStatic
         fun parse(sourceName: String): ProgramIdentity? {
             val hash = sourceName.lastIndexOf('#')
@@ -25,7 +28,7 @@ data class ProgramIdentity(val unitId: String, val programIndex: Int) {
     }
 }
 
-/** (unit id, program index, ordinal) as one key: what a dispatch instruction
+/** (namespace, program index, ordinal) as one key: what a dispatch instruction
  *  is known by across processes (spec, Phase B "Site identity"). */
 @JvmInline
 value class SiteIdentity(val key: String)

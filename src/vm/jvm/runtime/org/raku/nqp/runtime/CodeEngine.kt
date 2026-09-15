@@ -1,7 +1,7 @@
 package org.raku.nqp.runtime
 
 import org.raku.nqp.runtime.unit.ProgramUnit
-import org.raku.nqp.runtime.unit.isStoreBacked
+import org.raku.nqp.runtime.unit.identityNamespace
 
 /**
  * The bytecode side of the Truffle code engine -- the general-code analog
@@ -150,11 +150,13 @@ object CodeEngines {
              * program it is parsing (site identity, milestone 7 Phase B).
              * Anything else keeps the text key: since the artifact v2 work
              * every unit is a ProgramUnit, so only the store name
-             * (isStoreBacked) tells a stored unit from one built for this
-             * process -- and an in-memory unit's id is a fresh sha1 per
-             * compile, so its identical texts must go on sharing a root. */
-            val key = if (cu is ProgramUnit && cu.isStoreBacked())
-                cu.unitId() + "#" + sci.programIndex else null
+             * (identityNamespace) tells a stored unit from one built for
+             * this process -- and an in-memory unit's id is a fresh sha1
+             * per compile, so its identical texts must go on sharing a
+             * root. The namespace is store name AND unit id: the id alone
+             * repeats across Rakudo's jars (all "perl6"), the name alone
+             * across a parent and its nested units. */
+            val key = (cu as? ProgramUnit)?.identityNamespace()?.let { it + "#" + sci.programIndex }
             val program = if (key != null)
                 programs.computeIfAbsent(key) { engine.compile(cu.engineProgram(sci.programIndex), key) }
             else
