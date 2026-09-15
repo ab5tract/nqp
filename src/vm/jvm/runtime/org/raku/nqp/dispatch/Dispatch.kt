@@ -107,6 +107,23 @@ object Dispatch {
                 if (run(tc, ctx, programs[i], site)) return
         }
         if (site.linkedName == null) site.linkedName = name
+        /* First miss of this site's life: the persisted programs, if any,
+         * before a recording (milestone 7 Phase C). */
+        if (!site.restored && site.unitNamespace != null) {
+            site.restored = true
+            when (DispatchPersist.mode) {
+                DispatchPersist.Mode.ON -> {
+                    val persisted = DispatchPersist.restore(tc, site)
+                    if (persisted.isNotEmpty()) {
+                        for (p in persisted) site.install(p)
+                        val ctx = GuardCheckContext(tc, descriptor, args)
+                        for (p in persisted) if (run(tc, ctx, p, site)) return
+                    }
+                }
+                DispatchPersist.Mode.VERIFY -> site.verifyPrograms = DispatchPersist.restore(tc, site)
+                DispatchPersist.Mode.OFF -> {}
+            }
+        }
         val registry = tc.gc.dispatchers
         val epoch = registry.epoch
         var cached = site.cachedDispatcher
@@ -249,10 +266,13 @@ object Dispatch {
             val program = record.compile()
             record.program = program
             if (chain != null) report(chain, program)
+            DispatchPersist.recorded.incrementAndGet()
             if (bindFailureOf != null)
                 bindFailureOf.program!!.bindFailureProgram = program
             else if (site != null && !record.doNotInstall)
                 site.install(program)
+            if (site != null && DispatchPersist.mode == DispatchPersist.Mode.VERIFY)
+                DispatchPersist.verify(tc, site, program, descriptor, args)
             } catch (sse: org.raku.nqp.runtime.SaveStackException) {
                 /* A continuation capture is crossing this recording. The
                  * recording cannot survive it -- this very Java frame is
@@ -338,6 +358,11 @@ object Dispatch {
             throw ExceptionHandling.dieInternal(tc,
                 "Resumption state is not available while checking dispatch guards")
     }
+
+    /** A guard-check context for a caller outside this file: the class is
+     *  private, so DispatchPersist.verify asks for one rather than making it. */
+    internal fun guardContext(tc: ThreadContext, descriptor: CallSiteDescriptor,
+                              args: Array<Any?>): DispatchContext = GuardCheckContext(tc, descriptor, args)
 
     /**
      * Tries to run a program: checks that it applies to these arguments and, if

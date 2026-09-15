@@ -129,15 +129,26 @@ class UnitStore private constructor(
 
     fun dispatchSlotCount(programIndex: Int): Int =
         if (programIndex < 0 || programIndex >= header.programCount) 0 else programRow(programIndex, 3)
-    fun dispatchSlot(programIndex: Int, ordinal: Int): ByteBuffer? {
-        if (programIndex < 0 || programIndex >= header.programCount) return null
-        if (ordinal < 0 || ordinal >= programRow(programIndex, 3)) return null
+
+    /** "unit" or "nested/<id>": the entry-name prefix this store reads, for the writer. */
+    val entryPrefix: String get() = prefix
+
+    /** The absolute slot index of (program, ordinal) in this unit's table, or -1. */
+    fun absoluteSlot(programIndex: Int, ordinal: Int): Int {
+        if (programIndex < 0 || programIndex >= header.programCount) return -1
+        if (ordinal < 0 || ordinal >= programRow(programIndex, 3)) return -1
         val slot = programRow(programIndex, 2) + ordinal
+        return if (slot in 0 until header.dispatchSlotCount) slot else -1
+    }
+
+    fun dispatchSlot(programIndex: Int, ordinal: Int): ByteBuffer? {
+        val slot = absoluteSlot(programIndex, ordinal)
+        if (slot < 0) return null
         val len = index.getInt(slotTable + 8 * slot + 4)
         if (len == 0) return null
         val off = index.getInt(slotTable + 8 * slot)
         val dispatch = entry(DISPATCH) ?: throw IllegalStateException("unit ${header.unitId}: no $prefix.dispatch entry")
-        if (off + len > dispatch.remaining())
+        if (off < 0 || off + len > dispatch.remaining())
             throw IllegalStateException("unit ${header.unitId}: $prefix.dispatch slot $slot at $off+$len past ${dispatch.remaining()}")
         return dispatch.slice(off, len).order(ByteOrder.LITTLE_ENDIAN)
     }

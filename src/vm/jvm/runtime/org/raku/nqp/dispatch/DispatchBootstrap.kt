@@ -29,6 +29,8 @@ class CachedDispatcher(@JvmField val dispatcher: Dispatcher, @JvmField val epoch
  */
 class DispatchCallSite @JvmOverloads constructor(type: MethodType,
                        @JvmField val fromIndy: Boolean = false) : MutableCallSite(type) {
+    init { DispatchBootstrap.created.incrementAndGet() }
+
     @Volatile @JvmField var programs: Array<DispatchProgram> = emptyArray()
 
     /**
@@ -44,6 +46,20 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
      *  helper sites in Ops, Rakudo's rv-decont site, the indy road). Phase
      *  C keys unit.dispatch by it. Set once at construction. */
     @JvmField var identity: String? = null
+
+    /** Where the site's unit.dispatch slot is: the unit's identity namespace
+     *  (DispatchPersist maps it to the store), the program index and the
+     *  ordinal. -1/null for an anonymous site. Set once at construction. */
+    @JvmField var unitNamespace: String? = null
+    @JvmField var programIndex: Int = -1
+    @JvmField var ordinal: Int = -1
+
+    /** The slot has been consulted once for this site's current life; reset()
+     *  clears it, so an eval-server run re-arms from the slot. */
+    @JvmField var restored: Boolean = false
+
+    /** verify mode only: the realised persisted programs, kept aside. */
+    @JvmField var verifyPrograms: List<DispatchProgram>? = null
 
     /** The dispatcher this site's instruction names, found once per
      *  registry epoch rather than on every miss. Dispatcher and epoch
@@ -84,6 +100,8 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
         programs = emptyArray()
         chain = null
         heat = 0
+        restored = false
+        verifyPrograms = null
         linkedName = null
         staticDescriptor = null
         cachedDispatcher = null
@@ -117,6 +135,11 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
 
 /** Links dispatch instructions to the dispatch machinery. */
 object DispatchBootstrap {
+    /** Every DispatchCallSite this process has made, indy-born, helper-made
+     *  and engine-made alike -- the denominator the dispatch stats line's
+     *  site counts are read against. */
+    @JvmField val created = java.util.concurrent.atomic.AtomicLong()
+
     /**
      * Every callsite linked in this process. A long-lived process that runs
      * unrelated programs in turn -- the eval server -- loads the compilation

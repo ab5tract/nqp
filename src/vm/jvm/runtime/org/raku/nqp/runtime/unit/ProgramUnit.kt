@@ -161,6 +161,9 @@ class ProgramUnit(@JvmField val store: UnitStore) : CompilationUnit() {
 
     override fun initializeCompilationUnit(tc: ThreadContext, runDeserialize: Boolean) {
         gc = tc.gc
+        /* A site of this unit's programs finds its dispatch slot through the
+         * namespace, so the store has to be reachable by it (Phase C). */
+        identityNamespace()?.let { org.raku.nqp.dispatch.DispatchPersist.register(it, store) }
         UnitLoadStats.time(header.unitId, "shells", { "blocks=${store.blockCount}" }) {
             buildTable(tc.gc.BOOTCode?.st)
         }
