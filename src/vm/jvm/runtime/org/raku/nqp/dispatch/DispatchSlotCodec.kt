@@ -106,8 +106,10 @@ object DispatchSlotCodec {
 
     /* ----- from the persisted form ----- */
 
-    fun realise(tc: ThreadContext, p: PProgram): DispatchProgram? =
-        try { program(tc, p) } catch (_: Unpersistable) { null }
+    /** [onDrop], when given, is handed the reason a program did not realise
+     *  (NQP_DISPATCH_PERSIST_TRACE reads it); the program is dropped either way. */
+    fun realise(tc: ThreadContext, p: PProgram, onDrop: ((String) -> Unit)? = null): DispatchProgram? =
+        try { program(tc, p) } catch (e: Unpersistable) { onDrop?.invoke(e.message ?: "?"); null }
 
     private fun program(tc: ThreadContext, p: PProgram): DispatchProgram {
         val out = DispatchProgram(descriptor(p.descriptor), p.guards.map { guard(tc, it) }, outcome(tc, p.outcome),

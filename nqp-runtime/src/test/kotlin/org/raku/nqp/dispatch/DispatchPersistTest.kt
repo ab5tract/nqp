@@ -81,17 +81,10 @@ class DispatchPersistTest {
         mismatched = DispatchPersist.verifyMismatched.get()
         unseen = DispatchPersist.verifyUnseen.get()
         val differing = program(Outcome.Value(ValueSource.Literal(ArgKind.INT, 1L)))
-        val err = ByteArrayOutputStream()
-        val saved = System.err
-        try {
-            System.setErr(PrintStream(err, true, StandardCharsets.UTF_8))
-            DispatchPersist.verify(tc, site, differing, csd, matching)
-        }
-        finally { System.setErr(saved) }
+        val printed = capturingErr { DispatchPersist.verify(tc, site, differing, csd, matching) }
         assertEquals(mismatched + 1, DispatchPersist.verifyMismatched.get(), "a different outcome mismatches")
         assertEquals(matched, DispatchPersist.verifyMatched.get())
         assertEquals(unseen, DispatchPersist.verifyUnseen.get())
-        val printed = err.toString(StandardCharsets.UTF_8)
         assertTrue("dispatch-verify: MISMATCH" in printed, "the mismatch prints: $printed")
         assertTrue("persisted:" in printed && "recorded:" in printed, "both texts print: $printed")
 
@@ -103,5 +96,58 @@ class DispatchPersistTest {
         assertEquals(unseen + 1, DispatchPersist.verifyUnseen.get(), "a call the guards reject is unseen")
         assertEquals(matched, DispatchPersist.verifyMatched.get())
         assertEquals(mismatched, DispatchPersist.verifyMismatched.get())
+    }
+
+    /** Two programs written differently that invoke the same callee with the
+     *  same arguments on this call agree (byOutcome, silently); one that
+     *  invokes something else does not. This is the polymorphic-site case
+     *  verify mode meets on a real run: the site re-records in a form the
+     *  persisted program predates. */
+    @Test fun verifyAcceptsADifferentFormWithTheSameEvaluatedOutcome() {
+        val tc = ProgramUnitTestSupport.tc()
+        val knowhow = tc.gc.KnowHOW!!
+        val csd = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null)
+        fun program(callee: ValueSource) = DispatchProgram(csd,
+            listOf(Guard.OfType(ValueSource.Arg(0), knowhow.st)),
+            Outcome.InvokeCode(callee, CaptureShape(listOf(ValueSource.Arg(0)), csd)),
+            emptyList(), ResumeKind.NONE, emptyList(), null)
+        val site = DispatchCallSite(MethodType.methodType(Void.TYPE))
+        site.identity = "/x/fixture.jar!unit-y#7#0"
+        site.linkedName = "lang-meth-call"
+        /* The kept program names the callee as a constant, the recording
+         * reads it off the invocant; on these args they are one object. */
+        site.verifyPrograms = listOf(program(ValueSource.Literal(ArgKind.OBJ, knowhow)))
+        val args = arrayOf<Any?>(knowhow)
+
+        var byOutcome = DispatchPersist.verifyByOutcome.get()
+        var matched = DispatchPersist.verifyMatched.get()
+        var mismatched = DispatchPersist.verifyMismatched.get()
+        var unseen = DispatchPersist.verifyUnseen.get()
+        var printed = capturingErr { DispatchPersist.verify(tc, site, program(ValueSource.Arg(0)), csd, args) }
+        assertEquals(byOutcome + 1, DispatchPersist.verifyByOutcome.get(), "the same callee agrees")
+        assertEquals(matched, DispatchPersist.verifyMatched.get())
+        assertEquals(mismatched, DispatchPersist.verifyMismatched.get())
+        assertEquals(unseen, DispatchPersist.verifyUnseen.get())
+        assertEquals("", printed, "an agreement prints nothing")
+
+        byOutcome = DispatchPersist.verifyByOutcome.get()
+        mismatched = DispatchPersist.verifyMismatched.get()
+        val elsewhere = program(ValueSource.Literal(ArgKind.OBJ, tc.gc.BOOTArray))
+        printed = capturingErr { DispatchPersist.verify(tc, site, elsewhere, csd, args) }
+        assertEquals(mismatched + 1, DispatchPersist.verifyMismatched.get(), "another callee does not")
+        assertEquals(byOutcome, DispatchPersist.verifyByOutcome.get())
+        assertTrue("dispatch-verify: MISMATCH" in printed, "the mismatch prints: $printed")
+    }
+
+    /** Runs [body] with stderr captured, and hands back what it wrote. */
+    private fun capturingErr(body: () -> Unit): String {
+        val err = ByteArrayOutputStream()
+        val saved = System.err
+        try {
+            System.setErr(PrintStream(err, true, StandardCharsets.UTF_8))
+            body()
+        }
+        finally { System.setErr(saved) }
+        return err.toString(StandardCharsets.UTF_8)
     }
 }
