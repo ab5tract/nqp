@@ -1504,6 +1504,7 @@ final class NqpOps {
                  * (a Class.getSimpleName recursion) sat in every getattr
                  * root: "Too deep inlining" on raku-invoke and every root of
                  * that shape (milestone 7, Task 8c). */
+                /* The null-read-falls-to-slow policy is written three times below on purpose (one constant handle per branch); keep the three in step. */
                 AttrEntry e1 = site.e1;
                 if (e1 != null && e1.matches(l, ch, name)) {
                     SixModelObject v = readSlot(e1.getter, o);
@@ -1529,8 +1530,11 @@ final class NqpOps {
         return getattrSlow(o, ch, name, tc, cu);
     }
 
-    /** (SixModelObject)Object through a resolved getter; a null slot may
-     *  still auto-vivify, which the caller's slow road decides. */
+    /** (SixModelObject)SixModelObject through a resolved getter -- that is
+     *  the descriptor `invokeExact` is called with, and the one
+     *  `NqpDispatch.layoutHandles` `asType`s `RakuObjectLayout.refGetter`
+     *  to. A null slot may still auto-vivify, which the caller's slow road
+     *  decides. */
     private static SixModelObject readSlot(java.lang.invoke.MethodHandle getter, Object o) {
         try {
             return (SixModelObject) getter.invokeExact((SixModelObject) o);
@@ -1566,8 +1570,11 @@ final class NqpOps {
         return bindattrSlow(o, ch, name, value, tc);
     }
 
-    /** (SixModelObject,Object)void through a resolved setter, with the
-     *  trace and the write barrier the sited road always did. */
+    /** (SixModelObject,SixModelObject)void through a resolved setter -- that
+     *  is the descriptor `invokeExact` is called with, and the one
+     *  `NqpDispatch.layoutHandles` `asType`s `RakuObjectLayout.refSetter`
+     *  to. Carries the trace and the write barrier the sited road always
+     *  did. */
     private static SixModelObject writeSlot(java.lang.invoke.MethodHandle setter,
                                             org.raku.nqp.sixmodel.reprs.RakuObject r,
                                             String name, Object value, ThreadContext tc) {

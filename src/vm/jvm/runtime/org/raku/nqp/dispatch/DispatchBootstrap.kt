@@ -10,6 +10,11 @@ import java.lang.invoke.MutableCallSite
 import org.raku.nqp.runtime.CallSiteDescriptor
 import org.raku.nqp.runtime.ThreadContext
 
+/** A dispatcher found for this site's name, valid for one registry epoch;
+ *  one volatile reference so a reader never pairs a fresh epoch with a
+ *  stale dispatcher. */
+class CachedDispatcher(@JvmField val dispatcher: Dispatcher, @JvmField val epoch: Int)
+
 /**
  * A dispatch callsite, which doubles as its inline cache: the programs recorded
  * here, tried in turn. Each dispatch instruction in the bytecode gets one of
@@ -35,9 +40,9 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
     @JvmField var staticDescriptor: CallSiteDescriptor? = null
 
     /** The dispatcher this site's instruction names, found once per
-     *  registry epoch rather than on every miss. */
-    @JvmField var dispatcher: Dispatcher? = null
-    @JvmField var dispatcherEpoch: Int = -1
+     *  registry epoch rather than on every miss. Dispatcher and epoch
+     *  travel together in one immutable holder, published volatile. */
+    @Volatile @JvmField var cachedDispatcher: CachedDispatcher? = null
 
     /**
      * The compiled guard chain, as (ThreadContext, Object[])void, once the
@@ -75,8 +80,7 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
         heat = 0
         linkedName = null
         staticDescriptor = null
-        dispatcher = null
-        dispatcherEpoch = -1
+        cachedDispatcher = null
         coldTarget?.let { if (fromIndy) setTarget(it) }
         onReset?.run()
     }
