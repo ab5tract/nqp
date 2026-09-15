@@ -18,7 +18,7 @@ public class ArgsExpectation {
             CallSiteDescriptor csd, Object[] args) throws Throwable {
         switch (cr.staticInfo.argsExpectation) {
         case ArgsExpectation.USE_BINDER:
-            cr.staticInfo.mh.invokeExact(tc, cr, csd, args);
+            cr.staticInfo.getMh().invokeExact(tc, cr, csd, args);
             break;
         case ArgsExpectation.NO_ARGS:
             if (csd.argFlags.length != 0) {
@@ -29,12 +29,12 @@ public class ArgsExpectation {
                     ExceptionHandling.dieInternal(tc,
                         arityFail(csd.numPositionals, 0));
             }
-            cr.staticInfo.mh.invokeExact(tc, cr, csd);
+            cr.staticInfo.getMh().invokeExact(tc, cr, csd);
             break;
         case ArgsExpectation.OBJ:
             if (csd.argFlags.length == 1 && csd.argFlags[0] == CallSiteDescriptor.ARG_OBJ) {
                 /* Simple, common case. */
-                cr.staticInfo.mh.invokeExact(tc, cr, csd, (SixModelObject)args[0]);
+                cr.staticInfo.getMh().invokeExact(tc, cr, csd, (SixModelObject)args[0]);
             }
             else {
                 /* Flatten if needed. */
@@ -45,19 +45,19 @@ public class ArgsExpectation {
                 if (csd.argFlags.length == 1) {
                     switch (csd.argFlags[0]) {
                     case CallSiteDescriptor.ARG_OBJ:
-                        cr.staticInfo.mh.invokeExact(tc, cr, csd, (SixModelObject)args[0]);
+                        cr.staticInfo.getMh().invokeExact(tc, cr, csd, (SixModelObject)args[0]);
                         break;
                     case CallSiteDescriptor.ARG_INT:
                     case CallSiteDescriptor.ARG_UINT:
-                        cr.staticInfo.mh.invokeExact(tc, cr, csd, Ops.box_i(
+                        cr.staticInfo.getMh().invokeExact(tc, cr, csd, Ops.box_i(
                             (long)args[0], cr.staticInfo.compUnit.hllConfig.intBoxType, tc));
                         break;
                     case CallSiteDescriptor.ARG_NUM:
-                        cr.staticInfo.mh.invokeExact(tc, cr, csd, Ops.box_n(
+                        cr.staticInfo.getMh().invokeExact(tc, cr, csd, Ops.box_n(
                             (double)args[0], cr.staticInfo.compUnit.hllConfig.numBoxType, tc));
                         break;
                     case CallSiteDescriptor.ARG_STR:
-                        cr.staticInfo.mh.invokeExact(tc, cr, csd, Ops.box_s(
+                        cr.staticInfo.getMh().invokeExact(tc, cr, csd, Ops.box_s(
                             (String)args[0], cr.staticInfo.compUnit.hllConfig.strBoxType, tc));
                         break;
                     default:
@@ -75,7 +75,7 @@ public class ArgsExpectation {
             if (csd.argFlags.length == 2 && csd.argFlags[0] == CallSiteDescriptor.ARG_OBJ
                                          && csd.argFlags[1] == CallSiteDescriptor.ARG_OBJ) {
                 /* Simple, common case. */
-                cr.staticInfo.mh.invokeExact(tc, cr, csd,
+                cr.staticInfo.getMh().invokeExact(tc, cr, csd,
                     (SixModelObject)args[0], (SixModelObject)args[1]);
             }
             else {
@@ -123,7 +123,7 @@ public class ArgsExpectation {
                         ExceptionHandling.dieInternal(tc,
                             arityFail(csd.numPositionals, 2));
                     }
-                    cr.staticInfo.mh.invokeExact(tc, cr, csd, arg1, arg2);
+                    cr.staticInfo.getMh().invokeExact(tc, cr, csd, arg1, arg2);
                 }
                 else {
                     ExceptionHandling.dieInternal(tc,

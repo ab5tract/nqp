@@ -34,11 +34,13 @@ class CallFrame : Cloneable {
         fun outerFor(tc: ThreadContext, cr: CodeRef): CallFrame? {
             cr.outer?.let { return it }
             val wanted = cr.staticInfo.outerStaticInfo ?: return null
+            // Identity of the static info, not of its bound handle: the handle
+            // is part of the body (spun on first need, milestone 7 Phase B) and
+            // this search runs on blocks that may never be entered.
             if (wanted.liveInvocations.get() > 0) {
                 var checkFrame = tc.curFrame
                 while (checkFrame != null) {
-                    if (checkFrame.codeRef.staticInfo.mh === wanted.mh &&
-                            checkFrame.codeRef.staticInfo.compUnit === wanted.compUnit)
+                    if (checkFrame.codeRef.staticInfo === wanted)
                         return checkFrame
                     checkFrame = checkFrame.caller
                 }
@@ -317,8 +319,7 @@ class CallFrame : Cloneable {
         if (wanted != null) {
             var checkFrame = tc.curFrame
             while (checkFrame != null) {
-                if (checkFrame.codeRef.staticInfo.mh === wanted.mh &&
-                        checkFrame.codeRef.staticInfo.compUnit === wanted.compUnit) {
+                if (checkFrame.codeRef.staticInfo === wanted) {
                     this.outer = checkFrame
                     break
                 }

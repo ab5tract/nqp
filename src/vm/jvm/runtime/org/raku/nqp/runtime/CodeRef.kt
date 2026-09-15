@@ -59,6 +59,14 @@ class CodeRef : SixModelObject {
         this.name = name
     }
 
+    /** A shell (the artifact road): identity now, the body from [source]
+     *  on first need; see StaticCodeInfo. */
+    constructor(compUnit: CompilationUnit, mh: MethodHandle, name: String?, uniqueId: String?,
+                argsExpectation: Short, source: StaticBodySource) {
+        this.staticInfo = StaticCodeInfo(compUnit, mh, uniqueId, argsExpectation, this, source)
+        this.name = name
+    }
+
     /**
      * Clones the object.
      */

@@ -1003,7 +1003,7 @@ final class NqpOps {
             org.raku.nqp.runtime.StaticCodeInfo si = cr == null ? null : cr.staticInfo;
             System.err.println("nqp arity: refused in '" + (cr == null ? "<null>" : cr.name)
                 + "' uid=" + (si == null ? "?" : si.uniqueId)
-                + " at " + (si == null ? "?" : si.sourceFile + ":" + si.sourceLine)
+                + " at " + (si == null ? "?" : si.getSourceFile() + ":" + si.getSourceLine())
                 + " outer=" + (si == null || si.outerStaticInfo == null
                     ? "?" : si.outerStaticInfo.uniqueId)
                 + " required=" + required + " accepted=" + accepted + ": " + t);
@@ -1022,8 +1022,8 @@ final class NqpOps {
                 + " caller=" + (caller == null || caller.codeRef == null ? "?"
                     : "'" + caller.codeRef.name + "' uid="
                       + caller.codeRef.staticInfo.uniqueId + " at "
-                      + caller.codeRef.staticInfo.sourceFile + ":"
-                      + caller.codeRef.staticInfo.sourceLine));
+                      + caller.codeRef.staticInfo.getSourceFile() + ":"
+                      + caller.codeRef.staticInfo.getSourceLine()));
             CompilationUnit ccu = (CompilationUnit) fa[NqpRootNode.ARG_CU];
             StringBuilder cb = new StringBuilder();
             if (ccu == null || ccu.codeRefs == null) cb.append(" <none>");
