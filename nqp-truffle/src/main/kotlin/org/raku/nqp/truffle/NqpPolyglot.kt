@@ -36,12 +36,14 @@ object NqpPolyglot {
      * The eval's own result is a polyglot Value, and calling through one
      * boxes every argument of every call, so the bare CallTarget is
      * collected from where parse left it instead. [name] is what the
-     * Source is called in compilation traces and statistics.
+     * Source is called in compilation traces and statistics -- and, when
+     * it is a program identity, what the parse is filed under and what
+     * gives the program's dispatch sites their identity.
      */
     @JvmStatic
     fun compile(encoded: String, name: String): CallTarget {
         context.eval(Source.newBuilder(NqpLanguage.ID, encoded, name).buildLiteral())
-        return NqpLanguage.PARSED[encoded]
+        return NqpLanguage.PARSED[NqpLanguage.parsedKey(encoded, name)]
             ?: throw IllegalStateException("the language parsed nothing for: " + encoded.take(60))
     }
 

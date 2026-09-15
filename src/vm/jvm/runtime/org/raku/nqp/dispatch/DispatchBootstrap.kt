@@ -39,6 +39,12 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
     @JvmField var linkedName: String? = null
     @JvmField var staticDescriptor: CallSiteDescriptor? = null
 
+    /** "<unit id>#<program index>#<ordinal>" for a site of a store-backed
+     *  unit's program; null for an anonymous site (an in-memory unit, the
+     *  helper sites in Ops, Rakudo's rv-decont site, the indy road). Phase
+     *  C keys unit.dispatch by it. Set once at construction. */
+    @JvmField var identity: String? = null
+
     /** The dispatcher this site's instruction names, found once per
      *  registry epoch rather than on every miss. Dispatcher and epoch
      *  travel together in one immutable holder, published volatile. */
