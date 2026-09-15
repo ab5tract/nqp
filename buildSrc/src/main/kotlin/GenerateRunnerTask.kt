@@ -23,17 +23,16 @@ abstract class GenerateRunnerTask : DefaultTask() {
     @get:Input
     abstract val libDir: Property<String>
 
-    /** Third-party jar file names, in runner bootclasspath order. */
+    /** Third-party jar file names, in runner class path order. */
     @get:Input
     abstract val runnerJarNames: ListProperty<String>
 
     /**
      * Absolute path of the directory holding the Truffle module jars, and of
-     * the grammar engine's own jar. The engine goes on the CLASS path, not
-     * the boot classpath: it needs to see Truffle, and the boot loader cannot
-     * see the module path. It can still call into nqp-runtime, because the
-     * application loader delegates to the boot loader; the return trip is why
-     * the runtime looks the engine up reflectively rather than importing it.
+     * the grammar engine's own jar. Every jar goes on the CLASS path (nothing
+     * on the boot class path since 7b, milestone 7), and the engine needs the
+     * Truffle jars on the MODULE path as well: Truffle binds to the JDK's
+     * compiler only when its own jars resolve as modules.
      */
     @get:[Input Optional]
     abstract val truffleModuleDir: Property<String>
@@ -56,7 +55,7 @@ abstract class GenerateRunnerTask : DefaultTask() {
     fun run() {
         val jar = jarDir.get()
         val lib = libDir.get()
-        val bootEntries = buildList {
+        val classPathEntries = buildList {
             add(lib)
             add("$jar/nqp-runtime.jar")
             runnerJarNames.get().forEach { add("$jar/$it") }
@@ -71,8 +70,10 @@ abstract class GenerateRunnerTask : DefaultTask() {
             |# path it falls back to an interpreter that does no partial
             |# evaluation and simply measures as "Truffle is slow".
             |#
-            |# The engine jar goes on the class path rather than the boot
-            |# classpath because the boot loader cannot see the module path.
+            |# Every jar is on the class path (nothing on the boot class
+            |# path since milestone 7, 7b): a runtime-tree @TruffleBoundary
+            |# must be visible to the compiler, and the boot loader cannot
+            |# see the module path either.
             |# Every regex and every block runs on it (the encoder is always
             |# on since milestone 3):
             |# there is no bytecode regex path to fall back to.
@@ -156,7 +157,7 @@ abstract class GenerateRunnerTask : DefaultTask() {
         // runners (milestone 7, Task 7b).
         val jvmOpts = "--enable-native-access=ALL-UNNAMED${'$'}{TRUFFLE_NATIVE}" +
             " --sun-misc-unsafe-memory-access=allow -Xss64m -XX:+AllowParallelDefineClass" +
-            " ${'$'}TRUFFLE -cp \"${bootEntries.joinToString(":")}:${'$'}CP\""
+            " ${'$'}TRUFFLE -cp \"${classPathEntries.joinToString(":")}:${'$'}CP\""
         write(output, render("",
             "java -Dnqp.execname=\"${'$'}EXEC\" -Xmx\"${'$'}{NQP_JVM_MAXHEAP:-4g}\" $jvmOpts" +
                 " org.raku.nqp.runtime.unit.UnitMain \"$lib/nqp.jar\" \"${'$'}@\""))
