@@ -21,8 +21,6 @@ class AdaptorUnit(
         }
     }
 
-    override fun getCallSites(): Array<CallSiteDescriptor> = emptyArray()
-
     override fun hllName(): String = ""
 
     override fun unitId(): String = "adaptor:$target"

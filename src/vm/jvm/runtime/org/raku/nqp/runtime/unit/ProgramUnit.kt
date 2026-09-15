@@ -2,7 +2,6 @@ package org.raku.nqp.runtime.unit
 
 import java.nio.ByteBuffer
 import org.raku.nqp.runtime.ArgsExpectation
-import org.raku.nqp.runtime.CallSiteDescriptor
 import org.raku.nqp.runtime.CodeRef
 import org.raku.nqp.runtime.CompilationUnit
 import org.raku.nqp.runtime.ExceptionHandling
@@ -30,7 +29,16 @@ class ProgramUnit(@JvmField val store: UnitStore) : CompilationUnit() {
          *  lines name the unit the same way -- by [identityNamespace], which a
          *  site-check identity carries as its prefix -- so the two join even
          *  where several loaded artifacts share one unit id (Rakudo builds
-         *  five of them as "perl6"). */
+         *  five of them as "perl6").
+         *
+         *  Two lines print: `unit-check` per unit (the aggregate), and
+         *  `unit-check-prog <namespace>#<programIndex> slots=N` per LIVE
+         *  program, whose name is exactly what `site-check` prints, so the
+         *  join is per program rather than per unit. The aggregate alone
+         *  cannot see an undercount: UnitStore.dispatchSlot bounds the
+         *  ordinal by the program's own slot count and returns null past it,
+         *  so a program that numbers more ordinals than it stores slots is
+         *  silent. tools/build/site-check.raku joins the two streams. */
         private val SITE_CHECK = System.getenv("NQP_SITE_CHECK") != null
     }
 
@@ -75,7 +83,13 @@ class ProgramUnit(@JvmField val store: UnitStore) : CompilationUnit() {
         }
         qbidToCodeRef = table
         codeRefs = list.toTypedArray()
-        callSites = emptyArray()   // the v1 call-site table was never written; the engine builds its own descriptors
+        if (SITE_CHECK) {
+            val ns = identityNamespace() ?: header.unitId
+            val live = java.util.TreeSet<Int>()
+            for (cr in list) live.add(cr.staticInfo.programIndex)
+            for (p in live)
+                System.err.println("unit-check-prog $ns#$p slots=${store.dispatchSlotCount(p)}")
+        }
         if (Ops.REPOINT_TRACE) {
             val sb = StringBuilder("nqp buildTable: unit ${header.unitId}" +
                 " blocks=$n live=${list.size}" +
@@ -174,7 +188,6 @@ class ProgramUnit(@JvmField val store: UnitStore) : CompilationUnit() {
      *  null. Every slot is empty in Phase B. */
     fun dispatchSlot(programIndex: Int, ordinal: Int): ByteBuffer? = store.dispatchSlot(programIndex, ordinal)
 
-    override fun getCallSites(): Array<CallSiteDescriptor> = emptyArray()
     override fun hllName(): String = header.hll
     override fun deserializeQbid(): Int = header.deserializeQbid
     override fun loadQbid(): Int = header.loadQbid

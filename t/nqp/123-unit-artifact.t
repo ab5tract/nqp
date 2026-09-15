@@ -8,11 +8,11 @@
 # the module's symbols while this file is being compiled, long before the
 # jar exists.
 
-plan(8);
+plan(9);
 
 my $is-windows := nqp::backendconfig()<osname> eq 'MSWin32';
 if nqp::getcomp('nqp').backend.name ne 'jvm' || $is-windows {
-    skip('the unit artifact road is JVM-only and driven through /bin/sh', 8);
+    skip('the unit artifact road is JVM-only and driven through /bin/sh', 9);
 }
 else {
     my $dir := nqp::cwd() ~ '/t/nqp/123-unit-artifact.tmp';
@@ -107,6 +107,12 @@ else {
         $p := $p + 30 + $nlen + $elen + $csize;
     }
     is(@names[0] // '', 'unit.index', 'the jar carries unit.index first');
+    # The walk above stops at the first header whose signature is not PK\3\4,
+    # so a deflated (or simply missing) entry would end it early and leave the
+    # assertions below true of nothing. UnitMod has an SC, so its artifact is
+    # unit.index, unit.records, unit.programs, unit.serialized, unit.dispatch:
+    # exactly five, and the count is what proves the walk saw them all.
+    is(nqp::elems(@names), 5, 'five entries in the artifact, all walked');
     my int $classes := 0;
     for @names {
         $classes := $classes + 1

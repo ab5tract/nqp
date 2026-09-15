@@ -57,12 +57,12 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
 
     /**
      * The call target for each source parsed -- programs and matchers
-     * alike. The key is the Source NAME when that name is a program
-     * identity ({@code CodeEngines.materialize} names a store-backed
-     * unit's program by its namespace -- store name and unit id -- and
-     * its index), and the source TEXT
-     * otherwise; the two never collide, since a program's text is its
-     * wire form and never has the identity shape. eval answers
+     * alike. The key is the Source NAME when the source is a PROGRAM whose
+     * name is a program identity ({@code CodeEngines.materialize} names a
+     * store-backed unit's program by its namespace -- store name and unit
+     * id -- and its index), and the source TEXT otherwise; the two never
+     * collide, since a program's text is its wire form and never has the
+     * identity shape. eval answers
      * a polyglot Value, and calling through one boxes everything, so the
      * embedders ({@link NqpCodeEngine}, {@code NqpGrammarEngine}, both
      * through {@link NqpPolyglot}) collect the bare target from here.
@@ -70,12 +70,20 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
     static final java.util.concurrent.ConcurrentHashMap<String, CallTarget> PARSED =
         new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** The PARSED key: the Source name when it is a program identity
-     *  ("&lt;namespace&gt;#&lt;index&gt;", CodeEngines.materialize), else the
-     *  text. The namespace is this process's path to the store, so the key
-     *  is process-local. */
+    /** The PARSED key: the Source name when the source is a program AND
+     *  that name is a program identity ("&lt;namespace&gt;#&lt;index&gt;",
+     *  CodeEngines.materialize), else the text. The namespace is this
+     *  process's path to the store, so the key is process-local.
+     *
+     *  <p>The isProgram half matters because only programs are named by
+     *  identity: a regex source is named by whatever the grammar engine
+     *  passes, and a name that happened to parse as "&lt;x&gt;#&lt;int&gt;"
+     *  would key two different patterns to one parsed matcher. Both callers
+     *  -- {@link #parse} and {@code NqpPolyglot.compile}, which serves
+     *  programs for {@link NqpCodeEngine} and regexes for the grammar
+     *  engine -- go through here, so the two sides stay symmetric. */
     static String parsedKey(String source, String name) {
-        return ProgramIdentity.parse(name) != null ? name : source;
+        return NqpWire.isProgram(source) && ProgramIdentity.parse(name) != null ? name : source;
     }
 
     @Override protected CallTarget parse(ParsingRequest request) {

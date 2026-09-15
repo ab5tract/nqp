@@ -52,11 +52,17 @@ object UnitImageWriter {
         // records, back to back
         val records = ByteArrayOutputStream(1 shl 16)
         val blockRows = IntArray(nb * 4)
+        /* Programs are 1:1 with blocks, and ProgramUnit sizes a program's
+         * dispatch-slot window from the block that names it, so two blocks
+         * naming one program would silently share one slot window. */
+        val programClaimed = BooleanArray(np)
         for (q in 0 until nb) {
             val b = image.blocks[q]
             if (b == null) { blockRows[q * 4] = 0; blockRows[q * 4 + 1] = 0; blockRows[q * 4 + 2] = -1; blockRows[q * 4 + 3] = -1; continue }
             require(b.programIndex in 0 until np) { "unit ${image.unitId}: block $q names program ${b.programIndex} of $np" }
-            require(b.outerQbid < nb) { "unit ${image.unitId}: block $q names outer qbid ${b.outerQbid} beyond the table" }
+            require(!programClaimed[b.programIndex]) { "unit ${image.unitId}: block $q names program ${b.programIndex}, which another block already claims" }
+            programClaimed[b.programIndex] = true
+            require(b.outerQbid >= -1 && b.outerQbid < nb) { "unit ${image.unitId}: block $q names outer qbid ${b.outerQbid}, not -1 or a qbid of the table" }
             val bytes = UnitCodec.encode(BlockRecord.serializer(), b.record)
             blockRows[q * 4] = records.size(); blockRows[q * 4 + 1] = bytes.size
             blockRows[q * 4 + 2] = b.programIndex; blockRows[q * 4 + 3] = b.outerQbid
