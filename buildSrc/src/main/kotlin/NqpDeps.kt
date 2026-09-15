@@ -13,7 +13,6 @@ object NqpDeps {
     val thirdParty = listOf(
         "it.unimi.dsi:fastutil:8.5.19",
         "org.jline:jline:4.3.1",
-        "org.lz4:lz4-java:1.8.0",
         // Kotlin runtime for the incrementally converted sources
         // (kotlin-prototype); brings org.jetbrains:annotations transitively.
         "org.jetbrains.kotlin:kotlin-stdlib:2.4.10",
@@ -25,7 +24,7 @@ object NqpDeps {
     /** Module-name order for sorting resolved jar files back into
      *  THIRDPARTY_JARS order (Gradle resolution orders dependencies first). */
     val moduleOrder = listOf(
-        "fastutil", "jline", "lz4-java",
+        "fastutil", "jline",
         "kotlin-stdlib", "kotlinx-serialization-core-jvm", "annotations",
     )
 
