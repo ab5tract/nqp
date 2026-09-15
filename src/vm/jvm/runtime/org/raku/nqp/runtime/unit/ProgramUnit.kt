@@ -26,7 +26,11 @@ class ProgramUnit(@JvmField val store: UnitStore) : CompilationUnit() {
     companion object {
         /** NQP_SITE_CHECK, the knob NqpProgramBuilder's site-check line reads:
          *  this side prints what the store holds, so a run's site ordinals can
-         *  be judged against the slot table without the engine seeing it. */
+         *  be judged against the slot table without the engine seeing it. Both
+         *  lines name the unit the same way -- by [identityNamespace], which a
+         *  site-check identity carries as its prefix -- so the two join even
+         *  where several loaded artifacts share one unit id (Rakudo builds
+         *  five of them as "perl6"). */
         private val SITE_CHECK = System.getenv("NQP_SITE_CHECK") != null
     }
 
@@ -44,7 +48,7 @@ class ProgramUnit(@JvmField val store: UnitStore) : CompilationUnit() {
 
     fun buildTable(bootSt: STable?) {
         if (SITE_CHECK) System.err.println(
-            "unit-check ${header.unitId} programs=${store.programCount}" +
+            "unit-check ${identityNamespace() ?: header.unitId} programs=${store.programCount}" +
             " slots=${header.dispatchSlotCount}")
         val n = store.blockCount
         val table = arrayOfNulls<CodeRef>(n)
