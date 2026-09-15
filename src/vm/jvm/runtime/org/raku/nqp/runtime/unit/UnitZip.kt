@@ -7,7 +7,10 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
-/** The envelope: a zip with fixed entry names and no class entries. */
+/** The v1 envelope: a zip with fixed entry names and no class entries.
+ *  Window only -- the writer is v2 (UnitImageWriter) from Phase B on, and
+ *  this stays alive so a stage0 artifact still loads, through [toImage].
+ *  Task 9 deletes the whole file. */
 object UnitZip {
     const val META = "unit.meta"
     const val PROGRAMS = "unit.programs"
@@ -136,5 +139,32 @@ object UnitZip {
         if (m.serializedCodeRefCount > m.blocks.size)
             throw IllegalStateException("unit ${m.unitId}: ${m.serializedCodeRefCount} serialized code refs, table of ${m.blocks.size}")
         return UnitRecord(m, p, serialized, nested)
+    }
+
+    /** The transition window's transcoder: a v1 record as a v2 image, so
+     *  one reader (UnitStore) serves both formats. A v1 artifact carries no
+     *  dispatch counts -- its sites get ordinals but no slots -- and its
+     *  global static-lexical list is regrouped per block, which is where v2
+     *  keeps it. */
+    @JvmStatic
+    fun toImage(r: UnitRecord): UnitImage {
+        val m = r.meta
+        val lexByQbid = HashMap<Int, ArrayList<StaticLexValue>>()
+        for (v in m.staticLexValues)
+            lexByQbid.getOrPut(v.qbid) { ArrayList() }.add(StaticLexValue(v.name, v.scHandle, v.scIdx, v.flags))
+        val blocks = m.blocks.mapIndexed { qbid, b ->
+            if (b == null) null else BlockEntry(b.name, b.cuid, b.outerQbid, b.programIndex, BlockRecord(
+                b.oLex.toList(), b.iLex.toList(), b.nLex.toList(), b.sLex.toList(),
+                b.handlers, b.hasExitHandler, b.isThunk,
+                b.sourceFile, b.sourceLine, b.sourceLineDelta,
+                b.sectionRaw, b.sectionLine, b.sectionFile?.toList(),
+                lexByQbid[qbid] ?: listOf()))
+        }
+        val nested = LinkedHashMap<String, UnitStore>()
+        for ((id, n) in r.nested)
+            nested[id] = UnitStore.open(ByteBuffer.wrap(UnitImageWriter.bytes(toImage(n))), "<nested:$id>")
+        return UnitImage(m.unitId, m.hll, m.scHandle, m.scDesc,
+            m.serializedCodeRefCount, m.mainlineQbid, m.entryQbid, m.deserializeQbid, m.loadQbid,
+            blocks, r.programs.toList(), IntArray(r.programs.size), r.serialized, nested)
     }
 }
