@@ -485,7 +485,7 @@ object Syscalls {
         }
         define("jvm-build-unit-record", OBJ) { args ->
             val res = org.raku.nqp.runtime.EvalResult()
-            res.record = org.raku.nqp.runtime.unit.UnitWriter.record(args.obj(0), args.tc)
+            res.record = org.raku.nqp.runtime.unit.UnitWriter.store(args.obj(0), args.tc)
             obj(res)
         }
 

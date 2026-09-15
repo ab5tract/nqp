@@ -3,6 +3,9 @@ package org.raku.nqp.runtime.unit
 import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
+import java.nio.file.Path
+import java.nio.file.StandardOpenOption
 import java.util.concurrent.ConcurrentHashMap
 import org.raku.nqp.runtime.CompilationUnit
 import org.raku.nqp.runtime.ControlException
@@ -10,44 +13,64 @@ import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.ThreadContext
 
 /** Loads unit artifacts -- the only road there is. A shared load (eval
- *  server) caches the parsed, immutable record by path and builds a fresh
- *  ProgramUnit per load, so a request pays for parsing once. */
+ *  server) keeps one open store per path and builds a fresh ProgramUnit per
+ *  load, so a request pays for the open once. */
 object UnitLoader {
-    private val sharedRecords = ConcurrentHashMap<String, UnitRecord>()
-    private val sharedRoads = ConcurrentHashMap<String, Boolean>()
+    /** One store per path, process-wide, for shared loads (the eval
+     *  server): immutable, so every run's ProgramUnit slices the same
+     *  mapping. Replaces the parsed-record cache. */
+    private val stores = ConcurrentHashMap<String, UnitStore>()
 
-    /** A central-directory lookup, not a full read: cheap enough to call
-     *  on every load. */
+    /** Sniffs the first local file header only: v2's unit.index, or --
+     *  for the transition window -- v1's unit.meta. */
     @JvmStatic
     fun isUnitFile(fn: String): Boolean {
         val f = File(fn)
         if (!f.isFile) return false
-        return try { java.util.zip.ZipFile(f).use { it.getEntry(UnitZip.META) != null } } catch (t: Exception) { false }
+        return try {
+            FileChannel.open(f.toPath(), StandardOpenOption.READ).use { ch ->
+                val head = ByteBuffer.allocate(64)
+                ch.read(head); head.flip()
+                UnitStore.isUnit(head) || UnitZip.isUnit(head)
+            }
+        } catch (t: Exception) { false }
     }
 
-    /** Caches the sniff by path for a shared load (the eval server), so a
-     *  request pays one map lookup instead of re-reading the file's
-     *  central directory every time. */
+    /** The shared-load sniff cache of v1 is gone: the sniff now reads 64
+     *  bytes, not a central directory. */
     @JvmStatic
-    fun isUnitFile(fn: String, shared: Boolean): Boolean =
-        if (shared) sharedRoads.computeIfAbsent(fn) { isUnitFile(it) } else isUnitFile(fn)
+    fun isUnitFile(fn: String, shared: Boolean): Boolean = isUnitFile(fn)
 
     @JvmStatic
-    @Throws(IOException::class)
-    fun record(fn: String, shared: Boolean): UnitRecord =
-        if (shared) sharedRecords.computeIfAbsent(fn) { readRecord(it) }
-        else readRecord(fn)
+    fun store(fn: String, shared: Boolean): UnitStore =
+        if (shared) stores.computeIfAbsent(fn) { openStore(it) } else openStore(fn)
 
-    private fun readRecord(fn: String): UnitRecord {
+    private fun openStore(fn: String): UnitStore {
         val name = File(fn).name
-        val bytes = UnitLoadStats.time(name, "read-file", { "bytes=${File(fn).length()}" }) { File(fn).readBytes() }
-        return UnitLoadStats.time(name, "decode-total") { UnitZip.read(bytes) }
+        return UnitLoadStats.time(name, "open-store", { "bytes=${File(fn).length()}" }) {
+            FileChannel.open(Path.of(fn), StandardOpenOption.READ).use { ch ->
+                val mapped = ch.map(FileChannel.MapMode.READ_ONLY, 0, ch.size())
+                if (UnitStore.isUnit(mapped)) UnitStore.open(mapped, fn) else transcodeV1(mapped, fn)
+            }
+        }
     }
+
+    /** The transition window (deleted with v1, Task 9): a v1 artifact is
+     *  decoded by the old reader and re-encoded as an in-memory v2 image. */
+    private fun transcodeV1(bytes: ByteBuffer, name: String): UnitStore {
+        val arr = ByteArray(bytes.remaining()).also { bytes.duplicate().get(it) }
+        val rec = UnitLoadStats.time(File(name).name, "transcode-v1") { UnitZip.read(arr) }
+        return UnitStore.open(ByteBuffer.wrap(UnitImageWriter.bytes(UnitZip.toImage(rec))), name)
+    }
+
+    private fun openStore(bytes: ByteArray, name: String): UnitStore =
+        if (UnitStore.isUnit(ByteBuffer.wrap(bytes))) UnitStore.open(ByteBuffer.wrap(bytes), name)
+        else transcodeV1(ByteBuffer.wrap(bytes), name)
 
     @JvmStatic
     @Throws(IOException::class)
     fun loadUnit(tc: ThreadContext, fn: String, shared: Boolean): ProgramUnit {
-        val u = ProgramUnit(record(fn, shared))
+        val u = ProgramUnit(store(fn, shared))
         u.shared = shared
         u.initializeCompilationUnit(tc)
         return u
@@ -64,7 +87,7 @@ object UnitLoader {
 
     @JvmStatic
     fun loadAndRun(tc: ThreadContext, bytes: ByteArray) {
-        val u = ProgramUnit(UnitZip.read(bytes))
+        val u = ProgramUnit(openStore(bytes, "<buffer>"))
         u.shared = tc.gc.sharingHint
         u.initializeCompilationUnit(tc)
         u.runLoadIfAvailable(tc)
@@ -118,7 +141,7 @@ object UnitLoader {
     /** nqp::loadbytecodebuffer: a unit artifact already in memory. */
     @JvmStatic
     fun load(tc: ThreadContext, buffer: ByteArray) {
-        if (!UnitZip.isUnit(ByteBuffer.wrap(buffer)))
+        if (!UnitStore.isUnit(ByteBuffer.wrap(buffer)) && !UnitZip.isUnit(buffer))
             throw ExceptionHandling.dieInternal(tc, "loadbytecodebuffer: the buffer is not a unit artifact")
         try {
             loadAndRun(tc, buffer)
@@ -155,8 +178,8 @@ object UnitLoader {
         }
     }
 
-    /** Warms the shared record cache, so a server pays for parsing once. */
+    /** Warms the store cache, so a server pays for the open once. */
     @JvmStatic
     @Throws(IOException::class)
-    fun prime(path: String) { record(path, true) }
+    fun prime(path: String) { store(path, true) }
 }
