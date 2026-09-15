@@ -256,10 +256,13 @@ class GlobalContext {
             throw RuntimeException(e)
         }
 
+        /* Both registries exist before the first config is made in either:
+         * getHLLConfigFor stamps the config it creates with which registry
+         * it went into, and that comparison needs both fields set. */
         compileeHLLConfiguration = HashMap<String, HLLConfig>()
+        compilerHLLConfiguration = HashMap<String, HLLConfig>()
         hllConfiguration = compileeHLLConfiguration
         getHLLConfigFor("")
-        compilerHLLConfiguration = HashMap<String, HLLConfig>()
         hllConfiguration = compilerHLLConfiguration
         getHLLConfigFor("")
 
@@ -301,10 +304,24 @@ class GlobalContext {
             if (config == null) {
                 config = HLLConfig()
                 config.name = language
+                config.compilerSide = hllConfiguration === compilerHLLConfiguration
                 setupConfig(config)
                 hllConfiguration.put(language, config)
             }
             return config
+        }
+    }
+
+    /**
+     * The config for a language in the named registry, without creating one:
+     * what a persisted reference to an HLL config resolves through, so that
+     * an unknown name answers null rather than minting a config no type is
+     * owned by (which would leave a dispatch guard that can never match).
+     */
+    fun findHLLConfig(language: String, compilerSide: Boolean): HLLConfig? {
+        val registry = if (compilerSide) compilerHLLConfiguration else compileeHLLConfiguration
+        synchronized(registry) {
+            return registry.get(language)
         }
     }
 

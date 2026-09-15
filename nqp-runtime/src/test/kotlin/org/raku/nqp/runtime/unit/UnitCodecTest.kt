@@ -21,6 +21,8 @@ class UnitCodecTest {
      *  plugin does not process local classes. */
     @Serializable data class N(val s: String?)
 
+    @Serializable class WithDouble(val d: Double, val tag: Int)
+
     private val sample = Probe(
         -7, 1L shl 40, true, "gr\u00fc\u00dfe \ud83d\udc2a", null,
         listOf("", "a", "\u0000b"), null, intArrayOf(1, -1, Int.MAX_VALUE), longArrayOf(0L, Long.MIN_VALUE),
@@ -50,6 +52,13 @@ class UnitCodecTest {
         val back = UnitCodec.decode(Inner.serializer(), padded)
         assertEquals(Inner("z", 9), back)
         assertEquals(5, padded.position())
+    }
+
+    @Test fun doublesRoundTripAsRawBits() {
+        val b = UnitCodec.encode(WithDouble.serializer(), WithDouble(-0.0, 7))
+        assertEquals(12, b.size)
+        val d = UnitCodec.decode(WithDouble.serializer(), ByteBuffer.wrap(b))
+        assertEquals((-0.0).toRawBits(), d.d.toRawBits()); assertEquals(7, d.tag)
     }
 
     @Test fun nullMarkIsOneByte() {

@@ -24,6 +24,16 @@ class HLLConfig {
     /** HLL name. */
     @JvmField var name: String? = null
 
+    /**
+     * Which of the global context's two registries this config was created
+     * in: the compiler-side one, or the compilee-side one. A name alone does
+     * not identify a config -- both registries hold a config per name, and
+     * which one a type's hllOwner points at is decided by whichever registry
+     * was current when it was deserialized -- so a persisted dispatch program
+     * carries this flag alongside the name (GlobalContext.findHLLConfig).
+     */
+    @JvmField var compilerSide: Boolean = false
+
     /** The types the languages wish to get things boxed as. */
     @JvmField var intBoxType: SixModelObject? = null
     @JvmField var uintBoxType: SixModelObject? = null
