@@ -140,6 +140,12 @@ object DispatchBootstrap {
      */
     private val resettables = java.util.concurrent.CopyOnWriteArrayList<Runnable>()
 
+    init { DispatchDump.installIfRequested() }
+
+    /** Every callsite registered here, for diagnostics that walk them. */
+    @JvmStatic
+    fun sites(): Collection<DispatchCallSite> = linked
+
     @JvmStatic
     fun registerResettable(action: Runnable) {
         resettables.add(action)
