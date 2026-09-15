@@ -28,7 +28,9 @@ data class ProgramIdentity(val namespace: String, val programIndex: Int) {
     }
 }
 
-/** (namespace, program index, ordinal) as one key: what a dispatch instruction
- *  is known by across processes (spec, Phase B "Site identity"). */
+/** (namespace, program index, ordinal) as one key for a dispatch instruction.
+ *  The namespace is THIS process's path to the store, so the string is not a
+ *  cross-process key: Phase C resolves a slot through the site's own unit,
+ *  program index and ordinal, and the key only tells two live sites apart. */
 @JvmInline
 value class SiteIdentity(val key: String)
