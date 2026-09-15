@@ -106,6 +106,7 @@ object Dispatch {
             for (i in compiled until programs.size)
                 if (run(tc, ctx, programs[i], site)) return
         }
+        if (site.linkedName == null) site.linkedName = name
         val registry = tc.gc.dispatchers
         val epoch = registry.epoch
         var cached = site.cachedDispatcher
