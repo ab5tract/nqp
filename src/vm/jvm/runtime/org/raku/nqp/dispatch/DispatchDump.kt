@@ -3,9 +3,7 @@ package org.raku.nqp.dispatch
 import java.io.File
 import java.io.PrintWriter
 import org.raku.nqp.runtime.CallSiteDescriptor
-import org.raku.nqp.runtime.CodeRef
 import org.raku.nqp.sixmodel.STable
-import org.raku.nqp.sixmodel.SerializationContext
 import org.raku.nqp.sixmodel.SixModelObject
 
 /**
@@ -41,41 +39,37 @@ object DispatchDump {
 
     /* ----- references ----- */
 
+    /* The addressing itself is DispatchSlotCodec's, so that a dump names a
+     * reference exactly when the program carrying it persists; what has no
+     * address is spelled out here instead, with the reason the codec gave. */
+
     private fun typeName(obj: SixModelObject): String =
         if (obj.stInitialized) obj.st.debugName ?: "?" else "?"
 
-    private fun objectIndex(sc: SerializationContext, obj: SixModelObject): Int {
-        val i = sc.getObjectIndex(obj)
-        return if (i >= 0 && i < sc.objectCount() && sc.getObject(i) === obj) i else -1
+    private fun kindName(kind: Int): String = when (kind) {
+        PRef.CODE -> "code"
+        PRef.STABLE -> "st"
+        else -> "obj"
     }
 
-    private fun codeIndex(sc: SerializationContext, obj: SixModelObject): Int {
-        if (obj !is CodeRef) return -1
-        val i = try { sc.getCodeIndex(obj) } catch (_: NullPointerException) { -1 }
-        return if (i >= 0 && i < sc.coderefCount() && sc.getCodeRef(i) === obj) i else -1
-    }
+    private fun address(r: PRef): String = "${kindName(r.kind)}:${r.handle}:${r.index}"
 
     private fun ref(obj: SixModelObject?): String {
         if (obj == null) return "null"
-        val sc = obj.sc
-        if (sc != null) {
-            val oi = objectIndex(sc, obj)
-            if (oi >= 0) return "obj:${sc.handle}:$oi"
-            val ci = codeIndex(sc, obj)
-            if (ci >= 0) return "code:${sc.handle}:$ci"
+        return try {
+            address(DispatchSlotCodec.ref(obj)!!)
+        } catch (_: Unpersistable) {
+            "NP(obj:${obj.javaClass.simpleName}:${typeName(obj)}:${if (obj.sc == null) "nosc" else "notroot"})"
         }
-        return "NP(obj:${obj.javaClass.simpleName}:${typeName(obj)}:${if (sc == null) "nosc" else "notroot"})"
     }
 
     private fun ref(st: STable?): String {
         if (st == null) return "null"
-        val sc = st.sc
-        if (sc != null) {
-            val i = try { sc.getSTableIndex(st) } catch (_: NullPointerException) { -1 }
-            if (i >= 0 && i < sc.stableCount() && sc.getSTable(i) === st)
-                return "st:${sc.handle}:$i"
+        return try {
+            address(DispatchSlotCodec.ref(st)!!)
+        } catch (_: Unpersistable) {
+            "NP(st:${st.debugName}:${if (st.sc == null) "nosc" else "notroot"})"
         }
-        return "NP(st:${st.debugName}:${if (sc == null) "nosc" else "notroot"})"
     }
 
     private fun literal(kind: ArgKind, value: Any?): String = when (kind) {
