@@ -15,7 +15,7 @@ import org.raku.nqp.runtime.unit.UnitStore
  * "verify" restores into DispatchCallSite.verifyPrograms without installing,
  * records fresh, and compares (see verify). NQP_DISPATCH_RECORD ("all" or
  * a comma-separated list of store-name prefixes) makes the process rewrite
- * the selected artifacts' slots at exit (recordAtExit, Task 5).
+ * the selected artifacts' slots at exit (recordAtExit).
  *
  * Stores are registered by identity namespace (store name + "!" + unit
  * id) when a ProgramUnit initializes; they are immutable and process-wide,
@@ -32,6 +32,12 @@ object DispatchPersist {
 
     private val stores = ConcurrentHashMap<String, UnitStore>()
 
+    /** NQP_DISPATCH_RECORD: "all", or comma-separated store-name prefixes. */
+    private val recordSelector: List<String>? = System.getenv("NQP_DISPATCH_RECORD")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
+
+    private fun selected(storeName: String): Boolean =
+        recordSelector!!.any { it == "all" || storeName.startsWith(it) }
+
     @JvmField val restored = AtomicLong()
     @JvmField val restoredSites = AtomicLong()
     @JvmField val dropped = AtomicLong()
@@ -47,6 +53,7 @@ object DispatchPersist {
                 System.err.println("dispatch-verify: matched=$verifyMatched mismatched=$verifyMismatched unseen=$verifyUnseen")
             })
         }
+        if (recordSelector != null) Runtime.getRuntime().addShutdownHook(Thread { recordAtExit() })
     }
 
     @JvmStatic
@@ -90,5 +97,45 @@ object DispatchPersist {
             }
         }
         if (applicable == 0) verifyUnseen.incrementAndGet()
+    }
+
+    /** The training run's exit: every recorded site of every selected
+     *  store, persisted into its slot; duplicates of one slot (two live
+     *  sites with one identity) merge by text, capped at MAX_PROGRAMS. */
+    @JvmStatic
+    fun recordAtExit() {
+        val bySlot = HashMap<String, HashMap<String, HashMap<Int, LinkedHashMap<String, DispatchProgram>>>>()
+        for (site in DispatchBootstrap.sites()) {
+            val ns = site.unitNamespace ?: continue
+            val programs = site.programs
+            if (programs.isEmpty()) continue
+            val store = stores[ns] ?: continue
+            if (!selected(store.name)) continue
+            val slot = store.absoluteSlot(site.programIndex, site.ordinal)
+            if (slot < 0) continue
+            val byText = bySlot.getOrPut(store.name) { HashMap() }.getOrPut(store.entryPrefix) { HashMap() }.getOrPut(slot) { LinkedHashMap() }
+            for (p in programs) byText.putIfAbsent(DispatchDump.describe(p), p)
+        }
+        for ((path, perPrefix) in bySlot) {
+            var slots = 0; var written = 0; var unpersistable = 0
+            val encoded = HashMap<String, Map<Int, ByteArray>>()
+            for ((prefix, perSlot) in perPrefix) {
+                val m = HashMap<Int, ByteArray>()
+                for ((slot, byText) in perSlot) {
+                    val persisted = ArrayList<PProgram>()
+                    for (p in byText.values) {
+                        val pp = DispatchSlotCodec.persist(p)
+                        if (pp == null) unpersistable++ else if (persisted.size < Dispatch.MAX_PROGRAMS) persisted.add(pp)
+                    }
+                    if (persisted.isEmpty()) continue
+                    m[slot] = UnitCodec.encode(DispatchSlot.serializer(), DispatchSlot(persisted))
+                    slots++; written += persisted.size
+                }
+                if (m.isNotEmpty()) encoded[prefix] = m
+            }
+            if (encoded.isEmpty()) continue
+            org.raku.nqp.runtime.unit.UnitDispatchWriter.rewrite(path, encoded)
+            System.err.println("dispatch-record: wrote $slots slots ($written programs, $unpersistable unpersistable) to $path")
+        }
     }
 }

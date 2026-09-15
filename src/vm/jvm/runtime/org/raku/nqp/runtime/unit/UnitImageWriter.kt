@@ -35,7 +35,9 @@ object UnitImageWriter {
         }
     }
 
-    private fun put(z: ZipOutputStream, name: String, bytes: ByteArray) {
+    /** internal, not private: UnitDispatchWriter rebuilds an artifact entry
+     *  by entry and must store them exactly as this writer first did. */
+    internal fun put(z: ZipOutputStream, name: String, bytes: ByteArray) {
         val entry = ZipEntry(name)
         entry.method = ZipEntry.STORED
         entry.size = bytes.size.toLong(); entry.compressedSize = bytes.size.toLong()
