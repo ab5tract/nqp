@@ -23,6 +23,13 @@ import org.raku.nqp.sixmodel.STable
  * program is a CompilationUnit, so this stays one.
  */
 class ProgramUnit(@JvmField val store: UnitStore) : CompilationUnit() {
+    companion object {
+        /** NQP_SITE_CHECK, the knob NqpProgramBuilder's site-check line reads:
+         *  this side prints what the store holds, so a run's site ordinals can
+         *  be judged against the slot table without the engine seeing it. */
+        private val SITE_CHECK = System.getenv("NQP_SITE_CHECK") != null
+    }
+
     private val header get() = store.header
 
     /** cuid -> code ref, for the blocks that carry one. */
@@ -36,6 +43,9 @@ class ProgramUnit(@JvmField val store: UnitStore) : CompilationUnit() {
     private val pendingLexValues = ArrayList<Pair<StaticCodeInfo, List<StaticLexValue>>>()  // guarded by this
 
     fun buildTable(bootSt: STable?) {
+        if (SITE_CHECK) System.err.println(
+            "unit-check ${header.unitId} programs=${store.programCount}" +
+            " slots=${header.dispatchSlotCount}")
         val n = store.blockCount
         val table = arrayOfNulls<CodeRef>(n)
         val list = ArrayList<CodeRef>(n)
