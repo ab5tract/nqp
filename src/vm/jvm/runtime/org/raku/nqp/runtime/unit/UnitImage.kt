@@ -9,7 +9,7 @@ import kotlinx.serialization.Serializable
  * the block's identity (name, cuid, outer, program index) lives in the
  * header's per-qbid lists and the index's block table, so a shell costs
  * no record decode. UnitImage is what the writer takes: the compiler's
- * record (RecordReader) or a transcoded v1 record, in memory.
+ * record (RecordReader), in memory.
  */
 @Serializable
 class UnitHeader(
