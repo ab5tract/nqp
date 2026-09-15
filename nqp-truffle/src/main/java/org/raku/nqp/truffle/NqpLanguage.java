@@ -56,8 +56,12 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
     }
 
     /**
-     * The call target for each source parsed, by source text -- programs
-     * and matchers alike; their wire magics never collide. eval answers
+     * The call target for each source parsed -- programs and matchers
+     * alike. The key is the Source NAME when that name is a program
+     * identity ({@code CodeEngines.materialize} names a store-backed
+     * unit's program by unit id and index), and the source TEXT
+     * otherwise; the two never collide, since a program's text is its
+     * wire form and never has the identity shape. eval answers
      * a polyglot Value, and calling through one boxes everything, so the
      * embedders ({@link NqpCodeEngine}, {@code NqpGrammarEngine}, both
      * through {@link NqpPolyglot}) collect the bare target from here.
@@ -65,19 +69,26 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
     static final java.util.concurrent.ConcurrentHashMap<String, CallTarget> PARSED =
         new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** The PARSED key: the Source name when it is a program identity
+     *  ("&lt;unit&gt;#&lt;index&gt;", CodeEngines.materialize), else the text. */
+    static String parsedKey(String source, String name) {
+        return ProgramIdentity.parse(name) != null ? name : source;
+    }
+
     @Override protected CallTarget parse(ParsingRequest request) {
         String source = request.getSource().getCharacters().toString();
         if (NqpWire.isProgram(source)) {
             NqpWire.Program p = NqpWire.decode(source);
+            ProgramIdentity identity = ProgramIdentity.parse(request.getSource().getName());
             BytecodeRootNodes<NqpRootNode> nodes = NqpRootNodeGen.create(
-                this, BytecodeConfig.DEFAULT, b -> NqpProgramBuilder.build(b, p));
+                this, BytecodeConfig.DEFAULT, b -> NqpProgramBuilder.build(b, p, identity));
             NqpRootNode root = nodes.getNode(0);
             root.programSize = p.code().length;
             root.resultType = p.resultType();
             root.needsFrame = p.needsFrame();
             root.hllFree = p.hllFree();
             CallTarget target = root.getCallTarget();
-            PARSED.put(source, target);
+            PARSED.put(parsedKey(source, request.getSource().getName()), target);
             return new ConstantRootNode(this, new Program(target)).getCallTarget();
         }
         if (source.startsWith("code-test:")) {
@@ -87,7 +98,7 @@ public final class NqpLanguage extends TruffleLanguage<NqpLanguage.Ctx> {
         /* Everything else is a regex: a descriptor the backend flattened,
          * or a pattern for the harnesses (RxMatchRootNode tells them apart). */
         CallTarget match = RxMatchRootNode.create(this, source);
-        PARSED.put(source, match);
+        PARSED.put(parsedKey(source, request.getSource().getName()), match);
         return new ConstantRootNode(this, new Matcher(match)).getCallTarget();
     }
 

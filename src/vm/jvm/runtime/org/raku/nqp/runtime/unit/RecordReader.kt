@@ -16,6 +16,12 @@ import org.raku.nqp.sixmodel.SixModelObject
 class RecordReader(private val tc: ThreadContext) {
     private val hints = HashMap<Pair<SixModelObject, String>, Long>()
 
+    /** (type, name) pairs [intOr] has already found the guest class does not
+     *  carry. Without it every block of every compile throws and catches one
+     *  RuntimeException per absent attribute, each carrying a full attribute
+     *  dump built by RakuObjectLayout. */
+    private val absent = HashSet<Pair<SixModelObject, String>>()
+
     private fun hint(type: SixModelObject, name: String): Long =
         hints.getOrPut(type to name) { type.st.REPR.hint_for(tc, type.st, type, name) }
 
@@ -32,13 +38,19 @@ class RecordReader(private val tc: ThreadContext) {
      * RuntimeException naming it; every other failure -- a native-type
      * mismatch, an nqp-level throw -- is rethrown untouched.
      */
-    private fun intOr(o: SixModelObject, name: String, default: Int): Int =
-        try { int(o, name) }
+    private fun intOr(o: SixModelObject, name: String, default: Int): Int {
+        val key = o.st.WHAT to name
+        if (key in absent) return default
+        return try { int(o, name) }
         catch (e: RuntimeException) {
             if (e.javaClass === RuntimeException::class.java &&
-                e.message?.startsWith("No such attribute '$name'") == true) default
+                e.message?.startsWith("No such attribute '$name'") == true) {
+                absent.add(key)
+                default
+            }
             else throw e
         }
+    }
 
     private fun list(o: SixModelObject, name: String): SixModelObject? =
         o.get_attribute_boxed(tc, o.st.WHAT, name, hint(o.st.WHAT, name))
@@ -138,7 +150,7 @@ class RecordReader(private val tc: ThreadContext) {
          * ProgramUnitTest documents. v1 dropped those rows where it applied
          * them; v2 drops them here, where the grouping happens. */
         if (WHY) for (q in lexByQbid.keys)
-            if (q > maxQbid || table[q] == null)
+            if (q < 0 || q > maxQbid || table[q] == null)
                 System.err.println("unit record $unitId: ${lexByQbid[q]!!.size} static lexical row(s) for qbid $q, which is not a block; dropped")
 
         val serializedString = str(unit, "\$!serialized")
