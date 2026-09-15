@@ -71,12 +71,17 @@ class StaticCodeInfo private constructor(
         bodyReady = true
     }
 
+    private var bodyFinished = false
+
     /**
      * Allocates the static-lexical arrays from the lexical names and spins
      * the two bound handles from the base handle; the tail of the old init
-     * block. A source calls it after setting the name arrays.
+     * block. A source calls it after setting the name arrays. Runs once:
+     * a second call is a no-op, so re-currying the handles is impossible.
      */
     internal fun finishBody() {
+        if (bodyFinished) return
+        bodyFinished = true
         _oLexicalNames?.let {
             _oLexStatic = arrayOfNulls(it.size)
             _oLexStaticFlags = ByteArray(it.size)
@@ -111,9 +116,8 @@ class StaticCodeInfo private constructor(
 
     private var _mh: MethodHandle = mh
     /**
-     * Method handle for the code ref (bound; the body). (Package-private in
-     * Java; Kotlin has no package visibility, and ArgsExpectation/CallFrame
-     * read it.)
+     * The code ref's bound method handle: part of the body, since
+     * finishBody() is what curries it into this shape.
      */
     var mh: MethodHandle
         get() { ensureBody(); return _mh }
@@ -121,7 +125,9 @@ class StaticCodeInfo private constructor(
 
     private var _mhResume: MethodHandle? = null
     /**
-     * Curried method handle for resuming. (Package-private in Java.)
+     * The handle for resuming, curried by finishBody() out of the same base
+     * handle; part of the body, and null for a block that takes no resume
+     * argument.
      */
     var mhResume: MethodHandle?
         get() { ensureBody(); return _mhResume }
@@ -306,6 +312,15 @@ class StaticCodeInfo private constructor(
 
     fun oTryGetLexicalIdx(name: String): Int {
         ensureBody()
+        return rawOLexicalIdx(name)
+    }
+
+    /** oTryGetLexicalIdx without the body barrier: for a StaticBodySource
+     *  applying the block's static lexical values while it fills the body.
+     *  Reading the getter there would re-enter ensureBody() on a monitor
+     *  this thread already holds with bodyReady still false, and recurse
+     *  until the stack ran out. */
+    internal fun rawOLexicalIdx(name: String): Int {
         val names = _oLexicalNames
         if (names != null) {
             var map = oLexicalMap
@@ -319,6 +334,13 @@ class StaticCodeInfo private constructor(
         } else {
             return -1
         }
+    }
+
+    /** oLexStatic/oLexStaticFlags writes without the body barrier; same
+     *  caller, and the same reason. The arrays exist from finishBody(). */
+    internal fun rawSetOLexStatic(idx: Int, value: SixModelObject?, flags: Byte) {
+        _oLexStatic!![idx] = value
+        _oLexStaticFlags!![idx] = flags
     }
 
     fun iTryGetLexicalIdx(name: String): Int {

@@ -9049,10 +9049,10 @@ object Ops {
         return null
     }
 
-    /** Turns a runtime compile's record into a live unit: a ProgramUnit
-     *  built from the record, initialized under the compilee's HLL config
-     *  when asked, and retained for nested embedding while a compilation
-     *  is under way. */
+    /** Turns a runtime compile's unit into a live one: a ProgramUnit over
+     *  the store the compile opened, initialized under the compilee's HLL
+     *  config when asked, and retained for nested embedding while a
+     *  compilation is under way. */
     @JvmStatic
     fun loadcompunit(obj: SixModelObject?, compileeHLL: Long, tc: ThreadContext): SixModelObject? {
         try {
@@ -9062,9 +9062,9 @@ object Ops {
             val u = org.raku.nqp.runtime.unit.ProgramUnit(rec)
             u.shared = false
             res.cu = u
-            val unitName = rec.meta.unitId
+            val unitName = rec.header.unitId
             if (System.getenv("NQP_CODE_WHY") != null)
-                System.err.println("unit record $unitName (${rec.programs.size} programs, ${rec.meta.blocks.size} qbids)")
+                System.err.println("unit record $unitName (${rec.programCount} programs, ${rec.blockCount} qbids)")
             if (compileeHLL != 0L)
                 usecompileehllconfig(tc)
             u.initializeCompilationUnit(tc)
