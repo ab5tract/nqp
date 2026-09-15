@@ -2,6 +2,7 @@ import java.io.StringWriter
 
 plugins {
     kotlin("jvm") version "2.4.10"
+    kotlin("plugin.serialization") version "2.4.10" apply false
 }
 // Root project: orchestrates the JVM backend build (runtime jar, bootstrap
 // stages, runner generation). The Makefile build path remains authoritative
@@ -105,7 +106,7 @@ val jvmDir: Directory = layout.buildDirectory.dir("jvm").get()
 val shareRuntimeDir = jvmDir.dir("share/runtime")
 val shareLibDir = jvmDir.dir("share/lib")
 // The Truffle modules keep a directory of their own: everything in
-// share/runtime is a candidate for the runner's boot classpath, and these
+// share/runtime is a candidate for the runner's class path, and these
 // have to be on the module path instead.
 val shareTruffleDir = jvmDir.dir("share/truffle")
 val runtimeJarFile = File(projectDir, "nqp-runtime/build/libs/nqp-runtime.jar")
@@ -228,6 +229,7 @@ fun registerStage(
             }
             workingDir = projectDir
             mainClass = "org.raku.nqp.runtime.unit.UnitMain"
+            // The task's class-path input snapshot only; the real class path is set in doFirst below.
             classpath = files(compilerDir, engineJarFile)
 
             doFirst {
@@ -270,7 +272,7 @@ val syncRuntimeJars = tasks.register<Sync>("syncRuntimeJars") {
     from(nqpThirdParty)
     from(runtimeJarFile)
     // The engine sits here with the rest of the runtime, but the runner puts
-    // it on the class path: runnerJars decides the boot classpath by name, so
+    // it on the class path: runnerJars decides the class path by name, so
     // an extra jar in this directory is not picked up by accident.
     from(engineJarFile)
     into(shareRuntimeDir)
@@ -284,7 +286,7 @@ val syncTruffleModules = tasks.register<Sync>("syncTruffleModules") {
 }
 
 // Local jvmconfig.properties served from the lib dir: the lib dir precedes
-// nqp-runtime.jar on the runner bootclasspath, so this shadows the jar's
+// nqp-runtime.jar on the runner class path, so this shadows the jar's
 // baked (install-prefix) copy for build-tree runs — the same mechanism the
 // Makefile build uses with its repo-root jvmconfig.properties.
 val generateLocalJvmConfig = tasks.register<JvmConfigPropertiesTask>("generateLocalJvmConfig") {
