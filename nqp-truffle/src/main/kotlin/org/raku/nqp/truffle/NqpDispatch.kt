@@ -493,6 +493,10 @@ object NqpDispatch {
              * prefix has to go with it, or compiled code keeps replaying
              * programs that guard on a finished run's types. */
             site.onReset = Runnable { reset() }
+            /* One cache per dispatch instruction built, so counting here
+             * counts the instructions the process parsed, split by whether
+             * the program they belong to had an identity. */
+            if (STATS) (if (site.identity != null) sites else anonSites).incrementAndGet()
         }
 
         /** Rebuilds the prefix from the site's programs after a miss. */
@@ -567,6 +571,11 @@ object NqpDispatch {
     @JvmField val STATS: Boolean = System.getenv("NQP_DISPATCH_STATS") != null
     @JvmField val hits = AtomicLong()
     @JvmField val misses = AtomicLong()
+
+    /** Dispatch instructions built, with an identity and without (see
+     *  Cache's init and DispatchCallSite.identity). */
+    @JvmField val sites = AtomicLong()
+    @JvmField val anonSites = AtomicLong()
     @JvmField val slowEvals = AtomicLong()
     @JvmField val invokes = AtomicLong()
     @JvmField val directs = AtomicLong()
@@ -579,6 +588,7 @@ object NqpDispatch {
     init {
         if (STATS) Runtime.getRuntime().addShutdownHook(Thread {
             System.err.println("dispatch stats: hits=" + hits + " misses=" + misses +
+                " sites=" + sites + " anon=" + anonSites +
                 " slowEvals=" + slowEvals + " invokes=" + invokes + " directs=" + directs +
                 " noTarget=" + noTarget + " badExpectation=" + badExpectation + " notCodeRef=" + notCodeRef +
                 " slowLayout=" + slowEvalsLayout + " slowNull=" + slowEvalsNull +

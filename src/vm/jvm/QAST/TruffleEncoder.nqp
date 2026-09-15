@@ -958,6 +958,14 @@ class QAST::TruffleEncoder {
                 ~ ' dispatches=' ~ %e<dispatches> ~ ' nested=' ~ nqp::elems(%e<nested>)
                 ~ ' uses_hll=' ~ %e<uses_hll>);
         }
+        # The block's DISPATCH node count is its unit.dispatch slot count
+        # (milestone 7 Phase B): the record carries it, the writer sizes
+        # the table from it, the builder numbers the nodes in walk order.
+        # The harness roads that encode without a block record leave
+        # $*BREC unbound, and an unbound dynamic throws when named, so it
+        # is read through getlexdyn (which answers null) instead.
+        my $brec := nqp::getlexdyn('$*BREC');
+        $brec.dispatches(%e<dispatches>) unless nqp::isnull($brec);
         nqp::splice(@code, @ltypes, 4, 0);
         trace('YES: committing ' ~ nqp::elems(%e<decls>) ~ ' decls');
         for %e<decls> -> $d {
