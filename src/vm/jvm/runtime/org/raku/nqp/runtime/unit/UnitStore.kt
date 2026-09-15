@@ -86,6 +86,14 @@ class UnitStore private constructor(
         slotTable = programTable + 16 * header.programCount
         val need = slotTable + 8 * header.dispatchSlotCount
         if (index.remaining() < need) throw IllegalStateException("unit artifact $name: $prefix.index holds ${index.remaining()} bytes, tables need $need")
+        /* Every program's slot window must land inside the slot table: a
+         * rewriter that mispointed one would otherwise hand out another
+         * program's persisted programs at a miss. */
+        for (i in 0 until header.programCount) {
+            val first = index.getInt(programTable + 16 * i + 8); val count = index.getInt(programTable + 16 * i + 12)
+            if (first < 0 || count < 0 || first + count > header.dispatchSlotCount)
+                throw IllegalStateException("unit artifact $name: program $i claims dispatch slots $first+$count of ${header.dispatchSlotCount}")
+        }
         if (header.names.size != header.blockCount || header.cuids.size != header.blockCount)
             throw IllegalStateException("unit artifact $name: ${header.names.size} names / ${header.cuids.size} cuids for ${header.blockCount} blocks")
         if (header.serializedCodeRefCount > header.blockCount)
