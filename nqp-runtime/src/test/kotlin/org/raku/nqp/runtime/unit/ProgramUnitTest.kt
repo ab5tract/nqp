@@ -1,8 +1,10 @@
 package org.raku.nqp.runtime.unit
 
 import org.raku.nqp.runtime.ArgsExpectation
+import org.raku.nqp.runtime.CodeRef
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -72,12 +74,36 @@ class ProgramUnitTest {
         assertEquals(4, t[0]!!.staticInfo.mh.type().parameterCount())   // (tc, cr, csd, args)
     }
 
+    /**
+     * `unitEntry` plus `USE_BINDER` is the precondition the fast paths key
+     * on: `Ops.invokeDirect` takes the direct road only for a code ref
+     * carrying both, and `Dispatch.invokeCallback` does the same. So every
+     * block `buildTable` produces must carry the pair -- not just the
+     * mainline -- and a code ref built any other way must NOT claim
+     * `unitEntry`, or those fast paths would enter a body that has no
+     * engine program behind it.
+     */
     @Test
     fun everyTableCodeRefIsAUnitEntry() {
         val u = unit()
         u.buildTable(null)
-        val cr = u.qbidToCodeRef!![0]!!
-        assertTrue(cr.staticInfo.unitEntry, "buildTable marks the shared entry body")
+        val t = u.qbidToCodeRef!!
+        for (qbid in t.indices) {
+            val cr = t[qbid] ?: continue
+            assertTrue(cr.staticInfo.unitEntry, "buildTable marks qbid $qbid as a unit entry")
+            assertEquals(ArgsExpectation.USE_BINDER, cr.staticInfo.argsExpectation,
+                "qbid $qbid takes its args through the binder")
+        }
+    }
+
+    @Test
+    fun aCodeRefNotFromBuildTableIsNotAUnitEntry() {
+        val u = unit()
+        // The shape AdaptorUnit uses: a hand-built code ref over some handle,
+        // never routed through `buildTable`.
+        val cr = CodeRef(u, ProgramEntry.ENTER, "hand-built", null,
+            null, null, null, null, null, ArgsExpectation.USE_BINDER)
+        assertFalse(cr.staticInfo.unitEntry, "only buildTable may claim the unit-entry body")
     }
 
     @Test
