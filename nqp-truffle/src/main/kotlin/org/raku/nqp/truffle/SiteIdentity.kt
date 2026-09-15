@@ -17,12 +17,15 @@ data class ProgramIdentity(val namespace: String, val programIndex: Int) {
     companion object {
         /** Null unless [sourceName] has the "<namespace>#<index>" shape. The
          *  split is at the LAST '#', so a namespace that carries one of its
-         *  own -- a store name is a file path -- still parses. */
+         *  own -- a store name is a file path -- still parses. A negative
+         *  index is not a program index (they are table offsets), so
+         *  "<x>#-1" is not an identity either. */
         @JvmStatic
         fun parse(sourceName: String): ProgramIdentity? {
             val hash = sourceName.lastIndexOf('#')
             if (hash <= 0 || hash == sourceName.length - 1) return null
             val idx = sourceName.substring(hash + 1).toIntOrNull() ?: return null
+            if (idx < 0) return null
             return ProgramIdentity(sourceName.substring(0, hash), idx)
         }
     }

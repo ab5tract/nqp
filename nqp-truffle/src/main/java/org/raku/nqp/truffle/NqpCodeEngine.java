@@ -239,8 +239,8 @@ public final class NqpCodeEngine implements CodeEngine {
                 /* resumeNextSave already re-saved this frame. Leave it
                  * too: a re-suspending bytecode frame leaves through its
                  * postlude, and skipping this made tc.curFrame point at a
-                 * frame packed away in a continuation --
-                 * Dispatch.descriptorFor reads tc.curFrame, so race/hyper
+                 * frame packed away in a continuation, which the
+                 * since-deleted Dispatch.descriptorFor read, so race/hyper
                  * runs then resolved callsite descriptors against the
                  * wrong unit. leaveSuspended, not leave: the save is not
                  * this frame's exit, so its LEAVE/KEEP/UNDO stay owed to

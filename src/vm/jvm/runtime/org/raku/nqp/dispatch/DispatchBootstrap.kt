@@ -174,11 +174,12 @@ object DispatchBootstrap {
                 Array<Any>::class.java)
             val handler = caller.findStatic(Dispatch::class.java, "dispatch", handlerType)
 
-            /* Curry the callsite and the linking class in -- the class names
-             * the callsite-descriptor table csIdx points into, so descriptor
-             * resolution never leans on tc.curFrame -- and gather the
-             * dispatch arguments (which follow the dispatcher name, callsite
-             * index and thread context) into an array. */
+            /* Curry the callsite and the linking class in -- the class named
+             * the callsite-descriptor table csIdx pointed into on the class
+             * road; that table is gone, so Dispatch.dispatch refuses any
+             * non-negative index -- and gather the dispatch arguments (which
+             * follow the dispatcher name, callsite index and thread context)
+             * into an array. */
             val site = DispatchCallSite(type, fromIndy = true)
             val cold = MethodHandles
                 .insertArguments(handler, 0, site, caller.lookupClass())

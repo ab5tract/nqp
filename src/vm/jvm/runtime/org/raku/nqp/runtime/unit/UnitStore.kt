@@ -43,7 +43,11 @@ class UnitStore private constructor(
             val whole = bytes.duplicate().order(ByteOrder.LITTLE_ENDIAN)
             val dir = ZipDirectory.read(whole, name)
             val slices = HashMap<String, ByteBuffer>(dir.size * 2)
-            for ((n, e) in dir) slices[n] = whole.slice(e.offset, e.size).order(ByteOrder.LITTLE_ENDIAN)
+            /* Read-only on both roads: the mapped road gets its slices from
+             * a READ_ONLY mapping, so a heap-opened store must not hand out
+             * writable ones. entry() duplicates, and UnitImageWriter's nested
+             * copy only reads, so nothing needs a writable view. */
+            for ((n, e) in dir) slices[n] = whole.slice(e.offset, e.size).asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN)
             return UnitStore(name, slices, "unit")
         }
 
