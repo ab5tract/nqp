@@ -21,8 +21,7 @@ object UnitLoader {
      *  mapping. Replaces the parsed-record cache. */
     private val stores = ConcurrentHashMap<String, UnitStore>()
 
-    /** Sniffs the first local file header only: v2's unit.index, or --
-     *  for the transition window -- v1's unit.meta. */
+    /** Sniffs the first local file header only: v2's unit.index. */
     @JvmStatic
     fun isUnitFile(fn: String): Boolean {
         val f = File(fn)
@@ -31,15 +30,10 @@ object UnitLoader {
             FileChannel.open(f.toPath(), StandardOpenOption.READ).use { ch ->
                 val head = ByteBuffer.allocate(64)
                 ch.read(head); head.flip()
-                UnitStore.isUnit(head) || UnitZip.isUnit(head)
+                UnitStore.isUnit(head)
             }
         } catch (t: Exception) { false }
     }
-
-    /** The shared-load sniff cache of v1 is gone: the sniff now reads 64
-     *  bytes, not a central directory. */
-    @JvmStatic
-    fun isUnitFile(fn: String, shared: Boolean): Boolean = isUnitFile(fn)
 
     @JvmStatic
     fun store(fn: String, shared: Boolean): UnitStore =
@@ -50,22 +44,13 @@ object UnitLoader {
         return UnitLoadStats.time(name, "open-store", { "bytes=${File(fn).length()}" }) {
             FileChannel.open(Path.of(fn), StandardOpenOption.READ).use { ch ->
                 val mapped = ch.map(FileChannel.MapMode.READ_ONLY, 0, ch.size())
-                if (UnitStore.isUnit(mapped)) UnitStore.open(mapped, fn) else transcodeV1(mapped, fn)
+                UnitStore.open(mapped, fn)
             }
         }
     }
 
-    /** The transition window (deleted with v1, Task 9): a v1 artifact is
-     *  decoded by the old reader and re-encoded as an in-memory v2 image. */
-    private fun transcodeV1(bytes: ByteBuffer, name: String): UnitStore {
-        val arr = ByteArray(bytes.remaining()).also { bytes.duplicate().get(it) }
-        val rec = UnitLoadStats.time(File(name).name, "transcode-v1") { UnitZip.read(arr) }
-        return UnitStore.open(ByteBuffer.wrap(UnitImageWriter.bytes(UnitZip.toImage(rec))), name)
-    }
-
     private fun openStore(bytes: ByteArray, name: String): UnitStore =
-        if (UnitStore.isUnit(ByteBuffer.wrap(bytes))) UnitStore.open(ByteBuffer.wrap(bytes), name)
-        else transcodeV1(ByteBuffer.wrap(bytes), name)
+        UnitStore.open(ByteBuffer.wrap(bytes), name)
 
     @JvmStatic
     @Throws(IOException::class)
@@ -141,7 +126,7 @@ object UnitLoader {
     /** nqp::loadbytecodebuffer: a unit artifact already in memory. */
     @JvmStatic
     fun load(tc: ThreadContext, buffer: ByteArray) {
-        if (!UnitStore.isUnit(ByteBuffer.wrap(buffer)) && !UnitZip.isUnit(buffer))
+        if (!UnitStore.isUnit(ByteBuffer.wrap(buffer)))
             throw ExceptionHandling.dieInternal(tc, "loadbytecodebuffer: the buffer is not a unit artifact")
         try {
             loadAndRun(tc, buffer)
@@ -166,7 +151,7 @@ object UnitLoader {
      *  block does that itself. */
     @JvmStatic
     fun loadApp(tc: ThreadContext, path: String, shared: Boolean): CompilationUnit {
-        if (!isUnitFile(path, shared))
+        if (!isUnitFile(path))
             throw ExceptionHandling.dieInternal(tc, "$path is not a unit artifact")
         return try {
             UnitLoadStats.load(File(path).name) { loadUnit(tc, path, shared) }
