@@ -1,10 +1,12 @@
 package org.raku.nqp.runtime.unit
 
+import java.nio.ByteBuffer
 import org.raku.nqp.runtime.ArgsExpectation
 import org.raku.nqp.runtime.CodeRef
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -169,5 +171,33 @@ class ProgramUnitTest {
     fun dispatchSlotsReadThroughTheUnit() {
         val u = ProgramUnitTestSupport.unit()
         assertNull(u.dispatchSlot(0, 0)); assertNull(u.dispatchSlot(7, 0))
+    }
+
+    /**
+     * The namespace a program identity is keyed by. Neither half alone is
+     * enough: a unit id is author-supplied and repeats across artifacts
+     * (Rakudo's build names five of them "perl6"), and a nested unit
+     * inherits its parent's store name -- so keying on either alone let one
+     * unit's program answer for another's (milestone 7 Task 7).
+     */
+    @Test
+    fun identityNamespaceNamesBothTheStoreAndTheUnit() {
+        // a unit built in this process has none: its id is a fresh sha1 per
+        // compile, so its programs go on sharing a root by text
+        assertNull(ProgramUnitTestSupport.unit().identityNamespace())
+        assertEquals("x.jar!unit-x", ProgramUnitTestSupport.unit("x.jar").identityNamespace())
+
+        // a nested unit rides in the parent's zip and so carries the parent's
+        // store name; only its unit id tells the two apart
+        val inner = UnitStore.open(ByteBuffer.wrap(UnitImageWriter.bytes(UnitImage(
+            "inner", "nqp", null, null, 0, 0, -1, -1, -1,
+            listOf(BlockEntry("m", null, -1, 0, BlockRecord(
+                emptyList(), emptyList(), emptyList(), emptyList(), longArrayOf(0),
+                false, false, "t.nqp", 3, 0, null, null, null, emptyList()))),
+            listOf("P"), intArrayOf(0), null, emptyMap()))), "<inner>")
+        val parent = ProgramUnitTestSupport.unit("x.jar", mapOf("inner" to inner))
+        val nested = ProgramUnit(parent.store.nested("inner")!!)
+        assertEquals("x.jar!inner", nested.identityNamespace())
+        assertNotEquals(parent.identityNamespace(), nested.identityNamespace())
     }
 }

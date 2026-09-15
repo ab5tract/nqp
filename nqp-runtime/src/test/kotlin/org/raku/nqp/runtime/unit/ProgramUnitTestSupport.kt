@@ -39,7 +39,7 @@ object ProgramUnitTestSupport {
      * applies at once. deserializeQbid is -1: the fixture has no deserialize
      * program, so runDeserializeIfAvailable runs the drain alone.
      */
-    fun image(): UnitImage = UnitImage(
+    fun image(nested: Map<String, UnitStore> = emptyMap()): UnitImage = UnitImage(
         "unit-x", "nqp", SC_HANDLE, "desc", 2, 0, -1, -1, 3,
         listOf(
             block("main", -1, 0, olex = listOf("\$x", "\$y"),
@@ -49,10 +49,13 @@ object ProgramUnitTestSupport {
             block(LOAD_NAME, 0, 2, olex = listOf("\$z"),
                   lex = listOf(StaticLexValue("\$z", SC_HANDLE, SC_IDX, 2)), cuid = "cuid-3")),
         listOf("PROG0", "PROG1", PROG2),
-        intArrayOf(2, 0, 1), byteArrayOf(9, 8, 7), emptyMap())
+        intArrayOf(2, 0, 1), byteArrayOf(9, 8, 7), nested)
 
-    fun unit(): ProgramUnit =
-        ProgramUnit(UnitStore.open(ByteBuffer.wrap(UnitImageWriter.bytes(image())), "<test>"))
+    /** [storeName] is what UnitLoader passes: a file path for an artifact,
+     *  a "<...>"-wrapped label for a unit built in this process. It decides
+     *  ProgramUnit.identityNamespace, so a test that cares names it. */
+    fun unit(storeName: String = "<test>", nested: Map<String, UnitStore> = emptyMap()): ProgramUnit =
+        ProgramUnit(UnitStore.open(ByteBuffer.wrap(UnitImageWriter.bytes(image(nested))), storeName))
 
     /** A fresh runtime: a GlobalContext bootstraps the MOP and hands back its
      *  main thread's context. */
