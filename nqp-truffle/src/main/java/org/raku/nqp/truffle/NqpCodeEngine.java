@@ -137,7 +137,7 @@ public final class NqpCodeEngine implements CodeEngine {
             System.err.println("nqp cont: non-suspendable escape in '"
                 + (cf.codeRef == null ? "<null>" : cf.codeRef.name) + "' uid="
                 + (sci == null ? "?" : sci.uniqueId) + " at "
-                + (sci == null ? "?" : sci.sourceFile + ":" + sci.sourceLine)
+                + (sci == null ? "?" : sci.getSourceFile() + ":" + sci.getSourceLine())
                 + "; saved so far: " + sse);
         }
         return new IllegalStateException(
