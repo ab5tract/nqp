@@ -215,3 +215,25 @@ class ProgramUnit(@JvmField val store: UnitStore) : CompilationUnit() {
  * "<buffer>" (loadbytecodebuffer). A file name never starts with '<'.
  */
 fun ProgramUnit.isStoreBacked(): Boolean = !store.name.startsWith("<")
+
+/**
+ * The namespace a stored unit's program identities live in, or null for a
+ * unit built in this process (see [isStoreBacked]). It is the store's name
+ * and the unit id together, because neither alone identifies a store:
+ *
+ *  - a nested unit inherits its parent's store NAME (UnitStore.nested),
+ *    so the name alone would let nested program 3 answer for the parent's;
+ *  - a unit ID is author-supplied -- nqp's `--javaclass` names it, and
+ *    Rakudo's build gives rakudo.jar and every BOOTSTRAP jar the same
+ *    "perl6" -- so the id alone would let v6c's program 3 answer for
+ *    rakudo.jar's (milestone 7 Task 7: that collision ran one unit's
+ *    block body in place of another's).
+ *
+ * The pair is unique where it must be: two stores of one name differ by id
+ * (parent vs nested), two stores of one id differ by name (two files), and
+ * a pair that repeats is the same artifact opened again -- whose programs
+ * are identical, which is exactly when sharing one parsed root is right
+ * (an eval server re-opening the same jar per run depends on it).
+ */
+fun ProgramUnit.identityNamespace(): String? =
+    if (isStoreBacked()) store.name + "!" + unitId() else null
