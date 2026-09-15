@@ -22,8 +22,10 @@ import org.raku.nqp.dispatch.BindFailureException
 import org.raku.nqp.dispatch.BindReturnException
 import org.raku.nqp.dispatch.Captures
 import org.raku.nqp.dispatch.Dispatch
+import org.raku.nqp.dispatch.DispatchBootstrap
 import org.raku.nqp.dispatch.DispatchCallSite
 import org.raku.nqp.dispatch.DispatchCompiler
+import org.raku.nqp.dispatch.DispatchPersist
 import org.raku.nqp.dispatch.DispatchProgram
 import org.raku.nqp.dispatch.DispatchRecord
 import org.raku.nqp.dispatch.Guard
@@ -589,6 +591,9 @@ object NqpDispatch {
         if (STATS) Runtime.getRuntime().addShutdownHook(Thread {
             System.err.println("dispatch stats: hits=" + hits + " misses=" + misses +
                 " sites=" + sites + " anon=" + anonSites +
+                " sitesAll=" + DispatchBootstrap.created + " restored=" + DispatchPersist.restored +
+                " restoredSites=" + DispatchPersist.restoredSites + " dropped=" + DispatchPersist.dropped +
+                " recorded=" + DispatchPersist.recorded +
                 " slowEvals=" + slowEvals + " invokes=" + invokes + " directs=" + directs +
                 " noTarget=" + noTarget + " badExpectation=" + badExpectation + " notCodeRef=" + notCodeRef +
                 " slowLayout=" + slowEvalsLayout + " slowNull=" + slowEvalsNull +
