@@ -1504,7 +1504,9 @@ final class NqpOps {
                  * (a Class.getSimpleName recursion) sat in every getattr
                  * root: "Too deep inlining" on raku-invoke and every root of
                  * that shape (milestone 7, Task 8c). */
-                /* The null-read-falls-to-slow policy is written three times below on purpose (one constant handle per branch); keep the three in step. */
+                /* The null-read-falls-to-slow policy is written three times
+                 * below on purpose (one constant handle per branch); keep
+                 * the three in step. */
                 AttrEntry e1 = site.e1;
                 if (e1 != null && e1.matches(l, ch, name)) {
                     SixModelObject v = readSlot(e1.getter, o);
