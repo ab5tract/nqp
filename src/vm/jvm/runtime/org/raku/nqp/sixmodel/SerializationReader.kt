@@ -59,7 +59,7 @@ class SerializationReader(
     /* Per-STable progress, and the way back from an STable to its index, so a
      * REPR can ask for one it depends on out of table order. */
     private var stableState = IntArray(0)
-    private lateinit var stableIndex: java.util.IdentityHashMap<STable, Int>
+    private var stableIndex = java.util.IdentityHashMap<STable, Int>()
 
     /* The version of the serialization format we're currently reading. */
     @JvmField var version = 0
