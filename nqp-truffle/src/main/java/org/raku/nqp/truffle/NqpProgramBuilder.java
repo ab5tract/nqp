@@ -727,6 +727,9 @@ final class NqpProgramBuilder {
         if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("isfalse") && nargs == 1) return Op.ISFALSE;
         if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("findmethod") && nargs == 2) return Op.FINDMETHOD;
         if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("can") && nargs == 2) return Op.CAN;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("decont") && nargs == 1) return Op.DECONT;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("isconcrete") && nargs == 1) return Op.ISCONCRETE;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("create") && nargs == 1) return Op.CREATE;
         return null;
     }
 
