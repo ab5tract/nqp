@@ -7997,7 +7997,10 @@ object Ops {
     @JvmStatic
     fun settypehll(type: SixModelObject?, language: String, tc: ThreadContext): SixModelObject? {
         val st = type!!.st
-        st.update { s -> s.withFacts(hllOwner = tc.gc.getHLLConfigFor(language)) }
+        /* The HLL config is looked up BEFORE the update: the GlobalContext's
+         * monitor is never taken while the STable's is held. */
+        val cfg = tc.gc.getHLLConfigFor(language)
+        st.update { s -> s.withFacts(hllOwner = cfg) }
         return type
     }
     @JvmStatic
