@@ -694,7 +694,7 @@ final class NqpProgramBuilder {
 
     /* ----- table ops with a dedicated operation ----- */
 
-    private enum Op { RUN, GETATTR, BINDATTR, DECONT, ISNULL, ISCONCRETE, ISTYPE, ISCONT, ISTRUE, ISFALSE, HLLIZE, P6SINK, ASSERTPARAMCHECK, P6TYPECHECKRV, CREATE,
+    private enum Op { RUN, GETATTR, BINDATTR, DECONT, ISNULL, ISCONCRETE, ISTYPE, ISCONT, ISTRUE, ISFALSE, FINDMETHOD, FINDMETHOD_TRY, CAN, HLLIZE, P6SINK, ASSERTPARAMCHECK, P6TYPECHECKRV, CREATE,
                       INT_BIN, INT_UN, NUM_BIN, NUM_CMP, NUM_NEG, BIGINT_ARITH }
 
     /**
@@ -725,6 +725,8 @@ final class NqpProgramBuilder {
         if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("iscont") && nargs == 1) return Op.ISCONT;
         if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("istrue") && nargs == 1) return Op.ISTRUE;
         if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("isfalse") && nargs == 1) return Op.ISFALSE;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("findmethod") && nargs == 2) return Op.FINDMETHOD;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("can") && nargs == 2) return Op.CAN;
         return null;
     }
 
@@ -745,6 +747,9 @@ final class NqpProgramBuilder {
         if (id == NqpOps.OP_ISCONCRETE && nargs == 1) return Op.ISCONCRETE;
         if (id == NqpOps.OP_ISTYPE && nargs == 2) return Op.ISTYPE;
         if (id == NqpOps.OP_ISTRUE && nargs == 1) return Op.ISTRUE;
+        if (id == NqpOps.OP_TRYFINDMETHOD && nargs == 2) return Op.FINDMETHOD_TRY;
+        if (id == NqpOps.OP_FINDMETHOD && nargs == 2) return Op.FINDMETHOD;
+        if (id == NqpOps.OP_CAN && nargs == 2) return Op.CAN;
         if (id == NqpOps.OP_HLLIZE && nargs == 1) return Op.HLLIZE;
         if (id == NqpOps.OP_P6SINK && nargs == 1) return Op.P6SINK;
         if (id == NqpOps.OP_ASSERTPARAMCHECK && nargs == 1) return Op.ASSERTPARAMCHECK;
@@ -769,6 +774,9 @@ final class NqpProgramBuilder {
             case ISCONT -> b.beginIsContOp(new NqpTypeOps.IsContSite());
             case ISTRUE -> b.beginIsTrueOp(new NqpTypeOps.IsTrueSite(), 0);
             case ISFALSE -> b.beginIsTrueOp(new NqpTypeOps.IsTrueSite(), 1);
+            case FINDMETHOD -> b.beginFindMethodOp(new NqpTypeOps.FindMethodSite(), NqpTypeOps.FIND_FATAL);
+            case FINDMETHOD_TRY -> b.beginFindMethodOp(new NqpTypeOps.FindMethodSite(), NqpTypeOps.FIND_TRY);
+            case CAN -> b.beginFindMethodOp(new NqpTypeOps.FindMethodSite(), NqpTypeOps.FIND_CAN);
             case HLLIZE -> b.beginHllizeOp(new NqpTypeOps.HllizeSite());
             case P6SINK -> b.beginP6SinkOp(new NqpTypeOps.SinkSite());
             case ASSERTPARAMCHECK -> b.beginAssertParamCheckOp();
@@ -795,6 +803,9 @@ final class NqpProgramBuilder {
             case ISCONT -> b.endIsContOp();
             case ISTRUE -> b.endIsTrueOp();
             case ISFALSE -> b.endIsTrueOp();
+            case FINDMETHOD -> b.endFindMethodOp();
+            case FINDMETHOD_TRY -> b.endFindMethodOp();
+            case CAN -> b.endFindMethodOp();
             case HLLIZE -> b.endHllizeOp();
             case P6SINK -> b.endP6SinkOp();
             case ASSERTPARAMCHECK -> b.endAssertParamCheckOp();

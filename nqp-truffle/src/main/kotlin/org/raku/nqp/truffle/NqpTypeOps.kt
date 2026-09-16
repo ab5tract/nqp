@@ -724,6 +724,109 @@ object NqpTypeOps {
     private fun istrueSlow(v: Any?, tc: ThreadContext): Long =
         Ops.istrue(v as SixModelObject?, tc)
 
+    /* ----- findmethod / tryfindmethod / can ----- */
+
+    const val FIND_FATAL = 0
+    const val FIND_TRY = 1
+    const val FIND_CAN = 2
+
+    /**
+     * The method a name resolves to on a type is a fact of its state when
+     * the state's method cache answers it (the Phase B rule: a site folds
+     * only a fact some state it holds published; the HOW walk is not one).
+     * A cache HIT is such a fact whatever the cache's authority -- the
+     * runtime returns a hit before it ever consults the flag, see
+     * Ops.findmethodNonFatal -- so a hit folds under any cache. A cache
+     * MISS only means "no such method" when the cache is AUTHORITATIVE, so
+     * a miss folds to null under an authoritative cache and pins (counted
+     * as `nonauth`) under an advisory one; an absent cache pins the same
+     * way. What is folded is then held under one STable compare, the
+     * name's identity and the state's assumption. Three ops share it:
+     * findmethod (fatal on null, through the runtime's error road),
+     * tryfindmethod (null on null) and can (0/1).
+     */
+    class FindMethodSite : Site() {
+        @JvmField val decont = DecontSite()
+        @JvmField @field:CompilationFinal var st: STable? = null
+        @JvmField @field:CompilationFinal var name: String? = null
+        @JvmField @field:CompilationFinal var found: SixModelObject? = null
+        @JvmField var pinReason: String? = null
+        override fun clear() { st = null; name = null; found = null; pinReason = null }
+    }
+
+    @JvmStatic
+    fun findmethod(site: FindMethodSite, o: Any?, name: Any?, kind: Int, tc: ThreadContext): Any? {
+        if (NqpCensus.ON) NqpCensus.call(site.stats)
+        val v = try {
+            decont(site.decont, o, tc)
+        } catch (sse: SaveStackException) {
+            throw suspendedIn(sse, java.util.function.Function { fetched -> findmethod(site, fetched, name, kind, tc) })
+        }
+        if (v is SixModelObject && name is String && Ops.isnull(v) == 0L) {
+            var st = site.st
+            if (st == null && site.mayResolve()) {
+                CompilerDirectives.transferToInterpreterAndInvalidate()
+                resolveFindMethod(site, v, name)
+                st = site.st
+            }
+            if (st != null) {
+                if (!site.valid()) republished(site)
+                else if (NqpRaw.st(v) === st && (name === site.name || name == site.name)) {
+                    val found = site.found
+                    return when (kind) {
+                        FIND_CAN -> if (found == null) 0L else 1L
+                        FIND_TRY -> found
+                        else -> found ?: findmethodSlow(v, name, kind, tc)   /* the runtime raises the error */
+                    }
+                }
+                else miss(site)
+            }
+        }
+        if (NqpCensus.ON) NqpCensus.slow(site.stats, site.pinReason ?: if (site.mayResolve()) "generic" else "pinned")
+        return findmethodSlow(v, name, kind, tc)
+    }
+
+    @TruffleBoundary
+    private fun resolveFindMethod(site: FindMethodSite, v: SixModelObject, name: String) {
+        if (!v.stInitialized) { site.pin(); return }
+        val st = v.st
+        val s = st.state
+        val cache = s.methodCache
+        if (cache == null) {
+            site.pinReason = "nonauth"; site.pin()
+            if (DEBUG) debug("findmethod pin nonauth (no cache): " + st.debugName + "." + name)
+            return
+        }
+        val raw = cache.get(name)
+        val hit = if (raw == null || Ops.isnull(raw) == 1L) null else raw
+        /* A miss is only "no such method" when the cache is authoritative;
+         * under an advisory one the HOW may still find the method. */
+        if (hit == null && !s.methodCacheAuthoritative) {
+            site.pinReason = "nonauth"; site.pin()
+            if (DEBUG) debug("findmethod pin nonauth (advisory miss): " + st.debugName + "." + name)
+            return
+        }
+        site.st = st; site.state = s; site.name = name
+        site.found = hit
+        if (DEBUG) debug("findmethod site resolved " + st.debugName + "." + name + " found=" + (hit != null))
+    }
+
+    /**
+     * The runtime road: the same three entries the table and classlib roads
+     * call. `NqpOps.str` is private to NqpOps, so the str coercion is
+     * written out here (ruling: the brief's named fallback).
+     */
+    @TruffleBoundary
+    private fun findmethodSlow(v: Any?, name: Any?, kind: Int, tc: ThreadContext): Any? {
+        val o = v as SixModelObject?
+        val n = if (name is String) name else name.toString()
+        return when (kind) {
+            FIND_CAN -> Ops.can(o, n, tc)
+            FIND_TRY -> Ops.findmethodNonFatal(o, n, tc)
+            else -> Ops.findmethod(o, n, tc)
+        }
+    }
+
     /* ----- assertparamcheck ----- */
 
     /**

@@ -9,7 +9,7 @@
 # This file spawns ./nqp-j-gradle (the gradle-generated runner) relative
 # to the nqp tree, so prove must run from there.
 
-plan(15);
+plan(25);
 
 my class Queue is repr('ConcBlockingQueue') { }
 my class VMDecoder is repr('Decoder') { }
@@ -126,3 +126,40 @@ is($true-child[0], 0, 'the istrue child exits 0');
 my $true-err := $true-child[1];
 ok(site-field($true-err, 'IsTrueSite', 'calls') >= 3000, 'istrue, isfalse and the condition reach IsTrueSite');
 ok(count-of($true-err, 'classlib', 'Ops.istrue') < 0 && count-of($true-err, 'classlib', 'Ops.isfalse') < 0, 'istrue/isfalse no longer travel the classlib road');
+
+# ---- findmethod / tryfindmethod / can ---------------------------------
+# NQPClassHOW publishes an AUTHORITATIVE method cache at compose and
+# demotes it on add_method (setmethcacheauth 0). A site folds the cache's
+# answer only while it is authoritative; the demotion republishes the
+# type, and the site must then take the HOW road and see the new method.
+class MethBase { method m() { 'old' } }
+class MethFoo is MethBase { }
+sub has_m($o) { nqp::can($o, 'm') }
+sub has_x($o) { nqp::can($o, 'x') }
+sub find_m($o) { nqp::findmethod($o, 'm') }
+sub try_x($o) { nqp::tryfindmethod($o, 'x') }
+my $mo := MethFoo.new;
+my $hm := -1; my $hx := -1; my $fm; my $tx;
+$i := 0;
+while $i < 200 { $hm := has_m($mo); $hx := has_x($mo); $fm := find_m($mo); $tx := try_x($mo); $i++ }
+is($hm, 1, 'can folds 1 for an inherited method');
+is($hx, 0, 'can folds 0 for a missing method under an authoritative cache');
+is($fm($mo), 'old', 'findmethod folds the code object');
+ok(nqp::isnull($tx), 'tryfindmethod folds null for a missing method');
+MethFoo.HOW.add_method(MethFoo, 'x', sub ($self) { 'new' });
+$i := 0;
+while $i < 200 { $hx := has_x($mo); $tx := try_x($mo); $i++ }
+is($hx, 1, 'a can site resolved before add_method sees the added method');
+is($tx($mo), 'new', 'and so does a tryfindmethod site');
+my $died := 0;
+try { nqp::findmethod($mo, 'nope'); CATCH { $died := 1 } }
+is($died, 1, 'findmethod of a missing method still dies through the runtime road');
+
+my $meth-child := child-stderr(
+    'class Base { method m() { 1 } }; class Foo is Base { }; my $o := Foo.new; my $i := 0; my $n := 0; while $i < 1000 { $n := $n + nqp::can($o, "m"); nqp::findmethod($o, "m"); nqp::tryfindmethod($o, "zz"); $i++ }; say($n)',
+    %on);
+is($meth-child[0], 0, 'the findmethod child exits 0');
+my $meth-err := $meth-child[1];
+ok(site-field($meth-err, 'FindMethodSite', 'calls') >= 3000, 'findmethod, tryfindmethod and can reach FindMethodSite');
+ok(count-of($meth-err, 'classlib', 'Ops.findmethod') < 0 && count-of($meth-err, 'classlib', 'Ops.can') < 0 && count-of($meth-err, 'table', 'tryfindmethod') < 0,
+   'none of the three travels its old road');
