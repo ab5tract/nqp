@@ -577,8 +577,15 @@ object NqpDispatch {
             return false
         }
 
+        /**
+         * A stale program is not cacheable: the fold SKIPS it, so the one
+         * publish that refresh does drops it from the prefix and hasStale()
+         * is false afterwards. Without this the rebuild would reuse the very
+         * Program objects it was called to replace -- a new site assumption,
+         * a deopt, and a still-stale cache on the next miss, for ever.
+         */
         private fun cacheable(p: DispatchProgram): Boolean =
-            !p.isResuming && Captures.sameShape(p.descriptor, csd)
+            !p.isResuming && p.isFresh && Captures.sameShape(p.descriptor, csd)
     }
 
     /**
