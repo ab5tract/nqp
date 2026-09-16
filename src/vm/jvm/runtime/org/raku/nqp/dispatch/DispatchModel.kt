@@ -252,7 +252,7 @@ sealed interface Guard {
     /** The value belongs to this language. */
     data class OfHll(override val on: ValueSource, val hll: HLLConfig?) : Guard {
         override fun check(ctx: DispatchContext) =
-            (on.evaluateRaw(ctx) as? SixModelObject)?.st?.hllOwner === hll
+            (on.evaluateRaw(ctx) as? SixModelObject)?.st?.state?.hllOwner === hll
     }
 
     companion object {
@@ -264,7 +264,7 @@ sealed interface Guard {
 
         fun hllOf(value: DispatchValue): HLLConfig? {
             if (value.kind != ArgKind.OBJ) return null
-            return value.obj?.st?.hllOwner
+            return value.obj?.st?.state?.hllOwner
         }
 
         fun isConcrete(value: Any?): Boolean =

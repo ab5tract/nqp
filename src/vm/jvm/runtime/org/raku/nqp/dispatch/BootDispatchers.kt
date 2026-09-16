@@ -163,7 +163,7 @@ object BootDispatchers {
          * the same way. */
         record.guardType(source)
         val methods = knowHowMethods(tc, invocant)
-            ?: (if (invocant != null && invocant.stInitialized) invocant.st.MethodCache else null)
+            ?: (if (invocant != null && invocant.stInitialized) invocant.st.state.methodCache else null)
             ?: throw ExceptionHandling.dieInternal(tc,
                 "lang-meth-call cannot work out how to dispatch on this type" +
                 " ('${Ops.typeName(invocant, tc)}' calling" +
@@ -254,7 +254,7 @@ object BootDispatchers {
 
         if (tracked.kind == ArgKind.OBJ) {
             val obj = tracked.value as SixModelObject?
-            if (obj is CodeRef || (obj != null && obj.stInitialized && obj.st.InvocationSpec != null)) {
+            if (obj is CodeRef || (obj != null && obj.stInitialized && obj.st.state.invocationSpec != null)) {
                 produceConstant(record, capture, ArgKind.INT, 1L)
                 return
             }
@@ -291,7 +291,7 @@ object BootDispatchers {
         }
 
         val value = Captures.argValue(tc, Captures.asCapture(tc, target), 0)
-        val already = value.kind == ArgKind.OBJ && value.obj?.st?.hllOwner === hll
+        val already = value.kind == ArgKind.OBJ && value.obj?.st?.state?.hllOwner === hll
         val languageDispatcher = hll?.hllizeDispatcher
         if (languageDispatcher != null && !already)
             record.delegate(tc.gc.dispatchers.find(tc, languageDispatcher), target!!)
@@ -310,7 +310,7 @@ object BootDispatchers {
     }
 
     private fun hllOf(tc: ThreadContext, obj: SixModelObject?): HLLConfig? =
-        if (obj == null || !obj.stInitialized) null else obj.st.hllOwner
+        if (obj == null || !obj.stInitialized) null else obj.st.state.hllOwner
 
     /** The method table of an object's meta-object, if it is a KnowHOW. */
     private fun knowHowMethods(tc: ThreadContext,

@@ -44,7 +44,7 @@ import org.raku.nqp.sixmodel.reprs.SlotKind
  * than read an attribute) pins itself at once.
  *
  * The type-check caches (`istype`, `p6typecheckrv`) trust
- * `STable.TypeCheckCache` to be stable once published, the assumption
+ * `STable.state.typeCheckCache` to be stable once published, the assumption
  * spesh's `optimize_istype` makes when it folds to a constant.
  *
  * Kotlin on a PE-visible path: `@JvmField`s only, no `!!` on the fast
@@ -120,7 +120,7 @@ object NqpTypeOps {
     private fun resolveSink(site: SinkSite, o: SixModelObject, tc: ThreadContext) {
         if (Ops.isnull(o) == 1L || !o.stInitialized) { site.pin(); return }
         val st = o.st
-        val trivial = st.ContainerSpec != null || run {
+        val trivial = st.state.containerSpec != null || run {
             val m = Ops.findmethodNonFatal(o, "sink", tc)
             Ops.isnull(m) == 1L || m === muSink(tc)
         }
@@ -188,9 +188,9 @@ object NqpTypeOps {
 
     /** Mirrors Ops.hllizeInternal's branches that answer the object itself. */
     private fun hllizeIsIdentity(st: STable, wanted: org.raku.nqp.runtime.HLLConfig): Boolean {
-        if (st.hllOwner === wanted) return true
+        if (st.state.hllOwner === wanted) return true
         val H = org.raku.nqp.runtime.HLLConfig
-        return when (st.hllRole.toInt()) {
+        return when (st.state.hllRole.toInt()) {
             H.ROLE_INT -> Ops.isnull(wanted.foreignTypeInt) == 1L && Ops.isnull(wanted.foreignTransformInt) == 1L
             H.ROLE_NUM -> Ops.isnull(wanted.foreignTypeNum) == 1L && Ops.isnull(wanted.foreignTransformNum) == 1L
             H.ROLE_STR -> Ops.isnull(wanted.foreignTypeStr) == 1L && Ops.isnull(wanted.foreignTransformStr) == 1L
@@ -240,7 +240,7 @@ object NqpTypeOps {
              * the container it sees, so a site that alternates between a
              * Scalar and a plain value stays fast on both. */
             val ost = NqpRaw.st(o)
-            if (ost != null && ost.ContainerSpec == null) return o
+            if (ost != null && ost.state.containerSpec == null) return o
             var st = site.st
             if (st == null && site.mayResolve()) {
                 CompilerDirectives.transferToInterpreterAndInvalidate()
@@ -281,7 +281,7 @@ object NqpTypeOps {
     @TruffleBoundary
     private fun resolveDecont(site: DecontSite, o: SixModelObject, tc: ThreadContext) {
         val st = o.st ?: run { site.pin(); return }
-        val cs = st.ContainerSpec ?: run { site.pin(); return }   // handled inline; never reached
+        val cs = st.state.containerSpec ?: run { site.pin(); return }   // handled inline; never reached
         val fetch = cs.fetchAttribute(tc)
         val rd = st.REPRData
         if (fetch != null && rd is RakuObjectREPRData) {
@@ -454,9 +454,9 @@ object NqpTypeOps {
         val vst = v.st
         val tst = t.st
         if (vst == null || tst == null || Ops.isnull(v) == 1L) { site.pin(); return }
-        val cache = vst.TypeCheckCache ?: run { site.pin(); return }
-        val mode = vst.ModeFlags and STable.TYPE_CHECK_CACHE_FLAG_MASK
-        val needsAccept = (tst.ModeFlags and STable.TYPE_CHECK_NEEDS_ACCEPTS) != 0
+        val cache = vst.state.typeCheckCache ?: run { site.pin(); return }
+        val mode = vst.state.modeFlags and STable.TYPE_CHECK_CACHE_FLAG_MASK
+        val needsAccept = (tst.state.modeFlags and STable.TYPE_CHECK_NEEDS_ACCEPTS) != 0
         for (entry in cache) {
             if (entry === t) {
                 site.objSt = vst; site.typeSt = tst; site.result = 1

@@ -306,7 +306,7 @@ class CallFrame : Cloneable {
             this.codeRef = staticCode
         }
         else {
-            val ispec = staticCode!!.st.InvocationSpec
+            val ispec = staticCode!!.st.state.invocationSpec
                 ?: throw ExceptionHandling.dieInternal(tc, "Can not invoke this object")
             if (Ops.isnull(ispec.ClassHandle) == 0L)
                 this.codeRef = staticCode.get_attribute_boxed(tc, ispec.ClassHandle, ispec.AttrName, ispec.Hint) as CodeRef

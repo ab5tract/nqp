@@ -2850,7 +2850,7 @@ object Ops {
                                 csd: CallSiteDescriptor, args: Array<Any?>) {
         val routable = method is CodeRef ||
             (method != null && method.stInitialized &&
-                method.st.hllOwner?.callDispatcher != null)
+                method.st.state.hllOwner?.callDispatcher != null)
         if (!routable) {
             invokeDirect(tc, method, csd, args)
             return
@@ -2964,11 +2964,11 @@ object Ops {
         }
         else {
             if (invokee != null && invokee.stInitialized
-                    && invokee.st.hllOwner?.callDispatcher != null) {
+                    && invokee.st.state.hllOwner?.callDispatcher != null) {
                 invokeViaCallDispatcher(tc, invokee, callSite, argList)
                 return
             }
-            val invSpec = invokee!!.st.InvocationSpec
+            val invSpec = invokee!!.st.state.invocationSpec
                 ?: throw ExceptionHandling.dieInternal(tc, "Cannot invoke this object")
             if (isnull(invSpec.ClassHandle) == 0L)
                 cr = invokee.get_attribute_boxed(tc, invSpec.ClassHandle, invSpec.AttrName, invSpec.Hint) as CodeRef
@@ -3154,7 +3154,7 @@ object Ops {
             throw ExceptionHandling.dieInternal(tc, "Cannot call method '" + name + "' on a null object")
         val theInvocant = decont(invocant, tc)!!
 
-        val meth = theInvocant.st.MethodCache!!.get(name)
+        val meth = theInvocant.st.state.methodCache!!.get(name)
         if (isnull(meth) == 1L)
             throw ExceptionHandling.dieInternal(tc,
                 "Method '" + name + "' not found for invocant of class '" + typeName(theInvocant, tc) + "'")
@@ -3174,14 +3174,14 @@ object Ops {
             throw ExceptionHandling.dieInternal(tc, "Cannot call method '" + name + "' on a null object")
         val theInvocant = decont(invocant, tc)!!
 
-        val cache = theInvocant.st.MethodCache
+        val cache = theInvocant.st.state.methodCache
 
         /* Try the by-name method cache, if the HOW published one. */
         if (cache != null) {
             val found = cache.get(name)
             if (isnull(found) == 0L)
                 return found
-            if ((theInvocant.st.ModeFlags and STable.METHOD_CACHE_AUTHORITATIVE) != 0)
+            if ((theInvocant.st.state.modeFlags and STable.METHOD_CACHE_AUTHORITATIVE) != 0)
                 return null
         }
 
@@ -3308,7 +3308,7 @@ object Ops {
     }
     @JvmStatic
     fun isinvokable(obj: SixModelObject?, tc: ThreadContext): Long {
-        return if (obj is CodeRef || obj!!.st.InvocationSpec != null) 1 else 0
+        return if (obj is CodeRef || obj!!.st.state.invocationSpec != null) 1 else 0
     }
     /* Assert that a signature bind check passed. A failure either becomes a
      * resumption of the dispatch that invoked us, if it asked for that, or an
@@ -3346,7 +3346,7 @@ object Ops {
      * constants, which is how hllization decides what to map. */
     @JvmStatic
     fun gettypehllrole(obj: SixModelObject?, tc: ThreadContext): Long {
-        return if (obj == null || !obj.stInitialized) 0L else obj.st.hllRole
+        return if (obj == null || !obj.stInitialized) 0L else obj.st.state.hllRole
     }
     /* Is this a VM level code handle, as opposed to something a language
      * wrapped around one? */
@@ -3365,9 +3365,9 @@ object Ops {
             return 0
 
         /* Start by considering cache. */
-        val objTypeCheckMode = obj!!.st.ModeFlags and STable.TYPE_CHECK_CACHE_FLAG_MASK
-        val typeCheckNeedsAccept = (type!!.st.ModeFlags and STable.TYPE_CHECK_NEEDS_ACCEPTS) != 0
-        val cache = obj.st.TypeCheckCache
+        val objTypeCheckMode = obj!!.st.state.modeFlags and STable.TYPE_CHECK_CACHE_FLAG_MASK
+        val typeCheckNeedsAccept = (type!!.st.state.modeFlags and STable.TYPE_CHECK_NEEDS_ACCEPTS) != 0
+        val cache = obj.st.state.typeCheckCache
         if (cache != null) {
             /* We have the cache, so just look for the type object we
              * want to be in there. */
@@ -4545,12 +4545,12 @@ object Ops {
     }
     @JvmStatic
     fun iscont(obj: SixModelObject?): Long {
-        return if (isnull(obj) == 1L || obj!!.st.ContainerSpec == null) 0 else 1
+        return if (isnull(obj) == 1L || obj!!.st.state.containerSpec == null) 0 else 1
     }
     @JvmStatic
     fun isrwcont(obj: SixModelObject?, tc: ThreadContext): Long {
         if (isnull(obj) == 0L) {
-            val cs = obj!!.st.ContainerSpec
+            val cs = obj!!.st.state.containerSpec
             if (cs != null && cs.canStore(tc, obj))
                 return 1
         }
@@ -4558,7 +4558,7 @@ object Ops {
     }
     private fun getContainerPrimitive(obj: SixModelObject?): BoxedPrimitive {
         if (isnull(obj) == 0L && obj !is TypeObject) {
-            val cs = obj!!.st.ContainerSpec
+            val cs = obj!!.st.state.containerSpec
             if (cs is NativeRefContainerSpec)
                 return (obj.st.REPRData as NativeRefREPRData).primitiveType
         }
@@ -4592,13 +4592,13 @@ object Ops {
          * below and is returned as-is. */
         if (obj == null)
             return null
-        val cs = obj.st.ContainerSpec
+        val cs = obj.st.state.containerSpec
         return if (cs == null || obj is TypeObject) obj else cs.fetch(tc, obj)
     }
     @JvmStatic
     fun decont_i(obj: SixModelObject?, tc: ThreadContext): Long {
         if (obj !is TypeObject) {
-            val cs = obj!!.st.ContainerSpec
+            val cs = obj!!.st.state.containerSpec
             if (cs != null)
                 return cs.fetch_i(tc, obj)
         }
@@ -4607,7 +4607,7 @@ object Ops {
     @JvmStatic
     fun decont_u(obj: SixModelObject?, tc: ThreadContext): Long {
         if (obj !is TypeObject) {
-            val cs = obj!!.st.ContainerSpec
+            val cs = obj!!.st.state.containerSpec
             if (cs != null)
                 return cs.fetch_i(tc, obj)
         }
@@ -4616,7 +4616,7 @@ object Ops {
     @JvmStatic
     fun decont_n(obj: SixModelObject?, tc: ThreadContext): Double {
         if (obj !is TypeObject) {
-            val cs = obj!!.st.ContainerSpec
+            val cs = obj!!.st.state.containerSpec
             if (cs != null)
                 return cs.fetch_n(tc, obj)
         }
@@ -4625,7 +4625,7 @@ object Ops {
     @JvmStatic
     fun decont_s(obj: SixModelObject?, tc: ThreadContext): String? {
         if (obj !is TypeObject) {
-            val cs = obj!!.st.ContainerSpec
+            val cs = obj!!.st.state.containerSpec
             if (cs != null)
                 return cs.fetch_s(tc, obj)
         }
@@ -4638,7 +4638,7 @@ object Ops {
          * which side was null. Say which. */
         if (cont == null)
             throw ExceptionHandling.dieInternal(tc, "Cannot assign: the container is null")
-        val cs = cont.st.ContainerSpec
+        val cs = cont.st.state.containerSpec
         if (cs != null) {
             val v = decont(value, tc)
                 ?: throw ExceptionHandling.dieInternal(tc, "Cannot assign: the value is null")
@@ -4650,7 +4650,7 @@ object Ops {
     }
     @JvmStatic
     fun assign_i(cont: SixModelObject?, value: Long, tc: ThreadContext): SixModelObject? {
-        val cs = cont!!.st.ContainerSpec
+        val cs = cont!!.st.state.containerSpec
         if (cs != null)
             cs.store_i(tc, cont, value)
         else
@@ -4659,7 +4659,7 @@ object Ops {
     }
     @JvmStatic
     fun assign_u(cont: SixModelObject?, value: Long, tc: ThreadContext): SixModelObject? {
-        val cs = cont!!.st.ContainerSpec
+        val cs = cont!!.st.state.containerSpec
         if (cs != null)
             cs.store_i(tc, cont, value) /* FIXME Need a store_u */
         else
@@ -4669,7 +4669,7 @@ object Ops {
 
     @JvmStatic
     fun assign_n(cont: SixModelObject?, value: Double, tc: ThreadContext): SixModelObject? {
-        val cs = cont!!.st.ContainerSpec
+        val cs = cont!!.st.state.containerSpec
         if (cs != null)
             cs.store_n(tc, cont, value)
         else
@@ -4678,7 +4678,7 @@ object Ops {
     }
     @JvmStatic
     fun assign_s(cont: SixModelObject?, value: String?, tc: ThreadContext): SixModelObject? {
-        val cs = cont!!.st.ContainerSpec
+        val cs = cont!!.st.state.containerSpec
         if (cs != null)
             cs.store_s(tc, cont, value)
         else
@@ -4687,7 +4687,7 @@ object Ops {
     }
     @JvmStatic
     fun assignunchecked(cont: SixModelObject?, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        val cs = cont!!.st.ContainerSpec
+        val cs = cont!!.st.state.containerSpec
         if (cs != null)
             cs.storeUnchecked(tc, cont, decont(value, tc)!!)
         else
@@ -4788,7 +4788,7 @@ object Ops {
     fun istrue(obj: SixModelObject?, tc: ThreadContext): Long {
         val o = decont(obj, tc)
         if (isnull(o) == 1L) return 0
-        val bs = o!!.st.BoolificationSpec
+        val bs = o!!.st.state.boolificationSpec
         when (if (bs == null) BoolificationSpec.MODE_NOT_TYPE_OBJECT else bs.Mode) {
         BoolificationSpec.MODE_CALL_METHOD -> {
             invokeMethodViaDispatch(tc, bs!!.Method, o)
@@ -7002,7 +7002,7 @@ object Ops {
             tc.currentDispatcherFor = dispFor
         }
         else {
-            val invSpec = dispFor!!.st.InvocationSpec
+            val invSpec = dispFor!!.st.state.invocationSpec
                 ?: throw ExceptionHandling.dieInternal(tc, "setdispatcherfor needs invokable target")
             if (isnull(invSpec.ClassHandle) == 0L)
                 tc.currentDispatcherFor = dispFor.get_attribute_boxed(tc,
@@ -7029,7 +7029,7 @@ object Ops {
             tc.nextDispatcherFor = dispFor
         }
         else {
-            val invSpec = dispFor!!.st.InvocationSpec
+            val invSpec = dispFor!!.st.state.invocationSpec
                 ?: throw ExceptionHandling.dieInternal(tc, "nextdispatcherfor needs invokable target")
             if (isnull(invSpec.ClassHandle) == 0L)
                 tc.nextDispatcherFor = dispFor.get_attribute_boxed(tc,
@@ -7416,7 +7416,7 @@ object Ops {
 
     @JvmStatic
     fun cas(cont: SixModelObject?, expected: SixModelObject?, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        val cs = cont!!.st.ContainerSpec
+        val cs = cont!!.st.state.containerSpec
         if (cs != null)
             return cs.cas(tc, cont, decont(expected, tc)!!, decont(value, tc)!!)
         else
@@ -7425,7 +7425,7 @@ object Ops {
     }
     @JvmStatic
     fun atomicload(cont: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        val cs = cont!!.st.ContainerSpec
+        val cs = cont!!.st.state.containerSpec
         if (cs != null)
             return cs.atomic_load(tc, cont)
         else
@@ -7434,7 +7434,7 @@ object Ops {
     }
     @JvmStatic
     fun atomicstore(cont: SixModelObject?, value: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        val cs = cont!!.st.ContainerSpec
+        val cs = cont!!.st.state.containerSpec
         if (cs != null) {
             val theValue = decont(value, tc)
             cs.atomic_store(tc, cont, theValue!!)
@@ -8004,7 +8004,7 @@ object Ops {
     @JvmStatic
     fun hllize(obj: SixModelObject?, tc: ThreadContext): SixModelObject? {
         val wanted = tc.frame.codeRef.staticInfo.compUnit.hllConfig
-        if (isnull(obj) == 0L && obj!!.stInitialized && obj.st.hllOwner === wanted)
+        if (isnull(obj) == 0L && obj!!.stInitialized && obj.st.state.hllOwner === wanted)
             return obj
         else
             return hllizeInternal(obj, wanted, tc)
@@ -8017,7 +8017,7 @@ object Ops {
      *  RakuAST). The getattrIn twin of this. */
     @JvmStatic
     fun hllizeIn(obj: SixModelObject?, wanted: HLLConfig, tc: ThreadContext): SixModelObject? {
-        if (isnull(obj) == 0L && obj!!.stInitialized && obj.st.hllOwner === wanted)
+        if (isnull(obj) == 0L && obj!!.stInitialized && obj.st.state.hllOwner === wanted)
             return obj
         else
             return hllizeInternal(obj, wanted, tc)
@@ -8025,7 +8025,7 @@ object Ops {
     @JvmStatic
     fun hllizefor(obj: SixModelObject?, language: String, tc: ThreadContext): SixModelObject? {
         val wanted = tc.gc.getHLLConfigFor(language)
-        if (isnull(obj) == 0L && obj!!.stInitialized && obj.st.hllOwner === wanted)
+        if (isnull(obj) == 0L && obj!!.stInitialized && obj.st.state.hllOwner === wanted)
             return obj
         else
             return hllizeInternal(obj, wanted, tc)
@@ -8052,7 +8052,7 @@ object Ops {
             return obj
 
         /* Go by what role the object plays. */
-        when (obj!!.st.hllRole.toInt()) {
+        when (obj!!.st.state.hllRole.toInt()) {
             /* For the boxed-native roles, a type object cannot be unboxed;
              * MoarVM's MVM_hll_map answers with the target language's foreign
              * type itself there, so mirror that. */
