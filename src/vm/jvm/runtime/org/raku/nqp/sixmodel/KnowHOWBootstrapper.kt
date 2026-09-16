@@ -30,12 +30,12 @@ object KnowHOWBootstrapper {
         tc.gc.VMNull = bootType(tc, "VMNull", "VMNull")
         tc.gc.Thread = bootType(tc, "Thread", "VMThread")
 
-        tc.gc.BOOTArray!!.st.hllRole = HLLConfig.ROLE_ARRAY.toLong()
-        tc.gc.BOOTHash!!.st.hllRole = HLLConfig.ROLE_HASH.toLong()
-        tc.gc.BOOTInt!!.st.hllRole = HLLConfig.ROLE_INT.toLong()
-        tc.gc.BOOTNum!!.st.hllRole = HLLConfig.ROLE_NUM.toLong()
-        tc.gc.BOOTStr!!.st.hllRole = HLLConfig.ROLE_STR.toLong()
-        tc.gc.BOOTCode!!.st.hllRole = HLLConfig.ROLE_CODE.toLong()
+        tc.gc.BOOTArray!!.st.let { it.publish(it.state.withFacts(hllRole = HLLConfig.ROLE_ARRAY.toLong())) }
+        tc.gc.BOOTHash!!.st.let { it.publish(it.state.withFacts(hllRole = HLLConfig.ROLE_HASH.toLong())) }
+        tc.gc.BOOTInt!!.st.let { it.publish(it.state.withFacts(hllRole = HLLConfig.ROLE_INT.toLong())) }
+        tc.gc.BOOTNum!!.st.let { it.publish(it.state.withFacts(hllRole = HLLConfig.ROLE_NUM.toLong())) }
+        tc.gc.BOOTStr!!.st.let { it.publish(it.state.withFacts(hllRole = HLLConfig.ROLE_STR.toLong())) }
+        tc.gc.BOOTCode!!.st.let { it.publish(it.state.withFacts(hllRole = HLLConfig.ROLE_CODE.toLong())) }
 
         tc.gc.BOOTIntArray = bootTypedArray(tc, "BOOTIntArray", tc.gc.BOOTInt!!)
         tc.gc.BOOTNumArray = bootTypedArray(tc, "BOOTNumArray", tc.gc.BOOTNum!!)
@@ -99,10 +99,11 @@ object KnowHOWBootstrapper {
 
         /* Give it an authoritative method cache; this in turn will make the
          * method dispatch bottom out. */
-        knowhow.st.MethodCache = methods
-        knowhow.st.ModeFlags = STable.METHOD_CACHE_AUTHORITATIVE
-        knowhowHow.st.MethodCache = methods
-        knowhowHow.st.ModeFlags = STable.METHOD_CACHE_AUTHORITATIVE
+        knowhow.st.publish(knowhow.st.state.withFacts(methodCache = HashMap(methods),
+            modeFlags = STable.METHOD_CACHE_AUTHORITATIVE))
+        knowhowHow.st.publish(knowhowHow.st.state.withFacts(methodCache = HashMap(methods),
+            modeFlags = STable.METHOD_CACHE_AUTHORITATIVE))
+        knowhowHow.composedType = knowhow
 
         /* Associate the created objects with the initial core serialization
          * context. */
@@ -142,8 +143,9 @@ object KnowHOWBootstrapper {
         val typeObj = repr.type_object_for(tc, metaObj)
 
         /* Set up method dispatch cache. */
-        typeObj.st.MethodCache = methods
-        typeObj.st.ModeFlags = STable.METHOD_CACHE_AUTHORITATIVE
+        typeObj.st.publish(typeObj.st.state.withFacts(methodCache = HashMap(methods),
+            modeFlags = STable.METHOD_CACHE_AUTHORITATIVE))
+        metaObj.composedType = typeObj
 
         /* Associate the created object with the intial core serialization
          * context. */
@@ -163,8 +165,9 @@ object KnowHOWBootstrapper {
         metaObj.name = typeName
         val repr = REPRRegistry.getByName(reprName)
         val typeObj = repr.type_object_for(tc, metaObj)
-        typeObj.st.MethodCache = metaObj.methods
-        typeObj.st.ModeFlags = STable.METHOD_CACHE_AUTHORITATIVE
+        typeObj.st.publish(typeObj.st.state.withFacts(methodCache = HashMap(metaObj.methods!!),
+            modeFlags = STable.METHOD_CACHE_AUTHORITATIVE))
+        metaObj.composedType = typeObj
         val sc = tc.gc.scs["__6MODEL_CORE__"]!!
         sc.addObject(typeObj)
         typeObj.sc = sc

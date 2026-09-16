@@ -3232,7 +3232,11 @@ object Ops {
     }
     @JvmStatic
     fun composetype(obj: SixModelObject?, reprinfo: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        obj!!.st.REPR.compose(tc, obj.st, reprinfo!!)
+        val st = obj!!.st
+        st.REPR.compose(tc, st, reprinfo!!)
+        /* The REPR data changed (a P6opaque layout was installed): a site that
+         * folded the old REPR data is invalidated by the fresh assumption. */
+        st.republish()
         return obj
     }
     @JvmStatic
@@ -3243,19 +3247,22 @@ object Ops {
             val cur = iter.shift_boxed(tc)
             cache.put(iterkey_s(cur, tc)!!, iterval(cur, tc))
         }
-        obj!!.st.MethodCache = cache
-        if (obj.st.sc != null)
-            scwbSTable(tc, obj.st)
+        val st = obj!!.st
+        st.publish(st.state.withFacts(methodCache = cache))
+        if (st.sc != null)
+            scwbSTable(tc, st)
         return obj
     }
     @JvmStatic
     fun setmethcacheauth(obj: SixModelObject?, flag: Long, tc: ThreadContext): SixModelObject? {
-        var newFlags = obj!!.st.ModeFlags and (STable.METHOD_CACHE_AUTHORITATIVE.inv())
+        val st = obj!!.st
+        val s = st.state
+        var newFlags = s.modeFlags and (STable.METHOD_CACHE_AUTHORITATIVE.inv())
         if (flag != 0L)
             newFlags = newFlags or STable.METHOD_CACHE_AUTHORITATIVE
-        obj.st.ModeFlags = newFlags
-        if (obj.st.sc != null)
-            scwbSTable(tc, obj.st)
+        st.publish(s.withFacts(modeFlags = newFlags))
+        if (st.sc != null)
+            scwbSTable(tc, st)
         return obj
     }
     @JvmStatic
@@ -3264,17 +3271,20 @@ object Ops {
         val cache = arrayOfNulls<SixModelObject>(elems.toInt())
         for (i in 0 until elems)
             cache[i.toInt()] = types.at_pos_boxed(tc, i)
-        obj!!.st.TypeCheckCache = cache
-        if (obj.st.sc != null)
-            scwbSTable(tc, obj.st)
+        val st = obj!!.st
+        st.publish(st.state.withFacts(typeCheckCache = cache))
+        if (st.sc != null)
+            scwbSTable(tc, st)
         return obj
     }
     @JvmStatic
     fun settypecheckmode(obj: SixModelObject?, mode: Long, tc: ThreadContext): SixModelObject? {
-        obj!!.st.ModeFlags = mode.toInt() or
-            (obj.st.ModeFlags and (STable.TYPE_CHECK_CACHE_FLAG_MASK.inv()))
-        if (obj.st.sc != null)
-            scwbSTable(tc, obj.st)
+        val st = obj!!.st
+        val s = st.state
+        st.publish(s.withFacts(modeFlags = mode.toInt() or
+            (s.modeFlags and (STable.TYPE_CHECK_CACHE_FLAG_MASK.inv()))))
+        if (st.sc != null)
+            scwbSTable(tc, st)
         return obj
     }
     @JvmStatic
@@ -3292,12 +3302,8 @@ object Ops {
     @JvmStatic
     fun setinvokespec(obj: SixModelObject?, ch: SixModelObject?,
             name: String?, invocationHandler: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        val spec = InvocationSpec()
-        spec.ClassHandle = ch
-        spec.AttrName = name
-        spec.Hint = STable.NO_HINT
-        spec.InvocationHandler = invocationHandler
-        obj!!.st.InvocationSpec = spec
+        val st = obj!!.st
+        st.publish(st.state.withFacts(invocationSpec = InvocationSpec(ch, name, STable.NO_HINT, invocationHandler)))
         return obj
     }
     @JvmStatic
@@ -4517,22 +4523,24 @@ object Ops {
 
     @JvmStatic
     fun setdebugtypename(type: SixModelObject?, debugName: String?, tc: ThreadContext): SixModelObject? {
-        type!!.st.debugName = debugName
+        val st = type!!.st
+        st.debugName = debugName
+        /* The assumption carries the name, for the trace. */
+        st.publish(st.state.withFacts(name = debugName))
         return type
     }
 
     /* Container operations. */
     @JvmStatic
     fun setcontspec(obj: SixModelObject?, confname: String?, confarg: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        if (obj!!.st.ContainerSpec != null)
+        val st = obj!!.st
+        if (st.state.containerSpec != null)
             ExceptionHandling.dieInternal(tc, "Cannot change a type's container specification")
-
         val cc = tc.gc.contConfigs.get(confname)
-        if (cc == null)
-            ExceptionHandling.dieInternal(tc, "No such container spec " + confname)
-        cc!!.setContainerSpec(tc, obj.st)
-        cc.configureContainerSpec(tc, obj.st, confarg!!)
-
+            ?: throw ExceptionHandling.dieInternal(tc, "No such container spec " + confname)
+        val cs = cc.newContainerSpec(tc, st)
+        cc.configureContainerSpec(tc, cs, confarg!!)
+        st.publish(st.state.withFacts(containerSpec = cs))
         return obj
     }
     @JvmStatic
@@ -4772,10 +4780,8 @@ object Ops {
     /* Boolification operations. */
     @JvmStatic
     fun setboolspec(obj: SixModelObject?, mode: Long, method: SixModelObject?, tc: ThreadContext): SixModelObject? {
-        val bs = BoolificationSpec()
-        bs.Mode = mode.toInt()
-        bs.Method = method
-        obj!!.st.BoolificationSpec = bs
+        val st = obj!!.st
+        st.publish(st.state.withFacts(boolificationSpec = BoolificationSpec(mode.toInt(), method)))
         return obj
     }
     @JvmStatic
@@ -7985,12 +7991,14 @@ object Ops {
     }
     @JvmStatic
     fun settypehll(type: SixModelObject?, language: String, tc: ThreadContext): SixModelObject? {
-        type!!.st.hllOwner = tc.gc.getHLLConfigFor(language)
+        val st = type!!.st
+        st.publish(st.state.withFacts(hllOwner = tc.gc.getHLLConfigFor(language)))
         return type
     }
     @JvmStatic
     fun settypehllrole(type: SixModelObject?, role: Long, tc: ThreadContext): SixModelObject? {
-        type!!.st.hllRole = role
+        val st = type!!.st
+        st.publish(st.state.withFacts(hllRole = role))
         return type
     }
     @JvmStatic

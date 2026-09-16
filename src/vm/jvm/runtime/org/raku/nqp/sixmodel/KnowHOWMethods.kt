@@ -71,6 +71,12 @@ class KnowHOWMethods : CompilationUnit() {
             if (Ops.isnull(self) == 1L || self !is KnowHOWREPRInstance)
                 throw ExceptionHandling.dieInternal(tc, "KnowHOW methods must be called on object instance with REPR KnowHOWREPR")
             self.methods!![name!!] = method
+            /* A type this meta-object composed holds a published copy of the table. */
+            val composed = self.composedType
+            if (composed != null) {
+                val cst = composed.st
+                cst.publish(cst.state.withFacts(methodCache = HashMap(self.methods!!)))
+            }
             Ops.return_o(method, cf)
         }
         finally {
@@ -123,12 +129,14 @@ class KnowHOWMethods : CompilationUnit() {
             if (Ops.isnull(self) == 1L || self !is KnowHOWREPRInstance)
                 throw ExceptionHandling.dieInternal(tc, "KnowHOW methods must be called on object instance with REPR KnowHOWREPR")
 
-            /* Set method cache. */
-            typeObj!!.st.MethodCache = self.methods
-            typeObj!!.st.ModeFlags = STable.METHOD_CACHE_AUTHORITATIVE
-
-            /* Set type check cache. */
-            typeObj!!.st.TypeCheckCache = arrayOf(typeObj)
+            /* Set method cache and type check cache. Publish a COPY of the
+             * live table: add_method after compose must not edit a published
+             * cache (it republishes instead). */
+            val st = typeObj!!.st
+            st.publish(st.state.withFacts(methodCache = HashMap(self.methods!!),
+                modeFlags = STable.METHOD_CACHE_AUTHORITATIVE,
+                typeCheckCache = arrayOf(typeObj)))
+            self.composedType = typeObj
 
             /* Use any attribute information to produce attribute protocol
              * data. The protocol consists of an array... */
@@ -169,6 +177,8 @@ class KnowHOWMethods : CompilationUnit() {
 
             /* Compose the representation using it. */
             typeObj!!.st.REPR.compose(tc, typeObj.st, reprInfoHash)
+            /* The REPR data changed; the facts did not. */
+            st.republish()
 
             Ops.return_o(typeObj, cf)
         }

@@ -5,6 +5,7 @@ import java.nio.ByteOrder
 
 import org.raku.nqp.runtime.CallFrame
 import org.raku.nqp.runtime.CodeRef
+import org.raku.nqp.runtime.HLLConfig
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.reprs.VMHashInstance
@@ -520,64 +521,74 @@ class SerializationReader(
         st.WHO = readRef()
 
         /* Method cache and v-table. */
-        val methodCache = readRef()
-        if (Ops.isnull(methodCache) == 0L)
-            st.MethodCache = (methodCache as VMHashInstance).storage
+        val methodCacheRef = readRef()
+        val methodCache: Map<String, SixModelObject?>? =
+            if (Ops.isnull(methodCacheRef) == 0L) (methodCacheRef as VMHashInstance).storage else null
         val vTable = arrayOfNulls<SixModelObject>(orig.getLong().toInt())
-        st.VTable = vTable
         for (j in vTable.indices)
             vTable[j] = readRef()
 
         /* Type check cache. */
         val tcCacheSize = orig.getLong().toInt()
+        var typeCheckCache: Array<SixModelObject?>? = null
         if (tcCacheSize > 0) {
-            val typeCheckCache = arrayOfNulls<SixModelObject>(tcCacheSize)
-            st.TypeCheckCache = typeCheckCache
-            for (j in typeCheckCache.indices)
-                typeCheckCache[j] = readRef()
+            val cache = arrayOfNulls<SixModelObject>(tcCacheSize)
+            for (j in cache.indices)
+                cache[j] = readRef()
+            typeCheckCache = cache
         }
 
         /* Mode flags. */
-        st.ModeFlags = orig.getLong().toInt()
+        val modeFlags = orig.getLong().toInt()
 
         /* Boolification spec. */
+        var boolSpec: BoolificationSpec? = null
         if (orig.getLong() != 0L) {
-            val boolSpec = BoolificationSpec()
-            st.BoolificationSpec = boolSpec
-            boolSpec.Mode = orig.getLong().toInt()
-            boolSpec.Method = readRef()
+            val mode = orig.getLong().toInt()
+            boolSpec = BoolificationSpec(mode, readRef())
         }
 
-        /* Container spec. */
+        /* Container spec: built complete, then published with the rest. */
+        var contSpec: ContainerSpec? = null
         if (orig.getLong() != 0L) {
             if (version >= 5) {
                 val ccName = readStr()
                 val cc = tc.gc.contConfigs[ccName]
                     ?: throw RuntimeException("Unknown container config $ccName")
-                cc.setContainerSpec(tc, st)
-                st.ContainerSpec!!.deserialize(tc, st, this)
+                val cs = cc.newContainerSpec(tc, st)
+                cs.deserialize(tc, st, this)
+                contSpec = cs
             } else {
                 throw RuntimeException("Unable to deserialize old container spec format")
             }
         }
 
         /* Invocation spec. */
+        var invSpec: InvocationSpec? = null
         if (version >= 5) {
             if (orig.getLong() != 0L) {
-                val invSpec = InvocationSpec()
-                st.InvocationSpec = invSpec
-                invSpec.ClassHandle = readRef()
-                invSpec.AttrName = lookupString(orig.getInt())
-                invSpec.Hint = orig.getLong().toInt().toLong()
-                invSpec.InvocationHandler = readRef()
+                val classHandle = readRef()
+                val attrName = lookupString(orig.getInt())
+                val hint = orig.getLong().toInt().toLong()
+                invSpec = InvocationSpec(classHandle, attrName, hint, readRef())
             }
         }
 
         /* HLL stuff. */
+        var hllOwner: HLLConfig? = null
+        var hllRole = 0L
         if (version >= 6) {
-            st.hllOwner = tc.gc.getHLLConfigFor(readStr()!!)
-            st.hllRole = orig.getLong()
+            hllOwner = tc.gc.getHLLConfigFor(readStr()!!)
+            hllRole = orig.getLong()
         }
+
+        /* One publish, here: the point at which every fact field used to be
+         * assigned, so an object deserialized from inside the parametricity
+         * or REPR-data reads below sees the same facts it saw before (ledger
+         * ruling 1). No republish after deserialize_repr_data: no site folds
+         * a stub's REPR data. */
+        st.publish(TypeState(methodCache, vTable, typeCheckCache, modeFlags, contSpec, invSpec,
+            boolSpec, hllOwner, hllRole, st.debugName))
 
         /* Type parametricity. */
         if (version >= 9) {

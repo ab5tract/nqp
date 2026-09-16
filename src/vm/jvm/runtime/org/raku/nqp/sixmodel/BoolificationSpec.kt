@@ -1,9 +1,16 @@
 package org.raku.nqp.sixmodel
 
 /**
- * Specification of how we turn something into a boolean.
+ * Specification of how we turn something into a boolean. Immutable: it is
+ * published as part of a [TypeState], never edited in place.
  */
-class BoolificationSpec {
+class BoolificationSpec(
+    /** Boolification mode. */
+    @JvmField val Mode: Int,
+
+    /** A method to call to boolify, if applicable. */
+    @JvmField val Method: SixModelObject?,
+) {
     companion object {
         /** Boolification mode flags. */
         const val MODE_CALL_METHOD = 0
@@ -16,10 +23,4 @@ class BoolificationSpec {
         const val MODE_ITER = 7
         const val MODE_HAS_ELEMS = 8
     }
-
-    /** Boolification mode. */
-    @JvmField var Mode = 0
-
-    /** A method to call to boolify, if applicable. */
-    @JvmField var Method: SixModelObject? = null
 }

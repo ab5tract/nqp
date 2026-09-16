@@ -1,17 +1,18 @@
 package org.raku.nqp.sixmodel
 
 /* How do we invoke this thing? Specifies either an attribute to look at for
- * an invokable thing, or alternatively a method to call. */
-class InvocationSpec {
+ * an invokable thing, or alternatively a method to call. Immutable: it is
+ * published as part of a TypeState, never edited in place. */
+class InvocationSpec(
     /** Class handle where we find the attribute to invoke. */
-    @JvmField var ClassHandle: SixModelObject? = null
+    @JvmField val ClassHandle: SixModelObject?,
 
     /** Attribute name where we find the attribute to invoke. */
-    @JvmField var AttrName: String? = null
+    @JvmField val AttrName: String?,
 
     /** Attribute lookup hint used in gradual typing. */
-    @JvmField var Hint = 0L
+    @JvmField val Hint: Long,
 
     /** Thing that handles invocation. */
-    @JvmField var InvocationHandler: SixModelObject? = null
-}
+    @JvmField val InvocationHandler: SixModelObject?,
+)
