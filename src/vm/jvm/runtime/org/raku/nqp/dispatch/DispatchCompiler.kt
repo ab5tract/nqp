@@ -9,8 +9,8 @@ import org.raku.nqp.runtime.CallSiteDescriptor
 import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
-import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
+import org.raku.nqp.sixmodel.TypeState
 
 /**
  * Compiles the programs installed at a dispatch callsite into a MethodHandle
@@ -60,7 +60,7 @@ object DispatchCompiler {
         lookup.findStatic(DispatchCompiler::class.java, name,
             MethodType.methodType(Void.TYPE, arrayOf(*bound, TC, ARGS)))
 
-    private val TEST_TYPE_ARG = test("testTypeArg", Integer.TYPE, STable::class.java)
+    private val TEST_TYPE_ARG = test("testTypeArg", Integer.TYPE, TypeState::class.java)
     private val TEST_CONCRETENESS_ARG = test("testConcretenessArg", Integer.TYPE,
         java.lang.Boolean.TYPE)
     private val TEST_LITERAL_ID_ARG = test("testLiteralIdArg", Integer.TYPE, Any::class.java)
@@ -146,7 +146,7 @@ object DispatchCompiler {
             val index = on.index
             when (guard) {
                 is Guard.OfType ->
-                    return MethodHandles.insertArguments(TEST_TYPE_ARG, 0, index, guard.type)
+                    return MethodHandles.insertArguments(TEST_TYPE_ARG, 0, index, guard.state)
                 is Guard.Concreteness ->
                     return MethodHandles.insertArguments(TEST_CONCRETENESS_ARG, 0, index,
                         guard.concrete)
@@ -265,8 +265,8 @@ object DispatchCompiler {
     /* ----- guard tests ----- */
 
     @JvmStatic
-    fun testTypeArg(index: Int, type: STable?, tc: ThreadContext, args: Array<Any?>): Boolean =
-        (args[index] as? SixModelObject)?.st === type
+    fun testTypeArg(index: Int, state: TypeState?, tc: ThreadContext, args: Array<Any?>): Boolean =
+        (args[index] as? SixModelObject)?.st?.state === state
 
     @JvmStatic
     fun testConcretenessArg(index: Int, concrete: Boolean, tc: ThreadContext,
@@ -287,7 +287,7 @@ object DispatchCompiler {
     fun testGuard(guard: Guard, tc: ThreadContext, args: Array<Any?>): Boolean =
         when (guard) {
             is Guard.OfType ->
-                (evalRaw(guard.on, tc, args) as? SixModelObject)?.st === guard.type
+                (evalRaw(guard.on, tc, args) as? SixModelObject)?.st?.state === guard.state
             is Guard.Concreteness ->
                 Guard.isConcrete(evalRaw(guard.on, tc, args)) == guard.concrete
             is Guard.Literal -> {
