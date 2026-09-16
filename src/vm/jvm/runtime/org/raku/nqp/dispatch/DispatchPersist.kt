@@ -63,6 +63,10 @@ object DispatchPersist {
     @JvmField val dropped = AtomicLong()
     /** Slots skipped because their first int was not DispatchSlot.SCHEMA. */
     @JvmField val staleSchema = AtomicLong()
+    /** Slots dropped because a referenced SC's stamp (SerializationContext.stamp)
+     *  is not the one the slot was recorded under: the same handle, another
+     *  build of the artifact. */
+    @JvmField val staleStamp = AtomicLong()
     @JvmField val recorded = AtomicLong()
     @JvmField val verifyMatched = AtomicLong()
     @JvmField val verifyByOutcome = AtomicLong()
@@ -128,6 +132,17 @@ object DispatchPersist {
         }
         val slot = try { UnitCodec.decode(DispatchSlot.serializer(), bytes) }
                    catch (e: Exception) { throw IllegalStateException("unit ${ns}: dispatch slot of program ${site.programIndex} ordinal ${site.ordinal} does not decode: ${e.message}", e) }
+        /* Every SC the slot names must be the one it was recorded against.
+         * A handle this process has not loaded is not a stamp question: its
+         * programs drop one by one in realise, as they always did. */
+        for (s in slot.stamps) {
+            val sc = tc.gc.scs[s.handle] ?: continue
+            if (sc.stamp != s.stamp) {
+                staleStamp.incrementAndGet()
+                if (TRACE) System.err.println("dispatch-persist: stale stamp ${s.handle} recorded=${s.stamp} loaded=${sc.stamp} at ${site.identity}")
+                return emptyList()
+            }
+        }
         val onDrop: ((String) -> Unit)? =
             if (TRACE) { reason -> System.err.println("dispatch-persist: dropped ${site.identity} $reason") }
             else null
@@ -274,18 +289,21 @@ object DispatchPersist {
                         val m = HashMap<Int, ByteArray>()
                         for ((slot, byText) in perSlot) {
                             val persisted = ArrayList<PProgram>()
+                            val stamps = LinkedHashMap<String, Int>()
                             for (p in byText.values) {
-                                val pp = try { DispatchSlotCodec.persist(p) }
+                                val mine = LinkedHashMap<String, Int>()
+                                val pp = try { DispatchSlotCodec.persist(p, mine) }
                                          catch (t: Throwable) {
                                              failed++
                                              System.err.println("dispatch-record: FAILED program $path!$prefix#$slot: ${reason(t)}")
                                              null
                                          }
                                 if (pp == null) pathUnpersistable++
-                                else if (persisted.size < Dispatch.MAX_PROGRAMS) persisted.add(pp)
+                                else if (persisted.size < Dispatch.MAX_PROGRAMS) { persisted.add(pp); stamps.putAll(mine) }
                             }
                             if (persisted.isEmpty()) continue
-                            m[slot] = UnitCodec.encode(DispatchSlot.serializer(), DispatchSlot(DispatchSlot.SCHEMA, persisted))
+                            m[slot] = UnitCodec.encode(DispatchSlot.serializer(),
+                                DispatchSlot(DispatchSlot.SCHEMA, persisted, stamps.map { PStamp(it.key, it.value) }))
                             pathSlots++; pathPrograms += persisted.size
                         }
                         if (m.isNotEmpty()) encoded[prefix] = m
