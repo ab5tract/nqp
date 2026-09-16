@@ -595,6 +595,22 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         }
     }
 
+    /** nqp::iscont through a site: no decont, no user code, a folded fact.
+     *  Answers Object (a boxed Long, cached for 0 and 1) so the store local
+     *  the classlib road wrote into is unchanged. */
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class IsContOp {
+        @Specialization
+        static Object doIsCont(VirtualFrame f, Object site, Object o) {
+            try {
+                return NqpTypeOps.iscont((NqpTypeOps.IsContSite) site, o);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
     @Operation
     @ConstantOperand(type = Object.class, name = "site")
     public static final class P6SinkOp {
