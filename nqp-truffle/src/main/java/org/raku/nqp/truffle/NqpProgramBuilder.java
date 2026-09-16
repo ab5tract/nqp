@@ -694,7 +694,7 @@ final class NqpProgramBuilder {
 
     /* ----- table ops with a dedicated operation ----- */
 
-    private enum Op { RUN, GETATTR, BINDATTR, DECONT, ISNULL, ISCONCRETE, ISTYPE, HLLIZE, P6SINK, ASSERTPARAMCHECK, P6TYPECHECKRV, CREATE,
+    private enum Op { RUN, GETATTR, BINDATTR, DECONT, ISNULL, ISCONCRETE, ISTYPE, ISCONT, HLLIZE, P6SINK, ASSERTPARAMCHECK, P6TYPECHECKRV, CREATE,
                       INT_BIN, INT_UN, NUM_BIN, NUM_CMP, NUM_NEG, BIGINT_ARITH }
 
     /**
@@ -714,10 +714,15 @@ final class NqpProgramBuilder {
      * the consumers (Truthy, the arg coercions) take Object. So swapping the
      * generic site for the dedicated operation does not change the value's
      * shape, only who computes it.
+     *
+     * Batch 1 (milestone 8 Phase B) routes iscont, istrue, isfalse,
+     * findmethod, can and the three half-reachable sites from here as well;
+     * only tryfindmethod is a table op (dedicatedOp).
      */
     private static Op dedicatedClasslib(String cls, String meth, int nargs) {
         if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("hllize") && nargs == 1) return Op.HLLIZE;
         if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("istype") && nargs == 2) return Op.ISTYPE;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("iscont") && nargs == 1) return Op.ISCONT;
         return null;
     }
 
@@ -758,6 +763,7 @@ final class NqpProgramBuilder {
             case ISNULL -> b.beginIsNullOp();
             case ISCONCRETE -> b.beginIsConcreteOp(new NqpTypeOps.IsConcreteSite());
             case ISTYPE -> b.beginIsTypeOp(new NqpTypeOps.IsTypeSite());
+            case ISCONT -> b.beginIsContOp(new NqpTypeOps.IsContSite());
             case HLLIZE -> b.beginHllizeOp(new NqpTypeOps.HllizeSite());
             case P6SINK -> b.beginP6SinkOp(new NqpTypeOps.SinkSite());
             case ASSERTPARAMCHECK -> b.beginAssertParamCheckOp();
@@ -781,6 +787,7 @@ final class NqpProgramBuilder {
             case ISNULL -> b.endIsNullOp();
             case ISCONCRETE -> b.endIsConcreteOp();
             case ISTYPE -> b.endIsTypeOp();
+            case ISCONT -> b.endIsContOp();
             case HLLIZE -> b.endHllizeOp();
             case P6SINK -> b.endP6SinkOp();
             case ASSERTPARAMCHECK -> b.endAssertParamCheckOp();

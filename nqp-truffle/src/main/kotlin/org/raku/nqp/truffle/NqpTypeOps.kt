@@ -575,6 +575,50 @@ object NqpTypeOps {
     private fun istypeSlow(v: Any?, t: Any?, tc: ThreadContext): Long =
         Ops.istype_nd(v as SixModelObject?, t as SixModelObject?, tc)
 
+    /* ----- iscont ----- */
+
+    /**
+     * nqp::iscont with a site: whether a type's objects are containers is a
+     * fact of its state (the container spec), so the answer folds to a
+     * constant under one STable compare and the state's assumption.
+     * setcontspec publishes a new state, which invalidates the fold.
+     */
+    class IsContSite : Site() {
+        @JvmField @field:CompilationFinal var st: STable? = null
+        @JvmField @field:CompilationFinal var result: Long = 0
+        override fun clear() { st = null; result = 0 }
+    }
+
+    /** nqp::iscont: null is not a container; else the folded fact, else the runtime. */
+    @JvmStatic
+    fun iscont(site: IsContSite, o: Any?): Long {
+        if (NqpCensus.ON) NqpCensus.call(site.stats)
+        if (o !is SixModelObject || Ops.isnull(o) == 1L) return 0L
+        var st = site.st
+        if (st == null && site.mayResolve()) {
+            CompilerDirectives.transferToInterpreterAndInvalidate()
+            resolveIsCont(site, o)
+            st = site.st
+        }
+        if (st != null) {
+            if (!site.valid()) republished(site)
+            else if (NqpRaw.st(o) === st) return site.result
+            else miss(site)
+        }
+        if (NqpCensus.ON) NqpCensus.slow(site.stats, if (site.mayResolve()) "generic" else "pinned")
+        return Ops.iscont(o)
+    }
+
+    @TruffleBoundary
+    private fun resolveIsCont(site: IsContSite, o: SixModelObject) {
+        if (!o.stInitialized) { site.pin(); return }
+        val st = o.st
+        val s = st.state
+        site.st = st; site.state = s
+        site.result = if (s.containerSpec == null) 0L else 1L
+        if (DEBUG) debug("iscont site resolved " + site.result + " on " + st.debugName)
+    }
+
     /* ----- assertparamcheck ----- */
 
     /**
