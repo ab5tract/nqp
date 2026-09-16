@@ -639,6 +639,27 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         }
     }
 
+    /** findmethod (kind 0, fatal), tryfindmethod (1), can (2) through one
+     *  site. Object: the decont and the HOW road are user code; a capture
+     *  answers a token typed by the op's value (INT for can). */
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    @ConstantOperand(type = int.class, name = "kind")
+    public static final class FindMethodOp {
+        @Specialization
+        static Object doFind(VirtualFrame f, Object site, int kind, Object o, Object name) {
+            try {
+                return NqpTypeOps.findmethod((NqpTypeOps.FindMethodSite) site, o, name, kind, tc(f));
+            } catch (NqpTypeOps.SuspendedIn s) {
+                return NqpOps.suspendToken(s.sse, s.finish);
+            } catch (org.raku.nqp.runtime.SaveStackException sse) {
+                return kind == NqpTypeOps.FIND_CAN ? NqpOps.suspendToken(sse, NqpWire.T_INT) : NqpOps.suspendToken(sse);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
     @Operation
     @ConstantOperand(type = Object.class, name = "site")
     public static final class P6SinkOp {
