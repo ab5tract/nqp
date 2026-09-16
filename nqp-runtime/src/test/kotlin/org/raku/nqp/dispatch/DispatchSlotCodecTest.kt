@@ -18,7 +18,7 @@ class DispatchSlotCodecTest {
     /** persist -> encode -> decode -> realise, the whole road a slot takes. */
     private fun roundTrip(tc: ThreadContext, p: DispatchProgram): DispatchProgram {
         val persisted = assertNotNull(DispatchSlotCodec.persist(p))
-        val bytes = UnitCodec.encode(DispatchSlot.serializer(), DispatchSlot(DispatchSlot.SCHEMA, listOf(persisted)))
+        val bytes = UnitCodec.encode(DispatchSlot.serializer(), DispatchSlot(DispatchSlot.SCHEMA, listOf(persisted), emptyList()))
         val back = UnitCodec.decode(DispatchSlot.serializer(), ByteBuffer.wrap(bytes))
         return assertNotNull(DispatchSlotCodec.realise(tc, back.programs.single()))
     }
@@ -137,6 +137,18 @@ class DispatchSlotCodecTest {
         val p = DispatchProgram(csd, listOf(Guard.Literal(ValueSource.Arg(0), DispatchValue(ArgKind.OBJ, orphan))),
             Outcome.Value(ValueSource.Arg(0)), emptyList(), ResumeKind.NONE, emptyList(), null)
         assertNull(DispatchSlotCodec.persist(p))
+    }
+
+    /** The record side names, per SC handle, the stamp the SC was loaded
+     *  under; the bootstrap's SC is built in-process, so its stamp is 0 and
+     *  it is still named (a 0 matches only another in-process SC). */
+    @Test fun persistNamesTheStampOfEverySCItReferences() {
+        val tc = ProgramUnitTestSupport.tc()
+        val stamps = LinkedHashMap<String, Int>()
+        assertNotNull(DispatchSlotCodec.persist(program(tc), stamps))
+        val core = assertNotNull(tc.gc.KnowHOW!!.sc)
+        assertEquals(0, core.stamp, "an in-process SC is unstamped")
+        assertEquals(mapOf(core.handle to 0), stamps)
     }
 
     @Test fun aReferenceThatDoesNotResolveDropsTheProgram() {

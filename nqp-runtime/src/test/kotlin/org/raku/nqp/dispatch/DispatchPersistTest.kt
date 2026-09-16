@@ -34,7 +34,7 @@ class DispatchPersistTest {
         val p = DispatchProgram(csd, listOf(Guard.OfType(ValueSource.Arg(0), knowhow.st)),
             Outcome.Value(ValueSource.Arg(0)), emptyList(), ResumeKind.NONE, emptyList(), null)
         val bytes = UnitCodec.encode(DispatchSlot.serializer(),
-            DispatchSlot(DispatchSlot.SCHEMA, listOf(DispatchSlotCodec.persist(p)!!)))
+            DispatchSlot(DispatchSlot.SCHEMA, listOf(DispatchSlotCodec.persist(p)!!), emptyList()))
         val store = storeWith(bytes)
         val ns = "/x/fixture.jar!unit-x"
         DispatchPersist.register(ns, store)
@@ -61,7 +61,7 @@ class DispatchPersistTest {
         val p = DispatchProgram(csd, listOf(Guard.OfType(ValueSource.Arg(0), knowhow.st)),
             Outcome.Value(ValueSource.Arg(0)), emptyList(), ResumeKind.NONE, emptyList(), null)
         val bytes = UnitCodec.encode(DispatchSlot.serializer(),
-            DispatchSlot(DispatchSlot.SCHEMA + 1, listOf(DispatchSlotCodec.persist(p)!!)))
+            DispatchSlot(DispatchSlot.SCHEMA + 1, listOf(DispatchSlotCodec.persist(p)!!), emptyList()))
         val ns = "/x/fixture.jar!unit-stale"
         DispatchPersist.register(ns, storeWith(bytes))
         val site = DispatchCallSite(MethodType.methodType(Void.TYPE))
@@ -71,6 +71,40 @@ class DispatchPersistTest {
         assertTrue(DispatchPersist.restore(tc, site).isEmpty(), "a stale slot restores nothing")
         assertEquals(stale + 1, DispatchPersist.staleSchema.get())
         assertEquals(restored, DispatchPersist.restored.get(), "and is not counted as restored")
+    }
+
+    /** A slot's stamps against the loaded SCs: agreeing restores; a
+     *  disagreeing one is the cross-build hazard (the same handle, another
+     *  content, shifted indexes) and the whole slot is dropped as staleStamp;
+     *  a handle this process has not loaded is not a stamp question, its
+     *  programs drop one by one in realise as they always did. */
+    @Test fun aSlotWhoseStampDisagreesWithTheLoadedScIsTreatedAsEmpty() {
+        val tc = ProgramUnitTestSupport.tc()
+        val knowhow = tc.gc.KnowHOW!!
+        val core = knowhow.sc!!
+        val csd = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null)
+        val p = DispatchProgram(csd, listOf(Guard.OfType(ValueSource.Arg(0), knowhow.st)),
+            Outcome.Value(ValueSource.Arg(0)), emptyList(), ResumeKind.NONE, emptyList(), null)
+        fun slot(vararg stamps: PStamp) = UnitCodec.encode(DispatchSlot.serializer(),
+            DispatchSlot(DispatchSlot.SCHEMA, listOf(DispatchSlotCodec.persist(p)!!), stamps.toList()))
+        val site = DispatchCallSite(MethodType.methodType(Void.TYPE))
+        site.programIndex = 0; site.ordinal = 1
+
+        DispatchPersist.register("/x/fixture.jar!unit-stamp-ok", storeWith(slot(PStamp(core.handle, core.stamp))))
+        site.unitNamespace = "/x/fixture.jar!unit-stamp-ok"
+        assertEquals(1, DispatchPersist.restore(tc, site).size, "an agreeing stamp restores")
+
+        val stale = DispatchPersist.staleStamp.get(); val restored = DispatchPersist.restored.get()
+        DispatchPersist.register("/x/fixture.jar!unit-stamp-bad", storeWith(slot(PStamp(core.handle, core.stamp + 1))))
+        site.unitNamespace = "/x/fixture.jar!unit-stamp-bad"
+        assertTrue(DispatchPersist.restore(tc, site).isEmpty(), "a disagreeing stamp drops the slot")
+        assertEquals(stale + 1, DispatchPersist.staleStamp.get())
+        assertEquals(restored, DispatchPersist.restored.get())
+
+        DispatchPersist.register("/x/fixture.jar!unit-stamp-gone", storeWith(slot(PStamp("no-such-sc", 7))))
+        site.unitNamespace = "/x/fixture.jar!unit-stamp-gone"
+        assertEquals(1, DispatchPersist.restore(tc, site).size, "an unloaded SC is not a stamp mismatch")
+        assertEquals(stale + 1, DispatchPersist.staleStamp.get())
     }
 
     /**
@@ -109,6 +143,9 @@ class DispatchPersistTest {
         val decoded = UnitCodec.decode(DispatchSlot.serializer(), slot)
         assertEquals(DispatchSlot.SCHEMA, decoded.schema)
         assertEquals(1, decoded.programs.size)
+        val core = knowhow.sc!!
+        assertEquals(listOf(core.handle to core.stamp), decoded.stamps.map { it.handle to it.stamp },
+            "the slot names the stamp of the SC its program references")
         assertEquals(DispatchDump.describe(p),
             DispatchDump.describe(assertNotNull(DispatchSlotCodec.realise(tc, decoded.programs.single()))))
         assertTrue("dispatch-record: rewriting ${f.path}" in printed, printed)

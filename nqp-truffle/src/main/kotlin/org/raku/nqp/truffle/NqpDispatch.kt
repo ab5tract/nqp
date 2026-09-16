@@ -646,6 +646,7 @@ object NqpDispatch {
                 " sitesAll=" + DispatchBootstrap.created + " restored=" + DispatchPersist.restored +
                 " restoredSites=" + DispatchPersist.restoredSites + " dropped=" + DispatchPersist.dropped +
                 " staleSchema=" + DispatchPersist.staleSchema +
+                " staleStamp=" + DispatchPersist.staleStamp +
                 " recorded=" + DispatchPersist.recorded +
                 " publishes=" + STable.PUBLISHES.sum() +
                 " slowEvals=" + slowEvals + " invokes=" + invokes + " directs=" + directs +

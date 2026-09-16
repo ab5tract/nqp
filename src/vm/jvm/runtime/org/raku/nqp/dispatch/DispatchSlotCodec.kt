@@ -23,17 +23,22 @@ class Unpersistable(what: String) : RuntimeException(what)
 object DispatchSlotCodec {
     /* ----- to the persisted form ----- */
 
-    fun persist(p: DispatchProgram): PProgram? = try { program(p) } catch (_: Unpersistable) { null }
+    /** [stamps], when given, collects the stamp of every SC a persisted
+     *  reference names (DispatchSlot.stamps); a program that turns out
+     *  unpersistable may have added to it, so the caller keeps a map per
+     *  program and merges on success. */
+    fun persist(p: DispatchProgram, stamps: MutableMap<String, Int>? = null): PProgram? =
+        try { program(p, stamps) } catch (_: Unpersistable) { null }
 
-    private fun program(p: DispatchProgram): PProgram = PProgram(
-        descriptor(p.descriptor), p.guards.map { guard(it) }, outcome(p.outcome),
-        p.resumptions.map { PResumption(it.dispatcher.id, shape(it.initArgs)) },
+    private fun program(p: DispatchProgram, stamps: MutableMap<String, Int>?): PProgram = PProgram(
+        descriptor(p.descriptor), p.guards.map { guard(it, stamps) }, outcome(p.outcome, stamps),
+        p.resumptions.map { PResumption(it.dispatcher.id, shape(it.initArgs, stamps)) },
         p.resumeKind,
         p.resumeLevels.map { l ->
-            PLevel(l.dispatcher.id, descriptor(l.initDescriptor), l.guards.map { guard(it) },
-                l.newState?.let { source(it) }, l.requireNoFurther) },
+            PLevel(l.dispatcher.id, descriptor(l.initDescriptor), l.guards.map { guard(it, stamps) },
+                l.newState?.let { source(it, stamps) }, l.requireNoFurther) },
         p.bindControl?.let { PBind(it.failureFlag, it.successFlag, it.onSuccessToo) },
-        p.bindFailureProgram?.let { program(it) })
+        p.bindFailureProgram?.let { program(it, stamps) })
 
     private fun descriptor(d: CallSiteDescriptor) = PDescriptor(d.argFlags.copyOf(), d.names?.toList())
 
@@ -52,56 +57,62 @@ object DispatchSlotCodec {
         return if (i >= 0 && i < sc.coderefCount() && sc.getCodeRef(i) === obj) i else -1
     }
 
-    fun ref(obj: SixModelObject?): PRef? {
+    private fun stamped(sc: SerializationContext, r: PRef, stamps: MutableMap<String, Int>?): PRef {
+        stamps?.put(sc.handle, sc.stamp)
+        return r
+    }
+
+    fun ref(obj: SixModelObject?, stamps: MutableMap<String, Int>? = null): PRef? {
         if (obj == null) return null
         val sc = obj.sc ?: throw Unpersistable("object of ${typeName(obj)} in no SC")
         val oi = objectIndex(sc, obj)
-        if (oi >= 0) return PRef(sc.handle, oi, PRef.OBJ)
+        if (oi >= 0) return stamped(sc, PRef(sc.handle, oi, PRef.OBJ), stamps)
         val ci = codeIndex(sc, obj)
-        if (ci >= 0) return PRef(sc.handle, ci, PRef.CODE)
+        if (ci >= 0) return stamped(sc, PRef(sc.handle, ci, PRef.CODE), stamps)
         throw Unpersistable("object of ${typeName(obj)} not in the root set of ${sc.handle}")
     }
 
-    fun ref(st: STable?): PRef? {
+    fun ref(st: STable?, stamps: MutableMap<String, Int>? = null): PRef? {
         if (st == null) return null
         val sc = st.sc ?: throw Unpersistable("STable ${st.debugName} in no SC")
         val i = try { sc.getSTableIndex(st) } catch (_: NullPointerException) { -1 }
-        if (i >= 0 && i < sc.stableCount() && sc.getSTable(i) === st) return PRef(sc.handle, i, PRef.STABLE)
+        if (i >= 0 && i < sc.stableCount() && sc.getSTable(i) === st) return stamped(sc, PRef(sc.handle, i, PRef.STABLE), stamps)
         throw Unpersistable("STable ${st.debugName} not in the root set of ${sc.handle}")
     }
 
-    private fun literal(kind: ArgKind, value: Any?): PLiteral = when (kind) {
-        ArgKind.OBJ -> PLiteral(kind, ref(value as SixModelObject?), 0, 0.0, null)
+    private fun literal(kind: ArgKind, value: Any?, stamps: MutableMap<String, Int>?): PLiteral = when (kind) {
+        ArgKind.OBJ -> PLiteral(kind, ref(value as SixModelObject?, stamps), 0, 0.0, null)
         ArgKind.INT, ArgKind.UINT -> PLiteral(kind, null, (value as Number).toLong(), 0.0, null)
         ArgKind.NUM -> PLiteral(kind, null, 0, (value as Number).toDouble(), null)
         ArgKind.STR -> PLiteral(kind, null, 0, 0.0, value as String?)
     }
 
-    private fun source(s: ValueSource): PSource = when (s) {
+    private fun source(s: ValueSource, stamps: MutableMap<String, Int>?): PSource = when (s) {
         is ValueSource.Arg -> PArg(s.index)
         is ValueSource.ResumeInitArg -> PResumeInitArg(s.level, s.index)
-        is ValueSource.Literal -> literal(s.kind, s.value)
-        is ValueSource.Attribute -> PAttribute(source(s.from), ref(s.classHandle), s.name, s.kind)
-        is ValueSource.How -> PHow(source(s.from))
-        is ValueSource.Unbox -> PUnbox(source(s.from), s.kind)
-        is ValueSource.Lookup -> PLookup(source(s.table), source(s.key))
+        is ValueSource.Literal -> literal(s.kind, s.value, stamps)
+        is ValueSource.Attribute -> PAttribute(source(s.from, stamps), ref(s.classHandle, stamps), s.name, s.kind)
+        is ValueSource.How -> PHow(source(s.from, stamps))
+        is ValueSource.Unbox -> PUnbox(source(s.from, stamps), s.kind)
+        is ValueSource.Lookup -> PLookup(source(s.table, stamps), source(s.key, stamps))
         is ValueSource.ResumeState -> PResumeState(s.level)
     }
 
-    private fun guard(g: Guard): PGuard = when (g) {
-        is Guard.OfType -> PGuardType(source(g.on), ref(g.type))
-        is Guard.Concreteness -> PGuardConcreteness(source(g.on), g.concrete)
-        is Guard.Literal -> PGuardLiteral(source(g.on), literal(g.expected.kind, g.expected.value))
-        is Guard.NotLiteralObj -> PGuardNotLiteralObj(source(g.on), ref(g.rejected))
-        is Guard.OfHll -> PGuardHll(source(g.on), g.hll?.name, g.hll?.compilerSide ?: false)
+    private fun guard(g: Guard, stamps: MutableMap<String, Int>?): PGuard = when (g) {
+        is Guard.OfType -> PGuardType(source(g.on, stamps), ref(g.type, stamps))
+        is Guard.Concreteness -> PGuardConcreteness(source(g.on, stamps), g.concrete)
+        is Guard.Literal -> PGuardLiteral(source(g.on, stamps), literal(g.expected.kind, g.expected.value, stamps))
+        is Guard.NotLiteralObj -> PGuardNotLiteralObj(source(g.on, stamps), ref(g.rejected, stamps))
+        is Guard.OfHll -> PGuardHll(source(g.on, stamps), g.hll?.name, g.hll?.compilerSide ?: false)
     }
 
-    private fun shape(c: CaptureShape) = PShape(c.sources.map { source(it) }, descriptor(c.descriptor))
+    private fun shape(c: CaptureShape, stamps: MutableMap<String, Int>?) =
+        PShape(c.sources.map { source(it, stamps) }, descriptor(c.descriptor))
 
-    private fun outcome(o: Outcome): POutcome = when (o) {
-        is Outcome.Value -> POutcomeValue(source(o.source))
-        is Outcome.InvokeCode -> POutcomeInvoke(source(o.callee), shape(o.args))
-        is Outcome.InvokeSyscall -> POutcomeSyscall(o.syscall.name, shape(o.args))
+    private fun outcome(o: Outcome, stamps: MutableMap<String, Int>?): POutcome = when (o) {
+        is Outcome.Value -> POutcomeValue(source(o.source, stamps))
+        is Outcome.InvokeCode -> POutcomeInvoke(source(o.callee, stamps), shape(o.args, stamps))
+        is Outcome.InvokeSyscall -> POutcomeSyscall(o.syscall.name, shape(o.args, stamps))
     }
 
     /* ----- from the persisted form ----- */
