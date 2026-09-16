@@ -282,6 +282,14 @@ val stage2Trained = tasks.register<Sync>("stage2Trained") {
     stageTargets.forEach { from(jvmDir.dir("stage2").file(it.jar)) }
     into(stage2TrainedDir)
     stage2.values.forEach { dependsOn(it) }
+    // Always out of date, for the same reason trainDispatch is: the task
+    // that follows this one REWRITES these copies, so up-to-date checking
+    // cannot describe the pair. The copy has to be restored from stage2
+    // every build, or each training run would start from the last one's
+    // output and compound onto it instead of training fresh jars. (Until
+    // the marker file moved out of this directory, the stray file made the
+    // Sync out of date by accident; that is now said rather than inherited.)
+    outputs.upToDateWhen { false }
 }
 
 // Tees the training run's stderr: the build log goes on showing it while
@@ -309,15 +317,28 @@ val trainDispatch = tasks.register<JavaExec>("trainDispatch") {
     group = "nqp jvm"
     description = "Runs the trivial program with NQP_DISPATCH_RECORD=all against the stage2 copy, filling its dispatch slots"
     dependsOn(stage2Trained, ":nqp-runtime:jar", ":nqp-truffle:jar", "syncTruffleModules")
-    val marker = stage2TrainedDir.file("dispatch-trained.txt").asFile
+    // Outside the synced directory: the marker is this task's only declared
+    // output, and the jars it rewrites are its INPUTS. A marker inside
+    // stage2TrainedDir would overlap stage2Trained's output directory, which
+    // is Gradle's business, not ours.
+    val marker = jvmDir.file("dispatch-trained.txt").asFile
     inputs.files(stageTargets.map { stage2TrainedDir.file(it.jar) })
     inputs.file(runtimeJarFile)
     outputs.file(marker)
+    // INTENTIONALLY always out of date. The task rewrites the very jars it
+    // declares as inputs, so up-to-date checking cannot describe it: every
+    // build's Sync restores the untrained jars and this run trains them
+    // again, which is what we want -- each build trains from FRESH jars
+    // rather than compounding one training run onto the last.
+    outputs.upToDateWhen { false }
     javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(toolchainVersion) }
     workingDir = projectDir
     mainClass = "org.raku.nqp.runtime.unit.UnitMain"
-    // Class-path input snapshot only; the real class path is set in doFirst.
-    classpath = files(stage2TrainedDir, engineJarFile)
+    // The engine jar alone here: this is the configuration-time class path,
+    // whose only job is the input snapshot, and it must NOT name
+    // stage2TrainedDir -- the directory this task modifies. The real class
+    // path is built in doFirst.
+    classpath = files(engineJarFile)
     environment("NQP_DISPATCH_RECORD", "all")
     errorOutput = trainDispatchTee
     doFirst {
@@ -331,7 +352,13 @@ val trainDispatch = tasks.register<JavaExec>("trainDispatch") {
     }
     doLast {
         val text = trainDispatchLog.toString(Charsets.UTF_8)
-        check(text.contains("dispatch-record: wrote")) { "trainDispatch: no 'dispatch-record: wrote' line -- the training run recorded nothing" }
+        // The recorder ends every run with `done`, and contains its own
+        // failures as FAILED lines rather than dying: a run that rewrote
+        // some artifacts and then threw would otherwise satisfy a
+        // per-artifact marker and leave a half-trained build behind, green.
+        check(text.contains("dispatch-record: done") && !text.contains("dispatch-record: FAILED")) {
+            "trainDispatch: the training run did not finish cleanly -- no 'dispatch-record: done' line, or a 'dispatch-record: FAILED' one"
+        }
         marker.writeText(text.lines().filter { it.startsWith("dispatch-record:") }.joinToString("\n") + "\n")
     }
 }

@@ -38,6 +38,32 @@ class UnitDispatchWriterTest {
         assertEquals(PROG2_TEXT, after.program(2))
     }
 
+    /** The branch no other case reaches: a NAMED lower slot GROWS, so every
+     *  slot above it moves. The unnamed slot 2 is copied forward out of the
+     *  OLD dispatch entry at its old offset and repointed to a new one; a
+     *  writer that repointed it wrongly -- or read it back at its old offset
+     *  -- would hand out another slot's bytes at the next miss, which is the
+     *  one way this file can corrupt a whole artifact. */
+    @Test fun aGrowingNamedSlotMovesTheUnnamedOnesAndTheyStillReadBack() {
+        val f = File.createTempFile("unit-", ".jar"); f.deleteOnExit()
+        val image = ProgramUnitTestSupport.image()
+        f.writeBytes(UnitImageWriter.bytes(UnitImage(image.unitId, image.hll, image.scHandle, image.scDesc,
+            image.serializedCodeRefCount, image.mainlineQbid, image.entryQbid, image.deserializeQbid, image.loadQbid,
+            image.blocks, image.programs, image.dispatchCounts, image.serialized, image.nested,
+            mapOf(0 to byteArrayOf(1, 2, 3), 2 to byteArrayOf(7, 7)))))
+        val before = UnitStore.open(f.path)
+        assertContentEquals(byteArrayOf(7, 7), bytesOf(assertNotNull(before.dispatchSlot(2, 0))))
+
+        val grown = ByteArray(8) { 9 }
+        UnitDispatchWriter.rewrite(f.path, mapOf("unit" to mapOf(0 to grown)))
+
+        val after = UnitStore.open(f.path)
+        assertContentEquals(grown, bytesOf(assertNotNull(after.dispatchSlot(0, 0))), "the named slot grew")
+        assertContentEquals(byteArrayOf(7, 7), bytesOf(assertNotNull(after.dispatchSlot(2, 0))),
+            "the unnamed slot moved and still reads back")
+        assertNull(after.dispatchSlot(0, 1), "an unnamed empty slot stays empty")
+    }
+
     @Test fun refusesASlotOutsideTheTable() {
         val f = File.createTempFile("unit-", ".jar"); f.deleteOnExit()
         f.writeBytes(UnitImageWriter.bytes(ProgramUnitTestSupport.image()))

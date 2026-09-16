@@ -1,12 +1,14 @@
 package org.raku.nqp.dispatch
 
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.PrintStream
 import java.lang.invoke.MethodType
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.raku.nqp.runtime.CallSiteDescriptor
 import org.raku.nqp.runtime.unit.ProgramUnitTestSupport
@@ -31,7 +33,8 @@ class DispatchPersistTest {
         val csd = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null)
         val p = DispatchProgram(csd, listOf(Guard.OfType(ValueSource.Arg(0), knowhow.st)),
             Outcome.Value(ValueSource.Arg(0)), emptyList(), ResumeKind.NONE, emptyList(), null)
-        val bytes = UnitCodec.encode(DispatchSlot.serializer(), DispatchSlot(listOf(DispatchSlotCodec.persist(p)!!)))
+        val bytes = UnitCodec.encode(DispatchSlot.serializer(),
+            DispatchSlot(DispatchSlot.SCHEMA, listOf(DispatchSlotCodec.persist(p)!!)))
         val store = storeWith(bytes)
         val ns = "/x/fixture.jar!unit-x"
         DispatchPersist.register(ns, store)
@@ -46,6 +49,72 @@ class DispatchPersistTest {
             "an anonymous site restores nothing")
         site.ordinal = 0
         assertTrue(DispatchPersist.restore(tc, site).isEmpty(), "an empty slot restores nothing")
+    }
+
+    /** A slot written by another schema is not decoded at all: UnitCodec is
+     *  untagged and fixed-width, so the bytes of an older layout would read
+     *  as a plausible program rather than fail. */
+    @Test fun aSlotOfAnotherSchemaIsTreatedAsEmpty() {
+        val tc = ProgramUnitTestSupport.tc()
+        val knowhow = tc.gc.KnowHOW!!
+        val csd = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null)
+        val p = DispatchProgram(csd, listOf(Guard.OfType(ValueSource.Arg(0), knowhow.st)),
+            Outcome.Value(ValueSource.Arg(0)), emptyList(), ResumeKind.NONE, emptyList(), null)
+        val bytes = UnitCodec.encode(DispatchSlot.serializer(),
+            DispatchSlot(DispatchSlot.SCHEMA + 1, listOf(DispatchSlotCodec.persist(p)!!)))
+        val ns = "/x/fixture.jar!unit-stale"
+        DispatchPersist.register(ns, storeWith(bytes))
+        val site = DispatchCallSite(MethodType.methodType(Void.TYPE))
+        site.unitNamespace = ns; site.programIndex = 0; site.ordinal = 1
+        val stale = DispatchPersist.staleSchema.get()
+        val restored = DispatchPersist.restored.get()
+        assertTrue(DispatchPersist.restore(tc, site).isEmpty(), "a stale slot restores nothing")
+        assertEquals(stale + 1, DispatchPersist.staleSchema.get())
+        assertEquals(restored, DispatchPersist.restored.get(), "and is not counted as restored")
+    }
+
+    /**
+     * The recorder, end to end: a live site with an installed program, its
+     * store registered, rewrites the artifact on disk -- and the program
+     * reads back out of the file. Everything below this (the codec, the
+     * writer) has its own test; what only this one covers is the hook's own
+     * road from DispatchBootstrap.sites() to a file, and the marker lines
+     * both builds gate on.
+     */
+    @Test fun recordAtExitWritesTheInstalledProgramsIntoTheArtifact() {
+        val tc = ProgramUnitTestSupport.tc()
+        val knowhow = tc.gc.KnowHOW!!
+        val f = File.createTempFile("unit-record-", ".jar"); f.deleteOnExit()
+        f.writeBytes(UnitImageWriter.bytes(ProgramUnitTestSupport.image()))
+        val ns = f.path + "!unit-record-" + System.nanoTime()
+        DispatchPersist.register(ns, UnitStore.open(f.path))
+        val csd = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null)
+        val p = DispatchProgram(csd, listOf(Guard.OfType(ValueSource.Arg(0), knowhow.st)),
+            Outcome.Value(ValueSource.Arg(0)), emptyList(), ResumeKind.NONE, emptyList(), null)
+        val site = DispatchCallSite(MethodType.methodType(Void.TYPE))
+        site.unitNamespace = ns; site.programIndex = 0; site.ordinal = 1
+        site.identity = "$ns#0#1"
+        site.install(p)
+        DispatchBootstrap.registerSite(site)
+
+        /* Unarmed -- NQP_DISPATCH_RECORD is not set in a test JVM -- the
+         * hook's own entry point does nothing and says nothing. */
+        assertEquals("", capturingErr { DispatchPersist.recordAtExit() },
+            "an unselected run records nothing")
+
+        val printed = capturingErr { DispatchPersist.recordAtExit(listOf("all")) }
+
+        val after = UnitStore.open(f.path)
+        val slot = assertNotNull(after.dispatchSlot(0, 1), "the site's slot was written")
+        val decoded = UnitCodec.decode(DispatchSlot.serializer(), slot)
+        assertEquals(DispatchSlot.SCHEMA, decoded.schema)
+        assertEquals(1, decoded.programs.size)
+        assertEquals(DispatchDump.describe(p),
+            DispatchDump.describe(assertNotNull(DispatchSlotCodec.realise(tc, decoded.programs.single()))))
+        assertTrue("dispatch-record: rewriting ${f.path}" in printed, printed)
+        assertTrue("dispatch-record: wrote 1 slots" in printed, printed)
+        assertTrue("dispatch-record: done 1 paths, 1 slots" in printed, printed)
+        assertTrue("FAILED" !in printed, printed)
     }
 
     /** verify mode's three outcomes, which no run can reach until slots are

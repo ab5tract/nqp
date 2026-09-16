@@ -57,7 +57,7 @@ object DispatchDump {
     private fun ref(obj: SixModelObject?): String {
         if (obj == null) return "null"
         return try {
-            address(DispatchSlotCodec.ref(obj)!!)
+            DispatchSlotCodec.ref(obj)?.let(::address) ?: "null"
         } catch (_: Unpersistable) {
             "NP(obj:${obj.javaClass.simpleName}:${typeName(obj)}:${if (obj.sc == null) "nosc" else "notroot"})"
         }
@@ -66,7 +66,7 @@ object DispatchDump {
     private fun ref(st: STable?): String {
         if (st == null) return "null"
         return try {
-            address(DispatchSlotCodec.ref(st)!!)
+            DispatchSlotCodec.ref(st)?.let(::address) ?: "null"
         } catch (_: Unpersistable) {
             "NP(st:${st.debugName}:${if (st.sc == null) "nosc" else "notroot"})"
         }

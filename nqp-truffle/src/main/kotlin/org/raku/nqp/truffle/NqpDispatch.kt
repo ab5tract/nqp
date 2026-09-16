@@ -593,6 +593,7 @@ object NqpDispatch {
                 " sites=" + sites + " anon=" + anonSites +
                 " sitesAll=" + DispatchBootstrap.created + " restored=" + DispatchPersist.restored +
                 " restoredSites=" + DispatchPersist.restoredSites + " dropped=" + DispatchPersist.dropped +
+                " staleSchema=" + DispatchPersist.staleSchema +
                 " recorded=" + DispatchPersist.recorded +
                 " slowEvals=" + slowEvals + " invokes=" + invokes + " directs=" + directs +
                 " noTarget=" + noTarget + " badExpectation=" + badExpectation + " notCodeRef=" + notCodeRef +
