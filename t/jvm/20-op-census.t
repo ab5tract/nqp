@@ -55,10 +55,12 @@ sub child-stderr($code, %env) {
     nqp::list($status, nqp::decodertakeallchars($dec))
 }
 
-# One program exercising all three roads 1000 times: a table op
-# (tryfindmethod is the one batch-1 op with an encoder row), a classlib op
-# (findmethod arrives by name), and a site (istype, Phase A's).
-my $code := 'my $i := 0; my $n := 0; while $i < 1000 { $n := $n + nqp::istype($i, int); nqp::tryfindmethod(NQPMu, "new"); nqp::findmethod(NQPMu, "new"); $i++ }; say($n)';
+# One program exercising all three roads 1000 times: a table op (sha1 has
+# an encoder row), a classlib op (reprname arrives by name), and a site
+# (istype, Phase A's). The examples must be ops NO site has claimed:
+# tryfindmethod and findmethod stood here until batch 1 promoted them to
+# FindMethodSite, at which point their old names left the census.
+my $code := 'my $i := 0; my $n := 0; while $i < 1000 { $n := $n + nqp::istype($i, int); nqp::sha1("x"); nqp::reprname(NQPMu); $i++ }; say($n)';
 
 my %on := nqp::getenvhash();
 %on<NQP_OP_CENSUS> := '1';
@@ -79,8 +81,8 @@ sub count-of($text, $prefix, $name) {
     }
     -1
 }
-ok(count-of($err, 'table', 'tryfindmethod') >= 1000, 'a table op is counted by id and printed by name');
-ok(count-of($err, 'classlib', 'Ops.findmethod') >= 1000, 'a classlib op is counted by class and method name');
+ok(count-of($err, 'table', 'sha1') >= 1000, 'a table op is counted by id and printed by name');
+ok(count-of($err, 'classlib', 'Ops.reprname') >= 1000, 'a classlib op is counted by class and method name');
 
 sub site-field($text, $site, $field) {
     for nqp::split("\n", $text) -> $line {
