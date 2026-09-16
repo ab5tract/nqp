@@ -297,7 +297,7 @@ object DispatchCompiler {
             }
             is Guard.NotLiteralObj -> evalRaw(guard.on, tc, args) !== guard.rejected
             is Guard.OfHll ->
-                (evalRaw(guard.on, tc, args) as? SixModelObject)?.st?.hllOwner === guard.hll
+                (evalRaw(guard.on, tc, args) as? SixModelObject)?.st?.state?.hllOwner === guard.hll
         }
 
     /* ----- outcomes ----- */

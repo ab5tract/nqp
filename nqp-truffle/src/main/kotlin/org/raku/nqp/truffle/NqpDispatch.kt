@@ -261,7 +261,7 @@ object NqpDispatch {
             val v = on.eval(tc, args)
             if (v !is SixModelObject) return false
             val st = NqpRaw.st(v) ?: return false
-            return st.hllOwner === hll
+            return st.state.hllOwner === hll
         }
     }
 
