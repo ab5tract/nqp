@@ -1,6 +1,8 @@
 package org.raku.nqp.dispatch
 
+import java.lang.invoke.MethodType
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -169,5 +171,26 @@ class GuardStateTest {
         val guard = program.guards.filterIsInstance<Guard.Literal>().single()
         assertSame(asked, guard.state, "the state of the request, not of the build")
         assertFalse(program.isFresh)
+    }
+
+    /** A site at its program cap whose programs all went stale sheds them
+     *  on the next install, and the fresh program lands with them shed. An
+     *  invariant guard, not a regression test: it passes on the code before
+     *  and after the change, because once anything was shed the array is
+     *  below the cap and the add always fits. */
+    @Test fun aSaturatedSiteShedsItsStaleProgramsOnTheNextInstall() {
+        val tc = ProgramUnitTestSupport.tc()
+        val stale = freshType(tc)
+        val csd = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_OBJ), null)
+        fun over(t: SixModelObject) = DispatchProgram(csd, listOf(Guard.OfType(ValueSource.Arg(0), t.st)),
+            Outcome.Value(ValueSource.Arg(0)), emptyList(), ResumeKind.NONE, emptyList(), null)
+        val site = DispatchCallSite(MethodType.methodType(Void.TYPE))
+        repeat(Dispatch.MAX_PROGRAMS) { site.install(over(stale)) }
+        assertEquals(Dispatch.MAX_PROGRAMS, site.programs.size)
+        stale.st.republish()
+        assertTrue(site.programs.all { !it.isFresh })
+        site.install(over(freshType(tc)))
+        assertEquals(1, site.programs.size, "the stale programs were shed and the fresh one installed")
+        assertTrue(site.programs.single().isFresh)
     }
 }

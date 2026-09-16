@@ -116,7 +116,11 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
     fun install(program: DispatchProgram) {
         /* A program whose type guard's state was republished can never match
          * again: drop it, so a republish does not spend the site's program
-         * budget (MAX_PROGRAMS) on dead entries. */
+         * budget (MAX_PROGRAMS) on dead entries. A site never holds more than
+         * MAX_PROGRAMS, and a filter that drops anything leaves room for the
+         * add, so the shed and the add always land together in the store
+         * below (milestone 8 Phase B: the Phase A parking that asked for a
+         * separate write-back is void by this invariant). */
         var current = programs
         /* `any` first, then `filter`: the common case is that nothing went
          * stale, and the scan answers it without allocating a new array. */

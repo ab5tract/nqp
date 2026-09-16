@@ -549,9 +549,13 @@ class DispatchRecord(
         val value = tracked!!.get(source)!!.dispatchValue
         if (guards.literal) {
             /* A literal guard says everything a type or concreteness guard
-             * would have said. */
+             * would have said. Its constructor captured the value's state;
+             * a recorded state replaces that only when there is one (the
+             * OfType branch additionally requires stateRecorded; a literal
+             * guard's capture is the value's own state, so a recorded state
+             * need only exist to replace it). */
             val guard = Guard.Literal(source, value)
-            if (value.kind == ArgKind.OBJ && value.value is SixModelObject)
+            if (value.kind == ArgKind.OBJ && value.value is SixModelObject && guards.state != null)
                 guard.state = guards.state
             into.add(guard)
         }
