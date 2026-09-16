@@ -20,7 +20,8 @@ import org.raku.nqp.sixmodel.SixModelObject
  * sends verify's lines to that file instead of stderr, pid-prefixed, so a
  * TAP run and a stderr-comparing test survive the mode. NQP_DISPATCH_RECORD
  * ("all" or a comma-separated list of store-name prefixes) makes the process
- * rewrite the selected artifacts' slots at exit (recordAtExit).
+ * rewrite the selected artifacts' slots at exit (recordAtExit); no selector
+ * reaches src/vm/jvm/stage0, which the next build compiles from.
  * NQP_DISPATCH_PERSIST_TRACE names every program a restore drops.
  *
  * Stores are registered by identity namespace (store name + "!" + unit
@@ -47,12 +48,21 @@ object DispatchPersist {
     /** NQP_DISPATCH_RECORD: "all", or comma-separated store-name prefixes. */
     private val recordSelector: List<String>? = System.getenv("NQP_DISPATCH_RECORD")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
 
-    private fun selected(storeName: String): Boolean =
-        recordSelector!!.any { it == "all" || storeName.startsWith(it) }
+    private fun selected(selector: List<String>, storeName: String): Boolean =
+        selector.any { it == "all" || storeName.startsWith(it) }
+
+    /** stage0 is the bootstrap the next build compiles FROM: its jars are
+     *  committed, and the gradle build deliberately copies the UNTRAINED
+     *  stage2 into them. A hand-set NQP_DISPATCH_RECORD=all would otherwise
+     *  rewrite them as a side effect of any run that loads them. */
+    private fun isStage0(path: String): Boolean =
+        path.contains("/src/vm/jvm/stage0/") || path.startsWith("src/vm/jvm/stage0/")
 
     @JvmField val restored = AtomicLong()
     @JvmField val restoredSites = AtomicLong()
     @JvmField val dropped = AtomicLong()
+    /** Slots skipped because their first int was not DispatchSlot.SCHEMA. */
+    @JvmField val staleSchema = AtomicLong()
     @JvmField val recorded = AtomicLong()
     @JvmField val verifyMatched = AtomicLong()
     @JvmField val verifyByOutcome = AtomicLong()
@@ -104,6 +114,18 @@ object DispatchPersist {
         val ns = site.unitNamespace ?: return emptyList()
         val store = stores[ns] ?: return emptyList()
         val bytes = store.dispatchSlot(site.programIndex, site.ordinal) ?: return emptyList()
+        /* The schema int by hand, BEFORE any decode: UnitCodec is untagged
+         * and fixed-width, so a slot of another layout would not fail to
+         * decode, it would decode into a plausible program. The slice is
+         * already little-endian and the version is deliberately its first
+         * field. A slot this runtime does not read is simply an empty one --
+         * the build that reads a slot is the build that wrote it. */
+        val schema = if (bytes.remaining() >= 4) bytes.getInt(bytes.position()) else -1
+        if (schema != DispatchSlot.SCHEMA) {
+            staleSchema.incrementAndGet()
+            if (TRACE) System.err.println("dispatch-persist: stale schema $schema at ${site.identity}")
+            return emptyList()
+        }
         val slot = try { UnitCodec.decode(DispatchSlot.serializer(), bytes) }
                    catch (e: Exception) { throw IllegalStateException("unit ${ns}: dispatch slot of program ${site.programIndex} ordinal ${site.ordinal} does not decode: ${e.message}", e) }
         val onDrop: ((String) -> Unit)? =
@@ -200,43 +222,92 @@ object DispatchPersist {
     private fun sameValue(x: Any?, y: Any?): Boolean =
         if (x is SixModelObject || y is SixModelObject) x === y else x == y
 
-    /** The training run's exit: every recorded site of every selected
-     *  store, persisted into its slot; duplicates of one slot (two live
-     *  sites with one identity) merge by text, capped at MAX_PROGRAMS. */
+    /** The hook's entry point: does nothing, and says nothing, unless
+     *  NQP_DISPATCH_RECORD armed it. */
     @JvmStatic
     fun recordAtExit() {
-        val bySlot = HashMap<String, HashMap<String, HashMap<Int, LinkedHashMap<String, DispatchProgram>>>>()
-        for (site in DispatchBootstrap.sites()) {
-            val ns = site.unitNamespace ?: continue
-            val programs = site.programs
-            if (programs.isEmpty()) continue
-            val store = stores[ns] ?: continue
-            if (!selected(store.name)) continue
-            val slot = store.absoluteSlot(site.programIndex, site.ordinal)
-            if (slot < 0) continue
-            val byText = bySlot.getOrPut(store.name) { HashMap() }.getOrPut(store.entryPrefix) { HashMap() }.getOrPut(slot) { LinkedHashMap() }
-            for (p in programs) byText.putIfAbsent(DispatchDump.describe(p), p)
-        }
-        for ((path, perPrefix) in bySlot) {
-            var slots = 0; var written = 0; var unpersistable = 0
-            val encoded = HashMap<String, Map<Int, ByteArray>>()
-            for ((prefix, perSlot) in perPrefix) {
-                val m = HashMap<Int, ByteArray>()
-                for ((slot, byText) in perSlot) {
-                    val persisted = ArrayList<PProgram>()
-                    for (p in byText.values) {
-                        val pp = DispatchSlotCodec.persist(p)
-                        if (pp == null) unpersistable++ else if (persisted.size < Dispatch.MAX_PROGRAMS) persisted.add(pp)
-                    }
-                    if (persisted.isEmpty()) continue
-                    m[slot] = UnitCodec.encode(DispatchSlot.serializer(), DispatchSlot(persisted))
-                    slots++; written += persisted.size
-                }
-                if (m.isNotEmpty()) encoded[prefix] = m
+        recordAtExit(recordSelector ?: return)
+    }
+
+    /**
+     * The training run's exit: every recorded site of every selected store,
+     * persisted into its slot; duplicates of one slot (two live sites with
+     * one identity) merge by text, capped at MAX_PROGRAMS.
+     *
+     * Nothing here may throw. This runs in a shutdown hook, whose exception
+     * the JVM prints to a stream nobody greps and whose exit status stays 0;
+     * a throwable part way through -- after some artifacts were rewritten --
+     * would leave a HALF-trained build that the per-artifact markers cannot
+     * tell from a whole one. So every program and every artifact is
+     * contained on its own, and the run ends with one `done` line, in a
+     * finally, that the builds gate on together with the absence of FAILED.
+     *
+     * [selector] is NQP_DISPATCH_RECORD's, parsed; a test passes its own.
+     */
+    internal fun recordAtExit(selector: List<String>) {
+        var paths = 0; var slots = 0; var programs = 0; var unpersistable = 0; var failed = 0
+        try {
+            val bySlot = HashMap<String, HashMap<String, HashMap<Int, LinkedHashMap<String, DispatchProgram>>>>()
+            for (site in DispatchBootstrap.sites()) {
+                val ns = site.unitNamespace ?: continue
+                val sitePrograms = site.programs
+                if (sitePrograms.isEmpty()) continue
+                val store = stores[ns] ?: continue
+                if (!selected(selector, store.name)) continue
+                val slot = store.absoluteSlot(site.programIndex, site.ordinal)
+                if (slot < 0) continue
+                val byText = bySlot.getOrPut(store.name) { HashMap() }.getOrPut(store.entryPrefix) { HashMap() }.getOrPut(slot) { LinkedHashMap() }
+                for (p in sitePrograms) byText.putIfAbsent(DispatchDump.describe(p), p)
             }
-            if (encoded.isEmpty()) continue
-            org.raku.nqp.runtime.unit.UnitDispatchWriter.rewrite(path, encoded)
-            System.err.println("dispatch-record: wrote $slots slots ($written programs, $unpersistable unpersistable) to $path")
+            for ((path, perPrefix) in bySlot) {
+                if (isStage0(path)) {
+                    System.err.println("dispatch-record: refused $path (stage0 is never trained)")
+                    continue
+                }
+                System.err.println("dispatch-record: rewriting $path")
+                try {
+                    var pathSlots = 0; var pathPrograms = 0; var pathUnpersistable = 0
+                    val encoded = HashMap<String, Map<Int, ByteArray>>()
+                    for ((prefix, perSlot) in perPrefix) {
+                        val m = HashMap<Int, ByteArray>()
+                        for ((slot, byText) in perSlot) {
+                            val persisted = ArrayList<PProgram>()
+                            for (p in byText.values) {
+                                val pp = try { DispatchSlotCodec.persist(p) }
+                                         catch (t: Throwable) {
+                                             failed++
+                                             System.err.println("dispatch-record: FAILED program $path!$prefix#$slot: ${reason(t)}")
+                                             null
+                                         }
+                                if (pp == null) pathUnpersistable++
+                                else if (persisted.size < Dispatch.MAX_PROGRAMS) persisted.add(pp)
+                            }
+                            if (persisted.isEmpty()) continue
+                            m[slot] = UnitCodec.encode(DispatchSlot.serializer(), DispatchSlot(DispatchSlot.SCHEMA, persisted))
+                            pathSlots++; pathPrograms += persisted.size
+                        }
+                        if (m.isNotEmpty()) encoded[prefix] = m
+                    }
+                    if (encoded.isEmpty()) continue
+                    org.raku.nqp.runtime.unit.UnitDispatchWriter.rewrite(path, encoded)
+                    System.err.println("dispatch-record: wrote $pathSlots slots ($pathPrograms programs, $pathUnpersistable unpersistable) to $path")
+                    paths++; slots += pathSlots; programs += pathPrograms; unpersistable += pathUnpersistable
+                }
+                catch (t: Throwable) {
+                    failed++
+                    System.err.println("dispatch-record: FAILED $path: ${reason(t)}")
+                }
+            }
+        }
+        catch (t: Throwable) {
+            failed++
+            System.err.println("dispatch-record: FAILED: ${reason(t)}")
+        }
+        finally {
+            System.err.println("dispatch-record: done $paths paths, $slots slots, $programs programs," +
+                " $unpersistable unpersistable, $failed failed")
         }
     }
+
+    private fun reason(t: Throwable): String = "${t.javaClass.name}: ${t.message}"
 }
