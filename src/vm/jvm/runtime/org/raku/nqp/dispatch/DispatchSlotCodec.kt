@@ -187,7 +187,7 @@ object DispatchSlotCodec {
         is POutcomeValue -> Outcome.Value(source(tc, o.source))
         is POutcomeInvoke -> Outcome.InvokeCode(source(tc, o.callee), shape(tc, o.args))
         is POutcomeSyscall -> Outcome.InvokeSyscall(
-            try { Syscalls.find(tc, o.syscall) } catch (e: Exception) { throw Unpersistable("no syscall ${o.syscall}") },
+            try { Syscalls.find(tc, o.syscall) } catch (_: Exception) { throw Unpersistable("no syscall ${o.syscall}") },
             shape(tc, o.args))
     }
 }
