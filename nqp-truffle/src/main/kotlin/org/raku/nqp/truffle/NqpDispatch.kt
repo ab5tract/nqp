@@ -47,6 +47,7 @@ import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.TypeObject
+import org.raku.nqp.sixmodel.TypeState
 import org.raku.nqp.sixmodel.reprs.RakuObject
 import org.raku.nqp.sixmodel.reprs.RakuObjectLayout
 import org.raku.nqp.sixmodel.reprs.RakuObjectREPRData
@@ -283,6 +284,13 @@ object NqpDispatch {
         /** The callee when the program names it: a mapped or a resumable invoke of a literal. */
         @JvmField val calleeLiteral: SixModelObject?
         @JvmField @field:CompilationFinal(dimensions = 1) val map: IntArray?
+        /**
+         * The assumptions of every type state this program's constants came
+         * from (its type and identity guards, hence its literal method, its
+         * attribute getters and unbox sources). Tested first in replay; a
+         * constant of the compiled code, so they fold to nothing.
+         */
+        @JvmField @field:CompilationFinal(dimensions = 1) val assumptions: Array<Assumption>
 
         /**
          * The call node for a literal engine-bodied callee, adopted under
@@ -366,6 +374,8 @@ object NqpDispatch {
             this.calleeLiteral = calleeLiteral
             this.map = map
             if (STATS) dump(p, kind, guards)
+            /* Last: every state the folder read, guards and outcome alike. */
+            assumptions = f.assumptions()
         }
 
         companion object {
@@ -394,13 +404,27 @@ object NqpDispatch {
     class Folder(private val csd: CallSiteDescriptor, private val tc: ThreadContext) {
         /** Sources whose type a guard has fixed so far, structurally keyed. */
         private val known = HashMap<ValueSource, STable>()
+        /**
+         * The states those types were read through, in the order they were
+         * read. A recorded guard carries the state the dispatcher had in hand
+         * when it asked for the guard, which is the one its constants came
+         * from; a guard made outside a recording (a restored slot) has none,
+         * and the state current as this fold reads the facts is the right one.
+         */
+        private val states = LinkedHashSet<TypeState>()
+
+        /** The assumptions of the states the folded constants were read from, in guard order. */
+        fun assumptions(): Array<Assumption> = states.map { it.assumption }.toTypedArray()
 
         fun fold(g: Guard): Chk {
             val on = fold(g.on)
             when (g) {
                 is Guard.OfType -> {
                     val t = g.type
-                    if (t != null) known[g.on] = t
+                    if (t != null) {
+                        known[g.on] = t
+                        g.state?.let { states.add(it) }
+                    }
                     return TypeChk(on, t)
                 }
                 is Guard.Concreteness -> return ConcreteChk(on, g.concrete)
@@ -411,7 +435,10 @@ object NqpDispatch {
                         val v = e.value
                         if (v is SixModelObject) {
                             val st = v.st
-                            if (st != null) known[g.on] = st
+                            if (st != null) {
+                                known[g.on] = st
+                                states.add(g.state ?: st.state)
+                            }
                         }
                         return IdChk(on, e.value)
                     }
@@ -538,6 +565,12 @@ object NqpDispatch {
             old.invalidate()
         }
 
+        /** A folded program whose type state republished: it can never match again. */
+        fun hasStale(): Boolean {
+            for (p in programs) for (a in p.assumptions) if (!a.isValid) return true
+            return false
+        }
+
         private fun cacheable(p: DispatchProgram): Boolean =
             !p.isResuming && Captures.sameShape(p.descriptor, csd)
     }
@@ -595,6 +628,7 @@ object NqpDispatch {
                 " restoredSites=" + DispatchPersist.restoredSites + " dropped=" + DispatchPersist.dropped +
                 " staleSchema=" + DispatchPersist.staleSchema +
                 " recorded=" + DispatchPersist.recorded +
+                " publishes=" + org.raku.nqp.sixmodel.STable.PUBLISHES.sum() +
                 " slowEvals=" + slowEvals + " invokes=" + invokes + " directs=" + directs +
                 " noTarget=" + noTarget + " badExpectation=" + badExpectation + " notCodeRef=" + notCodeRef +
                 " slowLayout=" + slowEvalsLayout + " slowNull=" + slowEvalsNull +
@@ -648,6 +682,9 @@ object NqpDispatch {
      * interpreted replay of the programs it lacks, and a site refolds
      * once it has shown it needs to. The first fold is immediate: a
      * monomorphic site must not run its whole life through the fallback.
+     * A stale program (its type republished) refolds at once and does not
+     * count: the runtime site has already evicted it at the install that
+     * followed the miss.
      */
     const val REFOLD_AFTER = 16
 
@@ -657,12 +694,15 @@ object NqpDispatch {
     fun miss(cache: Cache, name: String, tc: ThreadContext, args: Array<Any?>) {
         if (STATS) { count(misses); countBy(missesBy, name) }
         Dispatch.fallback(cache.site, name, cache.csd, cache.programs.size, tc, args)
-        if (cache.programs.isEmpty() || ++cache.missesSinceFold >= REFOLD_AFTER)
+        if (cache.programs.isEmpty() || cache.hasStale() || ++cache.missesSinceFold >= REFOLD_AFTER)
             cache.refresh(tc)
     }
 
     @ExplodeLoop
     private fun matches(p: Program, tc: ThreadContext, args: Array<Any?>): Boolean {
+        val assumptions = p.assumptions
+        for (i in assumptions.indices)
+            if (!assumptions[i].isValid) return false
         val guards = p.guards
         for (i in guards.indices)
             if (!guards[i].test(tc, args)) return false

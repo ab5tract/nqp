@@ -114,7 +114,12 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
      * and we stop growing: dispatches still work by recording each time.
      */
     fun install(program: DispatchProgram) {
-        val current = programs
+        /* A program whose type guard's state was republished can never match
+         * again: drop it, so a republish does not spend the site's program
+         * budget (MAX_PROGRAMS) on dead entries. */
+        var current = programs
+        if (current.any { !it.isFresh })
+            current = current.filter { it.isFresh }.toTypedArray()
         if (current.size < Dispatch.MAX_PROGRAMS) {
             programs = current + program
             /* A hot site stays compiled as its cache grows; a cold one waits

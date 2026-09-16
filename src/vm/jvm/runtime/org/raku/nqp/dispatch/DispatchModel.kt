@@ -8,6 +8,7 @@ import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.TypeObject
+import org.raku.nqp.sixmodel.TypeState
 import org.raku.nqp.sixmodel.reprs.RakuObject
 import org.raku.nqp.sixmodel.reprs.SlotKind
 
@@ -222,10 +223,26 @@ sealed interface Guard {
      * comparisons the boxed helpers do are settled at recording time and only
      * the value itself needs looking at. */
 
-    /** The value has exactly this type. */
+    /** The value has exactly this type, with the facts the program was recorded against. */
     data class OfType(override val on: ValueSource, val type: STable?) : Guard {
+        /**
+         * The type's state as of the moment the guard was ASKED for -- which
+         * is before the dispatcher read the type's facts, not after, so the
+         * guard and the outcome's constants (its literal method, attribute
+         * slots, unbox kinds) agree even if the type republishes in between.
+         * DispatchRecord.emitGuards writes the state its guardType/guardLiteral
+         * recorded; the construction-time default here is what a guard made
+         * outside a recording gets, which is right for DispatchSlotCodec's
+         * restore (the program's constants are re-derived at fold time, under
+         * the state current then). Transient: outside the data-class equality
+         * (constructor parameters only), outside DispatchDump, never persisted.
+         */
+        @JvmField var state: TypeState? = type?.state
+        /** False once the type republished: the guard can never match again. */
+        val isFresh: Boolean
+            get() = type == null || type.state === state
         override fun check(ctx: DispatchContext) =
-            (on.evaluateRaw(ctx) as? SixModelObject)?.st === type
+            (on.evaluateRaw(ctx) as? SixModelObject)?.st?.state === state
     }
 
     /** The value is (or is not) a concrete object rather than a type object. */
@@ -235,6 +252,20 @@ sealed interface Guard {
 
     /** The value is this exact value. */
     data class Literal(override val on: ValueSource, val expected: DispatchValue) : Guard {
+        /**
+         * For an OBJ literal, the expected object's type state as of the
+         * moment the guard was asked for: an identity guard fixes the object
+         * and hence its type, so a program may fold that type's facts under
+         * it just as it may under a type guard. Null for a non-object literal
+         * and for a guard made outside a recording. Transient, exactly as
+         * OfType.state is: never in equality, the dump or a persisted slot.
+         * `check` does not consult it -- identity on the object is already
+         * stricter than any type test; it is the freshness that needs it.
+         */
+        @JvmField var state: TypeState? = null
+        /** False once the expected object's type republished. */
+        val isFresh: Boolean
+            get() = state == null || (expected.value as? SixModelObject)?.st?.state === state
         override fun check(ctx: DispatchContext): Boolean {
             val got = on.evaluateRaw(ctx)
             return when (expected.kind) {
@@ -443,4 +474,14 @@ class DispatchProgram(
     /** Is this a program recorded for the resumption of another dispatch? */
     val isResuming: Boolean
         get() = resumeKind != ResumeKind.NONE
+
+    /** False once a type this program guards on has republished. */
+    val isFresh: Boolean
+        get() {
+            for (g in guards) when {
+                g is Guard.OfType && !g.isFresh -> return false
+                g is Guard.Literal && !g.isFresh -> return false
+            }
+            return true
+        }
 }
