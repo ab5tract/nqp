@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap
 class UnitStore private constructor(
     @JvmField val name: String,
     private val entries: Map<String, ByteBuffer>,      // each slice: position 0, LITTLE_ENDIAN
+    private val crcs: Map<String, Int>,                 // the zip directory's CRC32 per entry
     private val prefix: String,                         // "unit" or "nested/<id>"
 ) {
     companion object {
@@ -43,12 +44,16 @@ class UnitStore private constructor(
             val whole = bytes.duplicate().order(ByteOrder.LITTLE_ENDIAN)
             val dir = ZipDirectory.read(whole, name)
             val slices = HashMap<String, ByteBuffer>(dir.size * 2)
+            val crcs = HashMap<String, Int>(dir.size * 2)
             /* Read-only on both roads: the mapped road gets its slices from
              * a READ_ONLY mapping, so a heap-opened store must not hand out
              * writable ones. entry() duplicates, and UnitImageWriter's nested
              * copy only reads, so nothing needs a writable view. */
-            for ((n, e) in dir) slices[n] = whole.slice(e.offset, e.size).asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN)
-            return UnitStore(name, slices, "unit")
+            for ((n, e) in dir) {
+                slices[n] = whole.slice(e.offset, e.size).asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN)
+                crcs[n] = e.crc
+            }
+            return UnitStore(name, slices, crcs, "unit")
         }
 
         /** True when the first local file header names unit.index: the
@@ -161,15 +166,22 @@ class UnitStore private constructor(
         return dispatch.slice(off, len).order(ByteOrder.LITTLE_ENDIAN)
     }
 
+    private fun key(unitEntryName: String): String =
+        if (prefix == "unit") unitEntryName else prefix + unitEntryName.removePrefix("unit")
+
     val serialized: ByteBuffer? get() = entry(SERIALIZED)
+
+    /** The CRC32 of this unit's serialized entry, from the zip directory:
+     *  the stamp every SC deserialized from it carries. 0 when the unit has
+     *  no serialized entry (a nested unit). */
+    val serializedCrc: Int get() = crcs[key(SERIALIZED)] ?: 0
 
     /** A raw entry of this unit (unit.index ... unit.dispatch), a fresh
      *  duplicate at position 0. */
-    fun entry(unitEntryName: String): ByteBuffer? =
-        entries[if (prefix == "unit") unitEntryName else prefix + unitEntryName.removePrefix("unit")]?.duplicate()
+    fun entry(unitEntryName: String): ByteBuffer? = entries[key(unitEntryName)]?.duplicate()
 
     fun nested(id: String): UnitStore? {
         if (id !in header.nestedIds) return null
-        return nestedStores.computeIfAbsent(id) { UnitStore(name, entries, NESTED_DIR + it) }
+        return nestedStores.computeIfAbsent(id) { UnitStore(name, entries, crcs, NESTED_DIR + it) }
     }
 }

@@ -201,6 +201,7 @@ class ProgramUnit(@JvmField val store: UnitStore) : CompilationUnit() {
     override fun lookupCodeRef(uniqueId: String): CodeRef? = byCuid[uniqueId]
     override fun engineProgram(idx: Int): String = store.program(idx)
     override fun serializedBlob(): ByteBuffer? = store.serialized
+    override fun serializedStamp(): Int = store.serializedCrc
 
     /** A nested unit rides in the parent's zip, or was resolved into the
      *  parent's in-memory image by UnitWriter.image() before this unit

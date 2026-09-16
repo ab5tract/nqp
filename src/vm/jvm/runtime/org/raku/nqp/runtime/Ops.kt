@@ -6570,9 +6570,11 @@ object Ops {
         }
 
         val binaryBlob: ByteBuffer
-        if (blob == null)
+        if (blob == null) {
             binaryBlob = cu.serializedBlob()
                 ?: throw ExceptionHandling.dieInternal(tc, "unit ${cu.unitId()} has no serialized context to deserialize")
+            sc.stamp = cu.serializedStamp()
+        }
         else
             try {
                 binaryBlob = Base64.decode(blob)
