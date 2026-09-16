@@ -153,10 +153,8 @@ open class BootJavaInterop(gc: GlobalContext) {
 
         val protoSt = gc.BOOTJava!!.st
         val freshType = protoSt.REPR.type_object_for(tc, computeHOW(tc, klass.getName()))
-        val fst = freshType.st
-        val fs = fst.state
-        fst.publish(fs.withFacts(methodCache = names,
-            modeFlags = fs.modeFlags or STable.METHOD_CACHE_AUTHORITATIVE))
+        freshType.st.update { s -> s.withFacts(methodCache = names,
+            modeFlags = s.modeFlags or STable.METHOD_CACHE_AUTHORITATIVE) }
 
         hash.bind_key_boxed(tc, "/TYPE/", freshType)
 

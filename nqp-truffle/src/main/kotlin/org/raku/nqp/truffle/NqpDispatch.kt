@@ -423,7 +423,10 @@ object NqpDispatch {
                     val t = g.type
                     if (t != null) {
                         known[g.on] = t
-                        g.state?.let { states.add(it) }
+                        /* As in the Literal branch: a guard made outside a recording
+                         * carries no state, and the current one is what this fold
+                         * reads -- never fold a fixed type under no assumption. */
+                        states.add(g.state ?: t.state)
                     }
                     return TypeChk(on, t)
                 }
@@ -539,7 +542,10 @@ object NqpDispatch {
                 var same = true
                 for (i in 0 until n)
                     if (current[i].program !== all[i]) { same = false; break }
-                if (same) { missesSinceFold = 0; return }
+                /* Only when nothing folded has gone stale: a quiet site whose
+                 * program list never changes must still refold a program whose
+                 * type republished, or it keeps it for ever. */
+                if (same && !hasStale()) { missesSinceFold = 0; return }
             }
             val fresh = Array(n) { i ->
                 if (i < current.size && current[i].program === all[i]) current[i]
@@ -628,7 +634,7 @@ object NqpDispatch {
                 " restoredSites=" + DispatchPersist.restoredSites + " dropped=" + DispatchPersist.dropped +
                 " staleSchema=" + DispatchPersist.staleSchema +
                 " recorded=" + DispatchPersist.recorded +
-                " publishes=" + org.raku.nqp.sixmodel.STable.PUBLISHES.sum() +
+                " publishes=" + STable.PUBLISHES.sum() +
                 " slowEvals=" + slowEvals + " invokes=" + invokes + " directs=" + directs +
                 " noTarget=" + noTarget + " badExpectation=" + badExpectation + " notCodeRef=" + notCodeRef +
                 " slowLayout=" + slowEvalsLayout + " slowNull=" + slowEvalsNull +

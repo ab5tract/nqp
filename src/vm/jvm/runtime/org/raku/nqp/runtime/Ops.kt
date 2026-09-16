@@ -3174,14 +3174,16 @@ object Ops {
             throw ExceptionHandling.dieInternal(tc, "Cannot call method '" + name + "' on a null object")
         val theInvocant = decont(invocant, tc)!!
 
-        val cache = theInvocant.st.state.methodCache
+        /* One read of the state: the cache and its authority must agree. */
+        val s = theInvocant.st.state
+        val cache = s.methodCache
 
         /* Try the by-name method cache, if the HOW published one. */
         if (cache != null) {
             val found = cache.get(name)
             if (isnull(found) == 0L)
                 return found
-            if ((theInvocant.st.state.modeFlags and STable.METHOD_CACHE_AUTHORITATIVE) != 0)
+            if ((s.modeFlags and STable.METHOD_CACHE_AUTHORITATIVE) != 0)
                 return null
         }
 
@@ -3248,7 +3250,7 @@ object Ops {
             cache.put(iterkey_s(cur, tc)!!, iterval(cur, tc))
         }
         val st = obj!!.st
-        st.publish(st.state.withFacts(methodCache = cache))
+        st.update { s -> s.withFacts(methodCache = cache) }
         if (st.sc != null)
             scwbSTable(tc, st)
         return obj
@@ -3256,11 +3258,12 @@ object Ops {
     @JvmStatic
     fun setmethcacheauth(obj: SixModelObject?, flag: Long, tc: ThreadContext): SixModelObject? {
         val st = obj!!.st
-        val s = st.state
-        var newFlags = s.modeFlags and (STable.METHOD_CACHE_AUTHORITATIVE.inv())
-        if (flag != 0L)
-            newFlags = newFlags or STable.METHOD_CACHE_AUTHORITATIVE
-        st.publish(s.withFacts(modeFlags = newFlags))
+        st.update { s ->
+            var newFlags = s.modeFlags and (STable.METHOD_CACHE_AUTHORITATIVE.inv())
+            if (flag != 0L)
+                newFlags = newFlags or STable.METHOD_CACHE_AUTHORITATIVE
+            s.withFacts(modeFlags = newFlags)
+        }
         if (st.sc != null)
             scwbSTable(tc, st)
         return obj
@@ -3272,7 +3275,7 @@ object Ops {
         for (i in 0 until elems)
             cache[i.toInt()] = types.at_pos_boxed(tc, i)
         val st = obj!!.st
-        st.publish(st.state.withFacts(typeCheckCache = cache))
+        st.update { s -> s.withFacts(typeCheckCache = cache) }
         if (st.sc != null)
             scwbSTable(tc, st)
         return obj
@@ -3280,9 +3283,8 @@ object Ops {
     @JvmStatic
     fun settypecheckmode(obj: SixModelObject?, mode: Long, tc: ThreadContext): SixModelObject? {
         val st = obj!!.st
-        val s = st.state
-        st.publish(s.withFacts(modeFlags = mode.toInt() or
-            (s.modeFlags and (STable.TYPE_CHECK_CACHE_FLAG_MASK.inv()))))
+        st.update { s -> s.withFacts(modeFlags = mode.toInt() or
+            (s.modeFlags and (STable.TYPE_CHECK_CACHE_FLAG_MASK.inv()))) }
         if (st.sc != null)
             scwbSTable(tc, st)
         return obj
@@ -3303,7 +3305,7 @@ object Ops {
     fun setinvokespec(obj: SixModelObject?, ch: SixModelObject?,
             name: String?, invocationHandler: SixModelObject?, tc: ThreadContext): SixModelObject? {
         val st = obj!!.st
-        st.publish(st.state.withFacts(invocationSpec = InvocationSpec(ch, name, STable.NO_HINT, invocationHandler)))
+        st.update { s -> s.withFacts(invocationSpec = InvocationSpec(ch, name, STable.NO_HINT, invocationHandler)) }
         return obj
     }
     @JvmStatic
@@ -3364,10 +3366,13 @@ object Ops {
         if (isnull(obj) == 1L)
             return 0
 
-        /* Start by considering cache. */
-        val objTypeCheckMode = obj!!.st.state.modeFlags and STable.TYPE_CHECK_CACHE_FLAG_MASK
-        val typeCheckNeedsAccept = (type!!.st.state.modeFlags and STable.TYPE_CHECK_NEEDS_ACCEPTS) != 0
-        val cache = obj.st.state.typeCheckCache
+        /* Start by considering cache. One read of each state: the mode and the
+         * cache it governs must come from the same published facts. */
+        val os = obj!!.st.state
+        val ts = type!!.st.state
+        val objTypeCheckMode = os.modeFlags and STable.TYPE_CHECK_CACHE_FLAG_MASK
+        val typeCheckNeedsAccept = (ts.modeFlags and STable.TYPE_CHECK_NEEDS_ACCEPTS) != 0
+        val cache = os.typeCheckCache
         if (cache != null) {
             /* We have the cache, so just look for the type object we
              * want to be in there. */
@@ -4526,7 +4531,7 @@ object Ops {
         val st = type!!.st
         st.debugName = debugName
         /* The assumption carries the name, for the trace. */
-        st.publish(st.state.withFacts(name = debugName))
+        st.update { s -> s.withFacts(name = debugName) }
         return type
     }
 
@@ -4540,7 +4545,7 @@ object Ops {
             ?: throw ExceptionHandling.dieInternal(tc, "No such container spec " + confname)
         val cs = cc.newContainerSpec(tc, st)
         cc.configureContainerSpec(tc, cs, confarg!!)
-        st.publish(st.state.withFacts(containerSpec = cs))
+        st.update { s -> s.withFacts(containerSpec = cs) }
         return obj
     }
     @JvmStatic
@@ -4781,7 +4786,7 @@ object Ops {
     @JvmStatic
     fun setboolspec(obj: SixModelObject?, mode: Long, method: SixModelObject?, tc: ThreadContext): SixModelObject? {
         val st = obj!!.st
-        st.publish(st.state.withFacts(boolificationSpec = BoolificationSpec(mode.toInt(), method)))
+        st.update { s -> s.withFacts(boolificationSpec = BoolificationSpec(mode.toInt(), method)) }
         return obj
     }
     @JvmStatic
@@ -7992,13 +7997,13 @@ object Ops {
     @JvmStatic
     fun settypehll(type: SixModelObject?, language: String, tc: ThreadContext): SixModelObject? {
         val st = type!!.st
-        st.publish(st.state.withFacts(hllOwner = tc.gc.getHLLConfigFor(language)))
+        st.update { s -> s.withFacts(hllOwner = tc.gc.getHLLConfigFor(language)) }
         return type
     }
     @JvmStatic
     fun settypehllrole(type: SixModelObject?, role: Long, tc: ThreadContext): SixModelObject? {
         val st = type!!.st
-        st.publish(st.state.withFacts(hllRole = role))
+        st.update { s -> s.withFacts(hllRole = role) }
         return type
     }
     @JvmStatic

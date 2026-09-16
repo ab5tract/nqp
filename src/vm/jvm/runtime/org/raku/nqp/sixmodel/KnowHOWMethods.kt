@@ -74,8 +74,7 @@ class KnowHOWMethods : CompilationUnit() {
             /* A type this meta-object composed holds a published copy of the table. */
             val composed = self.composedType
             if (composed != null) {
-                val cst = composed.st
-                cst.publish(cst.state.withFacts(methodCache = HashMap(self.methods!!)))
+                composed.st.update { s -> s.withFacts(methodCache = HashMap(self.methods!!)) }
             }
             Ops.return_o(method, cf)
         }
@@ -133,9 +132,9 @@ class KnowHOWMethods : CompilationUnit() {
              * live table: add_method after compose must not edit a published
              * cache (it republishes instead). */
             val st = typeObj!!.st
-            st.publish(st.state.withFacts(methodCache = HashMap(self.methods!!),
+            st.update { s -> s.withFacts(methodCache = HashMap(self.methods!!),
                 modeFlags = STable.METHOD_CACHE_AUTHORITATIVE,
-                typeCheckCache = arrayOf(typeObj)))
+                typeCheckCache = arrayOf(typeObj)) }
             self.composedType = typeObj
 
             /* Use any attribute information to produce attribute protocol
