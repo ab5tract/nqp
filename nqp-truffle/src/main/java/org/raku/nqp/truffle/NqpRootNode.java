@@ -213,6 +213,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doOp(VirtualFrame f, int id, int rtype, @Variadic Object[] a) {
             try {
+                if (NqpCensus.ON) NqpCensus.table(id);
                 return NqpOps.run(id, rtype, a, cu(f), tc(f), cf(f));
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
@@ -229,6 +230,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doCall(VirtualFrame f, int rtype, Object site, @Variadic Object[] a) {
             try {
+                if (NqpCensus.ON) NqpCensus.classlib((NqpOps.ClassLibSite) site);
                 return NqpOps.CLASSLIB_INLINE
                     ? NqpOps.classlibInline(rtype, (NqpOps.ClassLibSite) site, a, tc(f), cf(f))
                     : NqpOps.classlib(rtype, (NqpOps.ClassLibSite) site, a, tc(f), cf(f));

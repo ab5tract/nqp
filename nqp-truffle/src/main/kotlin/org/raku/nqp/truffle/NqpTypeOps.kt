@@ -85,6 +85,12 @@ object NqpTypeOps {
          */
         @JvmField @field:CompilationFinal var state: TypeState? = null
 
+        /** The census counters of this site's class (NqpCensus.NONE when
+         *  the knob is off, so the field is never null on the fast road).
+         *  isconcrete and istype delegate to inner DecontSites, whose own
+         *  decont entry counts under DecontSite as well. */
+        @JvmField val stats: NqpCensus.SiteStats = NqpCensus.stats(javaClass.simpleName)
+
         init { SITES.add(this) }
 
         /** Back to unresolved, misses included. */
@@ -134,6 +140,7 @@ object NqpTypeOps {
 
     @JvmStatic
     fun p6sink(site: SinkSite, o: Any?, tc: ThreadContext): Any? {
+        if (NqpCensus.ON) NqpCensus.call(site.stats)
         if (o is SixModelObject) {
             var st = site.st
             if (st == null && site.mayResolve()) {
@@ -216,6 +223,7 @@ object NqpTypeOps {
 
     @JvmStatic
     fun hllize(site: HllizeSite, o: Any?, cu: org.raku.nqp.runtime.CompilationUnit, tc: ThreadContext): Any? {
+        if (NqpCensus.ON) NqpCensus.call(site.stats)
         if (o is SixModelObject) {
             var st = site.st
             if (st == null && site.mayResolve()) {
@@ -290,6 +298,7 @@ object NqpTypeOps {
      */
     @JvmStatic
     fun decont(site: DecontSite, o: Any?, tc: ThreadContext): Any? {
+        if (NqpCensus.ON) NqpCensus.call(site.stats)
         if (o is SixModelObject) {
             /* A non-container is its own decont, for any type: a field load
              * and a null test, no speculation. The site speculates only on
@@ -373,6 +382,7 @@ object NqpTypeOps {
         site.reset()
         site.misses = misses
         if (misses >= MAX_MISSES) site.pin()
+        if (NqpCensus.ON) NqpCensus.miss(site.stats, misses >= MAX_MISSES)
         if (DEBUG) debug("miss " + site.javaClass.simpleName + " #" + misses)
     }
 
@@ -386,6 +396,7 @@ object NqpTypeOps {
         val misses = site.misses
         site.reset()
         site.misses = misses
+        if (NqpCensus.ON) NqpCensus.republished(site.stats)
         if (DEBUG) debug("republished " + site.javaClass.simpleName)
     }
 
@@ -444,6 +455,7 @@ object NqpTypeOps {
     /** nqp::isconcrete: null is not concrete; else the decont is not a type object. */
     @JvmStatic
     fun isconcrete(site: IsConcreteSite, o: Any?, tc: ThreadContext): Long {
+        if (NqpCensus.ON) NqpCensus.call(site.stats)
         if (o !is SixModelObject) return 0L
         if (Ops.isnull(o) == 1L) return 0L
         val v = try {
@@ -486,6 +498,7 @@ object NqpTypeOps {
 
     @JvmStatic
     fun istype(site: IsTypeSite, o: Any?, type: Any?, tc: ThreadContext): Long {
+        if (NqpCensus.ON) NqpCensus.call(site.stats)
         val v = try {
             decont(site.objDecont, o, tc)
         } catch (sse: SaveStackException) {
@@ -606,6 +619,7 @@ object NqpTypeOps {
 
     @JvmStatic
     fun p6typecheckrv(site: RvCheckSite, rv: Any?, routine: Any?, bypass: Any?, tc: ThreadContext): Any? {
+        if (NqpCensus.ON) NqpCensus.call(site.stats)
         val v = decont(site.decont, rv, tc)
         if (v is SixModelObject) {
             val cached = site.routine
@@ -718,6 +732,7 @@ object NqpTypeOps {
 
     @JvmStatic
     fun create(site: CreateSite, type: Any?, tc: ThreadContext): Any? {
+        if (NqpCensus.ON) NqpCensus.call(site.stats)
         if (type is SixModelObject) {
             var st = site.st
             if (st == null && site.mayResolve()) {
@@ -796,6 +811,7 @@ object NqpTypeOps {
 
     @JvmStatic
     fun bigintArith(site: BigIntSite, kind: Int, a: Any?, b: Any?, type: Any?, tc: ThreadContext): Any? {
+        if (NqpCensus.ON) NqpCensus.call(site.stats)
         if (a is SixModelObject && b is SixModelObject && type is SixModelObject) {
             var st = site.st
             if (st == null && site.mayResolve()) {
