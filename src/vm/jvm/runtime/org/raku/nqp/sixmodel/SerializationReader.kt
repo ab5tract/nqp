@@ -522,8 +522,11 @@ class SerializationReader(
 
         /* Method cache and v-table. */
         val methodCacheRef = readRef()
+        /* A COPY of the deserialized hash: the guest keeps the hash object and
+         * may mutate it, and a mutation must never change a published fact
+         * behind the assumption's back -- facts change by publishing only. */
         val methodCache: Map<String, SixModelObject?>? =
-            if (Ops.isnull(methodCacheRef) == 0L) (methodCacheRef as VMHashInstance).storage else null
+            if (Ops.isnull(methodCacheRef) == 0L) HashMap((methodCacheRef as VMHashInstance).storage) else null
         val vTable = arrayOfNulls<SixModelObject>(orig.getLong().toInt())
         for (j in vTable.indices)
             vTable[j] = readRef()
@@ -585,8 +588,9 @@ class SerializationReader(
         /* One publish, here: the point at which every fact field used to be
          * assigned, so an object deserialized from inside the parametricity
          * or REPR-data reads below sees the same facts it saw before (ledger
-         * ruling 1). No republish after deserialize_repr_data: no site folds
-         * a stub's REPR data. */
+         * ruling 1). The REPR data that follows gets its own republish: the
+         * `create` and bigint sites do trust the state for it (ruling 1 as
+         * amended by the final review). */
         st.publish(TypeState(methodCache, vTable, typeCheckCache, modeFlags, contSpec, invSpec,
             boolSpec, hllOwner, hllRole, st.debugName))
 
@@ -616,6 +620,8 @@ class SerializationReader(
 
         /* If the REPR has a function to deserialize representation data, call it. */
         st.REPR.deserialize_repr_data(tc, st, this)
+        /* REPRData is outside the state, so it needs a publish of its own. */
+        st.republish()
     }
 
     private fun deserializeObjects() {

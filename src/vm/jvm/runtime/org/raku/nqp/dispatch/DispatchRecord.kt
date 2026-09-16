@@ -558,7 +558,8 @@ class DispatchRecord(
         else {
             if (guards.type) {
                 val guard = Guard.OfType(source, Guard.typeOf(value))
-                if (guards.stateRecorded) guard.state = guards.state
+                /* Never overwrite the constructor default with null. */
+                if (guards.stateRecorded && guards.state != null) guard.state = guards.state
                 into.add(guard)
             }
             if (guards.concreteness)

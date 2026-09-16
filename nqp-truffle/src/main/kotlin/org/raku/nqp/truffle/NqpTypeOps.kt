@@ -65,7 +65,12 @@ object NqpTypeOps {
     init {
         /* The per-eval-server-run reset, as NqpOps.resetSites: between
          * runs, no program executing. */
-        DispatchBootstrap.registerResettable(Runnable { for (s in SITES) s.reset() })
+        DispatchBootstrap.registerResettable(Runnable {
+            for (s in SITES) s.reset()
+            /* The Mu sink entry is a site-like cache over the previous run's
+             * Raku HLL config: it goes with the sites. */
+            muSinkCache = null
+        })
     }
 
     abstract class Site {

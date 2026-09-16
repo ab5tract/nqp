@@ -118,6 +118,8 @@ class DispatchCallSite @JvmOverloads constructor(type: MethodType,
          * again: drop it, so a republish does not spend the site's program
          * budget (MAX_PROGRAMS) on dead entries. */
         var current = programs
+        /* `any` first, then `filter`: the common case is that nothing went
+         * stale, and the scan answers it without allocating a new array. */
         if (current.any { !it.isFresh })
             current = current.filter { it.isFresh }.toTypedArray()
         if (current.size < Dispatch.MAX_PROGRAMS) {

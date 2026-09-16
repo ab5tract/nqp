@@ -89,13 +89,22 @@ class STable(
      * the state sees a state at least as new as the assumption (the ordering
      * NqpDispatch.Cache.publish uses).
      */
-    fun publish(next: TypeState) {
+    @Synchronized fun publish(next: TypeState) {
         val old = state
         state = next
         old.assumption.invalidate()
         PUBLISHES.increment()
     }
 
+    /**
+     * The read-modify-write every fact writer wants: [f] is applied to the
+     * current state and its result published, all under [publish]'s lock, so
+     * no writer ever builds a successor from a state it no longer owns (two
+     * concurrent plain publishes could otherwise leave a state installed whose
+     * assumption is never invalidated).
+     */
+    @Synchronized fun update(f: (TypeState) -> TypeState) { publish(f(state)) }
+
     /** The same facts under a fresh assumption: for a change outside the state (REPR data). */
-    fun republish() = publish(state.withFacts())
+    fun republish() = update { it.withFacts() }
 }

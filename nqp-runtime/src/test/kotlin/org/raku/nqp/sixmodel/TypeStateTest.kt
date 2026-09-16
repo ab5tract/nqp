@@ -56,6 +56,20 @@ class TypeStateTest {
         assertTrue(base.assumption.isValid, "withFacts does not publish")
     }
 
+    @Test fun updateSeesTheCurrentStateAndInstallsItsResult() {
+        val st = freshSTable()
+        st.publish(st.state.withFacts(hllRole = 7L))
+        val old = st.state
+        var seen: TypeState? = null
+        st.update { s -> seen = s; s.withFacts(modeFlags = STable.METHOD_CACHE_AUTHORITATIVE) }
+        assertSame(old, seen, "update applies its function to the current state")
+        assertNotSame(old, st.state)
+        assertFalse(old.assumption.isValid)
+        assertTrue(st.state.assumption.isValid)
+        assertTrue(st.state.methodCacheAuthoritative)
+        assertEquals(7L, st.state.hllRole, "the untouched facts carry over")
+    }
+
     @Test fun republishKeepsTheFactsUnderAFreshAssumption() {
         val st = freshSTable()
         st.publish(st.state.withFacts(hllRole = 3L))
