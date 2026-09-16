@@ -18,6 +18,7 @@ import org.raku.nqp.sixmodel.REPR
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.TypeObject
+import org.raku.nqp.sixmodel.TypeState
 import org.raku.nqp.sixmodel.reprs.RakuObject
 import org.raku.nqp.sixmodel.reprs.RakuObjectLayout
 import org.raku.nqp.sixmodel.reprs.RakuObjectREPRData
@@ -43,9 +44,13 @@ import org.raku.nqp.sixmodel.reprs.SlotKind
  * metamodel answered, a generic return type, a container that does more
  * than read an attribute) pins itself at once.
  *
- * The type-check caches (`istype`, `p6typecheckrv`) trust
- * `STable.state.typeCheckCache` to be stable once published, the assumption
- * spesh's `optimize_istype` makes when it folds to a constant.
+ * A folded fact is trusted only under the [TypeState] it was read from:
+ * every site holds that state object and tests its `assumption` before its
+ * identity guards, so a republish (`STable.publish`) deoptimizes exactly
+ * the code that trusted it and the site re-resolves. The type-check caches
+ * (`istype`, `p6typecheckrv`) are folded under that licence, not on faith --
+ * `istype` under BOTH operands' states, since the type operand's
+ * NEEDS_ACCEPTS flag went into the answer too.
  *
  * Kotlin on a PE-visible path: `@JvmField`s only, no `!!` on the fast
  * road; nqp-truffle compiles without the null assertions.
@@ -67,16 +72,30 @@ object NqpTypeOps {
         /** Guard failures so far; at MAX_MISSES the site is generic for good. */
         @JvmField @field:CompilationFinal var misses: Int = 0
 
+        /**
+         * The state of the type the site resolved on. The site's constants
+         * were read from THIS object, and its assumption is the licence to
+         * trust them: compiled code folds `valid()` to nothing, and a
+         * republish deoptimizes exactly the code that trusted it.
+         */
+        @JvmField @field:CompilationFinal var state: TypeState? = null
+
         init { SITES.add(this) }
 
         /** Back to unresolved, misses included. */
-        abstract fun reset()
+        fun reset() { clear(); state = null; misses = 0 }
+
+        /** The site's own speculation fields back to unresolved. */
+        protected abstract fun clear()
 
         /** Whether the site may still (re)speculate. */
         fun mayResolve(): Boolean = misses < MAX_MISSES
 
         /** Give the site up: generic from here on. */
         fun pin() { misses = MAX_MISSES }
+
+        /** The resolved type's facts still hold. */
+        fun valid(): Boolean { val s = state; return s != null && s.assumption.isValid }
     }
 
     /* ----- p6sink ----- */
@@ -93,7 +112,19 @@ object NqpTypeOps {
     class SinkSite : Site() {
         @JvmField @field:CompilationFinal var st: STable? = null
         @JvmField @field:CompilationFinal var trivial: Boolean = false
-        override fun reset() { st = null; trivial = false; misses = 0 }
+        /**
+         * Mu's state, when the trivial verdict was "this type's `sink` IS
+         * Mu's". That verdict rests on Mu's method table as much as on the
+         * sunk type's, and a setmethcache on Mu republishes only Mu. Null
+         * when the verdict came from the container spec or from the type
+         * having no `sink` at all -- neither depends on Mu.
+         */
+        @JvmField @field:CompilationFinal var muState: TypeState? = null
+
+        override fun clear() { st = null; trivial = false; muState = null }
+
+        /** Mu's facts still hold (null: the verdict never depended on them). */
+        fun muValid(): Boolean { val s = muState; return s == null || s.assumption.isValid }
     }
 
     @JvmStatic
@@ -106,11 +137,12 @@ object NqpTypeOps {
                 st = site.st
             }
             if (st != null) {
-                if (NqpRaw.st(o) === st) {
+                if (!site.valid() || !site.muValid()) republished(site)
+                else if (NqpRaw.st(o) === st) {
                     if (site.trivial) return o
                     return sinkSlow(o, tc)
                 }
-                miss(site)
+                else miss(site)
             }
         }
         return sinkSlow(o, tc)
@@ -120,24 +152,41 @@ object NqpTypeOps {
     private fun resolveSink(site: SinkSite, o: SixModelObject, tc: ThreadContext) {
         if (Ops.isnull(o) == 1L || !o.stInitialized) { site.pin(); return }
         val st = o.st
-        val trivial = st.state.containerSpec != null || run {
+        val s = st.state
+        /* Only the "it IS Mu's sink" branch depends on Mu, so only that
+         * branch keeps Mu's state; the other two verdicts leave it null. */
+        var muState: TypeState? = null
+        val trivial = if (s.containerSpec != null) true else {
             val m = Ops.findmethodNonFatal(o, "sink", tc)
-            Ops.isnull(m) == 1L || m === muSink(tc)
+            if (Ops.isnull(m) == 1L) true
+            else {
+                val mu = muSink(tc)
+                if (mu != null && m === mu.method) { muState = mu.state; true } else false
+            }
         }
         site.st = st
         site.trivial = trivial
+        site.state = s
+        site.muState = muState
         if (DEBUG) debug("sink site " + (if (trivial) "trivial" else "calls sink") + " for " + st.debugName)
     }
 
-    /** Mu's `sink` (the Raku language's null value is Mu), found once. */
-    @Volatile private var muSinkCache: SixModelObject? = null
+    /** Mu's `sink` (the Raku language's null value is Mu) under Mu's state. */
+    private class MuSink(@JvmField val state: TypeState, @JvmField val method: SixModelObject?)
+    @Volatile private var muSinkCache: MuSink? = null
     @TruffleBoundary
-    private fun muSink(tc: ThreadContext): SixModelObject? {
-        muSinkCache?.let { return it }
+    private fun muSink(tc: ThreadContext): MuSink? {
+        val cached = muSinkCache
+        if (cached != null && cached.state.assumption.isValid) return cached
         val mu = tc.gc.getHLLConfigFor("Raku").nullValue ?: return null
+        val s = mu.st.state
         val m = Ops.findmethodNonFatal(mu, "sink", tc)
-        if (Ops.isnull(m) == 0L) muSinkCache = m
-        return m
+        /* No Mu sink: the caller's own "no sink method" branch has already
+         * answered, so there is nothing to key on. */
+        if (Ops.isnull(m) == 1L) return null
+        val entry = MuSink(s, m)
+        muSinkCache = entry
+        return entry
     }
 
     @TruffleBoundary
@@ -157,7 +206,7 @@ object NqpTypeOps {
      */
     class HllizeSite : Site() {
         @JvmField @field:CompilationFinal var st: STable? = null
-        override fun reset() { st = null; misses = 0 }
+        override fun clear() { st = null }
     }
 
     @JvmStatic
@@ -170,8 +219,9 @@ object NqpTypeOps {
                 st = site.st
             }
             if (st != null) {
-                if (NqpRaw.st(o) === st) return o
-                miss(site)
+                if (!site.valid()) republished(site)
+                else if (NqpRaw.st(o) === st) return o
+                else miss(site)
             }
         }
         return hllizeSlow(o, cu, tc)
@@ -181,16 +231,17 @@ object NqpTypeOps {
     private fun resolveHllize(site: HllizeSite, o: SixModelObject, cu: org.raku.nqp.runtime.CompilationUnit) {
         if (Ops.isnull(o) == 1L || !o.stInitialized) { site.pin(); return }
         val st = o.st
-        val identity = hllizeIsIdentity(st, NqpRaw.hll(cu))
-        if (identity) site.st = st else site.pin()
+        val s = st.state
+        val identity = hllizeIsIdentity(s, NqpRaw.hll(cu))
+        if (identity) { site.st = st; site.state = s } else site.pin()
         if (DEBUG) debug("hllize site " + (if (identity) "resolved on " else "pinned by ") + st.debugName)
     }
 
     /** Mirrors Ops.hllizeInternal's branches that answer the object itself. */
-    private fun hllizeIsIdentity(st: STable, wanted: org.raku.nqp.runtime.HLLConfig): Boolean {
-        if (st.state.hllOwner === wanted) return true
+    private fun hllizeIsIdentity(s: TypeState, wanted: org.raku.nqp.runtime.HLLConfig): Boolean {
+        if (s.hllOwner === wanted) return true
         val H = org.raku.nqp.runtime.HLLConfig
-        return when (st.state.hllRole.toInt()) {
+        return when (s.hllRole.toInt()) {
             H.ROLE_INT -> Ops.isnull(wanted.foreignTypeInt) == 1L && Ops.isnull(wanted.foreignTransformInt) == 1L
             H.ROLE_NUM -> Ops.isnull(wanted.foreignTypeNum) == 1L && Ops.isnull(wanted.foreignTransformNum) == 1L
             H.ROLE_STR -> Ops.isnull(wanted.foreignTypeStr) == 1L && Ops.isnull(wanted.foreignTransformStr) == 1L
@@ -223,8 +274,8 @@ object NqpTypeOps {
         @JvmField @field:CompilationFinal var layout: RakuObjectLayout? = null
         @JvmField @field:CompilationFinal var getter: MethodHandle? = null
 
-        override fun reset() {
-            st = null; container = false; layout = null; getter = null; misses = 0
+        override fun clear() {
+            st = null; container = false; layout = null; getter = null
         }
     }
 
@@ -248,7 +299,8 @@ object NqpTypeOps {
                 st = site.st
             }
             if (st != null) {
-                if (ost === st) {
+                if (!site.valid()) republished(site)
+                else if (ost === st) {
                     if (o is TypeObject) return o
                     val layout = site.layout
                     if (o is RakuObject && layout != null) {
@@ -281,7 +333,8 @@ object NqpTypeOps {
     @TruffleBoundary
     private fun resolveDecont(site: DecontSite, o: SixModelObject, tc: ThreadContext) {
         val st = o.st ?: run { site.pin(); return }
-        val cs = st.state.containerSpec ?: run { site.pin(); return }   // handled inline; never reached
+        val s = st.state
+        val cs = s.containerSpec ?: run { site.pin(); return }   // handled inline; never reached
         val fetch = cs.fetchAttribute(tc)
         val rd = st.REPRData
         if (fetch != null && rd is RakuObjectREPRData) {
@@ -294,6 +347,7 @@ object NqpTypeOps {
                         site.container = true
                         site.layout = layout
                         site.getter = hs[0]
+                        site.state = s
                         site.st = st
                         return
                     }
@@ -315,6 +369,19 @@ object NqpTypeOps {
         site.misses = misses
         if (misses >= MAX_MISSES) site.pin()
         if (DEBUG) debug("miss " + site.javaClass.simpleName + " #" + misses)
+    }
+
+    /**
+     * The type republished: forget the speculation WITHOUT spending a miss
+     * (a republish is not polymorphism); the next run re-resolves against the
+     * new facts, or pins if it cannot.
+     */
+    private fun republished(site: Site) {
+        CompilerDirectives.transferToInterpreterAndInvalidate()
+        val misses = site.misses
+        site.reset()
+        site.misses = misses
+        if (DEBUG) debug("republished " + site.javaClass.simpleName)
     }
 
     /** JESP_DEBUG=1 narrates site resolution and misses on stderr. */
@@ -362,9 +429,11 @@ object NqpTypeOps {
 
     /* ----- isconcrete ----- */
 
+    /* No state of its own: the answer is the deconted value's concreteness,
+     * read off the object. The inner DecontSite carries what is speculated. */
     class IsConcreteSite : Site() {
         @JvmField val decont = DecontSite()
-        override fun reset() { misses = 0 }
+        override fun clear() {}
     }
 
     /** nqp::isconcrete: null is not concrete; else the decont is not a type object. */
@@ -400,9 +469,14 @@ object NqpTypeOps {
         @JvmField val typeDecont = DecontSite()
         @JvmField @field:CompilationFinal var objSt: STable? = null
         @JvmField @field:CompilationFinal var typeSt: STable? = null
+        /** The type operand's state: its NEEDS_ACCEPTS flag went into the answer. */
+        @JvmField @field:CompilationFinal var typeState: TypeState? = null
         @JvmField @field:CompilationFinal var result: Long = 0
 
-        override fun reset() { objSt = null; typeSt = null; result = 0; misses = 0 }
+        override fun clear() { objSt = null; typeSt = null; typeState = null; result = 0 }
+
+        /** The type operand's facts still hold (the value operand's is `valid()`). */
+        fun typeValid(): Boolean { val s = typeState; return s != null && s.assumption.isValid }
     }
 
     @JvmStatic
@@ -432,8 +506,9 @@ object NqpTypeOps {
                 objSt = site.objSt
             }
             if (objSt != null) {
-                if (NqpRaw.st(v) === objSt && NqpRaw.st(t) === site.typeSt) return site.result
-                miss(site)
+                if (!site.valid() || !site.typeValid()) republished(site)
+                else if (NqpRaw.st(v) === objSt && NqpRaw.st(t) === site.typeSt) return site.result
+                else miss(site)
             }
         }
         return try {
@@ -454,19 +529,25 @@ object NqpTypeOps {
         val vst = v.st
         val tst = t.st
         if (vst == null || tst == null || Ops.isnull(v) == 1L) { site.pin(); return }
-        val cache = vst.state.typeCheckCache ?: run { site.pin(); return }
-        val mode = vst.state.modeFlags and STable.TYPE_CHECK_CACHE_FLAG_MASK
-        val needsAccept = (tst.state.modeFlags and STable.TYPE_CHECK_NEEDS_ACCEPTS) != 0
+        val vs = vst.state
+        val ts = tst.state
+        val cache = vs.typeCheckCache ?: run { site.pin(); return }
+        val mode = vs.typeCheckMode
+        val needsAccept = (ts.modeFlags and STable.TYPE_CHECK_NEEDS_ACCEPTS) != 0
         for (entry in cache) {
             if (entry === t) {
-                site.objSt = vst; site.typeSt = tst; site.result = 1
+                site.objSt = vst; site.typeSt = tst; site.state = vs; site.typeState = ts; site.result = 1
+                if (DEBUG) debug("istype site resolved 1: " + vst.debugName + " isa " + tst.debugName)
                 return
             }
         }
         if ((mode and STable.TYPE_CHECK_CACHE_THEN_METHOD) == 0 && !needsAccept) {
-            site.objSt = vst; site.typeSt = tst; site.result = 0
+            site.objSt = vst; site.typeSt = tst; site.state = vs; site.typeState = ts; site.result = 0
+            if (DEBUG) debug("istype site resolved 0: " + vst.debugName + " is not " + tst.debugName)
             return
         }
+        if (DEBUG) debug("istype pin: " + vst.debugName + " vs " + tst.debugName
+            + " mode=" + mode + " accepts=" + needsAccept)
         site.pin()
     }
 
@@ -515,7 +596,7 @@ object NqpTypeOps {
         @JvmField @field:CompilationFinal var rvSt: STable? = null
         @JvmField @field:CompilationFinal var rvTypeObject: Boolean = false
 
-        override fun reset() { routine = null; bypass = null; rvSt = null; rvTypeObject = false; misses = 0 }
+        override fun clear() { routine = null; bypass = null; rvSt = null; rvTypeObject = false }
     }
 
     @JvmStatic
@@ -528,10 +609,11 @@ object NqpTypeOps {
                 return resolveRvCheck(site, rv, v, routine, bypass, tc)
             }
             if (cached != null) {
-                if (routine === cached && bypass === site.bypass && NqpRaw.st(v) === site.rvSt
+                if (!site.valid()) republished(site)
+                else if (routine === cached && bypass === site.bypass && NqpRaw.st(v) === site.rvSt
                         && (v is TypeObject) == site.rvTypeObject)
                     return rv
-                miss(site)
+                else miss(site)
             }
         }
         return rvCheckRun(rv, routine, bypass, tc)
@@ -574,9 +656,11 @@ object NqpTypeOps {
     private fun resolveRvCheck(site: RvCheckSite, rv: Any?, v: SixModelObject, routine: Any?,
                                bypass: Any?, tc: ThreadContext): Any? {
         val vst = v.st
+        val vs = vst?.state
         val r = rvCheckRun(rv, routine, bypass, tc)
-        if (vst != null && routine is SixModelObject && rvCacheable(routine, tc)) {
+        if (vst != null && vs != null && routine is SixModelObject && rvCacheable(routine, tc)) {
             site.rvSt = vst
+            site.state = vs
             site.rvTypeObject = v is TypeObject
             site.bypass = bypass as SixModelObject?
             site.routine = routine
@@ -624,7 +708,7 @@ object NqpTypeOps {
         @JvmField @field:CompilationFinal var repr: REPR? = null
         @JvmField @field:CompilationFinal var layout: RakuObjectLayout? = null
 
-        override fun reset() { st = null; repr = null; layout = null; misses = 0 }
+        override fun clear() { st = null; repr = null; layout = null }
     }
 
     @JvmStatic
@@ -637,18 +721,17 @@ object NqpTypeOps {
                 st = site.st
             }
             if (st != null) {
-                if (NqpRaw.st(type) === st) {
+                if (!site.valid()) republished(site)
+                else if (NqpRaw.st(type) === st) {
+                    /* The REPR data is not re-read: a compose republishes the
+                     * state, so the assumption above is what stands for it. */
                     val layout = site.layout
-                    if (layout != null) {
-                        val rd = st.REPRData
-                        if (rd is RakuObjectREPRData && rd.layout === layout) return layout.newInstance()
-                    }
-                    else {
-                        val repr = site.repr
-                        if (repr != null) return repr.allocate(tc, st)
-                    }
+                    if (layout != null) return layout.newInstance()
+                    val repr = site.repr
+                    if (repr != null) return repr.allocate(tc, st)
+                    miss(site)
                 }
-                miss(site)
+                else miss(site)
             }
         }
         return createSlow(type, tc)
@@ -657,6 +740,10 @@ object NqpTypeOps {
     @TruffleBoundary
     private fun resolveCreate(site: CreateSite, type: SixModelObject) {
         val st = type.st ?: run { site.pin(); return }
+        /* The state FIRST: a compose between this read and the REPR data's
+         * republishes it, and the site re-resolves rather than allocating
+         * through a layout the type has left behind. */
+        val s = st.state
         val rd = st.REPRData
         if (rd is RakuObjectREPRData) {
             val layout = rd.layout
@@ -664,6 +751,7 @@ object NqpTypeOps {
             site.layout = layout
         }
         else site.repr = st.REPR
+        site.state = s
         site.st = st
     }
 
@@ -691,8 +779,8 @@ object NqpTypeOps {
         @JvmField @field:CompilationFinal var setter: MethodHandle? = null
         @JvmField @field:CompilationFinal var cache: Array<SixModelObject?>? = null
 
-        override fun reset() {
-            st = null; layout = null; getter = null; setter = null; cache = null; misses = 0
+        override fun clear() {
+            st = null; layout = null; getter = null; setter = null; cache = null
         }
     }
 
@@ -711,35 +799,38 @@ object NqpTypeOps {
                 st = site.st
             }
             if (st != null) {
-                val layout = site.layout
-                if (NqpRaw.st(a) === st && NqpRaw.st(b) === st && NqpRaw.st(type) === st
-                        && layout != null && a is RakuObject && b is RakuObject
-                        && a.layout === layout && b.layout === layout) {
-                    val getter = site.getter
-                    val setter = site.setter
-                    if (getter != null && setter != null) {
-                        val x = NqpRaw.getBig(getter, a)
-                        val y = NqpRaw.getBig(getter, b)
-                        if (x != null && y != null && x.bitLength() < 63 && y.bitLength() < 63) {
-                            val xl = x.toLong()
-                            val yl = y.toLong()
-                            val r: Long
-                            val fits: Boolean
-                            when (kind) {
-                                NqpOps.OP_ADD_I_BIG -> { r = xl + yl; fits = ((xl xor r) and (yl xor r)) >= 0 }
-                                NqpOps.OP_SUB_I_BIG -> { r = xl - yl; fits = ((xl xor yl) and (xl xor r)) >= 0 }
-                                else -> {
-                                    r = xl * yl
-                                    fits = xl == 0L || (r / xl == yl && !(xl == -1L && yl == Long.MIN_VALUE))
+                if (!site.valid()) republished(site)
+                else {
+                    val layout = site.layout
+                    if (NqpRaw.st(a) === st && NqpRaw.st(b) === st && NqpRaw.st(type) === st
+                            && layout != null && a is RakuObject && b is RakuObject
+                            && a.layout === layout && b.layout === layout) {
+                        val getter = site.getter
+                        val setter = site.setter
+                        if (getter != null && setter != null) {
+                            val x = NqpRaw.getBig(getter, a)
+                            val y = NqpRaw.getBig(getter, b)
+                            if (x != null && y != null && x.bitLength() < 63 && y.bitLength() < 63) {
+                                val xl = x.toLong()
+                                val yl = y.toLong()
+                                val r: Long
+                                val fits: Boolean
+                                when (kind) {
+                                    NqpOps.OP_ADD_I_BIG -> { r = xl + yl; fits = ((xl xor r) and (yl xor r)) >= 0 }
+                                    NqpOps.OP_SUB_I_BIG -> { r = xl - yl; fits = ((xl xor yl) and (xl xor r)) >= 0 }
+                                    else -> {
+                                        r = xl * yl
+                                        fits = xl == 0L || (r / xl == yl && !(xl == -1L && yl == Long.MIN_VALUE))
+                                    }
                                 }
+                                if (fits) return boxSmall(site, r, layout, setter)
                             }
-                            if (fits) return boxSmall(site, r, layout, setter)
                         }
                     }
-                }
-                else {
-                    if (DEBUG) debugBigMiss(site, a, b, type, st)
-                    miss(site)
+                    else {
+                        if (DEBUG) debugBigMiss(site, a, b, type, st)
+                        miss(site)
+                    }
                 }
             }
         }
@@ -786,6 +877,11 @@ object NqpTypeOps {
                 + " same-ab=" + (b.st === st) + " same-type=" + (type.st === st))
             site.pin(); return
         }
+        // The state is captured BEFORE the REPR data: a composetype landing
+        // between the two reads republishes `s`, so the site re-resolves
+        // instead of trusting a stale layout/getter/setter under a fresh
+        // assumption. Every other resolver captures first for the same reason.
+        val s = st.state
         val rd = st.REPRData as? RakuObjectREPRData ?: run { if (DEBUG) debug("bigint pin: not P6opaque"); site.pin(); return }
         val layout = rd.layout
         val slot = layout?.unboxIntSlot ?: -1
@@ -807,6 +903,7 @@ object NqpTypeOps {
             site.cache = cache
         }
         site.layout = layout
+        site.state = s
         site.st = st
     }
 
