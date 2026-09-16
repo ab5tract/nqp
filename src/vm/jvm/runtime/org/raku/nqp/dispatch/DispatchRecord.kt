@@ -8,6 +8,7 @@ import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.SixModelObject
+import org.raku.nqp.sixmodel.TypeState
 import org.raku.nqp.sixmodel.reprs.CallCaptureInstance
 import org.raku.nqp.sixmodel.reprs.TrackedInstance
 
@@ -194,6 +195,18 @@ class DispatchRecord(
         var literal = false
         var hll = false
         val notLiteral = ArrayList<SixModelObject?>()
+        /**
+         * The value's type state when a type or identity guard was first
+         * asked for. Recorded HERE, at the request, rather than when the
+         * Guard object is built at compile(): the dispatcher asks for the
+         * guard before it reads the type's facts, so a publish between the
+         * two would otherwise leave a program whose constants came from the
+         * old state carrying a guard that names the new one -- and nothing
+         * would ever reject it.
+         */
+        var state: TypeState? = null
+        /** Has the state been recorded? It may legitimately have been recorded as null. */
+        var stateRecorded = false
     }
 
     /* ----- reading values ----- */
@@ -349,11 +362,35 @@ class DispatchRecord(
         guardSets?.get(source)
             ?: throw ExceptionHandling.dieInternal(tc, "Guarding an untracked value")
 
-    fun guardType(source: ValueSource) { guardsFor(source).type = true }
+    fun guardType(source: ValueSource) {
+        val guards = guardsFor(source)
+        guards.type = true
+        recordState(source, guards)
+    }
 
     fun guardConcreteness(source: ValueSource) { guardsFor(source).concreteness = true }
 
-    fun guardLiteral(source: ValueSource) { guardsFor(source).literal = true }
+    fun guardLiteral(source: ValueSource) {
+        val guards = guardsFor(source)
+        guards.literal = true
+        /* An identity guard fixes the object, hence its type: the program may
+         * fold that type's facts under it exactly as under a type guard. */
+        recordState(source, guards)
+    }
+
+    /**
+     * Notes the tracked value's type state, once per value: whichever of the
+     * type and identity guards is asked for first is the one before which no
+     * fact of that type can have been read, so its reading is the one to keep.
+     */
+    private fun recordState(source: ValueSource, guards: ValueGuards) {
+        if (guards.stateRecorded) return
+        guards.stateRecorded = true
+        val value = tracked?.get(source)?.dispatchValue ?: return
+        if (value.kind != ArgKind.OBJ) return
+        val obj = value.value as? SixModelObject ?: return
+        if (obj.stInitialized) guards.state = obj.st.state
+    }
 
     fun guardHll(source: ValueSource) { guardsFor(source).hll = true }
 
@@ -513,11 +550,17 @@ class DispatchRecord(
         if (guards.literal) {
             /* A literal guard says everything a type or concreteness guard
              * would have said. */
-            into.add(Guard.Literal(source, value))
+            val guard = Guard.Literal(source, value)
+            if (value.kind == ArgKind.OBJ && value.value is SixModelObject)
+                guard.state = guards.state
+            into.add(guard)
         }
         else {
-            if (guards.type)
-                into.add(Guard.OfType(source, Guard.typeOf(value)))
+            if (guards.type) {
+                val guard = Guard.OfType(source, Guard.typeOf(value))
+                if (guards.stateRecorded) guard.state = guards.state
+                into.add(guard)
+            }
             if (guards.concreteness)
                 into.add(Guard.Concreteness(source, Guard.isConcrete(value.value)))
             if (guards.hll)
