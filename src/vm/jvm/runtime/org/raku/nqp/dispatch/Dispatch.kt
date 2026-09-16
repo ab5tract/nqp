@@ -375,6 +375,11 @@ object Dispatch {
     private fun run(tc: ThreadContext, ctx: GuardCheckContext, program: DispatchProgram,
                     site: DispatchCallSite?, bindFailureOf: DispatchRecord? = null): Boolean {
         if (!Captures.sameShape(program.descriptor, ctx.descriptor)) return false
+        /* Belt and braces: fallback may start below a folded prefix truncated
+         * at a stale program, and a stale program is never replayed. Its
+         * guards would fail anyway now that an identity guard checks the
+         * state as well. */
+        if (!program.isFresh) return false
         if (!program.guardsMatch(ctx)) return false
 
         val record = DispatchRecord(tc, null, ctx.descriptor, ctx.args, tc.curFrame, site)

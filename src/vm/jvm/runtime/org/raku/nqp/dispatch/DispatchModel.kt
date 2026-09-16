@@ -256,22 +256,31 @@ sealed interface Guard {
         /**
          * For an OBJ literal, the expected object's type state as of the
          * moment the guard was asked for: an identity guard fixes the object
-         * and hence its type, so a program may fold that type's facts under
-         * it just as it may under a type guard. Null for a non-object literal
-         * and for a guard made outside a recording. Transient, exactly as
-         * OfType.state is: never in equality, the dump or a persisted slot,
-         * and dropped by the generated `copy()` -- never copy a guard.
-         * `check` does not consult it -- identity on the object is already
-         * stricter than any type test; it is the freshness that needs it.
+         * and hence its type, and the program's constants were derived from
+         * that type's facts, so a republished type must MISS -- on every
+         * road, the compiled one, `check` and the runtime replay alike. Null
+         * for a non-object literal. The construction-time default is the
+         * capture for a guard built outside a recording (DispatchSlotCodec's
+         * restore, whose constants the Folder derives from the state current
+         * then); DispatchRecord.emitGuards overwrites it with the state it
+         * recorded before the dispatcher read the facts. Transient, exactly
+         * as OfType.state is: never in equality, the dump or a persisted
+         * slot, and dropped by the generated `copy()` -- never copy a guard.
          */
-        @JvmField var state: TypeState? = null
+        @JvmField var state: TypeState? =
+            if (expected.kind == ArgKind.OBJ)
+                (expected.value as? SixModelObject)?.let { if (it.stInitialized) it.st.state else null }
+            else null
         /** False once the expected object's type republished. */
         val isFresh: Boolean
             get() = state == null || (expected.value as? SixModelObject)?.st?.state === state
         override fun check(ctx: DispatchContext): Boolean {
             val got = on.evaluateRaw(ctx)
             return when (expected.kind) {
-                ArgKind.OBJ -> got === expected.value
+                /* The cast is safe: `got === expected.value`, and the state was
+                 * read from that very object. */
+                ArgKind.OBJ -> got === expected.value &&
+                    (state == null || (got as SixModelObject).st.state === state)
                 else -> got == expected.value
             }
         }

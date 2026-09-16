@@ -63,7 +63,8 @@ object DispatchCompiler {
     private val TEST_TYPE_ARG = test("testTypeArg", Integer.TYPE, TypeState::class.java)
     private val TEST_CONCRETENESS_ARG = test("testConcretenessArg", Integer.TYPE,
         java.lang.Boolean.TYPE)
-    private val TEST_LITERAL_ID_ARG = test("testLiteralIdArg", Integer.TYPE, Any::class.java)
+    private val TEST_LITERAL_ID_ARG = test("testLiteralIdArg", Integer.TYPE, Any::class.java,
+        TypeState::class.java)
     private val TEST_LITERAL_EQ_ARG = test("testLiteralEqArg", Integer.TYPE, Any::class.java)
     private val TEST_GUARD = test("testGuard", Guard::class.java)
 
@@ -153,7 +154,7 @@ object DispatchCompiler {
                 is Guard.Literal ->
                     return if (guard.expected.kind == ArgKind.OBJ)
                         MethodHandles.insertArguments(TEST_LITERAL_ID_ARG, 0, index,
-                            guard.expected.value)
+                            guard.expected.value, guard.state)
                     else
                         MethodHandles.insertArguments(TEST_LITERAL_EQ_ARG, 0, index,
                             guard.expected.value)
@@ -273,10 +274,12 @@ object DispatchCompiler {
                             args: Array<Any?>): Boolean =
         Guard.isConcrete(args[index]) == concrete
 
+    /* An identity guard is a state guard too: the program's constants came
+     * from the expected object's type, so a republish must miss here. */
     @JvmStatic
-    fun testLiteralIdArg(index: Int, expected: Any?, tc: ThreadContext,
+    fun testLiteralIdArg(index: Int, expected: Any?, state: TypeState?, tc: ThreadContext,
                          args: Array<Any?>): Boolean =
-        args[index] === expected
+        args[index] === expected && (state == null || (expected as SixModelObject).st.state === state)
 
     @JvmStatic
     fun testLiteralEqArg(index: Int, expected: Any?, tc: ThreadContext,
@@ -292,7 +295,9 @@ object DispatchCompiler {
                 Guard.isConcrete(evalRaw(guard.on, tc, args)) == guard.concrete
             is Guard.Literal -> {
                 val got = evalRaw(guard.on, tc, args)
-                if (guard.expected.kind == ArgKind.OBJ) got === guard.expected.value
+                if (guard.expected.kind == ArgKind.OBJ)
+                    got === guard.expected.value &&
+                        (guard.state == null || (got as SixModelObject).st.state === guard.state)
                 else got == guard.expected.value
             }
             is Guard.NotLiteralObj -> evalRaw(guard.on, tc, args) !== guard.rejected

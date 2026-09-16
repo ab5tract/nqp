@@ -2,11 +2,13 @@ package org.raku.nqp.dispatch
 
 import kotlin.test.Test
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import org.raku.nqp.runtime.CallSiteDescriptor
 import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.runtime.unit.ProgramUnitTestSupport
+import org.raku.nqp.sixmodel.SixModelObject
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.TypeObject
 
@@ -44,8 +46,10 @@ class GuardStateTest {
         val tc = ProgramUnitTestSupport.tc()
         val obj = freshType(tc)
         val guard = Guard.Literal(ValueSource.Arg(0), DispatchValue(ArgKind.OBJ, obj))
-        /* Null until something records one: a literal guard on its own folds
-         * no type fact, so it is fresh forever. */
+        /* An OBJ literal guard captures the expected object's state at
+         * construction, so a guard built outside a recording is a state guard
+         * too; a recording overwrites it with the state of the request. */
+        assertSame(obj.st.state, guard.state)
         assertTrue(guard.isFresh)
         guard.state = obj.st.state
         assertTrue(guard.isFresh)
@@ -90,6 +94,65 @@ class GuardStateTest {
         val guard = program.guards.filterIsInstance<Guard.OfType>().single()
         assertSame(asked, guard.state, "the state of the request, not of the build")
         assertFalse(program.isFresh, "the type republished between the request and the build")
+    }
+
+    /** A minimal guard-check context: guards read only tc, descriptor and args. */
+    private class Ctx(
+        override val tc: ThreadContext,
+        override val descriptor: CallSiteDescriptor,
+        override val args: Array<Any?>,
+    ) : DispatchContext {
+        override fun resumeInitArg(level: Int, index: Int): DispatchValue =
+            throw UnsupportedOperationException()
+        override fun resumeState(level: Int): SixModelObject? =
+            throw UnsupportedOperationException()
+    }
+
+    /**
+     * Hole (d) of the hotfix-2 review: a guard built OUTSIDE a recording --
+     * DispatchSlotCodec's restore -- used to carry no state at all, so it
+     * stayed "fresh" while the Folder had folded it under the state current
+     * at restore time. It now captures that state at construction.
+     */
+    @Test fun anIdentityGuardBuiltOutsideARecordingCapturesTheStateItWasBuiltUnder() {
+        val tc = ProgramUnitTestSupport.tc()
+        val obj = freshType(tc)
+        val built = obj.st.state
+        val guard = Guard.Literal(ValueSource.Arg(0), DispatchValue(ArgKind.OBJ, obj))
+        assertSame(built, guard.state, "the state at construction")
+        assertTrue(guard.isFresh)
+        val args = arrayOf<Any?>(obj)
+        assertTrue(guard.check(Ctx(tc, csd, args)))
+        assertTrue(DispatchCompiler.testLiteralIdArg(0, obj, guard.state, tc, args))
+    }
+
+    /**
+     * Hole (e): the identity guard is a state guard on every road, so a
+     * republish misses in `check` and in the compiled test, not merely in
+     * `isFresh`.
+     */
+    @Test fun anIdentityGuardMissesOnEveryRoadOnceItsTypeRepublishes() {
+        val tc = ProgramUnitTestSupport.tc()
+        val obj = freshType(tc)
+        val guard = Guard.Literal(ValueSource.Arg(0), DispatchValue(ArgKind.OBJ, obj))
+        val args = arrayOf<Any?>(obj)
+        assertTrue(guard.check(Ctx(tc, csd, args)))
+        obj.st.publish(obj.st.state.withFacts(hllRole = 9L))
+        assertFalse(guard.isFresh)
+        assertFalse(guard.check(Ctx(tc, csd, args)), "check sees the republish")
+        assertFalse(DispatchCompiler.testLiteralIdArg(0, obj, guard.state, tc, args),
+            "the compiled identity test sees it too")
+    }
+
+    /** A non-object literal folds no type fact: no state, and equality as before. */
+    @Test fun aNonObjectLiteralGuardKeepsNoState() {
+        val tc = ProgramUnitTestSupport.tc()
+        val intCsd = CallSiteDescriptor(byteArrayOf(CallSiteDescriptor.ARG_INT), null)
+        val guard = Guard.Literal(ValueSource.Arg(0), DispatchValue(ArgKind.INT, 42L))
+        assertNull(guard.state)
+        assertTrue(guard.isFresh)
+        assertTrue(guard.check(Ctx(tc, intCsd, arrayOf<Any?>(42L))))
+        assertFalse(guard.check(Ctx(tc, intCsd, arrayOf<Any?>(43L))))
     }
 
     @Test fun aRecordNamesTheStateAnIdentityGuardWasAskedUnder() {

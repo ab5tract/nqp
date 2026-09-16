@@ -547,8 +547,14 @@ object NqpDispatch {
                  * type republished, or it keeps it for ever. */
                 if (same && !hasStale()) { missesSinceFold = 0; return }
             }
+            /* A folded Program is reused only if it is the same program AND
+             * everything it folded is still valid: rebuilding it refolds the
+             * constants under the state current now, so hasStale() is false
+             * after one publish even if program freshness and assumption
+             * validity ever diverge again. */
             val fresh = Array(n) { i ->
-                if (i < current.size && current[i].program === all[i]) current[i]
+                if (i < current.size && current[i].program === all[i] &&
+                        current[i].assumptions.all { a -> a.isValid }) current[i]
                 else Program(all[i], csd, tc)
             }
             publish(fresh)
