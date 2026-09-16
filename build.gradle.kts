@@ -1,3 +1,5 @@
+import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 import java.io.StringWriter
 
 plugins {
@@ -268,6 +270,72 @@ fun registerStage(
 val stage1 = registerStage(1, File(projectDir, "src/vm/jvm/stage0"), emptyList())
 val stage2 = registerStage(2, jvmDir.dir("stage1").asFile, stage1.values)
 
+/* Milestone 7 Phase C: the stage2 jars are trained on the trivial
+ * program before they become the lib jars. A COPY is trained, because
+ * rewriting the compile tasks' outputs would make every later build
+ * recompile stage2; jBootstrapFiles keeps copying the untrained jars,
+ * so stage0 stays empty-tabled. */
+val stage2TrainedDir = jvmDir.dir("stage2-trained")
+val stage2Trained = tasks.register<Sync>("stage2Trained") {
+    group = "nqp jvm"
+    description = "Copies the stage2 jars for dispatch training"
+    stageTargets.forEach { from(jvmDir.dir("stage2").file(it.jar)) }
+    into(stage2TrainedDir)
+    stage2.values.forEach { dependsOn(it) }
+}
+
+// Tees the training run's stderr: the build log goes on showing it while
+// doLast turns the same text into the marker file. (commons-io's
+// TeeOutputStream is not on the build script's class path here.)
+val trainDispatchLog = ByteArrayOutputStream()
+val trainDispatchTee = object : OutputStream() {
+    override fun write(b: Int) {
+        System.err.write(b)
+        trainDispatchLog.write(b)
+    }
+
+    override fun write(b: ByteArray, off: Int, len: Int) {
+        System.err.write(b, off, len)
+        trainDispatchLog.write(b, off, len)
+    }
+
+    override fun flush() {
+        System.err.flush()
+        trainDispatchLog.flush()
+    }
+}
+
+val trainDispatch = tasks.register<JavaExec>("trainDispatch") {
+    group = "nqp jvm"
+    description = "Runs the trivial program with NQP_DISPATCH_RECORD=all against the stage2 copy, filling its dispatch slots"
+    dependsOn(stage2Trained, ":nqp-runtime:jar", ":nqp-truffle:jar", "syncTruffleModules")
+    val marker = stage2TrainedDir.file("dispatch-trained.txt").asFile
+    inputs.files(stageTargets.map { stage2TrainedDir.file(it.jar) })
+    inputs.file(runtimeJarFile)
+    outputs.file(marker)
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(toolchainVersion) }
+    workingDir = projectDir
+    mainClass = "org.raku.nqp.runtime.unit.UnitMain"
+    // Class-path input snapshot only; the real class path is set in doFirst.
+    classpath = files(stage2TrainedDir, engineJarFile)
+    environment("NQP_DISPATCH_RECORD", "all")
+    errorOutput = trainDispatchTee
+    doFirst {
+        classpath = files(stage2TrainedDir, runtimeJarFile) + files(thirdPartySorted()) + files(engineJarFile)
+        jvmArgs("--enable-native-access=ALL-UNNAMED", "-Xmx$nqpStageMaxHeap", "-XX:+AllowParallelDefineClass")
+        jvmArgs("--module-path", shareTruffleDir.asFile.absolutePath,
+            "--add-modules", "org.graalvm.truffle,org.graalvm.truffle.runtime")
+        args = listOf("${stage2TrainedDir.asFile.absolutePath}/nqp.jar",
+            "--module-path=${stage2TrainedDir.asFile.absolutePath}",
+            "--setting-path=${stage2TrainedDir.asFile.absolutePath}", "-e", "")
+    }
+    doLast {
+        val text = trainDispatchLog.toString(Charsets.UTF_8)
+        check(text.contains("dispatch-record: wrote")) { "trainDispatch: no 'dispatch-record: wrote' line -- the training run recorded nothing" }
+        marker.writeText(text.lines().filter { it.startsWith("dispatch-record:") }.joinToString("\n") + "\n")
+    }
+}
+
 val syncRuntimeJars = tasks.register<Sync>("syncRuntimeJars") {
     from(nqpThirdParty)
     from(runtimeJarFile)
@@ -298,9 +366,11 @@ val generateLocalJvmConfig = tasks.register<JvmConfigPropertiesTask>("generateLo
 }
 
 val syncLib = tasks.register<Sync>("syncLib") {
-    stageTargets.forEach { from(jvmDir.dir("stage2").file(it.jar)) }
+    // The trained copy, not stage2's own output: the lib jars carry the
+    // recorded dispatch programs (milestone 7 Phase C).
+    stageTargets.forEach { from(stage2TrainedDir.file(it.jar)) }
     into(shareLibDir)
-    stage2.values.forEach { dependsOn(it) }
+    dependsOn(trainDispatch)
     // jvmconfig.properties is produced into this directory by its own task;
     // don't delete it.
     preserve {
