@@ -13,6 +13,12 @@ class SerializationContext(@JvmField var handle: String) {
     /* Description (probably the file name) if any. */
     @JvmField var description: String? = null
 
+    /* The artifact stamp (UnitStore.serializedCrc) this SC was deserialized
+     * under; 0 for an SC built in this process (the bootstrap, a compile in
+     * progress). DispatchSlot persists it per referenced handle and restore
+     * drops a slot whose stamp disagrees. */
+    @JvmField var stamp: Int = 0
+
     /* The root set of objects that live in this SC. */
     private var rootObjects = ArrayList<SixModelObject?>()
 

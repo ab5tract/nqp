@@ -2,6 +2,7 @@ package org.raku.nqp.runtime.unit
 
 import java.io.File
 import java.nio.ByteBuffer
+import java.util.zip.CRC32
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -116,5 +117,18 @@ class UnitStoreTest {
         wrongVersion[dataStart + 4] = 9
         val e4 = assertFailsWith<IllegalStateException> { UnitStore.open(ByteBuffer.wrap(wrongVersion), "<v9>") }
         assertTrue(e4.message!!.contains("version 9"), e4.message)
+    }
+
+    /** The stamp of a unit's SC is the CRC32 of its unit.serialized entry,
+     *  read from the zip central directory: no hashing at load, no format
+     *  change (the writer already sets a real CRC on every stored entry). */
+    @Test fun theSerializedEntrysCrcIsTheStamp() {
+        val base = ProgramUnitTestSupport.image()
+        val bytes = byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8)
+        val img = UnitImage(base.unitId, base.hll, base.scHandle, base.scDesc, base.serializedCodeRefCount,
+            base.mainlineQbid, base.entryQbid, base.deserializeQbid, base.loadQbid, base.blocks, base.programs,
+            base.dispatchCounts, bytes, base.nested, emptyMap())
+        val store = UnitStore.open(ByteBuffer.wrap(UnitImageWriter.bytes(img)), "/x/stamp.jar")
+        assertEquals(CRC32().also { it.update(bytes) }.value.toInt(), store.serializedCrc)
     }
 }
