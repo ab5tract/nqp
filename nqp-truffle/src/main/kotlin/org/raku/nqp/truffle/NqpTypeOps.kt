@@ -14,6 +14,7 @@ import org.raku.nqp.runtime.ExceptionHandling
 import org.raku.nqp.runtime.Ops
 import org.raku.nqp.runtime.SaveStackException
 import org.raku.nqp.runtime.ThreadContext
+import org.raku.nqp.sixmodel.BoolificationSpec
 import org.raku.nqp.sixmodel.REPR
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SixModelObject
@@ -23,6 +24,7 @@ import org.raku.nqp.sixmodel.reprs.RakuObject
 import org.raku.nqp.sixmodel.reprs.RakuObjectLayout
 import org.raku.nqp.sixmodel.reprs.RakuObjectREPRData
 import org.raku.nqp.sixmodel.reprs.SlotKind
+import org.raku.nqp.sixmodel.reprs.VMIterInstance
 
 /**
  * jesp diamond 3: the type-check family as PE-visible operations.
@@ -618,6 +620,109 @@ object NqpTypeOps {
         site.result = if (s.containerSpec == null) 0L else 1L
         if (DEBUG) debug("iscont site resolved " + site.result + " on " + st.debugName)
     }
+
+    /* ----- istrue / isfalse ----- */
+
+    /**
+     * nqp::istrue with a site: the boolification mode is a fact of the
+     * deconted value's state, so under one STable compare the answer is one
+     * REPR read chosen by a compilation-final mode. Mode 0 (call a method)
+     * is user code and is not folded: the site pins and the census counts
+     * the road as `method`. Only BIGINT (mode 6) stays on the runtime road
+     * besides it: its read goes through the bigint cache behind a boundary.
+     */
+    class IsTrueSite : Site() {
+        @JvmField val decont = DecontSite()
+        @JvmField @field:CompilationFinal var st: STable? = null
+        @JvmField @field:CompilationFinal var mode: Int = -1
+        /** Why the site pinned, for the census; null while it may resolve. */
+        @JvmField var pinReason: String? = null
+        override fun clear() { st = null; mode = -1; pinReason = null }
+    }
+
+    /**
+     * The constant a native-typed condition carries: the DSL refuses null
+     * ("Constant operands do not permit null values"), never cast. That arm
+     * of Truthy reads no site, so the builder passes this rather than
+     * allocate a site nothing would use.
+     */
+    @JvmField val NO_SITE: Any = Any()
+
+    /** nqp::istrue (negate == 0) or nqp::isfalse (negate != 0) of a value. */
+    @JvmStatic
+    fun istrue(site: IsTrueSite, o: Any?, negate: Int, tc: ThreadContext): Long {
+        if (NqpCensus.ON) NqpCensus.call(site.stats)
+        val v = try {
+            decont(site.decont, o, tc)
+        } catch (sse: SaveStackException) {
+            /* A Proxy FETCH captured; finish by re-running on the fetched
+             * value, which is no longer a container (see istype). */
+            throw suspendedIn(sse, java.util.function.Function { fetched -> istrue(site, fetched, negate, tc) })
+        }
+        val truth = truth(site, v, tc)
+        return if (negate == 0) truth else 1L - truth
+    }
+
+    /** The truth of an already-deconted value: the fold, else the runtime. */
+    private fun truth(site: IsTrueSite, v: Any?, tc: ThreadContext): Long {
+        if (v !is SixModelObject || Ops.isnull(v) == 1L) return 0L
+        var st = site.st
+        if (st == null && site.mayResolve()) {
+            CompilerDirectives.transferToInterpreterAndInvalidate()
+            resolveIsTrue(site, v)
+            st = site.st
+        }
+        if (st != null) {
+            if (!site.valid()) republished(site)
+            else if (NqpRaw.st(v) === st) return truthByMode(site.mode, v, tc)
+            else miss(site)
+        }
+        if (NqpCensus.ON) NqpCensus.slow(site.stats, site.pinReason ?: if (site.mayResolve()) "generic" else "pinned")
+        return istrueSlow(v, tc)
+    }
+
+    /** The folded modes, as Ops.istrue answers them; `mode` is compilation-final. */
+    private fun truthByMode(mode: Int, o: SixModelObject, tc: ThreadContext): Long = when (mode) {
+        BoolificationSpec.MODE_NOT_TYPE_OBJECT -> if (o is TypeObject) 0L else 1L
+        BoolificationSpec.MODE_UNBOX_INT -> if (o is TypeObject || o.get_int(tc) == 0L) 0L else 1L
+        BoolificationSpec.MODE_UNBOX_NUM -> if (o is TypeObject || o.get_num(tc) == 0.0) 0L else 1L
+        BoolificationSpec.MODE_UNBOX_STR_NOT_EMPTY ->
+            if (o is TypeObject) 0L else { val s = o.get_str(tc); if (s == null || s.isEmpty()) 0L else 1L }
+        BoolificationSpec.MODE_UNBOX_STR_NOT_EMPTY_OR_ZERO ->
+            if (o is TypeObject) 0L else { val s = o.get_str(tc); if (s == null || s.isEmpty() || s == "0") 0L else 1L }
+        BoolificationSpec.MODE_HAS_ELEMS -> if (o.elems(tc) == 0L) 0L else 1L
+        /* Under the STable compare the cast cannot fail: the folded
+         * type's REPR is the iterator REPR. */
+        BoolificationSpec.MODE_ITER -> if ((o as VMIterInstance).boolify()) 1L else 0L
+        else -> istrueSlow(o, tc)
+    }
+
+    @TruffleBoundary
+    private fun resolveIsTrue(site: IsTrueSite, o: SixModelObject) {
+        if (!o.stInitialized) { site.pin(); return }
+        val st = o.st
+        val s = st.state
+        val bs = s.boolificationSpec
+        val mode = if (bs == null) BoolificationSpec.MODE_NOT_TYPE_OBJECT else bs.Mode
+        when (mode) {
+            BoolificationSpec.MODE_NOT_TYPE_OBJECT, BoolificationSpec.MODE_UNBOX_INT,
+            BoolificationSpec.MODE_UNBOX_NUM, BoolificationSpec.MODE_UNBOX_STR_NOT_EMPTY,
+            BoolificationSpec.MODE_UNBOX_STR_NOT_EMPTY_OR_ZERO, BoolificationSpec.MODE_HAS_ELEMS,
+            BoolificationSpec.MODE_ITER -> {
+                site.st = st; site.state = s; site.mode = mode
+                if (DEBUG) debug("istrue site resolved mode " + mode + " on " + st.debugName)
+            }
+            else -> {
+                site.pinReason = if (mode == BoolificationSpec.MODE_CALL_METHOD) "method" else "mode" + mode
+                site.pin()
+                if (DEBUG) debug("istrue pin " + site.pinReason + ": " + st.debugName)
+            }
+        }
+    }
+
+    @TruffleBoundary
+    private fun istrueSlow(v: Any?, tc: ThreadContext): Long =
+        Ops.istrue(v as SixModelObject?, tc)
 
     /* ----- assertparamcheck ----- */
 
