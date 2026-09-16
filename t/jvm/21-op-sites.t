@@ -9,7 +9,7 @@
 # This file spawns ./nqp-j-gradle (the gradle-generated runner) relative
 # to the nqp tree, so prove must run from there.
 
-plan(6);
+plan(15);
 
 my class Queue is repr('ConcBlockingQueue') { }
 my class VMDecoder is repr('Decoder') { }
@@ -96,3 +96,33 @@ my $cont-err := $cont-child[1];
 ok(site-field($cont-err, 'IsContSite', 'calls') >= 1000, 'iscont reaches IsContSite');
 ok(count-of($cont-err, 'classlib', 'Ops.iscont') < 0, 'iscont no longer travels the classlib road');
 ok(site-field($cont-err, 'IsContSite', 'misses') == 0, 'a monomorphic iscont loop never misses');
+
+# ---- istrue / isfalse / a condition on an object -----------------------
+# The boolification mode is a fact of the state: a plain class folds to
+# "not a type object" (mode 5); setboolspec to mode 0 (call a method) both
+# republishes the type and names a road the site must not fold.
+class TrueFoo { }
+sub is_true($o) { nqp::istrue($o) }
+sub is_false($o) { nqp::isfalse($o) }
+sub cond_true($o) { if $o { 1 } else { 0 } }
+my $tf := TrueFoo.new;
+my $t := -1; my $f := -1; my $cd := -1;
+$i := 0;
+while $i < 200 { $t := is_true($tf); $f := is_false($tf); $cd := cond_true($tf); $i++ }
+is($t, 1, 'istrue folds 1 for an instance of a plain class');
+is($f, 0, 'isfalse folds 0 for it');
+is($cd, 1, 'a condition on it is true');
+nqp::setboolspec(TrueFoo, 0, -> $o { 0 });
+$i := 0;
+while $i < 200 { $t := is_true($tf); $f := is_false($tf); $cd := cond_true($tf); $i++ }
+is($t, 0, 'an istrue site resolved before setboolspec sees the method mode');
+is($f, 1, 'and so does an isfalse site');
+is($cd, 0, 'and so does a condition');
+
+my $true-child := child-stderr(
+    'class Foo { }; my $o := Foo.new; my $i := 0; my $n := 0; while $i < 1000 { $n := $n + nqp::istrue($o) + nqp::isfalse($o); if $o { $n++ }; $i++ }; say($n)',
+    %on);
+is($true-child[0], 0, 'the istrue child exits 0');
+my $true-err := $true-child[1];
+ok(site-field($true-err, 'IsTrueSite', 'calls') >= 3000, 'istrue, isfalse and the condition reach IsTrueSite');
+ok(count-of($true-err, 'classlib', 'Ops.istrue') < 0 && count-of($true-err, 'classlib', 'Ops.isfalse') < 0, 'istrue/isfalse no longer travel the classlib road');

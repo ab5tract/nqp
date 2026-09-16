@@ -254,15 +254,23 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         }
     }
 
-    /** nqp truthiness, typed by the encoder; negate for until-loops. */
+    /** nqp truthiness, typed by the encoder; negate for until-loops. An
+     *  object condition goes through an IsTrueSite (batch 1); natives inline. */
     @Operation
     @ConstantOperand(type = int.class, name = "type")
     @ConstantOperand(type = int.class, name = "negate")
+    @ConstantOperand(type = Object.class, name = "site")
     public static final class Truthy {
         @Specialization
-        static boolean doTruthy(VirtualFrame f, int type, int negate, Object v) {
+        static boolean doTruthy(VirtualFrame f, int type, int negate, Object site, Object v) {
             try {
+                if (type == NqpWire.T_OBJ)
+                    return (NqpTypeOps.istrue((NqpTypeOps.IsTrueSite) site, v, 0, tc(f)) != 0) == (negate == 0);
                 return NqpOps.truthy(type, v, tc(f)) == (negate == 0);
+            } catch (NqpTypeOps.SuspendedIn s) {
+                /* A condition answers a boolean, not a token: the capture
+                 * escapes raw, exactly as it did through truthyObj. */
+                throw NqpOps.carry(s.sse);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -605,6 +613,26 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static Object doIsCont(VirtualFrame f, Object site, Object o) {
             try {
                 return NqpTypeOps.iscont((NqpTypeOps.IsContSite) site, o);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    /** nqp::istrue (negate 0) / nqp::isfalse (negate 1) through a site.
+     *  Object, not long: the decont and a mode-0 boolification are user code. */
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    @ConstantOperand(type = int.class, name = "negate")
+    public static final class IsTrueOp {
+        @Specialization
+        static Object doIsTrue(VirtualFrame f, Object site, int negate, Object o) {
+            try {
+                return NqpTypeOps.istrue((NqpTypeOps.IsTrueSite) site, o, negate, tc(f));
+            } catch (NqpTypeOps.SuspendedIn s) {
+                return NqpOps.suspendToken(s.sse, s.finish);
+            } catch (org.raku.nqp.runtime.SaveStackException sse) {
+                return NqpOps.suspendToken(sse, NqpWire.T_INT);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
