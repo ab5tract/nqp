@@ -529,6 +529,10 @@ class SerializationWriter(
         /* Make sure we're going to write to the correct place. */
         currentBuffer = STABLE_DATA
 
+        /* One read of the published facts: everything written below is one
+         * consistent state, not nine reads that a publish could split. */
+        val s = st.state
+
         /* Write HOW, WHAT and WHO. */
         writeObjRef(st.HOW!!)
         writeObjRef(st.WHAT)
@@ -536,30 +540,30 @@ class SerializationWriter(
 
         /* Method cache and v-table. */
         growToHold(currentBuffer, 2)
-        val methodCache = st.state.methodCache
+        val methodCache = s.methodCache
         if (methodCache != null) {
             writeHash(methodCache)
         } else {
             outputs[currentBuffer].putShort(REFVAR_NULL)
         }
-        val vTable = st.state.vTable
+        val vTable = s.vTable
         val vtl = vTable?.size ?: 0
         writeInt(vtl.toLong())
         for (i in 0 until vtl)
             writeRef(vTable!![i])
 
         /* Type check cache. */
-        val typeCheckCache = st.state.typeCheckCache
+        val typeCheckCache = s.typeCheckCache
         val tcl = typeCheckCache?.size ?: 0
         writeInt(tcl.toLong())
         for (i in 0 until tcl)
             writeRef(typeCheckCache!![i])
 
         /* Mode flags. */
-        writeInt(st.state.modeFlags.toLong())
+        writeInt(s.modeFlags.toLong())
 
         /* Boolification spec. */
-        val boolSpec = st.state.boolificationSpec
+        val boolSpec = s.boolificationSpec
         writeInt(if (boolSpec == null) 0L else 1L)
         if (boolSpec != null) {
             writeInt(boolSpec.Mode.toLong())
@@ -567,7 +571,7 @@ class SerializationWriter(
         }
 
         /* Container spec. */
-        val contSpec = st.state.containerSpec
+        val contSpec = s.containerSpec
         writeInt(if (contSpec == null) 0L else 1L)
         if (contSpec != null) {
             writeStr(contSpec.name())
@@ -575,7 +579,7 @@ class SerializationWriter(
         }
 
         /* Invocation spec. */
-        val invSpec = st.state.invocationSpec
+        val invSpec = s.invocationSpec
         writeInt(if (invSpec == null) 0L else 1L)
         if (invSpec != null) {
             writeRef(invSpec.ClassHandle)
@@ -585,8 +589,8 @@ class SerializationWriter(
         }
 
         /* HLL info. */
-        writeStr(st.state.hllOwner?.name ?: "")
-        writeInt(st.state.hllRole)
+        writeStr(s.hllOwner?.name ?: "")
+        writeInt(s.hllRole)
 
         /* Parametricity. */
         val parametricity = st.parametricity

@@ -257,7 +257,9 @@ object DispatchPersist {
                 val slot = store.absoluteSlot(site.programIndex, site.ordinal)
                 if (slot < 0) continue
                 val byText = bySlot.getOrPut(store.name) { HashMap() }.getOrPut(store.entryPrefix) { HashMap() }.getOrPut(slot) { LinkedHashMap() }
-                for (p in sitePrograms) byText.putIfAbsent(DispatchDump.describe(p), p)
+                // Only fresh programs: a stale one (its type republished after recording, evicted
+                // at the NEXT install) would be restored under a new guard with its baked callee.
+                for (p in sitePrograms) if (p.isFresh) byText.putIfAbsent(DispatchDump.describe(p), p)
             }
             for ((path, perPrefix) in bySlot) {
                 if (isStage0(path)) {

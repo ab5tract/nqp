@@ -235,7 +235,8 @@ sealed interface Guard {
          * outside a recording gets, which is right for DispatchSlotCodec's
          * restore (the program's constants are re-derived at fold time, under
          * the state current then). Transient: outside the data-class equality
-         * (constructor parameters only), outside DispatchDump, never persisted.
+         * (constructor parameters only), outside DispatchDump, never persisted
+         * -- and so dropped by the generated `copy()`: never copy a guard.
          */
         @JvmField var state: TypeState? = type?.state
         /** False once the type republished: the guard can never match again. */
@@ -258,7 +259,8 @@ sealed interface Guard {
          * and hence its type, so a program may fold that type's facts under
          * it just as it may under a type guard. Null for a non-object literal
          * and for a guard made outside a recording. Transient, exactly as
-         * OfType.state is: never in equality, the dump or a persisted slot.
+         * OfType.state is: never in equality, the dump or a persisted slot,
+         * and dropped by the generated `copy()` -- never copy a guard.
          * `check` does not consult it -- identity on the object is already
          * stricter than any type test; it is the freshness that needs it.
          */
