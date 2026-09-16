@@ -9,7 +9,7 @@
 # This file spawns ./nqp-j-gradle (the gradle-generated runner) relative
 # to the nqp tree, so prove must run from there.
 
-plan(25);
+plan(30);
 
 my class Queue is repr('ConcBlockingQueue') { }
 my class VMDecoder is repr('Decoder') { }
@@ -163,3 +163,18 @@ my $meth-err := $meth-child[1];
 ok(site-field($meth-err, 'FindMethodSite', 'calls') >= 3000, 'findmethod, tryfindmethod and can reach FindMethodSite');
 ok(count-of($meth-err, 'classlib', 'Ops.findmethod') < 0 && count-of($meth-err, 'classlib', 'Ops.can') < 0 && count-of($meth-err, 'table', 'tryfindmethod') < 0,
    'none of the three travels its old road');
+
+# ---- the half-reachable sites --------------------------------------------
+# decont, isconcrete and create had sites only for the encoder's hand-emitted
+# forms; a source-level nqp::decont/isconcrete/create took the generic
+# classlib road. The arms make them reach the sites by name.
+my $reach-child := child-stderr(
+    'class Foo { }; my $o := Foo.new; my $i := 0; my $n := 0; while $i < 1000 { $n := $n + nqp::isconcrete(nqp::decont($o)); nqp::create(Foo); $i++ }; say($n)',
+    %on);
+is($reach-child[0], 0, 'the reachability child exits 0');
+my $reach-err := $reach-child[1];
+ok(site-field($reach-err, 'IsConcreteSite', 'calls') >= 1000, 'a source-level isconcrete reaches IsConcreteSite');
+ok(site-field($reach-err, 'CreateSite', 'calls') >= 1000, 'a source-level create reaches CreateSite');
+ok(count-of($reach-err, 'classlib', 'Ops.decont') < 0 && count-of($reach-err, 'classlib', 'Ops.isconcrete') < 0 && count-of($reach-err, 'classlib', 'Ops.create') < 0,
+   'none of the three travels the classlib road');
+ok(site-field($reach-err, 'DecontSite', 'calls') >= 2000, 'the decont (direct and inner) reaches DecontSite');
