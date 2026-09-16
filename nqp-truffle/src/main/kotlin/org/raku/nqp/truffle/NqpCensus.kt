@@ -6,13 +6,22 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.LongAdder
 
 /**
- * The op census (milestone 8, Phase B): NQP_OP_CENSUS=1 counts every
+ * The op census (milestone 8, Phase B): NQP_OP_CENSUS counts every
  * table op by id, every classlib op by class and method name, and every
  * site's calls, misses, pins, republishes and named slow paths; printed
- * at exit next to the dispatch stats. [ON] is read once into a static
- * final, so a program compiled with it off carries no counter at all;
- * every bump sits behind a boundary, so with it on the counters cost a
- * call and never a deoptimization.
+ * at exit next to the dispatch stats.
+ *
+ * The knob is PRESENCE-based, like JESP_DEBUG: set or unset, never a
+ * value. `NQP_OP_CENSUS=0` turns the census ON. [ON] is read once into a
+ * static final, so a program run with it unset carries no counter at
+ * all -- the containers are not allocated and a site's stats field is
+ * [NONE] -- and every bump sits behind a boundary, so with it on the
+ * counters cost a call and never a deoptimization.
+ *
+ * The printed block is for machines: every op with a non-zero count and
+ * every classlib name, sorted descending, uncut. A reader that wants a
+ * top N (tools/build/evalserver-sweep.raku's census block, the rig's
+ * parser) takes it itself.
  *
  * Counts rank candidates; the JFR share (tools/build/jfr-attribute.raku
  * --ops) decides what is hot.
@@ -20,8 +29,8 @@ import java.util.concurrent.atomic.LongAdder
 object NqpCensus {
     @JvmField val ON: Boolean = System.getenv("NQP_OP_CENSUS") != null
 
-    private val table = Array(NqpOps.OP_COUNT) { LongAdder() }
-    private val classlib = ConcurrentHashMap<String, LongAdder>()
+    private val table: Array<LongAdder> = if (ON) Array(NqpOps.OP_COUNT) { LongAdder() } else emptyArray()
+    private val classlib: ConcurrentHashMap<String, LongAdder> by lazy { ConcurrentHashMap() }
 
     /** One site class's counters. [slow] is keyed by the path a site names
      *  when it takes a slow road it could not fold (istrue.method,
@@ -34,9 +43,10 @@ object NqpCensus {
         @JvmField val slow = ConcurrentHashMap<String, LongAdder>()
     }
 
-    /** The stats of an unrecorded site: counted, never printed. */
+    /** The stats of a knob-off site: never counted, never printed; exists
+     *  so the field is non-null. */
     @JvmField val NONE = SiteStats("none")
-    private val sites = ConcurrentHashMap<String, SiteStats>()
+    private val sites: ConcurrentHashMap<String, SiteStats> by lazy { ConcurrentHashMap() }
 
     /** The counters for a site class, by simple name; [NONE] when off. */
     @JvmStatic fun stats(name: String): SiteStats = if (ON) sites.computeIfAbsent(name) { SiteStats(it) } else NONE
@@ -58,35 +68,49 @@ object NqpCensus {
 
     /** Table op names from NqpOps' own OP_* constants: no build-time
      *  resource, the same names the encoder's table uses (lower-cased,
-     *  the arity suffix kept: substr2, substr3). */
+     *  the arity suffix kept: substr2, substr3). Two constants may share
+     *  an id (an alias); the LAST OP_* field per id wins. An empty map
+     *  when the reflection is refused -- every op then prints as
+     *  op#<id>, which the census is still readable as. */
     private val names: Map<Int, String> by lazy {
-        val out = HashMap<Int, String>()
-        for (f in NqpOps::class.java.declaredFields) {
-            if (!Modifier.isStatic(f.modifiers) || f.type != Int::class.javaPrimitiveType) continue
-            if (!f.name.startsWith("OP_") || f.name == "OP_COUNT") continue
-            f.trySetAccessible()
-            out[f.getInt(null)] = f.name.removePrefix("OP_").lowercase()
+        try {
+            val out = HashMap<Int, String>()
+            for (f in NqpOps::class.java.declaredFields) {
+                if (!Modifier.isStatic(f.modifiers) || f.type != Int::class.javaPrimitiveType) continue
+                if (!f.name.startsWith("OP_") || f.name == "OP_COUNT") continue
+                f.trySetAccessible()
+                out[f.getInt(null)] = f.name.removePrefix("OP_").lowercase()
+            }
+            out
+        } catch (t: Throwable) {
+            emptyMap()
         }
-        out
     }
 
     init {
         if (ON) Runtime.getRuntime().addShutdownHook(Thread { print() })
     }
 
+    /** The whole block, on stderr, at exit. A shutdown hook may not take
+     *  the JVM down with it, so every failure here is reported and
+     *  swallowed. */
     private fun print() {
-        val tableTotal = table.sumOf { it.sum() }
-        val classlibTotal = classlib.values.sumOf { it.sum() }
-        val siteCalls = sites.values.sumOf { it.calls.sum() }
-        val siteMisses = sites.values.sumOf { it.misses.sum() }
-        System.err.println("op census: table=$tableTotal classlib=$classlibTotal siteCalls=$siteCalls siteMisses=$siteMisses")
-        table.withIndex().filter { it.value.sum() > 0 }.sortedByDescending { it.value.sum() }.take(30)
-            .forEach { System.err.println("  table " + it.value.sum() + " " + (names[it.index] ?: "op#${it.index}")) }
-        classlib.entries.sortedByDescending { it.value.sum() }.take(30)
-            .forEach { System.err.println("  classlib " + it.value.sum() + " " + it.key) }
-        sites.values.sortedByDescending { it.calls.sum() }.forEach { s ->
-            val slow = s.slow.entries.sortedByDescending { it.value.sum() }.joinToString(" ") { it.key + "=" + it.value.sum() }
-            System.err.println("  site ${s.name} calls=${s.calls.sum()} misses=${s.misses.sum()} pins=${s.pins.sum()} republished=${s.republished.sum()} slow=[$slow]")
+        try {
+            val tableTotal = table.sumOf { it.sum() }
+            val classlibTotal = classlib.values.sumOf { it.sum() }
+            val siteCalls = sites.values.sumOf { it.calls.sum() }
+            val siteMisses = sites.values.sumOf { it.misses.sum() }
+            System.err.println("op census: table=$tableTotal classlib=$classlibTotal siteCalls=$siteCalls siteMisses=$siteMisses")
+            table.withIndex().filter { it.value.sum() > 0 }.sortedByDescending { it.value.sum() }
+                .forEach { System.err.println("  table " + it.value.sum() + " " + (names[it.index] ?: "op#${it.index}")) }
+            classlib.entries.sortedByDescending { it.value.sum() }
+                .forEach { System.err.println("  classlib " + it.value.sum() + " " + it.key) }
+            sites.values.sortedByDescending { it.calls.sum() }.forEach { s ->
+                val slow = s.slow.entries.sortedByDescending { it.value.sum() }.joinToString(" ") { it.key + "=" + it.value.sum() }
+                System.err.println("  site ${s.name} calls=${s.calls.sum()} misses=${s.misses.sum()} pins=${s.pins.sum()} republished=${s.republished.sum()} slow=[$slow]")
+            }
+        } catch (t: Throwable) {
+            System.err.println("op census: print failed: " + t)
         }
     }
 }

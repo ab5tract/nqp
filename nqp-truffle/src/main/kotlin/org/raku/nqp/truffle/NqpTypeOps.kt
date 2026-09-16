@@ -85,11 +85,13 @@ object NqpTypeOps {
          */
         @JvmField @field:CompilationFinal var state: TypeState? = null
 
-        /** The census counters of this site's class (NqpCensus.NONE when
-         *  the knob is off, so the field is never null on the fast road).
+        /** The census counters of this site's class: NONE when the knob is
+         *  off, so a knob-off site pays nothing -- no map lookup, no
+         *  SiteStats, and the field is still never null on the fast road.
          *  isconcrete and istype delegate to inner DecontSites, whose own
          *  decont entry counts under DecontSite as well. */
-        @JvmField val stats: NqpCensus.SiteStats = NqpCensus.stats(javaClass.simpleName)
+        @JvmField val stats: NqpCensus.SiteStats =
+            if (NqpCensus.ON) NqpCensus.stats(javaClass.simpleName) else NqpCensus.NONE
 
         init { SITES.add(this) }
 
