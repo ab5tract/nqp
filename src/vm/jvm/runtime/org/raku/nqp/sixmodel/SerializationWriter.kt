@@ -536,30 +536,30 @@ class SerializationWriter(
 
         /* Method cache and v-table. */
         growToHold(currentBuffer, 2)
-        val methodCache = st.MethodCache
+        val methodCache = st.state.methodCache
         if (methodCache != null) {
             writeHash(methodCache)
         } else {
             outputs[currentBuffer].putShort(REFVAR_NULL)
         }
-        val vTable = st.VTable
+        val vTable = st.state.vTable
         val vtl = vTable?.size ?: 0
         writeInt(vtl.toLong())
         for (i in 0 until vtl)
             writeRef(vTable!![i])
 
         /* Type check cache. */
-        val typeCheckCache = st.TypeCheckCache
+        val typeCheckCache = st.state.typeCheckCache
         val tcl = typeCheckCache?.size ?: 0
         writeInt(tcl.toLong())
         for (i in 0 until tcl)
             writeRef(typeCheckCache!![i])
 
         /* Mode flags. */
-        writeInt(st.ModeFlags.toLong())
+        writeInt(st.state.modeFlags.toLong())
 
         /* Boolification spec. */
-        val boolSpec = st.BoolificationSpec
+        val boolSpec = st.state.boolificationSpec
         writeInt(if (boolSpec == null) 0L else 1L)
         if (boolSpec != null) {
             writeInt(boolSpec.Mode.toLong())
@@ -567,7 +567,7 @@ class SerializationWriter(
         }
 
         /* Container spec. */
-        val contSpec = st.ContainerSpec
+        val contSpec = st.state.containerSpec
         writeInt(if (contSpec == null) 0L else 1L)
         if (contSpec != null) {
             writeStr(contSpec.name())
@@ -575,7 +575,7 @@ class SerializationWriter(
         }
 
         /* Invocation spec. */
-        val invSpec = st.InvocationSpec
+        val invSpec = st.state.invocationSpec
         writeInt(if (invSpec == null) 0L else 1L)
         if (invSpec != null) {
             writeRef(invSpec.ClassHandle)
@@ -585,8 +585,8 @@ class SerializationWriter(
         }
 
         /* HLL info. */
-        writeStr(st.hllOwner?.name ?: "")
-        writeInt(st.hllRole)
+        writeStr(st.state.hllOwner?.name ?: "")
+        writeInt(st.state.hllRole)
 
         /* Parametricity. */
         val parametricity = st.parametricity

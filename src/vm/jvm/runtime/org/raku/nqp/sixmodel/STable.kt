@@ -98,17 +98,4 @@ class STable(
 
     /** The same facts under a fresh assumption: for a change outside the state (REPR data). */
     fun republish() = publish(state.withFacts())
-
-    /* ----- TRANSITIONAL (Task 1 only; Task 2 renames the readers and deletes these) -----
-     * Read-only views under the old field names, so every reader keeps compiling and
-     * every writer fails to compile: the compiler enumerates the writers. */
-    val MethodCache: Map<String, SixModelObject?>? get() = state.methodCache
-    val VTable: Array<SixModelObject?>? get() = state.vTable
-    val TypeCheckCache: Array<SixModelObject?>? get() = state.typeCheckCache
-    val ModeFlags: Int get() = state.modeFlags
-    val ContainerSpec: ContainerSpec? get() = state.containerSpec
-    val InvocationSpec: InvocationSpec? get() = state.invocationSpec
-    val BoolificationSpec: BoolificationSpec? get() = state.boolificationSpec
-    val hllOwner: HLLConfig? get() = state.hllOwner
-    val hllRole: Long get() = state.hllRole
 }

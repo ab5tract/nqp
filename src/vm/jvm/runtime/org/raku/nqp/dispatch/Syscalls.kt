@@ -370,12 +370,12 @@ object Syscalls {
 
         define("has-type-check-cache", OBJ) { args ->
             val type = args.obj(0)
-            bool(type != null && type.stInitialized && type.st.TypeCheckCache != null)
+            bool(type != null && type.stInitialized && type.st.state.typeCheckCache != null)
         }
         define("type-check-mode-flags", OBJ) { args ->
             val type = args.obj(0)
             int(if (type == null || !type.stInitialized) 0L
-                else (type.st.ModeFlags and STable.TYPE_CHECK_CACHE_FLAG_MASK).toLong())
+                else (type.st.state.modeFlags and STable.TYPE_CHECK_CACHE_FLAG_MASK).toLong())
         }
         define("code-is-stub", OBJ) { args ->
             val code = args.obj(0)

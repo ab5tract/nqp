@@ -10,7 +10,7 @@ open class NativeRefContainerSpec : ContainerSpec() {
     /* Fetches a value out of a container. Used for decontainerization. */
     override fun fetch(tc: ThreadContext, cont: SixModelObject): SixModelObject {
         val rd = cont.st.REPRData as NativeRefREPRData
-        var hll = cont.st.hllOwner
+        var hll = cont.st.state.hllOwner
         if (hll == null)
             hll = tc.frame.codeRef.staticInfo.compUnit.hllConfig
         return when (rd.primitiveType) {

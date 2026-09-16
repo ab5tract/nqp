@@ -72,5 +72,5 @@ class DispatchRegistry {
     }
 
     private fun isInvokable(obj: SixModelObject?): Boolean =
-        obj is CodeRef || (obj != null && obj.stInitialized && obj.st.InvocationSpec != null)
+        obj is CodeRef || (obj != null && obj.stInitialized && obj.st.state.invocationSpec != null)
 }
