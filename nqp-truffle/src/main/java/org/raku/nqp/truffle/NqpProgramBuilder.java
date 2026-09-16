@@ -638,8 +638,14 @@ final class NqpProgramBuilder {
                     b.beginStoreLocal(ores);
                 }
                 // A classlib op with a per-instruction site (jesp diamond 6:
-                // hllize). The JVM compiler maps these by name onto Ops, so
-                // the choice is by name too, again at load.
+                // hllize, and istype -- which reaches its IsTypeSite ONLY
+                // through this road, since nqp's encoder has no table row for
+                // it). The JVM compiler maps these by name onto Ops, so the
+                // choice is by name too, again at load. A dedicated operation
+                // ignores `rtype`, which is sound here because both roads
+                // answer Object: a boxed Long for istype's INT result, or a
+                // T_INT suspension token that the emitSuspendCheck below
+                // handles identically. See dedicatedClasslib.
                 Op cop = dedicatedClasslib(cls, meth, nargs);
                 if (emit) {
                     if (cop != null) beginOp(cop, -1);
@@ -691,9 +697,27 @@ final class NqpProgramBuilder {
     private enum Op { RUN, GETATTR, BINDATTR, DECONT, ISNULL, ISCONCRETE, ISTYPE, HLLIZE, P6SINK, ASSERTPARAMCHECK, P6TYPECHECKRV, CREATE,
                       INT_BIN, INT_UN, NUM_BIN, NUM_CMP, NUM_NEG, BIGINT_ARITH }
 
-    /** Which operation a classlib op becomes; null is the method-handle road. */
+    /**
+     * Which operation a classlib op becomes; null is the method-handle road.
+     *
+     * The type-check family is reached from HERE, not from {@link #dedicatedOp}:
+     * Compiler.nqp maps `hllize` and `istype` with map_classlib_core_op, so
+     * they arrive as CLASSLIB with a class/method name and never as a table
+     * op id (nqp's encoder has no op3 row for either).
+     *
+     * `istype`'s registry result type is INT, and that is fine: the classlib
+     * road answers `Object` too (NqpOps.classlibInline returns the method
+     * handle's result, a BOXED Long for a long-returning Ops method, and a
+     * suspension token typed T_INT on a capture), and IsTypeOp answers exactly
+     * the same two things (see its comment in NqpRootNode). The store local
+     * either road writes into is the same untyped `b.createLocal()` below, and
+     * the consumers (Truthy, the arg coercions) take Object. So swapping the
+     * generic site for the dedicated operation does not change the value's
+     * shape, only who computes it.
+     */
     private static Op dedicatedClasslib(String cls, String meth, int nargs) {
         if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("hllize") && nargs == 1) return Op.HLLIZE;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("istype") && nargs == 2) return Op.ISTYPE;
         return null;
     }
 
