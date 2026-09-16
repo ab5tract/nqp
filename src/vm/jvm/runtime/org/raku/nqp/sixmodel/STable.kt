@@ -53,94 +53,62 @@ class STable(
          * Indicates that there's no attribute access hint.
          */
         const val NO_HINT = -1L
+
+        /** Every publish in the process; printed as `publishes=` in the dispatch stats line. */
+        @JvmField val PUBLISHES = java.util.concurrent.atomic.LongAdder()
     }
 
-    /**
-     * Any data specific to this type that the REPR wants to keep.
-     */
+    /** REPR-specific data (a RakuObjectREPRData for P6opaque). REPR-owned; a change republishes [state]. */
     @JvmField var REPRData: Any? = null
 
-    /**
-     * The type-object.
-     */
+    /** The type object. */
     lateinit var WHAT: SixModelObject
 
-    /**
-     * Info for types that are parametric or parameterized.
-     */
+    /** Parametric/parameterized type data; a growing lookup table, so a cache, not a fact. */
     @JvmField var parametricity: AbstractParametricity? = null
 
     /**
-     * By-name method dispatch cache.
+     * The type's published facts. Every reader goes through here; the only
+     * writer is [publish]. Volatile: a publish on one thread is seen whole
+     * by every other (the state object itself is immutable).
      */
-    @JvmField var MethodCache: MutableMap<String, SixModelObject?>? = null
+    @Volatile @JvmField var state: TypeState = TypeState.initial()
 
-    /**
-     * The computed v-table for static dispatch.
-     */
-    @JvmField var VTable: Array<SixModelObject?>? = null
-
-    /**
-     * Array of type objects. If this is set, then it is expected to contain
-     * the type objects of all types that this type is equivalent to (e.g.
-     * all the things it isa and all the things it does).
-     */
-    @JvmField var TypeCheckCache: Array<SixModelObject?>? = null
-
-    /**
-     * The type checking mode and method cache mode.
-     */
-    @JvmField var ModeFlags = 0
-
-    /**
-     * An ID solely for use in caches that last a VM instance. Thus it
-     * should never, ever be serialized and you should NEVER make a
-     * type directory based upon this ID. Otherwise you'll create memory
-     * leaks for anonymous types, and other such screwups.
-     */
-    @JvmField var TypeCacheId = 0
-
-    /**
-     * If this is a container, then this contains information needed in
-     * order to fetch the value in it. If not, it'll be null, which can
-     * be taken as a "not a container" indication.
-     */
-    @JvmField var ContainerSpec: ContainerSpec? = null
-
-    /**
-     * If this is invokable, then this contains information needed to
-     * figure out how to invoke it. If not, it'll be null.
-     */
-    @JvmField var InvocationSpec: InvocationSpec? = null
-
-    /**
-     * Information - if any - about how we can turn something of this type
-     * into a boolean.
-     */
-    @JvmField var BoolificationSpec: BoolificationSpec? = null
-
-    /**
-     * The underlying package stash.
-     */
+    /** The stash / package. */
     @JvmField var WHO: SixModelObject? = null
 
-    /**
-     * Serialization context that this s-table belongs to.
-     */
+    /** The serialization context this STable belongs to, if any. */
     @JvmField var sc: SerializationContext? = null
 
-    /**
-     * The HLL that this type is owned by, if any.
-     */
-    @JvmField var hllOwner: HLLConfig? = null
-
-    /**
-     * The role that the type plays in the HLL, if any.
-     */
-    @JvmField var hllRole = 0L
-
-    /**
-     * Debug name for the type, for understanding what it is while debugging.
-     */
+    /** The HLL owner's debug name for the type, if it set one. */
     @JvmField var debugName: String? = null
+
+    /**
+     * Installs the next state, then invalidates the previous one's assumption
+     * -- in that order, so a thread that read a valid assumption and then reads
+     * the state sees a state at least as new as the assumption (the ordering
+     * NqpDispatch.Cache.publish uses).
+     */
+    fun publish(next: TypeState) {
+        val old = state
+        state = next
+        old.assumption.invalidate()
+        PUBLISHES.increment()
+    }
+
+    /** The same facts under a fresh assumption: for a change outside the state (REPR data). */
+    fun republish() = publish(state.withFacts())
+
+    /* ----- TRANSITIONAL (Task 1 only; Task 2 renames the readers and deletes these) -----
+     * Read-only views under the old field names, so every reader keeps compiling and
+     * every writer fails to compile: the compiler enumerates the writers. */
+    val MethodCache: Map<String, SixModelObject?>? get() = state.methodCache
+    val VTable: Array<SixModelObject?>? get() = state.vTable
+    val TypeCheckCache: Array<SixModelObject?>? get() = state.typeCheckCache
+    val ModeFlags: Int get() = state.modeFlags
+    val ContainerSpec: ContainerSpec? get() = state.containerSpec
+    val InvocationSpec: InvocationSpec? get() = state.invocationSpec
+    val BoolificationSpec: BoolificationSpec? get() = state.boolificationSpec
+    val hllOwner: HLLConfig? get() = state.hllOwner
+    val hllRole: Long get() = state.hllRole
 }

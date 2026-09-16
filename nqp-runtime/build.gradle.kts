@@ -41,6 +41,12 @@ dependencies {
     // runner always puts nqp-runtime + the truffle modules on the path together, so
     // TruffleString resolves at runtime from the engine module already present.
     compileOnly("org.graalvm.truffle:truffle-api:${property("truffleVersion")}")
+    // TypeState creates its Assumption through Truffle.getRuntime(); the tests run
+    // without the engine module, so the default (interpreter) runtime supplies it.
+    // testImplementation, not testRuntimeOnly: TypeStateTest reads Assumption.isValid,
+    // so the type has to be on the test COMPILE path too. Test configurations are not
+    // bundled into nqp-runtime.jar, so the main-path isolation above is unaffected.
+    testImplementation("org.graalvm.truffle:truffle-api:${property("truffleVersion")}")
 
     testImplementation(kotlin("test"))
 }

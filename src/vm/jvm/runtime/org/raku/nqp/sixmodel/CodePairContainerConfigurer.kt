@@ -9,14 +9,10 @@ import org.raku.nqp.runtime.ThreadContext
  * container semantics.
  */
 open class CodePairContainerConfigurer : ContainerConfigurer() {
-    /* Sets this container spec in place for the specified STable. */
-    override fun setContainerSpec(tc: ThreadContext, st: STable) {
-        st.ContainerSpec = CodePairContainerSpec()
-    }
+    override fun newContainerSpec(tc: ThreadContext, st: STable): ContainerSpec = CodePairContainerSpec()
 
-    /* Configures the container spec with the specified info. */
-    override fun configureContainerSpec(tc: ThreadContext, st: STable, config: SixModelObject) {
-        val cs = st.ContainerSpec as CodePairContainerSpec
+    override fun configureContainerSpec(tc: ThreadContext, cs: ContainerSpec, config: SixModelObject) {
+        cs as CodePairContainerSpec
         val fetch = config.at_key_boxed(tc, "fetch")
         if (Ops.isnull(fetch) == 1L)
             throw ExceptionHandling.dieInternal(tc,
