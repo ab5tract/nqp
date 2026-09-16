@@ -694,7 +694,7 @@ final class NqpProgramBuilder {
 
     /* ----- table ops with a dedicated operation ----- */
 
-    private enum Op { RUN, GETATTR, BINDATTR, DECONT, ISNULL, ISCONCRETE, ISTYPE, ISCONT, HLLIZE, P6SINK, ASSERTPARAMCHECK, P6TYPECHECKRV, CREATE,
+    private enum Op { RUN, GETATTR, BINDATTR, DECONT, ISNULL, ISCONCRETE, ISTYPE, ISCONT, ISTRUE, ISFALSE, HLLIZE, P6SINK, ASSERTPARAMCHECK, P6TYPECHECKRV, CREATE,
                       INT_BIN, INT_UN, NUM_BIN, NUM_CMP, NUM_NEG, BIGINT_ARITH }
 
     /**
@@ -723,6 +723,8 @@ final class NqpProgramBuilder {
         if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("hllize") && nargs == 1) return Op.HLLIZE;
         if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("istype") && nargs == 2) return Op.ISTYPE;
         if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("iscont") && nargs == 1) return Op.ISCONT;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("istrue") && nargs == 1) return Op.ISTRUE;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("isfalse") && nargs == 1) return Op.ISFALSE;
         return null;
     }
 
@@ -742,6 +744,7 @@ final class NqpProgramBuilder {
         if (id == NqpOps.OP_ISNULL && nargs == 1) return Op.ISNULL;
         if (id == NqpOps.OP_ISCONCRETE && nargs == 1) return Op.ISCONCRETE;
         if (id == NqpOps.OP_ISTYPE && nargs == 2) return Op.ISTYPE;
+        if (id == NqpOps.OP_ISTRUE && nargs == 1) return Op.ISTRUE;
         if (id == NqpOps.OP_HLLIZE && nargs == 1) return Op.HLLIZE;
         if (id == NqpOps.OP_P6SINK && nargs == 1) return Op.P6SINK;
         if (id == NqpOps.OP_ASSERTPARAMCHECK && nargs == 1) return Op.ASSERTPARAMCHECK;
@@ -764,6 +767,8 @@ final class NqpProgramBuilder {
             case ISCONCRETE -> b.beginIsConcreteOp(new NqpTypeOps.IsConcreteSite());
             case ISTYPE -> b.beginIsTypeOp(new NqpTypeOps.IsTypeSite());
             case ISCONT -> b.beginIsContOp(new NqpTypeOps.IsContSite());
+            case ISTRUE -> b.beginIsTrueOp(new NqpTypeOps.IsTrueSite(), 0);
+            case ISFALSE -> b.beginIsTrueOp(new NqpTypeOps.IsTrueSite(), 1);
             case HLLIZE -> b.beginHllizeOp(new NqpTypeOps.HllizeSite());
             case P6SINK -> b.beginP6SinkOp(new NqpTypeOps.SinkSite());
             case ASSERTPARAMCHECK -> b.beginAssertParamCheckOp();
@@ -788,6 +793,8 @@ final class NqpProgramBuilder {
             case ISCONCRETE -> b.endIsConcreteOp();
             case ISTYPE -> b.endIsTypeOp();
             case ISCONT -> b.endIsContOp();
+            case ISTRUE -> b.endIsTrueOp();
+            case ISFALSE -> b.endIsTrueOp();
             case HLLIZE -> b.endHllizeOp();
             case P6SINK -> b.endP6SinkOp();
             case ASSERTPARAMCHECK -> b.endAssertParamCheckOp();
@@ -804,7 +811,7 @@ final class NqpProgramBuilder {
 
     /** A condition child, wrapped in typed truthiness (negated for until). */
     private int walkCond(int at, int condType, int negate, boolean emit) {
-        if (emit) b.beginTruthy(condType, negate);
+        if (emit) b.beginTruthy(condType, negate, condType == NqpWire.T_OBJ ? new NqpTypeOps.IsTrueSite() : NqpTypeOps.NO_SITE);
         at = walk(at, emit);
         if (emit) b.endTruthy();
         return at;
