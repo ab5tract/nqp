@@ -162,6 +162,12 @@ abstract class CompilationUnit {
     open fun serializedBlob(): java.nio.ByteBuffer? =
         throw IllegalStateException("serializedBlob has no meaning on a ${javaClass.simpleName} unit")
 
+    /** The serialized context's stamp: the artifact's CRC32 of the entry the
+     *  blob came from, so a persisted dispatch slot can tell an SC of one
+     *  build from the same handle in another. 0 for a unit that is not an
+     *  artifact (its SC, if any, is built in this process). */
+    open fun serializedStamp(): Int = 0
+
     /** Instantiates and initializes (without deserializing) the nested
      *  unit of the given name that rides in this unit. Only a unit
      *  artifact carries nested units. */

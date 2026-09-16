@@ -10,7 +10,9 @@ import java.nio.charset.StandardCharsets
  *  of a deflated entry is not its data. Zip64 is not supported (no unit
  *  artifact approaches 4 GB). */
 internal object ZipDirectory {
-    class Entry(@JvmField val offset: Int, @JvmField val size: Int)
+    /** [crc] is the entry's CRC32 as the central directory records it: the
+     *  unit loader's stamp for the SC an entry carries (DispatchSlot). */
+    class Entry(@JvmField val offset: Int, @JvmField val size: Int, @JvmField val crc: Int)
 
     private const val EOCD_SIG = 0x06054b50
     private const val CEN_SIG = 0x02014b50
@@ -32,6 +34,7 @@ internal object ZipDirectory {
                 throw IllegalStateException("unit artifact $name: bad central directory entry at $cen")
             val method = buf.getShort(cen + 10).toInt() and 0xFFFF
             val csize = buf.getInt(cen + 20); val usize = buf.getInt(cen + 24)
+            val crc = buf.getInt(cen + 16)
             val nameLen = buf.getShort(cen + 28).toInt() and 0xFFFF
             val extraLen = buf.getShort(cen + 30).toInt() and 0xFFFF
             val commentLen = buf.getShort(cen + 32).toInt() and 0xFFFF
@@ -46,7 +49,7 @@ internal object ZipDirectory {
             val data = loc + 30 + locName + locExtra
             if (data + usize > end)
                 throw IllegalStateException("unit artifact $name: entry $entryName runs past the end ($data + $usize > $end)")
-            out[entryName] = Entry(data, usize)
+            out[entryName] = Entry(data, usize, crc)
             cen += 46 + nameLen + extraLen + commentLen
         }
         return out
