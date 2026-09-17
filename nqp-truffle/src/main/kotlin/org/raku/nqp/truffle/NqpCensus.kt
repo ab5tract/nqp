@@ -8,7 +8,8 @@ import java.util.concurrent.atomic.LongAdder
 /**
  * The op census (milestone 8, Phase B): NQP_OP_CENSUS counts every
  * table op by id, every classlib op by class and method name (the typed
- * road's calls also under classlibTyped= on the header), and every
+ * road's calls also under classlibTyped= and classlibLong= on the
+ * header), and every
  * site's calls, misses, pins (every pin: an unfoldable resolve as much as
  * a polymorphic miss), republishes and named slow paths; printed
  * at exit next to the dispatch stats.

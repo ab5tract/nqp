@@ -2,7 +2,9 @@
 # In-process: one op per arity and flavour answers correctly through the
 # new nodes (the process runs with the road on). Child processes under
 # NQP_OP_CENSUS=1 prove the routing: the header's classlibTyped= counter
-# moves; under NQP_SITES_OFF=classlib it is 0 while the per-name classlib
+# moves, and its classlibLong= counter -- the long flavour's share of it --
+# moves with it but stays strictly below it; under NQP_SITES_OFF=classlib
+# both are 0 while the per-name classlib
 # count is unchanged; under NQP_CLASSLIB_INLINE=1 the typed road still runs;
 # and a continuation captured inside a classlib op's callee (a container
 # FETCH under nqp::decont, with the decont sites off) resumes through the
@@ -12,7 +14,7 @@
 # return stdout as well. This file spawns ./nqp-j-gradle relative to the
 # nqp tree, so prove must run from there.
 
-plan(26);
+plan(27);
 
 my class Queue is repr('ConcBlockingQueue') { }
 my class VMDecoder is repr('Decoder') { }
@@ -102,7 +104,7 @@ my $died := 0;
 try { nqp::unbox_i(Unboxable); CATCH { $died := 1 } }
 is($died, 1, 'an op that dies through the typed road is caught by try');
 
-# ---- routing: the census header's classlibTyped= counter ----------------
+# ---- routing: the census header's classlibTyped= / classlibLong= counters -
 my $loop := 'my $s := 0; my $i := 0; while $i < 1000 { $s := $s + nqp::chars("abc") + nqp::elems(nqp::list(1)); $i++ }; say($s)';
 my %on := nqp::getenvhash();
 %on<NQP_OP_CENSUS> := '1';
@@ -110,6 +112,7 @@ my $typed := child-run($loop, %on);
 is($typed[0], 0, 'the typed-road child exits 0');
 ok(header-field($typed[1], 'classlibTyped') >= 2000, 'chars and elems travel the typed road');
 ok(header-field($typed[1], 'classlibLong') >= 1000, 'chars, context-free INT, travels the long flavour (classlibLong=)');
+ok(header-field($typed[1], 'classlibLong') < header-field($typed[1], 'classlibTyped'), 'the Object flavour does not bump the long total');
 ok(count-of($typed[1], 'classlib', 'Ops.chars') >= 1000, 'the per-name census still counts chars');
 ok(count-of($typed[1], 'classlib', 'Ops.elems') >= 1000, 'and elems');
 
