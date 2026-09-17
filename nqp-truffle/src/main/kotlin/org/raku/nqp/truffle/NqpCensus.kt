@@ -8,7 +8,8 @@ import java.util.concurrent.atomic.LongAdder
 /**
  * The op census (milestone 8, Phase B): NQP_OP_CENSUS counts every
  * table op by id, every classlib op by class and method name, and every
- * site's calls, misses, pins, republishes and named slow paths; printed
+ * site's calls, misses, pins (every pin: an unfoldable resolve as much as
+ * a polymorphic miss), republishes and named slow paths; printed
  * at exit next to the dispatch stats.
  *
  * The knob is PRESENCE-based, like JESP_DEBUG: set or unset, never a
@@ -34,10 +35,12 @@ object NqpCensus {
 
     /** One site class's counters. [slow] is keyed by the path a site names
      *  when it takes a slow road it could not fold (istrue.method,
-     *  findmethod.nonauth). */
+     *  findmethod.nocache, findmethod.advisory). */
     class SiteStats(@JvmField val name: String) {
         @JvmField val calls = LongAdder()
         @JvmField val misses = LongAdder()
+        /** Every pin, whether from polymorphism (misses) or from an
+         *  unfoldable resolve (see slow=[...] for the reason). */
         @JvmField val pins = LongAdder()
         @JvmField val republished = LongAdder()
         @JvmField val slow = ConcurrentHashMap<String, LongAdder>()
@@ -62,7 +65,11 @@ object NqpCensus {
     }
 
     @JvmStatic @TruffleBoundary fun call(s: SiteStats) { s.calls.increment() }
-    @JvmStatic @TruffleBoundary fun miss(s: SiteStats, pinned: Boolean) { s.misses.increment(); if (pinned) s.pins.increment() }
+    @JvmStatic @TruffleBoundary fun miss(s: SiteStats) { s.misses.increment() }
+
+    /** Counted by `Site.pin()` itself, so a resolve-time pin (an
+     *  unfoldable fact) lands here as surely as a miss-time one. */
+    @JvmStatic @TruffleBoundary fun pin(s: SiteStats) { s.pins.increment() }
     @JvmStatic @TruffleBoundary fun republished(s: SiteStats) { s.republished.increment() }
     @JvmStatic @TruffleBoundary fun slow(s: SiteStats, path: String) { s.slow.computeIfAbsent(path) { LongAdder() }.increment() }
 
