@@ -264,8 +264,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static boolean doTruthy(VirtualFrame f, int type, int negate, Object site, Object v) {
             try {
-                if (type == NqpWire.T_OBJ)
-                    return (NqpTypeOps.istrue((NqpTypeOps.IsTrueSite) site, v, 0, tc(f)) != 0) == (negate == 0);
+                /* The site is NO_SITE for a native condition, and for an
+                 * object one built under NQP_SITES_OFF=istrue: both take the
+                 * generic road. The operand is constant, so the test folds. */
+                if (type == NqpWire.T_OBJ && site instanceof NqpTypeOps.IsTrueSite s)
+                    return (NqpTypeOps.istrue(s, v, 0, tc(f)) != 0) == (negate == 0);
                 return NqpOps.truthy(type, v, tc(f)) == (negate == 0);
             } catch (NqpTypeOps.SuspendedIn s) {
                 /* A condition answers a boolean, not a token: the capture
