@@ -65,7 +65,9 @@ object NqpCensus {
         val name = when (site) {
             is NqpOps.ClassLibSite -> site.cls.substringAfterLast('/').removeSuffix(";") + "." + site.meth
             is NqpClassLibRoad.TypedSite -> site.name
-            else -> site.toString()
+            // A third site kind would key the map by a per-instance default
+            // toString(), i.e. grow it without bound: name it by class.
+            else -> site.javaClass.simpleName
         }
         classlib.computeIfAbsent(name) { LongAdder() }.increment()
     }

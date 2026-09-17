@@ -934,7 +934,11 @@ final class NqpOps {
     }
 
     /** JESP_TRACE_CLASSLIB=meth: name, once per distinct current frame, the
-     *  code running that classlib op (the caller's frame when frame-free). */
+     *  code running that classlib op (the caller's frame when frame-free).
+     *  Object flavour only: the typed road's long flavour has no
+     *  ThreadContext to name a frame from and never traces, so a traced op
+     *  that is a context-free INT/UINT of arity 1-3 prints nothing (see
+     *  NqpClassLibRoad). */
     private static final String TRACE_CLASSLIB = System.getenv("JESP_TRACE_CLASSLIB");
     private static final java.util.Set<String> tracedClasslib = new java.util.HashSet<>();
 
