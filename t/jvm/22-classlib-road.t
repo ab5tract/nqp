@@ -12,7 +12,7 @@
 # return stdout as well. This file spawns ./nqp-j-gradle relative to the
 # nqp tree, so prove must run from there.
 
-plan(24);
+plan(26);
 
 my class Queue is repr('ConcBlockingQueue') { }
 my class VMDecoder is repr('Decoder') { }
@@ -109,6 +109,7 @@ my %on := nqp::getenvhash();
 my $typed := child-run($loop, %on);
 is($typed[0], 0, 'the typed-road child exits 0');
 ok(header-field($typed[1], 'classlibTyped') >= 2000, 'chars and elems travel the typed road');
+ok(header-field($typed[1], 'classlibLong') >= 1000, 'chars, context-free INT, travels the long flavour (classlibLong=)');
 ok(count-of($typed[1], 'classlib', 'Ops.chars') >= 1000, 'the per-name census still counts chars');
 ok(count-of($typed[1], 'classlib', 'Ops.elems') >= 1000, 'and elems');
 
@@ -118,6 +119,7 @@ my %off := nqp::getenvhash();
 my $variadic := child-run($loop, %off);
 is($variadic[0], 0, 'the kill-switch child exits 0');
 is(header-field($variadic[1], 'classlibTyped'), 0, 'NQP_SITES_OFF=classlib builds no typed node');
+is(header-field($variadic[1], 'classlibLong'), 0, 'NQP_SITES_OFF=classlib builds no long node either');
 ok(count-of($variadic[1], 'classlib', 'Ops.chars') >= 1000, 'the variadic road still counts chars');
 
 my %inline := nqp::getenvhash();
