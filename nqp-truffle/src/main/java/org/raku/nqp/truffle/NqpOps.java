@@ -185,7 +185,7 @@ final class NqpOps {
      * past HotSpot's 8000-byte HugeMethodLimit, and DontCompileHugeMethods
      * (default true) left it interpreted on every runner: 7.8 % of a
      * CORE.c compile's samples in its own self time (row b2a: 1091 of
-     * 14,055; 1007 of the 2199 table-road samples), and
+     * 14,055; the spike: 1007 of its 2199 table-road samples), and
      * -XX:-DontCompileHugeMethods alone took the compile from 266 s to
      * 246 s (-7.5 %) (milestone 8, B2, spec 6.6). Four pieces of ~95 arms
      * in ascending id order, about 2 KB each, compile under default flags;
