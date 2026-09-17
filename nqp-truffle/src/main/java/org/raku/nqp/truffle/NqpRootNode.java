@@ -267,8 +267,8 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
                 /* The site is NO_SITE for a native condition, and for an
                  * object one built under NQP_SITES_OFF=istrue: both take the
                  * generic road. The operand is constant, so the test folds. */
-                if (type == NqpWire.T_OBJ && site instanceof NqpTypeOps.IsTrueSite s)
-                    return (NqpTypeOps.istrue(s, v, 0, tc(f)) != 0) == (negate == 0);
+                if (type == NqpWire.T_OBJ && site instanceof NqpSiteOps.IsTrueSite s)
+                    return (NqpSiteOps.istrue(s, v, 0, tc(f)) != 0) == (negate == 0);
                 return NqpOps.truthy(type, v, tc(f)) == (negate == 0);
             } catch (NqpTypeOps.SuspendedIn s) {
                 /* A condition answers a boolean, not a token: the capture
@@ -615,7 +615,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doIsCont(VirtualFrame f, Object site, Object o) {
             try {
-                return NqpTypeOps.iscont((NqpTypeOps.IsContSite) site, o);
+                return NqpSiteOps.iscont((NqpSiteOps.IsContSite) site, o);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
@@ -631,7 +631,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doIsTrue(VirtualFrame f, Object site, int negate, Object o) {
             try {
-                return NqpTypeOps.istrue((NqpTypeOps.IsTrueSite) site, o, negate, tc(f));
+                return NqpSiteOps.istrue((NqpSiteOps.IsTrueSite) site, o, negate, tc(f));
             } catch (NqpTypeOps.SuspendedIn s) {
                 return NqpOps.suspendToken(s.sse, s.finish);
             } catch (org.raku.nqp.runtime.SaveStackException sse) {
@@ -652,11 +652,11 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         @Specialization
         static Object doFind(VirtualFrame f, Object site, int kind, Object o, Object name) {
             try {
-                return NqpTypeOps.findmethod((NqpTypeOps.FindMethodSite) site, o, name, kind, tc(f));
+                return NqpSiteOps.findmethod((NqpSiteOps.FindMethodSite) site, o, name, kind, tc(f));
             } catch (NqpTypeOps.SuspendedIn s) {
                 return NqpOps.suspendToken(s.sse, s.finish);
             } catch (org.raku.nqp.runtime.SaveStackException sse) {
-                return kind == NqpTypeOps.FIND_CAN ? NqpOps.suspendToken(sse, NqpWire.T_INT) : NqpOps.suspendToken(sse);
+                return kind == NqpSiteOps.FIND_CAN ? NqpOps.suspendToken(sse, NqpWire.T_INT) : NqpOps.suspendToken(sse);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
             }
