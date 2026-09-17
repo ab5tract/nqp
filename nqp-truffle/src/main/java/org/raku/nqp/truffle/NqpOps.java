@@ -180,7 +180,23 @@ final class NqpOps {
         }
     }
 
+    /* ----- the table road's switch, in four pieces -----
+     * One switch over all 380 arms compiled to 8541 bytes, past HotSpot's
+     * 8000-byte HugeMethodLimit, and DontCompileHugeMethods (default
+     * true) left it interpreted on every runner: 7.8 % of a CORE.c compile
+     * in its own self time, 1007 of 2199 table-road samples (milestone 8,
+     * B2, spec 6.6). Four pieces of ~95 arms in ascending id order, about
+     * 2 KB each, compile under default flags; the dispatcher below is two
+     * compares. tools/build/huge-methods.raku guards the limit. */
+
+    private static final int RUN0_T1 = 95, RUN0_T2 = 193, RUN0_T3 = 288;
+
     private static Object run0(int id, Object[] a, CompilationUnit cu, ThreadContext tc, CallFrame cf) {
+        if (id < RUN0_T2) return id < RUN0_T1 ? run0a(id, a, cu, tc, cf) : run0b(id, a, cu, tc, cf);
+        return id < RUN0_T3 ? run0c(id, a, cu, tc, cf) : run0d(id, a, cu, tc, cf);
+    }
+
+    private static Object run0a(int id, Object[] a, CompilationUnit cu, ThreadContext tc, CallFrame cf) {
         switch (id) {
             case OP_SAY: return Ops.say(str(a[0]), tc);
             case OP_PRINT: return Ops.print(str(a[0]), tc);
@@ -285,6 +301,13 @@ final class NqpOps {
             case OP_EXISTSPOS: return Ops.existspos(smo(a[0]), lng(a[1]), tc);
             case OP_CLONE_ND: return Ops.clone_nd(smo(a[0]), tc);
             case OP_SETCODEOBJ: return Ops.setcodeobj(smo(a[0]), smo(a[1]), tc);
+            default:
+                throw new IllegalStateException("nqpp: unknown op id " + id);
+        }
+    }
+
+    private static Object run0b(int id, Object[] a, CompilationUnit cu, ThreadContext tc, CallFrame cf) {
+        switch (id) {
             case OP_GETCURHLLSYM: return Ops.getcurhllsym(str(a[0]), tc);
             case OP_TAKECLOSURE: return Ops.takeclosure(smo(a[0]), tc);
             case OP_GETCODEOBJ: return Ops.getcodeobj(smo(a[0]), tc);
@@ -299,6 +322,36 @@ final class NqpOps {
             case OP_P6BINDATTRINVRES: {
                 try {
                     return Rak.P6BINDATTRINVRES.invoke(smo(a[0]), smo(a[1]), str(a[2]), smo(a[3]), tc);
+                } catch (Throwable t) { throw sneaky(t); }
+            }
+            case OP_CONTROL: {
+                // The bytecode path's control op: throw the category
+                // dynamically; if a block handler resumes, the result is
+                // waiting in the frame's return register.
+                Ops.throwcatdyn_c(lng(a[0]), tc);
+                return Ops.result_o(cf);
+            }
+            case OP_LASTEXPAYLOAD: return Ops.lastexpayload(tc);
+            case OP_THROWPAYLOADLEX: {
+                Ops._throwpayloadlex_c(lng(a[0]), smo(a[1]), tc);
+                return Ops.result_o(cf);
+            }
+            case OP_THROWPAYLOADLEXCALLER: {
+                Ops._throwpayloadlexcaller_c(lng(a[0]), smo(a[1]), tc);
+                return Ops.result_o(cf);
+            }
+            case OP_ASSERTPARAMCHECK:
+                return Ops.assertparamcheck(lng(a[0]), tc);
+            case OP_BINDCOMPLETE:
+                return Ops.bindcomplete(tc);
+            case OP_P6TYPECHECKRV: {
+                try {
+                    return Rak.P6TYPECHECKRV.invoke(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+                } catch (Throwable t) { throw sneaky(t); }
+            }
+            case OP_P6DECONTRV_RT: {
+                try {
+                    return Rak.P6DECONTRV_RT.invoke(smo(a[0]), smo(a[1]), lng(a[2]), tc);
                 } catch (Throwable t) { throw sneaky(t); }
             }
             case OP_GETATTR_I: return Ops.getattr_i(smo(a[0]), smo(a[1]), str(a[2]), tc);
@@ -319,7 +372,35 @@ final class NqpOps {
             case OP_BINDKEY_I: return Ops.bindkey_i(smo(a[0]), str(a[1]), lng(a[2]), tc);
             case OP_BINDKEY_N: return Ops.bindkey_n(smo(a[0]), str(a[1]), dbl(a[2]), tc);
             case OP_BINDKEY_S: return Ops.bindkey_s(smo(a[0]), str(a[1]), str(a[2]), tc);
+            case OP_ISCONT_I: return Ops.iscont_i(smo(a[0]));
+            case OP_ISCONT_N: return Ops.iscont_n(smo(a[0]));
+            case OP_ISCONT_S: return Ops.iscont_s(smo(a[0]));
+            case OP_HLLLIST: return Ops.hlllist(tc);
+            case OP_HLLHASH: return Ops.hllhash(tc);
+            case OP_BOOTARRAY: return Ops.bootarray(tc);
+            case OP_BOOTINTARRAY: return Ops.bootintarray(tc);
+            case OP_BOOTNUMARRAY: return Ops.bootnumarray(tc);
+            case OP_BOOTSTRARRAY: return Ops.bootstrarray(tc);
+            case OP_PUSH_I: return Ops.push_i(smo(a[0]), lng(a[1]), tc);
+            case OP_PUSH_N: return Ops.push_n(smo(a[0]), dbl(a[1]), tc);
+            case OP_PUSH_S: return Ops.push_s(smo(a[0]), str(a[1]), tc);
             case OP_HLLBOOL: return Ops.hllbool(lng(a[0]), tc);
+            case OP_ISTYPE_ND: return Ops.istype_nd(smo(a[0]), smo(a[1]), tc);
+            case OP_WHO: return Ops.who(smo(a[0]), tc);
+            case OP_GETPAYLOAD: return Ops.getpayload(smo(a[0]), tc);
+            case OP_ITERATOR: return Ops.iter(smo(a[0]), tc);
+            case OP_ITERVAL: return Ops.iterval(smo(a[0]), tc);
+            case OP_ASSIGN: return Ops.assign(smo(a[0]), smo(a[1]), tc);
+            case OP_P6BINDASSERT: {
+                try {
+                    return Rak.P6BINDASSERT.invoke(smo(a[0]), smo(a[1]), tc);
+                } catch (Throwable t) { throw sneaky(t); }
+            }
+            // Resolve as Ops.hlllist/hllhash do: off the RUNNING frame's
+            // compilation unit, not whichever unit handed the engine this
+            // program. Taking it from `cu` can build a container of the
+            // wrong HLL's type. (Found while bisecting the hash/list binder
+            // bug; not that bug's cause, but wrong on its own terms.)
             case OP_ITERKEY_S: return Ops.iterkey_s(smo(a[0]), tc);
             case OP_SPLICE: return Ops.splice(smo(a[0]), smo(a[1]), lng(a[2]), lng(a[3]), tc);
             case OP_HOW: return Ops.how(smo(a[0]), tc);
@@ -331,7 +412,44 @@ final class NqpOps {
             case OP_ASSIGN_N: return Ops.assign_n(smo(a[0]), dbl(a[1]), tc);
             case OP_ASSIGN_S: return Ops.assign_s(smo(a[0]), str(a[1]), tc);
             case OP_EXCEPTION: return Ops.exception(tc);
+            case OP_GETEXTYPE: return Ops.getextype(smo(a[0]), tc);
+            case OP_SETEXTYPE: return Ops.setextype(smo(a[0]), lng(a[1]), tc);
+            case OP_SETPAYLOAD: return Ops.setpayload(smo(a[0]), smo(a[1]), tc);
+            case OP_GETMESSAGE: return Ops.getmessage(smo(a[0]), tc);
+            case OP_SETMESSAGE: return Ops.setmessage(smo(a[0]), str(a[1]), tc);
+            case OP_NEWEXCEPTION: return Ops.newexception(tc);
+            case OP_BACKTRACE: return Ops.backtrace(smo(a[0]), tc);
+            case OP_BACKTRACESTRINGS: return Ops.backtracestrings(smo(a[0]), tc);
+            case OP_ISFALSE: return Ops.isfalse(smo(a[0]), tc);
+            case OP_ISBIG_I: return Ops.isbig_I(smo(a[0]), tc);
+            case OP_ATPOSREF_I: return Ops.atposref_i(smo(a[0]), lng(a[1]), tc);
+            case OP_ATPOSREF_U: return Ops.atposref_u(smo(a[0]), lng(a[1]), tc);
+            case OP_ISRWCONT: return Ops.isrwcont(smo(a[0]), tc);
+            // The bytecode path's :cont ops: throw, and if a handler
+            // resumed, the result waits in the frame's return register --
+            // the same shape OP_THROWPAYLOADLEX takes.
+            case OP_DIE_S: {
+                Ops.die_s_c(str(a[0]), tc);
+                return Ops.result_s(cf);
+            }
+            case OP_THROW: {
+                Ops._throw_c(smo(a[0]), tc);
+                return Ops.result_o(cf);
+            }
+            case OP_RETHROW: {
+                Ops.rethrow_c(smo(a[0]), tc);
+                return Ops.result_o(cf);
+            }
+            case OP_THROWEXTYPE: {
+                Ops.throwcatdyn_c(lng(a[0]), tc);
+                return Ops.result_o(cf);
+            }
+            // Delimited continuations. continuationcontrol throws a
+            // SaveStackException captured by the enclosing continuationreset;
+            // each records its frame and, on resume, the value is in the
+            // return register -- the same shape as the throw :cont ops.
             case OP_ISCONCRETE_ND: return Ops.isconcrete_nd(smo(a[0]), tc);
+            case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
             case OP_BOX_I2: return Ops.box_i(lng(a[0]), smo(a[1]), tc);
             case OP_BOX_N2: return Ops.box_n(dbl(a[0]), smo(a[1]), tc);
             case OP_BOX_S2: return Ops.box_s(str(a[0]), smo(a[1]), tc);
@@ -339,6 +457,13 @@ final class NqpOps {
             case OP_WHERE: return Ops.where(smo(a[0]), tc);
             case OP_GETLEXCALLER: return Ops.getlexcaller(str(a[0]), tc);
             case OP_GETCOMP: return Ops.getcomp(str(a[0]), tc);
+            default:
+                throw new IllegalStateException("nqpp: unknown op id " + id);
+        }
+    }
+
+    private static Object run0c(int id, Object[] a, CompilationUnit cu, ThreadContext tc, CallFrame cf) {
+        switch (id) {
             case OP_ATPOSREF_N: return Ops.atposref_n(smo(a[0]), lng(a[1]), tc);
             case OP_ATPOSREF_S: return Ops.atposref_s(smo(a[0]), lng(a[1]), tc);
             case OP_ATPOS_U: return Ops.atpos_u(smo(a[0]), lng(a[1]), tc);
@@ -439,6 +564,13 @@ final class NqpOps {
             case OP_BITAND_I_BIG: return Ops.bitand_I(smo(a[0]), smo(a[1]), smo(a[2]), tc);
             case OP_NEG_I_BIG: return Ops.neg_I(smo(a[0]), smo(a[1]), tc);
             case OP_GCD_I_BIG: return Ops.gcd_I(smo(a[0]), smo(a[1]), smo(a[2]), tc);
+            default:
+                throw new IllegalStateException("nqpp: unknown op id " + id);
+        }
+    }
+
+    private static Object run0d(int id, Object[] a, CompilationUnit cu, ThreadContext tc, CallFrame cf) {
+        switch (id) {
             case OP_FROMNUM_I_BIG: return Ops.fromnum_I(dbl(a[0]), smo(a[1]), tc);
             case OP_RAND_I_BIG: return Ops.rand_I(smo(a[0]), smo(a[1]), tc);
             case OP_UNBOX_U: return Ops.unbox_u(smo(a[0]), tc);
@@ -530,43 +662,6 @@ final class NqpOps {
             case OP_CHOWN: return Ops.chown(str(a[0]), lng(a[1]), lng(a[2]), tc);
             case OP_CHMOD: return Ops.chmod(str(a[0]), lng(a[1]), tc);
             case OP_GETENVHASH: return Ops.getenvhash(tc);
-            case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
-            case OP_GETEXTYPE: return Ops.getextype(smo(a[0]), tc);
-            case OP_SETEXTYPE: return Ops.setextype(smo(a[0]), lng(a[1]), tc);
-            case OP_SETPAYLOAD: return Ops.setpayload(smo(a[0]), smo(a[1]), tc);
-            case OP_GETMESSAGE: return Ops.getmessage(smo(a[0]), tc);
-            case OP_SETMESSAGE: return Ops.setmessage(smo(a[0]), str(a[1]), tc);
-            case OP_NEWEXCEPTION: return Ops.newexception(tc);
-            case OP_BACKTRACE: return Ops.backtrace(smo(a[0]), tc);
-            case OP_BACKTRACESTRINGS: return Ops.backtracestrings(smo(a[0]), tc);
-            case OP_ISFALSE: return Ops.isfalse(smo(a[0]), tc);
-            case OP_ISBIG_I: return Ops.isbig_I(smo(a[0]), tc);
-            case OP_ATPOSREF_I: return Ops.atposref_i(smo(a[0]), lng(a[1]), tc);
-            case OP_ATPOSREF_U: return Ops.atposref_u(smo(a[0]), lng(a[1]), tc);
-            case OP_ISRWCONT: return Ops.isrwcont(smo(a[0]), tc);
-            // The bytecode path's :cont ops: throw, and if a handler
-            // resumed, the result waits in the frame's return register --
-            // the same shape OP_THROWPAYLOADLEX takes.
-            case OP_DIE_S: {
-                Ops.die_s_c(str(a[0]), tc);
-                return Ops.result_s(cf);
-            }
-            case OP_THROW: {
-                Ops._throw_c(smo(a[0]), tc);
-                return Ops.result_o(cf);
-            }
-            case OP_RETHROW: {
-                Ops.rethrow_c(smo(a[0]), tc);
-                return Ops.result_o(cf);
-            }
-            case OP_THROWEXTYPE: {
-                Ops.throwcatdyn_c(lng(a[0]), tc);
-                return Ops.result_o(cf);
-            }
-            // Delimited continuations. continuationcontrol throws a
-            // SaveStackException captured by the enclosing continuationreset;
-            // each records its frame and, on resume, the value is in the
-            // return register -- the same shape as the throw :cont ops.
             case OP_CONTINUATIONRESET: {
                 // reset/invoke are @Throws(Throwable) in Ops.kt; a capture's
                 // SaveStackException travels through sneaky() unchanged and is
@@ -587,64 +682,6 @@ final class NqpOps {
                 return Ops.result_o(cf);
             }
             case OP_SIZED_NUM32: return (double) (float) dbl(a[0]);
-            case OP_ISTYPE_ND: return Ops.istype_nd(smo(a[0]), smo(a[1]), tc);
-            case OP_WHO: return Ops.who(smo(a[0]), tc);
-            case OP_GETPAYLOAD: return Ops.getpayload(smo(a[0]), tc);
-            case OP_ITERATOR: return Ops.iter(smo(a[0]), tc);
-            case OP_ITERVAL: return Ops.iterval(smo(a[0]), tc);
-            case OP_ASSIGN: return Ops.assign(smo(a[0]), smo(a[1]), tc);
-            case OP_P6BINDASSERT: {
-                try {
-                    return Rak.P6BINDASSERT.invoke(smo(a[0]), smo(a[1]), tc);
-                } catch (Throwable t) { throw sneaky(t); }
-            }
-            // Resolve as Ops.hlllist/hllhash do: off the RUNNING frame's
-            // compilation unit, not whichever unit handed the engine this
-            // program. Taking it from `cu` can build a container of the
-            // wrong HLL's type. (Found while bisecting the hash/list binder
-            // bug; not that bug's cause, but wrong on its own terms.)
-            case OP_HLLLIST: return Ops.hlllist(tc);
-            case OP_BOOTARRAY: return Ops.bootarray(tc);
-            case OP_BOOTINTARRAY: return Ops.bootintarray(tc);
-            case OP_BOOTNUMARRAY: return Ops.bootnumarray(tc);
-            case OP_BOOTSTRARRAY: return Ops.bootstrarray(tc);
-            case OP_PUSH_I: return Ops.push_i(smo(a[0]), lng(a[1]), tc);
-            case OP_PUSH_N: return Ops.push_n(smo(a[0]), dbl(a[1]), tc);
-            case OP_PUSH_S: return Ops.push_s(smo(a[0]), str(a[1]), tc);
-            case OP_HLLHASH: return Ops.hllhash(tc);
-            case OP_ISCONT_I: return Ops.iscont_i(smo(a[0]));
-            case OP_ISCONT_N: return Ops.iscont_n(smo(a[0]));
-            case OP_ISCONT_S: return Ops.iscont_s(smo(a[0]));
-            case OP_ASSERTPARAMCHECK:
-                return Ops.assertparamcheck(lng(a[0]), tc);
-            case OP_BINDCOMPLETE:
-                return Ops.bindcomplete(tc);
-            case OP_P6TYPECHECKRV: {
-                try {
-                    return Rak.P6TYPECHECKRV.invoke(smo(a[0]), smo(a[1]), smo(a[2]), tc);
-                } catch (Throwable t) { throw sneaky(t); }
-            }
-            case OP_P6DECONTRV_RT: {
-                try {
-                    return Rak.P6DECONTRV_RT.invoke(smo(a[0]), smo(a[1]), lng(a[2]), tc);
-                } catch (Throwable t) { throw sneaky(t); }
-            }
-            case OP_CONTROL: {
-                // The bytecode path's control op: throw the category
-                // dynamically; if a block handler resumes, the result is
-                // waiting in the frame's return register.
-                Ops.throwcatdyn_c(lng(a[0]), tc);
-                return Ops.result_o(cf);
-            }
-            case OP_LASTEXPAYLOAD: return Ops.lastexpayload(tc);
-            case OP_THROWPAYLOADLEX: {
-                Ops._throwpayloadlex_c(lng(a[0]), smo(a[1]), tc);
-                return Ops.result_o(cf);
-            }
-            case OP_THROWPAYLOADLEXCALLER: {
-                Ops._throwpayloadlexcaller_c(lng(a[0]), smo(a[1]), tc);
-                return Ops.result_o(cf);
-            }
             default:
                 throw new IllegalStateException("nqpp: unknown op id " + id);
         }
