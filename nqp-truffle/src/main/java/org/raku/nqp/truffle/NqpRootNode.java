@@ -329,7 +329,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static long doCall(Object site, Object a0) {
             NqpClassLibRoad.TypedSite s = (NqpClassLibRoad.TypedSite) site;
             try {
-                if (NqpCensus.ON) NqpCensus.classlibTyped(s);
+                if (NqpCensus.ON) NqpCensus.classlibLong(s);
                 return NqpOps.CLASSLIB_INLINE ? NqpClassLibRoad.callLong1(s, a0) : NqpClassLibRoad.long1(s, a0);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
@@ -344,7 +344,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static long doCall(Object site, Object a0, Object a1) {
             NqpClassLibRoad.TypedSite s = (NqpClassLibRoad.TypedSite) site;
             try {
-                if (NqpCensus.ON) NqpCensus.classlibTyped(s);
+                if (NqpCensus.ON) NqpCensus.classlibLong(s);
                 return NqpOps.CLASSLIB_INLINE ? NqpClassLibRoad.callLong2(s, a0, a1) : NqpClassLibRoad.long2(s, a0, a1);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
@@ -359,7 +359,7 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         static long doCall(Object site, Object a0, Object a1, Object a2) {
             NqpClassLibRoad.TypedSite s = (NqpClassLibRoad.TypedSite) site;
             try {
-                if (NqpCensus.ON) NqpCensus.classlibTyped(s);
+                if (NqpCensus.ON) NqpCensus.classlibLong(s);
                 return NqpOps.CLASSLIB_INLINE ? NqpClassLibRoad.callLong3(s, a0, a1, a2) : NqpClassLibRoad.long3(s, a0, a1, a2);
             } catch (Throwable t) {
                 throw NqpOps.carry(t);
