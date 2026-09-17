@@ -7,7 +7,8 @@ import java.util.concurrent.atomic.LongAdder
 
 /**
  * The op census (milestone 8, Phase B): NQP_OP_CENSUS counts every
- * table op by id, every classlib op by class and method name, and every
+ * table op by id, every classlib op by class and method name (the typed
+ * road's calls also under classlibTyped= on the header), and every
  * site's calls, misses, pins (every pin: an unfoldable resolve as much as
  * a polymorphic miss), republishes and named slow paths; printed
  * at exit next to the dispatch stats.
@@ -32,6 +33,7 @@ object NqpCensus {
 
     private val table: Array<LongAdder> = if (ON) Array(NqpOps.OP_COUNT) { LongAdder() } else emptyArray()
     private val classlib: ConcurrentHashMap<String, LongAdder> by lazy { ConcurrentHashMap() }
+    private val typed = LongAdder()
 
     /** One site class's counters. [slow] is keyed by the path a site names
      *  when it takes a slow road it could not fold (istrue.method,
@@ -56,12 +58,24 @@ object NqpCensus {
 
     @JvmStatic @TruffleBoundary fun table(id: Int) { table[id].increment() }
 
-    /** The site is typed Any, not NqpOps.ClassLibSite: that class is
-     *  package-private in Java, and Kotlin refuses to expose it in a public
-     *  signature. ClassLibOp holds it as an Object operand anyway. */
+    /** The site is typed Any: NqpOps.ClassLibSite is package-private in
+     *  Java and Kotlin refuses it in a public signature; the typed road's
+     *  site is the Kotlin TypedSite. Both count under `Ops.meth`. */
     @JvmStatic @TruffleBoundary fun classlib(site: Any) {
-        val s = site as NqpOps.ClassLibSite
-        classlib.computeIfAbsent(s.cls.substringAfterLast('/').removeSuffix(";") + "." + s.meth) { LongAdder() }.increment()
+        val name = when (site) {
+            is NqpOps.ClassLibSite -> site.cls.substringAfterLast('/').removeSuffix(";") + "." + site.meth
+            is NqpClassLibRoad.TypedSite -> site.name
+            else -> site.toString()
+        }
+        classlib.computeIfAbsent(name) { LongAdder() }.increment()
+    }
+
+    /** A call through the typed road (batch 2): the per-name count above
+     *  plus the header's classlibTyped= total, the routing fact
+     *  t/jvm/22-classlib-road.t asserts on. */
+    @JvmStatic @TruffleBoundary fun classlibTyped(site: Any) {
+        classlib(site)
+        typed.increment()
     }
 
     @JvmStatic @TruffleBoundary fun call(s: SiteStats) { s.calls.increment() }
@@ -107,7 +121,7 @@ object NqpCensus {
             val classlibTotal = classlib.values.sumOf { it.sum() }
             val siteCalls = sites.values.sumOf { it.calls.sum() }
             val siteMisses = sites.values.sumOf { it.misses.sum() }
-            System.err.println("op census: table=$tableTotal classlib=$classlibTotal siteCalls=$siteCalls siteMisses=$siteMisses")
+            System.err.println("op census: table=$tableTotal classlib=$classlibTotal siteCalls=$siteCalls siteMisses=$siteMisses classlibTyped=${typed.sum()}")
             table.withIndex().filter { it.value.sum() > 0 }.sortedByDescending { it.value.sum() }
                 .forEach { System.err.println("  table " + it.value.sum() + " " + (names[it.index] ?: "op#${it.index}")) }
             classlib.entries.sortedByDescending { it.value.sum() }

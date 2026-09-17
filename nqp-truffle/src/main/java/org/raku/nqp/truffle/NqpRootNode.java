@@ -240,6 +240,133 @@ public abstract class NqpRootNode extends RootNode implements BytecodeRootNode {
         }
     }
 
+    /* ----- the typed classlib road (milestone 8, B2): one operation per
+     * arity, the site's handle exact-typed, the thread context a real
+     * argument, no Object[] on either side (NqpClassLibRoad). ClassLibOp
+     * above stays for arity 5-6 and under NQP_SITES_OFF=classlib. The long
+     * operations serve context-free INT/UINT ops only: no capture is
+     * possible there, so no token and no suspend-check wrapper. ----- */
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class ClassLib0 {
+        @Specialization
+        static Object doCall(VirtualFrame f, Object site) {
+            NqpClassLibRoad.TypedSite s = (NqpClassLibRoad.TypedSite) site;
+            try {
+                if (NqpCensus.ON) NqpCensus.classlibTyped(s);
+                return NqpOps.CLASSLIB_INLINE ? NqpClassLibRoad.call0(s, tc(f)) : NqpClassLibRoad.obj0(s, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class ClassLib1 {
+        @Specialization
+        static Object doCall(VirtualFrame f, Object site, Object a0) {
+            NqpClassLibRoad.TypedSite s = (NqpClassLibRoad.TypedSite) site;
+            try {
+                if (NqpCensus.ON) NqpCensus.classlibTyped(s);
+                return NqpOps.CLASSLIB_INLINE ? NqpClassLibRoad.call1(s, a0, tc(f)) : NqpClassLibRoad.obj1(s, a0, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class ClassLib2 {
+        @Specialization
+        static Object doCall(VirtualFrame f, Object site, Object a0, Object a1) {
+            NqpClassLibRoad.TypedSite s = (NqpClassLibRoad.TypedSite) site;
+            try {
+                if (NqpCensus.ON) NqpCensus.classlibTyped(s);
+                return NqpOps.CLASSLIB_INLINE ? NqpClassLibRoad.call2(s, a0, a1, tc(f)) : NqpClassLibRoad.obj2(s, a0, a1, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class ClassLib3 {
+        @Specialization
+        static Object doCall(VirtualFrame f, Object site, Object a0, Object a1, Object a2) {
+            NqpClassLibRoad.TypedSite s = (NqpClassLibRoad.TypedSite) site;
+            try {
+                if (NqpCensus.ON) NqpCensus.classlibTyped(s);
+                return NqpOps.CLASSLIB_INLINE ? NqpClassLibRoad.call3(s, a0, a1, a2, tc(f)) : NqpClassLibRoad.obj3(s, a0, a1, a2, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class ClassLib4 {
+        @Specialization
+        static Object doCall(VirtualFrame f, Object site, Object a0, Object a1, Object a2, Object a3) {
+            NqpClassLibRoad.TypedSite s = (NqpClassLibRoad.TypedSite) site;
+            try {
+                if (NqpCensus.ON) NqpCensus.classlibTyped(s);
+                return NqpOps.CLASSLIB_INLINE ? NqpClassLibRoad.call4(s, a0, a1, a2, a3, tc(f)) : NqpClassLibRoad.obj4(s, a0, a1, a2, a3, tc(f));
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class ClassLibLong1 {
+        @Specialization
+        static long doCall(Object site, Object a0) {
+            NqpClassLibRoad.TypedSite s = (NqpClassLibRoad.TypedSite) site;
+            try {
+                if (NqpCensus.ON) NqpCensus.classlibTyped(s);
+                return NqpOps.CLASSLIB_INLINE ? NqpClassLibRoad.callLong1(s, a0) : NqpClassLibRoad.long1(s, a0);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class ClassLibLong2 {
+        @Specialization
+        static long doCall(Object site, Object a0, Object a1) {
+            NqpClassLibRoad.TypedSite s = (NqpClassLibRoad.TypedSite) site;
+            try {
+                if (NqpCensus.ON) NqpCensus.classlibTyped(s);
+                return NqpOps.CLASSLIB_INLINE ? NqpClassLibRoad.callLong2(s, a0, a1) : NqpClassLibRoad.long2(s, a0, a1);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = Object.class, name = "site")
+    public static final class ClassLibLong3 {
+        @Specialization
+        static long doCall(Object site, Object a0, Object a1, Object a2) {
+            NqpClassLibRoad.TypedSite s = (NqpClassLibRoad.TypedSite) site;
+            try {
+                if (NqpCensus.ON) NqpCensus.classlibTyped(s);
+                return NqpOps.CLASSLIB_INLINE ? NqpClassLibRoad.callLong3(s, a0, a1, a2) : NqpClassLibRoad.long3(s, a0, a1, a2);
+            } catch (Throwable t) {
+                throw NqpOps.carry(t);
+            }
+        }
+    }
+
     /** A type coercion from the {@link NqpOps} kind table. */
     @Operation
     @ConstantOperand(type = int.class, name = "kind")
