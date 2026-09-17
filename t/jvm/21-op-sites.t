@@ -9,7 +9,7 @@
 # This file spawns ./nqp-j-gradle (the gradle-generated runner) relative
 # to the nqp tree, so prove must run from there.
 
-plan(30);
+plan(31);
 
 my class Queue is repr('ConcBlockingQueue') { }
 my class VMDecoder is repr('Decoder') { }
@@ -86,7 +86,9 @@ my $i := 0;
 while $i < 200 { $c := is_cont($cf); $i++ }
 is($c, 0, 'iscont folds 0 for a plain class');
 nqp::setcontspec(ContFoo, 'code_pair', nqp::hash('fetch', -> $cont { 42 }, 'store', -> $cont, $v { }));
-is(is_cont($cf), 1, 'an iscont site resolved before setcontspec sees the container spec');
+$i := 0;
+while $i < 200 { $c := is_cont($cf); $i++ }
+is($c, 1, 'an iscont site resolved before setcontspec sees the container spec');
 
 my $cont-child := child-stderr(
     'class Foo { }; my $o := Foo.new; my $i := 0; my $n := 0; while $i < 1000 { $n := $n + nqp::iscont($o); $i++ }; say($n)',
@@ -129,9 +131,10 @@ ok(count-of($true-err, 'classlib', 'Ops.istrue') < 0 && count-of($true-err, 'cla
 
 # ---- findmethod / tryfindmethod / can ---------------------------------
 # NQPClassHOW publishes an AUTHORITATIVE method cache at compose and
-# demotes it on add_method (setmethcacheauth 0). A site folds the cache's
-# answer only while it is authoritative; the demotion republishes the
-# type, and the site must then take the HOW road and see the new method.
+# demotes it on add_method (setmethcacheauth 0). A site folds a cache HIT
+# under any authority and a MISS only under an authoritative cache
+# (Ruling 7); the demotion republishes the type, and the has_x site (a
+# folded miss) must then take the HOW road and see the new method.
 class MethBase { method m() { 'old' } }
 class MethFoo is MethBase { }
 sub has_m($o) { nqp::can($o, 'm') }
@@ -178,3 +181,19 @@ ok(site-field($reach-err, 'CreateSite', 'calls') >= 1000, 'a source-level create
 ok(count-of($reach-err, 'classlib', 'Ops.decont') < 0 && count-of($reach-err, 'classlib', 'Ops.isconcrete') < 0 && count-of($reach-err, 'classlib', 'Ops.create') < 0,
    'none of the three travels the classlib road');
 ok(site-field($reach-err, 'DecontSite', 'calls') >= 2000, 'the decont (direct and inner) reaches DecontSite');
+
+# ---- NQP_SITES_OFF: the batch kill-switch --------------------------------
+# A name in the knob means the dedicated road is not built at all: the
+# program carries no site for it, and the op travels the road it took
+# before the batch. No rebuild, so a bisect is a child process away.
+my %off := nqp::getenvhash();
+%off<NQP_OP_CENSUS> := '1';
+%off<NQP_SITES_OFF> := 'iscont';
+my $off-child := child-stderr(
+    'class Foo { }; my $o := Foo.new; my $i := 0; my $n := 0; while $i < 1000 { $n := $n + nqp::iscont($o); $i++ }; say($n)',
+    %off);
+my $off-err := $off-child[1];
+ok($off-child[0] == 0
+   && site-field($off-err, 'IsContSite', 'calls') == -1
+   && count-of($off-err, 'classlib', 'Ops.iscont') >= 1000,
+   'NQP_SITES_OFF=iscont builds no IsContSite and sends iscont back to the classlib road');

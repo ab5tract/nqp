@@ -20,6 +20,16 @@ import org.raku.nqp.runtime.CallSiteDescriptor;
  *   loop rather than growing a control-flow feature: the walker can walk
  *   any subtree twice because the wire form is just ints.</li>
  * </ul>
+ *
+ * <p>{@code NQP_SITES_OFF=name,...} (or {@code all}): those dedicated roads
+ * are not built — the generic table/classlib road runs instead. A bisect
+ * tool: it needs no rebuild, and a program built with a name off carries no
+ * site for it. The names are {@code iscont}, {@code istrue} (istrue, isfalse
+ * and the {@code Truthy} object arm), {@code findmethod} (findmethod,
+ * tryfindmethod, can), {@code reach} (the by-name decont/isconcrete/create
+ * arms), {@code istype}, {@code hllize}, {@code decont}, {@code isconcrete},
+ * {@code create}, {@code p6sink}, {@code p6typecheckrv}, {@code bigint} and
+ * {@code getattr} (getattr and bindattr).
  */
 final class NqpProgramBuilder {
 
@@ -40,6 +50,26 @@ final class NqpProgramBuilder {
      *  construction would number one node twice; the offset does not. */
     private final java.util.HashMap<Integer, Integer> siteOrdinals = new java.util.HashMap<>();
     private static final boolean SITE_CHECK = System.getenv("NQP_SITE_CHECK") != null;
+
+    /** NQP_SITES_OFF, read once: the dedicated roads this process does not
+     *  build (see the class comment). Empty unless the knob is set. */
+    private static final java.util.Set<String> SITES_OFF = sitesOff();
+
+    private static java.util.Set<String> sitesOff() {
+        String v = System.getenv("NQP_SITES_OFF");
+        if (v == null) return java.util.Set.of();
+        java.util.HashSet<String> out = new java.util.HashSet<>();
+        for (String n : v.split(",")) {
+            String t = n.trim().toLowerCase(java.util.Locale.ROOT);
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
+    }
+
+    /** Whether one dedicated road is switched off for this process. */
+    private static boolean off(String name) {
+        return !SITES_OFF.isEmpty() && (SITES_OFF.contains("all") || SITES_OFF.contains(name));
+    }
 
     private NqpProgramBuilder(NqpRootNodeGen.Builder b, NqpWire.Program p, ProgramIdentity identity) {
         this.b = b;
@@ -720,16 +750,20 @@ final class NqpProgramBuilder {
      * only tryfindmethod is a table op (dedicatedOp).
      */
     private static Op dedicatedClasslib(String cls, String meth, int nargs) {
-        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("hllize") && nargs == 1) return Op.HLLIZE;
-        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("istype") && nargs == 2) return Op.ISTYPE;
-        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("iscont") && nargs == 1) return Op.ISCONT;
-        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("istrue") && nargs == 1) return Op.ISTRUE;
-        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("isfalse") && nargs == 1) return Op.ISFALSE;
-        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("findmethod") && nargs == 2) return Op.FINDMETHOD;
-        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("can") && nargs == 2) return Op.CAN;
-        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("decont") && nargs == 1) return Op.DECONT;
-        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("isconcrete") && nargs == 1) return Op.ISCONCRETE;
-        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("create") && nargs == 1) return Op.CREATE;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("hllize") && nargs == 1 && !off("hllize")) return Op.HLLIZE;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("istype") && nargs == 2 && !off("istype")) return Op.ISTYPE;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("iscont") && nargs == 1 && !off("iscont")) return Op.ISCONT;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("istrue") && nargs == 1 && !off("istrue")) return Op.ISTRUE;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("isfalse") && nargs == 1 && !off("istrue")) return Op.ISFALSE;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("findmethod") && nargs == 2 && !off("findmethod")) return Op.FINDMETHOD;
+        // Compiler.nqp:948 registers tryfindmethod onto findmethodNonFatal as
+        // well; the op3 row wins today, so this arm covers a caller compiled
+        // without the row.
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("findmethodNonFatal") && nargs == 2 && !off("findmethod")) return Op.FINDMETHOD_TRY;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("can") && nargs == 2 && !off("findmethod")) return Op.CAN;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("decont") && nargs == 1 && !off("reach") && !off("decont")) return Op.DECONT;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("isconcrete") && nargs == 1 && !off("reach") && !off("isconcrete")) return Op.ISCONCRETE;
+        if (cls.equals("Lorg/raku/nqp/runtime/Ops;") && meth.equals("create") && nargs == 1 && !off("reach") && !off("create")) return Op.CREATE;
         return null;
     }
 
@@ -743,22 +777,26 @@ final class NqpProgramBuilder {
             case NqpNativeOps.NUM_NEG: return Op.NUM_NEG;
             default: break;
         }
-        if (id == NqpOps.OP_GETATTR && nargs == 3) return Op.GETATTR;
-        if (id == NqpOps.OP_BINDATTR && nargs == 4) return Op.BINDATTR;
-        if (id == NqpOps.OP_DECONT && nargs == 1) return Op.DECONT;
+        if (id == NqpOps.OP_GETATTR && nargs == 3 && !off("getattr")) return Op.GETATTR;
+        if (id == NqpOps.OP_BINDATTR && nargs == 4 && !off("getattr")) return Op.BINDATTR;
+        if (id == NqpOps.OP_DECONT && nargs == 1 && !off("decont")) return Op.DECONT;
         if (id == NqpOps.OP_ISNULL && nargs == 1) return Op.ISNULL;
-        if (id == NqpOps.OP_ISCONCRETE && nargs == 1) return Op.ISCONCRETE;
-        if (id == NqpOps.OP_ISTYPE && nargs == 2) return Op.ISTYPE;
-        if (id == NqpOps.OP_ISTRUE && nargs == 1) return Op.ISTRUE;
-        if (id == NqpOps.OP_TRYFINDMETHOD && nargs == 2) return Op.FINDMETHOD_TRY;
-        if (id == NqpOps.OP_FINDMETHOD && nargs == 2) return Op.FINDMETHOD;
-        if (id == NqpOps.OP_CAN && nargs == 2) return Op.CAN;
-        if (id == NqpOps.OP_HLLIZE && nargs == 1) return Op.HLLIZE;
-        if (id == NqpOps.OP_P6SINK && nargs == 1) return Op.P6SINK;
+        if (id == NqpOps.OP_ISCONCRETE && nargs == 1 && !off("isconcrete")) return Op.ISCONCRETE;
+        if (id == NqpOps.OP_ISTYPE && nargs == 2 && !off("istype")) return Op.ISTYPE;
+        if (id == NqpOps.OP_ISTRUE && nargs == 1 && !off("istrue")) return Op.ISTRUE;
+        // A dead symmetry line, as the others: nqp's encoder has no op3 row
+        // for iscont, so it arrives as a classlib op.
+        if (id == NqpOps.OP_ISCONT && nargs == 1 && !off("iscont")) return Op.ISCONT;
+        if (id == NqpOps.OP_TRYFINDMETHOD && nargs == 2 && !off("findmethod")) return Op.FINDMETHOD_TRY;
+        if (id == NqpOps.OP_FINDMETHOD && nargs == 2 && !off("findmethod")) return Op.FINDMETHOD;
+        if (id == NqpOps.OP_CAN && nargs == 2 && !off("findmethod")) return Op.CAN;
+        if (id == NqpOps.OP_HLLIZE && nargs == 1 && !off("hllize")) return Op.HLLIZE;
+        if (id == NqpOps.OP_P6SINK && nargs == 1 && !off("p6sink")) return Op.P6SINK;
         if (id == NqpOps.OP_ASSERTPARAMCHECK && nargs == 1) return Op.ASSERTPARAMCHECK;
-        if (id == NqpOps.OP_P6TYPECHECKRV && nargs == 3) return Op.P6TYPECHECKRV;
-        if (id == NqpOps.OP_CREATE && nargs == 1) return Op.CREATE;
-        if ((id == NqpOps.OP_ADD_I_BIG || id == NqpOps.OP_SUB_I_BIG || id == NqpOps.OP_MUL_I_BIG) && nargs == 3)
+        if (id == NqpOps.OP_P6TYPECHECKRV && nargs == 3 && !off("p6typecheckrv")) return Op.P6TYPECHECKRV;
+        if (id == NqpOps.OP_CREATE && nargs == 1 && !off("create")) return Op.CREATE;
+        if ((id == NqpOps.OP_ADD_I_BIG || id == NqpOps.OP_SUB_I_BIG || id == NqpOps.OP_MUL_I_BIG) && nargs == 3
+                && !off("bigint"))
             return Op.BIGINT_ARITH;
         return Op.RUN;
     }
@@ -825,7 +863,10 @@ final class NqpProgramBuilder {
 
     /** A condition child, wrapped in typed truthiness (negated for until). */
     private int walkCond(int at, int condType, int negate, boolean emit) {
-        if (emit) b.beginTruthy(condType, negate, condType == NqpWire.T_OBJ ? new NqpTypeOps.IsTrueSite() : NqpTypeOps.NO_SITE);
+        // NO_SITE also when istrue is switched off: Truthy then takes the
+        // generic road it took before batch 1.
+        if (emit) b.beginTruthy(condType, negate,
+            condType == NqpWire.T_OBJ && !off("istrue") ? new NqpTypeOps.IsTrueSite() : NqpTypeOps.NO_SITE);
         at = walk(at, emit);
         if (emit) b.endTruthy();
         return at;

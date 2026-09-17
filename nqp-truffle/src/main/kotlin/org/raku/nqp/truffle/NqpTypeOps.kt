@@ -106,8 +106,12 @@ object NqpTypeOps {
         /** Whether the site may still (re)speculate. */
         fun mayResolve(): Boolean = misses < MAX_MISSES
 
-        /** Give the site up: generic from here on. */
-        fun pin() { misses = MAX_MISSES }
+        /** Give the site up: generic from here on. Every pin is counted
+         *  here -- resolve-time (an unfoldable fact) and miss-time alike. */
+        fun pin() {
+            misses = MAX_MISSES
+            if (NqpCensus.ON) NqpCensus.pin(stats)
+        }
 
         /** The resolved type's facts still hold. */
         fun valid(): Boolean { val s = state; return s != null && s.assumption.isValid }
@@ -385,8 +389,9 @@ object NqpTypeOps {
         val misses = site.misses + 1
         site.reset()
         site.misses = misses
+        /* pin() counts the pin itself, so miss() counts only the miss. */
         if (misses >= MAX_MISSES) site.pin()
-        if (NqpCensus.ON) NqpCensus.miss(site.stats, misses >= MAX_MISSES)
+        if (NqpCensus.ON) NqpCensus.miss(site.stats)
         if (DEBUG) debug("miss " + site.javaClass.simpleName + " #" + misses)
     }
 
@@ -608,6 +613,9 @@ object NqpTypeOps {
             else miss(site)
         }
         if (NqpCensus.ON) NqpCensus.slow(site.stats, if (site.mayResolve()) "generic" else "pinned")
+        /* no boundary on purpose: Ops.iscont is two field reads, cheaper
+         * inline than a boundary crossing (unlike the siblings' slow roads,
+         * which call into the runtime proper). */
         return Ops.iscont(o)
     }
 
@@ -616,8 +624,13 @@ object NqpTypeOps {
         if (!o.stInitialized) { site.pin(); return }
         val st = o.st
         val s = st.state
-        site.st = st; site.state = s
+        /* st last: a reader that sees st non-null must see the fold it
+         * licenses (the file's convention, see resolveDecont/resolveCreate);
+         * this orders plain stores, it is not a fence -- the milestone-level
+         * item is recorded in the ledger. */
         site.result = if (s.containerSpec == null) 0L else 1L
+        site.state = s
+        site.st = st
         if (DEBUG) debug("iscont site resolved " + site.result + " on " + st.debugName)
     }
 
@@ -659,7 +672,18 @@ object NqpTypeOps {
              * value, which is no longer a container (see istype). */
             throw suspendedIn(sse, java.util.function.Function { fetched -> istrue(site, fetched, negate, tc) })
         }
-        val truth = truth(site, v, tc)
+        /* a mode-0 boolification is user code: its capture must resume
+         * through this op's negate, as the decont's does. The resumed
+         * value is the boolify METHOD's result -- an object, read as one
+         * (NqpOps.suspendToken's finisher overload) -- so the lost tail is
+         * Ops.istrue OF that object (Ops.istrue's own mode-0 road ends in
+         * `istrue(result_o(...))`), and then the negate. */
+        val truth = try {
+            truth(site, v, tc)
+        } catch (sse: SaveStackException) {
+            throw suspendedIn(sse, java.util.function.Function { t ->
+                val tt = truthy(t, tc); if (negate == 0) tt else 1L - tt })
+        }
         return if (negate == 0) truth else 1L - truth
     }
 
@@ -709,7 +733,10 @@ object NqpTypeOps {
             BoolificationSpec.MODE_UNBOX_NUM, BoolificationSpec.MODE_UNBOX_STR_NOT_EMPTY,
             BoolificationSpec.MODE_UNBOX_STR_NOT_EMPTY_OR_ZERO, BoolificationSpec.MODE_HAS_ELEMS,
             BoolificationSpec.MODE_ITER -> {
-                site.st = st; site.state = s; site.mode = mode
+                /* st last (see resolveIsCont). */
+                site.mode = mode
+                site.state = s
+                site.st = st
                 if (DEBUG) debug("istrue site resolved mode " + mode + " on " + st.debugName)
             }
             else -> {
@@ -738,9 +765,10 @@ object NqpTypeOps {
      * runtime returns a hit before it ever consults the flag, see
      * Ops.findmethodNonFatal -- so a hit folds under any cache. A cache
      * MISS only means "no such method" when the cache is AUTHORITATIVE, so
-     * a miss folds to null under an authoritative cache and pins (counted
-     * as `nonauth`) under an advisory one; an absent cache pins the same
-     * way. What is folded is then held under one STable compare, the
+     * a miss folds to null under an authoritative cache and pins under an
+     * advisory one (counted as `advisory`); a state with no method cache at
+     * all pins the same way, under its own key (`nocache`), so the census
+     * says which of the two a site met. What is folded is then held under one STable compare, the
      * name's identity and the state's assumption. Three ops share it:
      * findmethod (fatal on null, through the runtime's error road),
      * tryfindmethod (null on null) and can (0/1).
@@ -793,8 +821,8 @@ object NqpTypeOps {
         val s = st.state
         val cache = s.methodCache
         if (cache == null) {
-            site.pinReason = "nonauth"; site.pin()
-            if (DEBUG) debug("findmethod pin nonauth (no cache): " + st.debugName + "." + name)
+            site.pinReason = "nocache"; site.pin()
+            if (DEBUG) debug("findmethod pin nocache (no method cache): " + st.debugName + "." + name)
             return
         }
         val raw = cache.get(name)
@@ -802,12 +830,15 @@ object NqpTypeOps {
         /* A miss is only "no such method" when the cache is authoritative;
          * under an advisory one the HOW may still find the method. */
         if (hit == null && !s.methodCacheAuthoritative) {
-            site.pinReason = "nonauth"; site.pin()
-            if (DEBUG) debug("findmethod pin nonauth (advisory miss): " + st.debugName + "." + name)
+            site.pinReason = "advisory"; site.pin()
+            if (DEBUG) debug("findmethod pin advisory (miss under an advisory cache): " + st.debugName + "." + name)
             return
         }
-        site.st = st; site.state = s; site.name = name
+        /* st last (see resolveIsCont). */
+        site.name = name
         site.found = hit
+        site.state = s
+        site.st = st
         if (DEBUG) debug("findmethod site resolved " + st.debugName + "." + name + " found=" + (hit != null))
     }
 
@@ -819,7 +850,11 @@ object NqpTypeOps {
     @TruffleBoundary
     private fun findmethodSlow(v: Any?, name: Any?, kind: Int, tc: ThreadContext): Any? {
         val o = v as SixModelObject?
-        val n = if (name is String) name else name.toString()
+        /* Ops.can/findmethodNonFatal/findmethod all take a non-null String,
+         * so a null name has no runtime road to take: it is a builder bug,
+         * named rather than passed on as the string "null". */
+        val n: String = if (name is String) name
+            else name?.toString() ?: throw IllegalArgumentException("findmethod: null name")
         return when (kind) {
             FIND_CAN -> Ops.can(o, n, tc)
             FIND_TRY -> Ops.findmethodNonFatal(o, n, tc)
