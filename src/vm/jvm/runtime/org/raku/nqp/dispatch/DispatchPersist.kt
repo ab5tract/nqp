@@ -40,7 +40,9 @@ object DispatchPersist {
     /** Where verify's lines go; null is stderr. */
     private val verifyLog: String? = System.getenv("NQP_DISPATCH_VERIFY_LOG")
 
-    /** Names each dropped program's reason; a restore is otherwise silent. */
+    /** Names each dropped program's reason; a restore is otherwise silent.
+     *  It also ungates the `dispatch-verify: on` banner in verify mode
+     *  (see the `init` block below). */
     private val TRACE = System.getenv("NQP_DISPATCH_PERSIST_TRACE") != null
 
     private val stores = ConcurrentHashMap<String, UnitStore>()
