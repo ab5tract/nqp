@@ -97,7 +97,11 @@ object DispatchPersist {
 
     init {
         if (mode == Mode.VERIFY) {
-            verifySay("dispatch-verify: on")
+            /* The banner goes to the log (pid-prefixed) or, on request, to
+             * stderr; never to a child's bare stderr, which a test may
+             * anchor a match on (t/nqp/114-pod-panic.t under a verify
+             * suite, milestone 8 B2). The exit summary below stays. */
+            if (verifyLog != null || TRACE) verifySay("dispatch-verify: on")
             Runtime.getRuntime().addShutdownHook(Thread {
                 verifySay("dispatch-verify: matched=$verifyMatched byOutcome=$verifyByOutcome" +
                     " mismatched=$verifyMismatched unseen=$verifyUnseen")
