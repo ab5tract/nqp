@@ -29,7 +29,9 @@ import org.raku.nqp.runtime.CallSiteDescriptor;
  * tryfindmethod, can), {@code reach} (the by-name decont/isconcrete/create
  * arms), {@code istype}, {@code hllize}, {@code decont}, {@code isconcrete},
  * {@code create}, {@code p6sink}, {@code p6typecheckrv}, {@code bigint} and
- * {@code getattr} (getattr and bindattr).
+ * {@code getattr} (getattr and bindattr), and {@code classlib} (the typed
+ * classlib road of batch 2: off, every registry-derived op takes the
+ * variadic ClassLibOp).
  */
 final class NqpProgramBuilder {
 
@@ -662,11 +664,6 @@ final class NqpProgramBuilder {
                 boolean tcArg = code[at + 5] != 0;
                 int nargs = code[at + 6];
                 at += 7 + nargs;   // the arg types are informational here
-                BytecodeLocal ores = emit ? b.createLocal() : null;
-                if (emit) {
-                    b.beginBlock();
-                    b.beginStoreLocal(ores);
-                }
                 // A classlib op with a per-instruction site (jesp diamond 6:
                 // hllize, and istype -- which reaches its IsTypeSite ONLY
                 // through this road, since nqp's encoder has no table row for
@@ -677,13 +674,35 @@ final class NqpProgramBuilder {
                 // T_INT suspension token that the emitSuspendCheck below
                 // handles identically. See dedicatedClasslib.
                 Op cop = dedicatedClasslib(cls, meth, nargs);
+                // Everything else of arity 0-4 takes the typed road (batch 2):
+                // one exact handle per instruction, the context a real
+                // argument. NQP_SITES_OFF=classlib and arity 5-6 keep the
+                // variadic ClassLibOp.
+                NqpClassLibRoad.TypedSite ts = cop == null && !off("classlib")
+                    ? NqpClassLibRoad.site(cls, meth, desc, tcArg, nargs, rtype) : null;
+                if (ts != null && ts.isLong) {
+                    // A long is neither a suspend token nor a Rethrow: no
+                    // store local, no suspend check; the value flows on
+                    // unboxed (boxing elimination is on for long).
+                    if (emit) beginTyped(ts);
+                    for (int i = 0; i < nargs; i++) at = walk(at, emit);
+                    if (emit) endTyped(ts);
+                    return at;
+                }
+                BytecodeLocal ores = emit ? b.createLocal() : null;
+                if (emit) {
+                    b.beginBlock();
+                    b.beginStoreLocal(ores);
+                }
                 if (emit) {
                     if (cop != null) beginOp(cop, -1);
+                    else if (ts != null) beginTyped(ts);
                     else b.beginClassLibOp(rtype, new NqpOps.ClassLibSite(cls, meth, desc, tcArg, nargs));
                 }
                 for (int i = 0; i < nargs; i++) at = walk(at, emit);
                 if (emit) {
                     if (cop != null) endOp(cop);
+                    else if (ts != null) endTyped(ts);
                     else b.endClassLibOp();
                 }
                 if (emit) {
@@ -858,6 +877,48 @@ final class NqpProgramBuilder {
             case NUM_CMP -> b.endNumCmpOp();
             case NUM_NEG -> b.endNumNegOp();
             case BIGINT_ARITH -> b.endBigIntArithOp();
+        }
+    }
+
+    /** The typed classlib node for a site: by arity and flavour. A
+     *  zero-operand operation is emitted, not begun (the DSL's emitX). */
+    private void beginTyped(NqpClassLibRoad.TypedSite s) {
+        if (s.isLong) {
+            switch (s.nargs) {
+                case 1 -> b.beginClassLibLong1(s);
+                case 2 -> b.beginClassLibLong2(s);
+                case 3 -> b.beginClassLibLong3(s);
+                default -> throw new IllegalStateException("nqpp: long classlib arity " + s.nargs + " for " + s.name);
+            }
+            return;
+        }
+        switch (s.nargs) {
+            case 0 -> b.emitClassLib0(s);
+            case 1 -> b.beginClassLib1(s);
+            case 2 -> b.beginClassLib2(s);
+            case 3 -> b.beginClassLib3(s);
+            case 4 -> b.beginClassLib4(s);
+            default -> throw new IllegalStateException("nqpp: typed classlib arity " + s.nargs + " for " + s.name);
+        }
+    }
+
+    private void endTyped(NqpClassLibRoad.TypedSite s) {
+        if (s.isLong) {
+            switch (s.nargs) {
+                case 1 -> b.endClassLibLong1();
+                case 2 -> b.endClassLibLong2();
+                case 3 -> b.endClassLibLong3();
+                default -> throw new IllegalStateException("nqpp: long classlib arity " + s.nargs + " for " + s.name);
+            }
+            return;
+        }
+        switch (s.nargs) {
+            case 0 -> { }
+            case 1 -> b.endClassLib1();
+            case 2 -> b.endClassLib2();
+            case 3 -> b.endClassLib3();
+            case 4 -> b.endClassLib4();
+            default -> throw new IllegalStateException("nqpp: typed classlib arity " + s.nargs + " for " + s.name);
         }
     }
 

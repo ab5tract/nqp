@@ -950,9 +950,10 @@ final class NqpOps {
     }
 
     /** NQP_CLASSLIB_INLINE=1 restores the pre-milestone-7 road (op bodies
-     *  visible to PE) for exactly one measurement; the default is the
-     *  boundary, matching the table road's run(). Read once: a static
-     *  final folds in every program built after it. */
+     *  visible to PE) for measurement; the default is the boundary,
+     *  matching the table road's run(). Read once: a static final folds in
+     *  every program built after it. The same meaning on the typed road
+     *  (NqpClassLibRoad: callN without the boundary vs objN/longN). */
     static final boolean CLASSLIB_INLINE = System.getenv("NQP_CLASSLIB_INLINE") != null;
 
     @TruffleBoundary
