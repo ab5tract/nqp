@@ -812,12 +812,12 @@ final class NqpProgramBuilder {
             case ISNULL -> b.beginIsNullOp();
             case ISCONCRETE -> b.beginIsConcreteOp(new NqpTypeOps.IsConcreteSite());
             case ISTYPE -> b.beginIsTypeOp(new NqpTypeOps.IsTypeSite());
-            case ISCONT -> b.beginIsContOp(new NqpTypeOps.IsContSite());
-            case ISTRUE -> b.beginIsTrueOp(new NqpTypeOps.IsTrueSite(), 0);
-            case ISFALSE -> b.beginIsTrueOp(new NqpTypeOps.IsTrueSite(), 1);
-            case FINDMETHOD -> b.beginFindMethodOp(new NqpTypeOps.FindMethodSite(), NqpTypeOps.FIND_FATAL);
-            case FINDMETHOD_TRY -> b.beginFindMethodOp(new NqpTypeOps.FindMethodSite(), NqpTypeOps.FIND_TRY);
-            case CAN -> b.beginFindMethodOp(new NqpTypeOps.FindMethodSite(), NqpTypeOps.FIND_CAN);
+            case ISCONT -> b.beginIsContOp(new NqpSiteOps.IsContSite());
+            case ISTRUE -> b.beginIsTrueOp(new NqpSiteOps.IsTrueSite(), 0);
+            case ISFALSE -> b.beginIsTrueOp(new NqpSiteOps.IsTrueSite(), 1);
+            case FINDMETHOD -> b.beginFindMethodOp(new NqpSiteOps.FindMethodSite(), NqpSiteOps.FIND_FATAL);
+            case FINDMETHOD_TRY -> b.beginFindMethodOp(new NqpSiteOps.FindMethodSite(), NqpSiteOps.FIND_TRY);
+            case CAN -> b.beginFindMethodOp(new NqpSiteOps.FindMethodSite(), NqpSiteOps.FIND_CAN);
             case HLLIZE -> b.beginHllizeOp(new NqpTypeOps.HllizeSite());
             case P6SINK -> b.beginP6SinkOp(new NqpTypeOps.SinkSite());
             case ASSERTPARAMCHECK -> b.beginAssertParamCheckOp();
@@ -866,7 +866,7 @@ final class NqpProgramBuilder {
         // NO_SITE also when istrue is switched off: Truthy then takes the
         // generic road it took before batch 1.
         if (emit) b.beginTruthy(condType, negate,
-            condType == NqpWire.T_OBJ && !off("istrue") ? new NqpTypeOps.IsTrueSite() : NqpTypeOps.NO_SITE);
+            condType == NqpWire.T_OBJ && !off("istrue") ? new NqpSiteOps.IsTrueSite() : NqpSiteOps.NO_SITE);
         at = walk(at, emit);
         if (emit) b.endTruthy();
         return at;
