@@ -34,6 +34,7 @@ object NqpCensus {
     private val table: Array<LongAdder> = if (ON) Array(NqpOps.OP_COUNT) { LongAdder() } else emptyArray()
     private val classlib: ConcurrentHashMap<String, LongAdder> by lazy { ConcurrentHashMap() }
     private val typed = LongAdder()
+    private val long = LongAdder()
 
     /** One site class's counters. [slow] is keyed by the path a site names
      *  when it takes a slow road it could not fold (istrue.method,
@@ -80,6 +81,14 @@ object NqpCensus {
         typed.increment()
     }
 
+    /** A call through the long flavour (context-free INT/UINT ops of arity
+     *  1-3, plan Ruling 1): the typed total above plus the header's
+     *  classlibLong= total, so a test can tell the two flavours apart. */
+    @JvmStatic @TruffleBoundary fun classlibLong(site: Any) {
+        classlibTyped(site)
+        long.increment()
+    }
+
     @JvmStatic @TruffleBoundary fun call(s: SiteStats) { s.calls.increment() }
     @JvmStatic @TruffleBoundary fun miss(s: SiteStats) { s.misses.increment() }
 
@@ -123,7 +132,7 @@ object NqpCensus {
             val classlibTotal = classlib.values.sumOf { it.sum() }
             val siteCalls = sites.values.sumOf { it.calls.sum() }
             val siteMisses = sites.values.sumOf { it.misses.sum() }
-            System.err.println("op census: table=$tableTotal classlib=$classlibTotal siteCalls=$siteCalls siteMisses=$siteMisses classlibTyped=${typed.sum()}")
+            System.err.println("op census: table=$tableTotal classlib=$classlibTotal siteCalls=$siteCalls siteMisses=$siteMisses classlibTyped=${typed.sum()} classlibLong=${long.sum()}")
             table.withIndex().filter { it.value.sum() > 0 }.sortedByDescending { it.value.sum() }
                 .forEach { System.err.println("  table " + it.value.sum() + " " + (names[it.index] ?: "op#${it.index}")) }
             classlib.entries.sortedByDescending { it.value.sum() }
