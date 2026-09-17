@@ -181,13 +181,18 @@ final class NqpOps {
     }
 
     /* ----- the table road's switch, in four pieces -----
-     * One switch over all 380 arms compiled to 8541 bytes, past HotSpot's
-     * 8000-byte HugeMethodLimit, and DontCompileHugeMethods (default
-     * true) left it interpreted on every runner: 7.8 % of a CORE.c compile
-     * in its own self time, 1007 of 2199 table-road samples (milestone 8,
-     * B2, spec 6.6). Four pieces of ~95 arms in ascending id order, about
-     * 2 KB each, compile under default flags; the dispatcher below is two
-     * compares. tools/build/huge-methods.raku guards the limit. */
+     * One switch over all 380 arms, its last instruction at offset 8541,
+     * past HotSpot's 8000-byte HugeMethodLimit, and DontCompileHugeMethods
+     * (default true) left it interpreted on every runner: 7.8 % of a
+     * CORE.c compile's samples in its own self time (row b2a: 1091 of
+     * 14,055; 1007 of the 2199 table-road samples), and
+     * -XX:-DontCompileHugeMethods alone took the compile from 266 s to
+     * 246 s (-7.5 %) (milestone 8, B2, spec 6.6). Four pieces of ~95 arms
+     * in ascending id order, about 2 KB each, compile under default flags;
+     * the dispatcher below is two compares. tools/build/huge-methods.raku
+     * checks the limit (run it after adding ops: new ids land in run0d,
+     * which has room for roughly 250 more arms before the thresholds need
+     * rebalancing). */
 
     private static final int RUN0_T1 = 95, RUN0_T2 = 193, RUN0_T3 = 288;
 
@@ -375,6 +380,11 @@ final class NqpOps {
             case OP_ISCONT_I: return Ops.iscont_i(smo(a[0]));
             case OP_ISCONT_N: return Ops.iscont_n(smo(a[0]));
             case OP_ISCONT_S: return Ops.iscont_s(smo(a[0]));
+            // Resolve as Ops.hlllist/hllhash do: off the RUNNING frame's
+            // compilation unit, not whichever unit handed the engine this
+            // program. Taking it from `cu` can build a container of the
+            // wrong HLL's type. (Found while bisecting the hash/list binder
+            // bug; not that bug's cause, but wrong on its own terms.)
             case OP_HLLLIST: return Ops.hlllist(tc);
             case OP_HLLHASH: return Ops.hllhash(tc);
             case OP_BOOTARRAY: return Ops.bootarray(tc);
@@ -396,11 +406,6 @@ final class NqpOps {
                     return Rak.P6BINDASSERT.invoke(smo(a[0]), smo(a[1]), tc);
                 } catch (Throwable t) { throw sneaky(t); }
             }
-            // Resolve as Ops.hlllist/hllhash do: off the RUNNING frame's
-            // compilation unit, not whichever unit handed the engine this
-            // program. Taking it from `cu` can build a container of the
-            // wrong HLL's type. (Found while bisecting the hash/list binder
-            // bug; not that bug's cause, but wrong on its own terms.)
             case OP_ITERKEY_S: return Ops.iterkey_s(smo(a[0]), tc);
             case OP_SPLICE: return Ops.splice(smo(a[0]), smo(a[1]), lng(a[2]), lng(a[3]), tc);
             case OP_HOW: return Ops.how(smo(a[0]), tc);
@@ -444,10 +449,6 @@ final class NqpOps {
                 Ops.throwcatdyn_c(lng(a[0]), tc);
                 return Ops.result_o(cf);
             }
-            // Delimited continuations. continuationcontrol throws a
-            // SaveStackException captured by the enclosing continuationreset;
-            // each records its frame and, on resume, the value is in the
-            // return register -- the same shape as the throw :cont ops.
             case OP_ISCONCRETE_ND: return Ops.isconcrete_nd(smo(a[0]), tc);
             case OP_GETHLLSYM: return Ops.gethllsym(str(a[0]), str(a[1]), tc);
             case OP_BOX_I2: return Ops.box_i(lng(a[0]), smo(a[1]), tc);
@@ -662,6 +663,10 @@ final class NqpOps {
             case OP_CHOWN: return Ops.chown(str(a[0]), lng(a[1]), lng(a[2]), tc);
             case OP_CHMOD: return Ops.chmod(str(a[0]), lng(a[1]), tc);
             case OP_GETENVHASH: return Ops.getenvhash(tc);
+            // Delimited continuations. continuationcontrol throws a
+            // SaveStackException captured by the enclosing continuationreset;
+            // each records its frame and, on resume, the value is in the
+            // return register -- the same shape as the throw :cont ops.
             case OP_CONTINUATIONRESET: {
                 // reset/invoke are @Throws(Throwable) in Ops.kt; a capture's
                 // SaveStackException travels through sneaky() unchanged and is
