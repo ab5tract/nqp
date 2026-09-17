@@ -29,11 +29,26 @@ import org.raku.nqp.runtime.ThreadContext
  * arity 1-3 only (plan Ruling 1): without a context an op cannot reach
  * guest code, so it cannot capture, and a long cannot carry a token.
  *
+ * What the default road does NOT do is de-megamorphise the JVM call site.
+ * Behind the default `@TruffleBoundary` ([obj0]-[obj4], [long1]-[long3])
+ * the `invokeExact` inside each `callN` is still ONE JVM call site shared
+ * by every classlib instruction of that arity and flavour -- eight sites
+ * for the process instead of one, not one per instruction. Per-instruction
+ * folding of the `@CompilationFinal` handle happens only under
+ * `NQP_CLASSLIB_INLINE`, where the constant [TypedSite] and its handle are
+ * PE-visible and Graal can inline the target. What the default road removes
+ * is the two `Object[]` allocations and the spreading/boxing adapter.
+ *
  * The declared residual: operands stay boxed (the operand stack is Object
  * for a mixed signature). Arity 5-6 (twenty registrations) and
  * `NQP_SITES_OFF=classlib` keep the variadic node. `NQP_CLASSLIB_INLINE=1`
  * calls the compilation-final handle without the boundary (the
  * milestone 7 knob, same meaning on this road).
+ *
+ * `JESP_TRACE_CLASSLIB` reaches the Object flavour only: the long flavour
+ * has no [ThreadContext] to name a frame from, so [callLong1]-[callLong3]
+ * never trace and a traced op that is a context-free INT/UINT of arity 1-3
+ * (69 registrations) prints nothing.
  */
 object NqpClassLibRoad {
     const val MAX_ARITY = 4

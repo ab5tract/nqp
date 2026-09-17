@@ -22,8 +22,8 @@ import org.raku.nqp.truffle.NqpTypeOps.suspendedIn
 import org.raku.nqp.truffle.NqpTypeOps.truthy
 
 /**
- * The batch 1 sites of milestone 8 Phase B -- iscont, istrue/isfalse (and
- * the Truthy object arm), findmethod/tryfindmethod/can -- moved out of
+ * The batch 1 sites of milestone 8 Phase B -- iscont, istrue/isfalse (which
+ * the Truthy object arm also calls), findmethod/tryfindmethod/can -- moved out of
  * NqpTypeOps.kt when that file passed the spec's thousand-line split point
  * (section 4; 6.1 item 5). The Site base, the registry, DecontSite and the
  * shared helpers stay in NqpTypeOps; batch 2's sites go in a third file.
