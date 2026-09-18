@@ -1,7 +1,6 @@
 package org.raku.nqp.sixmodel
 
 import it.unimi.dsi.fastutil.ints.IntArrayList
-import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap
 
 import org.raku.nqp.runtime.CodeRef
 
@@ -19,14 +18,10 @@ class SerializationContext(@JvmField var handle: String) {
      * drops a slot whose stamp disagrees. */
     @JvmField var stamp: Int = 0
 
-    /* The root set of objects that live in this SC. */
-    private var rootObjects = ArrayList<SixModelObject?>()
-
-    /* The root set of STables that live in this SC. */
-    private var rootStables = ArrayList<STable?>()
-
-    /* The root set of code refs that live in this SC. */
-    private var rootCodes = ArrayList<CodeRef?>()
+    /* The three root sets. */
+    private val objects = RootSet<SixModelObject>()
+    private val stables = RootSet<STable>()
+    private val codes = RootSet<CodeRef>()
 
     /* Repossession info. The following lists have matching indexes, each
      * representing the integer of an object in our root set along with the SC
@@ -42,15 +37,15 @@ class SerializationContext(@JvmField var handle: String) {
     @JvmField var ownedObjects = HashMap<SixModelObject, SixModelObject>()
 
     /* Takes an object and adds it to this SC's root set, and installs a
-     * reposession entry. */
+     * reposession entry. The caller (Ops.scwbObject) moves obj.sc to this
+     * SC afterwards; the index field already points at the new slot. */
     fun repossessObject(origSC: SerializationContext, obj: SixModelObject) {
         /* Check the object really lives in the SC root set. */
-        if (obj.sc!!.rootObjects.indexOf(obj) < 0)
+        if (obj.sc!!.getObjectIndex(obj) < 0)
             throw RuntimeException("Attempt to repossess object not in this context")
 
         /* Add to root set. */
-        val newSlot = rootObjects.size
-        addObject(obj)
+        val newSlot = addObject(obj)
 
         /* Add repossession entry. */
         repIndexes.add(newSlot shl 1)
@@ -60,116 +55,90 @@ class SerializationContext(@JvmField var handle: String) {
     /* Takes an STable and adds it to this SC's root set, and installs a
      * reposession entry. */
     fun repossessSTable(origSC: SerializationContext, st: STable) {
-        /* Add to root set. */
-        val newSlot = rootStables.size
-        addSTable(st)
-
-        /* Add repossession entry. */
+        val newSlot = addSTable(st)
         repIndexes.add((newSlot shl 1) or 1)
         repScs.add(origSC)
     }
 
-    private val objectIndexCache = Object2IntOpenHashMap<SixModelObject>()
-
-    fun addObject(obj: SixModelObject?) {
-        val newIndex = rootObjects.size
-        rootObjects.add(obj)
-        objectIndexCache.put(obj, newIndex)
+    /* Objects. The index lives on the object (scIdx); a lookup validates it
+     * by reading the slot back, so a stale field answers -1, never a wrong
+     * index. */
+    fun addObject(obj: SixModelObject?): Int {
+        val i = objects.add(obj)
+        obj?.scIdx = i
+        return i
     }
 
     fun addObject(obj: SixModelObject?, index: Int) {
-        if (index == rootObjects.size) {
-            rootObjects.add(obj)
-        } else {
-            rootObjects[index] = obj
-        }
-        objectIndexCache.put(obj, index)
+        if (index == objects.size) objects.add(obj) else objects.set(index, obj)
+        obj?.scIdx = index
     }
 
-    fun getObjectIndex(obj: SixModelObject?): Int = objectIndexCache.getInt(obj)
-
-    fun getObject(index: Int): SixModelObject? = rootObjects[index]
-
-    fun objectCount(): Int = rootObjects.size
-
-    fun initObjectList(entries: Int) {
-        rootObjects.ensureCapacity(entries)
-        objectIndexCache.ensureCapacity(entries)
-        for (i in 0 until entries)
-            rootObjects.add(null)
+    fun getObjectIndex(obj: SixModelObject?): Int {
+        val i = obj?.scIdx ?: return -1
+        return if (i >= 0 && i < objects.size && objects.get(i) === obj) i else -1
     }
 
-    private val stableIndexCache = Object2IntOpenHashMap<STable>()
+    fun getObject(index: Int): SixModelObject? = objects.get(index)
+    fun objectCount(): Int = objects.size
+    fun initObjectList(entries: Int) = objects.init(entries)
 
-    fun addSTable(stable: STable?) {
-        val newIndex = rootStables.size
-        rootStables.add(stable)
-        stableIndexCache.put(stable, newIndex)
+    /* STables. */
+    fun addSTable(stable: STable?): Int {
+        val i = stables.add(stable)
+        stable?.scIdx = i
+        return i
     }
 
     fun setSTable(index: Int, stable: STable?) {
-        rootStables[index] = stable
-        stableIndexCache.put(stable, index)
+        stables.set(index, stable)
+        stable?.scIdx = index
     }
 
-    fun getSTableIndex(stable: STable?): Int = stableIndexCache.get(stable)!!
-
-    fun getSTable(index: Int): STable? = rootStables[index]
-
-    fun stableCount(): Int = rootStables.size
-
-    fun initSTableList(entries: Int) {
-        rootStables.ensureCapacity(entries)
-        stableIndexCache.ensureCapacity(entries)
-        for (i in 0 until entries)
-            rootStables.add(null)
+    fun getSTableIndex(stable: STable?): Int {
+        val i = stable?.scIdx ?: return -1
+        return if (i >= 0 && i < stables.size && stables.get(i) === stable) i else -1
     }
 
-    private val codeIndexCache = Object2IntOpenHashMap<CodeRef>()
+    fun getSTable(index: Int): STable? = stables.get(index)
+    fun stableCount(): Int = stables.size
+    fun initSTableList(entries: Int) = stables.init(entries)
 
-    /** The reader knows the code ref count from the unit before it adds
-     *  them one by one; reserving here spares the cache its rehashes. */
-    fun initCodeRefList(entries: Int) {
-        rootCodes.ensureCapacity(entries)
-        codeIndexCache.ensureCapacity(entries)
-    }
+    /* Code refs. */
+    fun initCodeRefList(entries: Int) = codes.ensureCapacity(entries)
 
-    fun addCodeRef(coderef: CodeRef?) {
-        val newIndex = rootCodes.size
-        rootCodes.add(coderef)
-        codeIndexCache.put(coderef, newIndex)
+    fun addCodeRef(coderef: CodeRef?): Int {
+        val i = codes.add(coderef)
+        coderef?.scCodeIdx = i
+        return i
     }
 
     fun addCodeRef(obj: CodeRef?, index: Int) {
-        if (index == rootCodes.size) {
-            rootCodes.add(obj)
-        } else {
-            rootCodes[index] = obj
-        }
-        codeIndexCache.put(obj, index)
+        if (index == codes.size) codes.add(obj) else codes.set(index, obj)
+        obj?.scCodeIdx = index
     }
 
-    fun getCodeIndex(coderef: SixModelObject?): Int = codeIndexCache.get(coderef)!!
+    fun getCodeIndex(coderef: SixModelObject?): Int {
+        val cr = coderef as? CodeRef ?: return -1
+        val i = cr.scCodeIdx
+        return if (i >= 0 && i < codes.size && codes.get(i) === cr) i else -1
+    }
 
-    fun getCodeRef(index: Int): CodeRef? = rootCodes[index]
-
-    fun coderefCount(): Int = rootCodes.size
+    fun getCodeRef(index: Int): CodeRef? = codes.get(index)
+    fun coderefCount(): Int = codes.size
 
     fun disclaimObjects() {
-        for (obj in rootObjects)
-            obj?.sc = null
-        rootObjects = ArrayList()
+        for (i in 0 until objects.size) objects.get(i)?.let { it.sc = null; it.scIdx = -1 }
+        objects.clear()
     }
 
     fun disclaimSTables() {
-        for (stable in rootStables)
-            stable?.sc = null
-        rootStables = ArrayList()
+        for (i in 0 until stables.size) stables.get(i)?.let { it.sc = null; it.scIdx = -1 }
+        stables.clear()
     }
 
     fun disclaimCodes() {
-        for (obj in rootCodes)
-            obj?.sc = null
-        rootCodes = ArrayList()
+        for (i in 0 until codes.size) codes.get(i)?.let { it.sc = null; it.scCodeIdx = -1 }
+        codes.clear()
     }
 }

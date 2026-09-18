@@ -802,6 +802,25 @@ class SerializationWriter(
         }
     }
 
+    /* The index a repossessed thing had in the SC it came FROM. Its own index
+     * field points at the slot it was repossessed INTO, so the context answers
+     * -1 for the original SC and the old slot has to be scanned for (MoarVM
+     * falls back the same way in MVM_sc_find_object_idx). Only repossession
+     * entries take this road, and there are few of them. */
+    private fun origIndexOfObject(origSC: SerializationContext, obj: SixModelObject): Int {
+        val fast = origSC.getObjectIndex(obj)
+        if (fast >= 0) return fast
+        for (i in 0 until origSC.objectCount()) if (origSC.getObject(i) === obj) return i
+        return -1
+    }
+
+    private fun origIndexOfSTable(origSC: SerializationContext, st: STable): Int {
+        val fast = origSC.getSTableIndex(st)
+        if (fast >= 0) return fast
+        for (i in 0 until origSC.stableCount()) if (origSC.getSTable(i) === st) return i
+        return -1
+    }
+
     /* Goes through the list of repossessions and serializes them all. */
     private fun serializeRepossessions() {
         /* Allocate table space, provided we've actually something to do. */
@@ -819,9 +838,9 @@ class SerializationWriter(
             /* Work out original object's SC location. */
             val origSCIdx = getSCId(origSC)
             val origIdx = if (isST != 0)
-                origSC.getSTableIndex(sc.getSTable(objIdx)!!)
+                origIndexOfSTable(origSC, sc.getSTable(objIdx)!!)
             else
-                origSC.getObjectIndex(sc.getObject(objIdx)!!)
+                origIndexOfObject(origSC, sc.getObject(objIdx)!!)
             if (origIdx < 0)
                 throw RuntimeException(
                     "Could not find object when writing repossessions; " +
