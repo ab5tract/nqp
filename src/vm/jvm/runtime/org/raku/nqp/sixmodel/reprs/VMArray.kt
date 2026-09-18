@@ -152,14 +152,12 @@ class VMArray : REPR() {
     }
 
     override fun deserialize_repr_data(tc: ThreadContext, st: STable, reader: SerializationReader) {
-        if (reader.version >= 7) {
-            val type = reader.readRef()
-            if (Ops.isnull(type) == 0L) {
-                val reprData = VMArrayREPRData()
-                reprData.type = type
-                reprData.ss = type!!.st.REPR.get_storage_spec(tc, type.st)
-                st.REPRData = reprData
-            }
+        val type = reader.readRef()
+        if (Ops.isnull(type) == 0L) {
+            val reprData = VMArrayREPRData()
+            reprData.type = type
+            reprData.ss = type!!.st.REPR.get_storage_spec(tc, type.st)
+            st.REPRData = reprData
         }
     }
 }

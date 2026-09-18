@@ -104,8 +104,8 @@ class P6int : REPR() {
     }
 
     override fun deserialize_repr_data(tc: ThreadContext, st: STable, reader: SerializationReader) {
-        val bits = if (reader.version >= 7) reader.readLong().toShort() else 64
-        val unsigned = reader.version >= 8 && reader.readLong() != 0L
+        val bits = reader.readLong().toShort()
+        val unsigned = reader.readLong() != 0L
         st.REPRData = StorageSpec.integer(bits, unsigned)
     }
 }

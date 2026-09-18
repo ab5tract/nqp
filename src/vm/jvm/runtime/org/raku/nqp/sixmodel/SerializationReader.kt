@@ -22,16 +22,15 @@ class SerializationReader(
         /* The current version of the serialization format. */
         private const val CURRENT_VERSION = 12
 
-        /* The minimum version of the serialization format. The bootstrap
-         * jars are still 11, so both roads are live here until they are
-         * rebuilt with the format-12 writer. */
-        private const val MIN_VERSION = 11
+        /* The minimum version of the serialization format. Every artifact
+         * in the tree, stage0 included, is written by the format-12 writer,
+         * so 12 is the only format this reads. */
+        private const val MIN_VERSION = 12
 
         /* Various sizes (in bytes). */
         private const val HEADER_SIZE               = 4 * 18
         private const val DEP_TABLE_ENTRY_SIZE      = 8
         private const val STABLES_TABLE_ENTRY_SIZE  = 12
-        private const val OBJECTS_TABLE_ENTRY_SIZE_V11 = 16
         private const val OBJECTS_TABLE_ENTRY_SIZE  = 8
         private const val CLOSURES_TABLE_ENTRY_SIZE = 24
         private const val CONTEXTS_TABLE_ENTRY_SIZE = 16
@@ -89,9 +88,6 @@ class SerializationReader(
     /* Format 12's string heap: the offset table, then the bytes. */
     private var stringOffsetsPos = 0
     private var stringDataPos = 0
-
-    private val v12: Boolean get() = version >= 12
-    private val objRowSize: Int get() = if (v12) OBJECTS_TABLE_ENTRY_SIZE else OBJECTS_TABLE_ENTRY_SIZE_V11
 
     /* Serialization contexts we depend on. */
     private lateinit var dependentSCs: Array<SerializationContext?>
@@ -227,7 +223,7 @@ class SerializationReader(
         objTableEntries = orig.getInt()
         if (objTableOffset < provPos)
             throw RuntimeException("Corruption detected (objects table starts before STables data ends)")
-        provPos = objTableOffset + objTableEntries * objRowSize
+        provPos = objTableOffset + objTableEntries * OBJECTS_TABLE_ENTRY_SIZE
         if (provPos > dataLen)
             throw RuntimeException("Corruption detected (objects table overruns end of data)")
 
@@ -282,25 +278,17 @@ class SerializationReader(
         provPos = stringHeapOffset
         if (provPos > dataLen)
             throw RuntimeException("Corruption detected (string table starts after end of data)")
+        if (stringHeapOffset + 4 * (stringHeapEntries + 1) > dataLen)
+            throw RuntimeException("Corruption detected (string offset table overruns end of data)")
     }
 
     private fun deserializeStringHeap() {
         sh = arrayOfNulls(stringHeapEntries + 1)
         sh[0] = null
-        if (v12) {
-            /* Format 12: an offset table, then the bytes; a string decodes on
-             * its first lookup (lookupString). Nothing is read here. */
-            stringOffsetsPos = stringHeapOffset
-            stringDataPos = stringHeapOffset + 4 * (stringHeapEntries + 1)
-            return
-        }
-        orig.position(stringHeapOffset)
-        for (i in 1..stringHeapEntries) {
-            val len = orig.getInt()
-            val bytes = ByteArray(len)
-            orig.get(bytes, 0, len)
-            sh[i] = String(bytes, Charsets.UTF_8)
-        }
+        /* An offset table, then the bytes; a string decodes on its first
+         * lookup (lookupString). Nothing is read here. */
+        stringOffsetsPos = stringHeapOffset
+        stringDataPos = stringHeapOffset + 4 * (stringHeapEntries + 1)
     }
 
     private fun resolveDependencies() {
@@ -387,22 +375,14 @@ class SerializationReader(
 
     /* The STable of object row i. */
     private fun objRowSTable(i: Int): STable {
-        orig.position(objTableOffset + i * objRowSize)
-        if (!v12) return lookupSTable(orig.getInt(), orig.getInt())
+        orig.position(objTableOffset + i * OBJECTS_TABLE_ENTRY_SIZE)
         val packed = orig.getInt()
         return lookupSTable(packed and 0xFFF, packed ushr 12)
     }
 
     /* Object row i's data offset, or -1 for a type object. */
     private fun objRowDataOffset(i: Int): Int {
-        if (!v12) {
-            orig.position(objTableOffset + i * objRowSize + 12)
-            val flags = orig.getInt()
-            if (flags == 0) return -1
-            orig.position(objTableOffset + i * objRowSize + 8)
-            return orig.getInt()
-        }
-        orig.position(objTableOffset + i * objRowSize + 4)
+        orig.position(objTableOffset + i * OBJECTS_TABLE_ENTRY_SIZE + 4)
         val off = orig.getInt()
         return if (off < 0) -1 else off
     }
@@ -818,14 +798,8 @@ class SerializationReader(
         }
     }
 
-    /* A packed reference (format 12) or the two ints of format 11, as
-     * (scIdx shl 32) or idx. */
+    /* A packed reference, as (scIdx shl 32) or idx. */
     private fun readPackedRef(): Long {
-        if (!v12) {
-            val scIdx = orig.getInt()
-            val idx = orig.getInt()
-            return (scIdx.toLong() shl 32) or (idx.toLong() and 0xFFFFFFFFL)
-        }
         val p = Varint.readUnsigned(orig)
         val idx = p ushr 1
         val scIdx = if ((p and 1L) == 0L) 0 else Varint.readUnsignedInt(orig)
@@ -861,20 +835,20 @@ class SerializationReader(
 
     fun readSTableRef(): STable { val r = readPackedRef(); return lookupSTable((r ushr 32).toInt(), r.toInt()) }
 
-    fun readLong(): Long = if (v12) Varint.readSigned(orig) else orig.getLong()
+    fun readLong(): Long = Varint.readSigned(orig)
 
-    fun readInt32(): Int = if (v12) Varint.readSigned(orig).toInt() else orig.getInt()
+    fun readInt32(): Int = Varint.readSigned(orig).toInt()
 
     fun readDouble(): Double = orig.getDouble()
 
-    fun readStr(): String? = lookupString(if (v12) Varint.readUnsignedInt(orig) else orig.getInt())
+    fun readStr(): String? = lookupString(Varint.readUnsignedInt(orig))
 
     /* An element count: the writer's writeCount and writeInt32 are one codec,
      * so this is readInt32 under another name. */
     private fun readCount(): Int = readInt32()
 
-    /* One tag byte in format 12, a short before it. */
-    private fun readTag(): Short = if (v12) orig.get().toShort() else orig.getShort()
+    /* One tag byte. */
+    private fun readTag(): Short = orig.get().toShort()
 
     private fun lookupSTable(scIdx: Int, idx: Int): STable {
         val stSC = locateSC(scIdx)
@@ -897,9 +871,7 @@ class SerializationReader(
         if (idx == 0) return null
         val s = sh[idx]
         if (s != null) return s
-        /* Format 11 read the whole heap up front, so a hole there is a null
-         * string and not one still to decode. */
-        return if (v12) decodeString(idx) else null
+        return decodeString(idx)
     }
 
     /* Format 12: bytes offsets[idx-1] until offsets[idx] of the string data.
