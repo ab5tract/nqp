@@ -66,6 +66,17 @@ class SerializationReader(
         @JvmField val VERIFY = System.getenv("NQP_SC_VERIFY") != null
         /** Every reader alive under the stats knob, for the exit line (Task 7). */
         @JvmField val LIVE = java.util.concurrent.ConcurrentLinkedQueue<SerializationReader>()
+
+        /** One line per reader alive under NQP_UNIT_LOAD_STATS=1, at exit. */
+        @JvmStatic
+        fun reportAll() {
+            for (r in LIVE) {
+                System.err.println("sc-demand ${r.sc.handle} stables=${r.stablesRead}/${r.stTableEntries}" +
+                    " objects=${r.objectsRead}/${r.objTableEntries} closures=${r.closuresRead}/${r.closureTableEntries}" +
+                    " contexts=${r.contextsRead}/${r.contextTableEntries} drains=${r.drains}" +
+                    " ms=${"%.2f".format(r.demandNanos / 1_000_000.0)}")
+            }
+        }
     }
 
     /* Per-STable progress (ST_UNREAD / ST_READING / ST_READ) and the stubs
@@ -350,6 +361,10 @@ class SerializationReader(
                     val origSC = locateSC(orig.getInt())
                     val origIdx = orig.getInt()
                     if (repoType == 1) {
+                        /* Already published by an earlier drain of this load:
+                         * re-registering it would hand the slot a second
+                         * identity (a fresh entry published over the live one). */
+                        if (sc.peekSTable(slot) != null) continue
                         val origST = origSC.getSTable(origIdx)!!
                         origST.sc = sc
                         origST.scIdx = slot
@@ -357,6 +372,8 @@ class SerializationReader(
                         stableState[slot] = ST_UNREAD
                         d.finished.add(Drain.Entry(this, Drain.STABLE, slot))
                     } else if (repoType == 0) {
+                        /* Same second-identity hazard as the STable pass. */
+                        if (sc.peekObject(slot) != null) continue
                         val origObj = origSC.getObject(origIdx)!!
                         origObj.sc = sc
                         origObj.scIdx = slot
@@ -719,10 +736,22 @@ class SerializationReader(
         // Get the STable we need to deserialize into.
         val st = pendingSTable[i]!!
 
-        // Read the HOW, WHAT and WHO.
-        st.HOW = readObjRef()
+        /* HOW and WHO stay pending (Phase C): the reference is kept, the
+         * object demanded on first read. WHAT is the type object itself,
+         * a stub with no data, so it is read now. */
+        val how = readPackedRef()
+        st.setPendingHow(locateSC((how ushr 32).toInt()), how.toInt())
         st.WHAT = readObjRef()
-        st.WHO = readRef()
+        val whoTag = readTag()
+        if (whoTag == REFVAR_OBJECT) {
+            val who = readPackedRef()
+            st.setPendingWho(locateSC((who ushr 32).toInt()), who.toInt())
+        } else {
+            /* readTag() consumed exactly one byte (format 12), so stepping
+             * back by one hands the whole reference to readRef(). */
+            orig.position(orig.position() - 1)
+            st.WHO = readRef()
+        }
 
         /* Method cache and v-table. */
         val methodCacheRef = readRef()
