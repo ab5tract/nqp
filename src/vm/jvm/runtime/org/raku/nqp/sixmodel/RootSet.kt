@@ -8,10 +8,15 @@ import java.util.concurrent.atomic.AtomicReferenceArray
  * publishes (milestone 8, Phase C) is whole to every thread that reads
  * the slot non-null. A compile's SC grows one by one through [add]; a
  * deserialized SC is presized by [init] and filled by [set].
+ *
+ * Both fields are volatile, so a reader that sees a grown array or a raised
+ * size sees every element the writer published into it first: the volatile read
+ * of [slots] pairs with the volatile write that installs it, and the array's own
+ * acquire read pairs with the release write of the slot.
  */
 class RootSet<T : Any>(capacity: Int = 16) {
-    private var slots = AtomicReferenceArray<T?>(maxOf(capacity, 1))
-    var size: Int = 0
+    @Volatile private var slots = AtomicReferenceArray<T?>(maxOf(capacity, 1))
+    @Volatile var size: Int = 0
         private set
 
     fun get(i: Int): T? {

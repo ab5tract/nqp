@@ -59,4 +59,27 @@ class SerializationContextTest {
         assertEquals(-1, a.scIdx)
         assertEquals(0, sc.objectCount())
     }
+
+    @Test
+    fun `repossession records the index the object had in its original SC`() {
+        val a = SerializationContext("test-sc-repo-a")
+        val b = SerializationContext("test-sc-repo-b")
+        val obj = org.raku.nqp.sixmodel.TypeObject()
+        a.initObjectList(3)
+        a.addObject(obj, 2)
+        obj.sc = a
+
+        /* Ops.scwbObject repossesses first and moves obj.sc afterwards. */
+        b.repossessObject(a, obj)
+        obj.sc = b
+
+        val newSlot = b.getObjectIndex(obj)
+        assertEquals(0, newSlot)
+        assertEquals(1, b.repOrigIndexes.size)
+        assertEquals(2, b.repOrigIndexes.getInt(0))
+        assertEquals(newSlot shl 1, b.repIndexes.getInt(0))
+        assertSame(a, b.repScs[0])
+        assertEquals(newSlot, obj.scIdx)
+        assertSame(obj, b.getObject(newSlot))
+    }
 }

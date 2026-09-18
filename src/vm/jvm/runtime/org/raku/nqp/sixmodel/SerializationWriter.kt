@@ -149,6 +149,14 @@ class SerializationWriter(
         return dependentSCs.size /* Deliberately index + 1. */
     }
 
+    /* The SC answers -1 for a thing that is not in its root set. Writing that
+     * into the wire would only move the failure to whoever reads the artifact,
+     * so every index the writer emits comes through here. */
+    private fun indexOrDie(idx: Int, what: String): Int =
+        if (idx >= 0) idx
+        else throw ExceptionHandling.dieInternal(tc,
+            "Serialization Error: $what is not in the root set of its SC")
+
     /* Takes an STable. If it's already in an SC, returns information on how
      * to reference it. Otherwise, adds it to the current SC, effectively
      * placing it onto the work list. */
@@ -161,7 +169,7 @@ class SerializationWriter(
 
         /* Work out SC reference. */
         val stSC = st.sc!!
-        return intArrayOf(getSCId(stSC), stSC.getSTableIndex(st))
+        return intArrayOf(getSCId(stSC), indexOrDie(stSC.getSTableIndex(st), "STable"))
     }
 
     /* Writing function for native integers. */
@@ -202,7 +210,7 @@ class SerializationWriter(
         growToHold(currentBuffer, 8)
         val refSC = ref.sc!!
         outputs[currentBuffer].putInt(getSCId(refSC))
-        outputs[currentBuffer].putInt(refSC.getObjectIndex(ref))
+        outputs[currentBuffer].putInt(indexOrDie(refSC.getObjectIndex(ref), "object"))
     }
 
     fun writeList(list: List<SixModelObject?>) {
@@ -238,7 +246,7 @@ class SerializationWriter(
     private fun writeCodeRef(ref: SixModelObject) {
         val codeSC = ref.sc!!
         val scId = getSCId(codeSC)
-        val idx = codeSC.getCodeIndex(ref)
+        val idx = indexOrDie(codeSC.getCodeIndex(ref), "code ref")
         growToHold(currentBuffer, 8)
         outputs[currentBuffer].putInt(scId)
         outputs[currentBuffer].putInt(idx)
@@ -670,7 +678,7 @@ class SerializationWriter(
             }
             val codeObjectSC = codeObject.sc!!
             outputs[CLOSURES].putInt(getSCId(codeObjectSC))
-            outputs[CLOSURES].putInt(codeObjectSC.getObjectIndex(codeObject))
+            outputs[CLOSURES].putInt(indexOrDie(codeObjectSC.getObjectIndex(codeObject), "code object"))
         } else {
             outputs[CLOSURES].putInt(0)
             outputs[CLOSURES].putInt(0) // pad
@@ -722,7 +730,7 @@ class SerializationWriter(
             ExceptionHandling.dieInternal(tc,
                 "Serialization Error: closure outer is a code object not in an SC")
         val staticSCId = getSCId(staticCodeSC!!)
-        val staticIdx = staticCodeSC.getCodeIndex(staticCodeRef)
+        val staticIdx = indexOrDie(staticCodeSC.getCodeIndex(staticCodeRef), "context code ref")
 
         /* Ensure there's space in the contexts table; grow if not. */
         growToHold(CONTEXTS, CONTEXTS_TABLE_ENTRY_SIZE)
@@ -802,25 +810,6 @@ class SerializationWriter(
         }
     }
 
-    /* The index a repossessed thing had in the SC it came FROM. Its own index
-     * field points at the slot it was repossessed INTO, so the context answers
-     * -1 for the original SC and the old slot has to be scanned for (MoarVM
-     * falls back the same way in MVM_sc_find_object_idx). Only repossession
-     * entries take this road, and there are few of them. */
-    private fun origIndexOfObject(origSC: SerializationContext, obj: SixModelObject): Int {
-        val fast = origSC.getObjectIndex(obj)
-        if (fast >= 0) return fast
-        for (i in 0 until origSC.objectCount()) if (origSC.getObject(i) === obj) return i
-        return -1
-    }
-
-    private fun origIndexOfSTable(origSC: SerializationContext, st: STable): Int {
-        val fast = origSC.getSTableIndex(st)
-        if (fast >= 0) return fast
-        for (i in 0 until origSC.stableCount()) if (origSC.getSTable(i) === st) return i
-        return -1
-    }
-
     /* Goes through the list of repossessions and serializes them all. */
     private fun serializeRepossessions() {
         /* Allocate table space, provided we've actually something to do. */
@@ -837,10 +826,9 @@ class SerializationWriter(
 
             /* Work out original object's SC location. */
             val origSCIdx = getSCId(origSC)
-            val origIdx = if (isST != 0)
-                origIndexOfSTable(origSC, sc.getSTable(objIdx)!!)
-            else
-                origIndexOfObject(origSC, sc.getObject(objIdx)!!)
+            /* The index the thing had in origSC, recorded when it was
+             * repossessed; its own index field names its slot here now. */
+            val origIdx = sc.repOrigIndexes.getInt(i)
             if (origIdx < 0)
                 throw RuntimeException(
                     "Could not find object when writing repossessions; " +
