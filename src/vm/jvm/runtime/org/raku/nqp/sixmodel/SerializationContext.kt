@@ -29,6 +29,12 @@ class SerializationContext(@JvmField var handle: String) {
     @JvmField var repIndexes = IntArrayList()
     @JvmField var repScs = ArrayList<SerializationContext>()
 
+    /** Per repossession entry, the entry's index in its ORIGINAL SC, recorded
+     *  when it is repossessed -- at that moment obj.sc is still the original SC
+     *  and scIdx still names that slot; the writer's repossession table needs
+     *  it, and the field later names the new slot. */
+    @JvmField var repOrigIndexes = IntArrayList()
+
     /* Some things we deserialize are not directly in an SC, root set, but
      * rather are owned by others. This is mostly thanks to Parrot legacy,
      * where not everything was a 6model object. This maps such owned
@@ -40,8 +46,10 @@ class SerializationContext(@JvmField var handle: String) {
      * reposession entry. The caller (Ops.scwbObject) moves obj.sc to this
      * SC afterwards; the index field already points at the new slot. */
     fun repossessObject(origSC: SerializationContext, obj: SixModelObject) {
-        /* Check the object really lives in the SC root set. */
-        if (obj.sc!!.getObjectIndex(obj) < 0)
+        /* Check the object really lives in the SC root set, and note the slot
+         * it holds there before addObject repoints its index field. */
+        val origSlot = obj.sc!!.getObjectIndex(obj)
+        if (origSlot < 0)
             throw RuntimeException("Attempt to repossess object not in this context")
 
         /* Add to root set. */
@@ -49,14 +57,19 @@ class SerializationContext(@JvmField var handle: String) {
 
         /* Add repossession entry. */
         repIndexes.add(newSlot shl 1)
+        repOrigIndexes.add(origSlot)
         repScs.add(origSC)
     }
 
     /* Takes an STable and adds it to this SC's root set, and installs a
      * reposession entry. */
     fun repossessSTable(origSC: SerializationContext, st: STable) {
+        val origSlot = origSC.getSTableIndex(st)
+        if (origSlot < 0)
+            throw RuntimeException("Attempt to repossess STable not in this context")
         val newSlot = addSTable(st)
         repIndexes.add((newSlot shl 1) or 1)
+        repOrigIndexes.add(origSlot)
         repScs.add(origSC)
     }
 
