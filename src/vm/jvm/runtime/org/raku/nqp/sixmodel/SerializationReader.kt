@@ -20,17 +20,19 @@ class SerializationReader(
 ) {
     companion object {
         /* The current version of the serialization format. */
-        private const val CURRENT_VERSION = 11
+        private const val CURRENT_VERSION = 12
 
-        /* The minimum version of the serialization format. */
-        private const val MIN_VERSION = 4
+        /* The minimum version of the serialization format. The bootstrap
+         * jars are still 11, so both roads are live here until they are
+         * rebuilt with the format-12 writer. */
+        private const val MIN_VERSION = 11
 
         /* Various sizes (in bytes). */
-        private const val V10_HEADER_SIZE           = 4 * 16
         private const val HEADER_SIZE               = 4 * 18
         private const val DEP_TABLE_ENTRY_SIZE      = 8
         private const val STABLES_TABLE_ENTRY_SIZE  = 12
-        private const val OBJECTS_TABLE_ENTRY_SIZE  = 16
+        private const val OBJECTS_TABLE_ENTRY_SIZE_V11 = 16
+        private const val OBJECTS_TABLE_ENTRY_SIZE  = 8
         private const val CLOSURES_TABLE_ENTRY_SIZE = 24
         private const val CONTEXTS_TABLE_ENTRY_SIZE = 16
         private const val REPOS_TABLE_ENTRY_SIZE    = 16
@@ -83,6 +85,13 @@ class SerializationReader(
     private var reposTableEntries = 0
     private var stringHeapOffset = 0
     private var stringHeapEntries = 0
+
+    /* Format 12's string heap: the offset table, then the bytes. */
+    private var stringOffsetsPos = 0
+    private var stringDataPos = 0
+
+    private val v12: Boolean get() = version >= 12
+    private val objRowSize: Int get() = if (v12) OBJECTS_TABLE_ENTRY_SIZE else OBJECTS_TABLE_ENTRY_SIZE_V11
 
     /* Serialization contexts we depend on. */
     private lateinit var dependentSCs: Array<SerializationContext?>
@@ -182,7 +191,7 @@ class SerializationReader(
             throw RuntimeException("Unknown serialization format version $version")
 
         /* Ensure that the data is at least as long as the header is expected to be. */
-        val headerSize = if (version >= 11) HEADER_SIZE else V10_HEADER_SIZE
+        val headerSize = HEADER_SIZE
         if (dataLen < headerSize)
             throw RuntimeException("Serialized data shorter than header (< $headerSize bytes)")
         provPos += headerSize
@@ -218,7 +227,7 @@ class SerializationReader(
         objTableEntries = orig.getInt()
         if (objTableOffset < provPos)
             throw RuntimeException("Corruption detected (objects table starts before STables data ends)")
-        provPos = objTableOffset + objTableEntries * OBJECTS_TABLE_ENTRY_SIZE
+        provPos = objTableOffset + objTableEntries * objRowSize
         if (provPos > dataLen)
             throw RuntimeException("Corruption detected (objects table overruns end of data)")
 
@@ -265,31 +274,32 @@ class SerializationReader(
         if (provPos > dataLen)
             throw RuntimeException("Corruption detected (repossessions table overruns end of data)")
 
-        if (version >= 11) {
-            /* Get size and location of string heap. */
-            stringHeapOffset = orig.getInt()
-            stringHeapEntries = orig.getInt()
-            if (stringHeapOffset < provPos)
-                throw RuntimeException("Corruption detected (string table starts before repossessions tabke ends)")
-            provPos = stringHeapOffset
-            if (provPos > dataLen)
-                throw RuntimeException("Corruption detected (string table starts after end of data)")
-        }
+        /* Get size and location of string heap. */
+        stringHeapOffset = orig.getInt()
+        stringHeapEntries = orig.getInt()
+        if (stringHeapOffset < provPos)
+            throw RuntimeException("Corruption detected (string table starts before repossessions tabke ends)")
+        provPos = stringHeapOffset
+        if (provPos > dataLen)
+            throw RuntimeException("Corruption detected (string table starts after end of data)")
     }
 
     private fun deserializeStringHeap() {
-        if (version >= 11) {
-            sh = arrayOfNulls(stringHeapEntries + 1)
-            sh[0] = null
-
-            orig.position(stringHeapOffset)
-            for (i in 1..stringHeapEntries) {
-                val len = orig.getInt()
-                val bytes = ByteArray(len)
-                orig.get(bytes, 0, len)
-
-                sh[i] = String(bytes, Charsets.UTF_8)
-            }
+        sh = arrayOfNulls(stringHeapEntries + 1)
+        sh[0] = null
+        if (v12) {
+            /* Format 12: an offset table, then the bytes; a string decodes on
+             * its first lookup (lookupString). Nothing is read here. */
+            stringOffsetsPos = stringHeapOffset
+            stringDataPos = stringHeapOffset + 4 * (stringHeapEntries + 1)
+            return
+        }
+        orig.position(stringHeapOffset)
+        for (i in 1..stringHeapEntries) {
+            val len = orig.getInt()
+            val bytes = ByteArray(len)
+            orig.get(bytes, 0, len)
+            sh[i] = String(bytes, Charsets.UTF_8)
         }
     }
 
@@ -338,8 +348,7 @@ class SerializationReader(
                 /* The object's STable may have changed as a result of the
                  * repossession (perhaps due to mixing in to it), so put the
                  * STable it should now have in place. */
-                orig.position(objTableOffset + objIdx * OBJECTS_TABLE_ENTRY_SIZE)
-                origObj.st = lookupSTable(orig.getInt(), orig.getInt())
+                origObj.st = objRowSTable(objIdx)
             } else if (repoType == 1) {
                 /* Get STable to repossess. */
                 val origSC = locateSC(origSCIdx)
@@ -376,28 +385,42 @@ class SerializationReader(
         stableState = IntArray(stTableEntries)
     }
 
+    /* The STable of object row i. */
+    private fun objRowSTable(i: Int): STable {
+        orig.position(objTableOffset + i * objRowSize)
+        if (!v12) return lookupSTable(orig.getInt(), orig.getInt())
+        val packed = orig.getInt()
+        return lookupSTable(packed and 0xFFF, packed ushr 12)
+    }
+
+    /* Object row i's data offset, or -1 for a type object. */
+    private fun objRowDataOffset(i: Int): Int {
+        if (!v12) {
+            orig.position(objTableOffset + i * objRowSize + 12)
+            val flags = orig.getInt()
+            if (flags == 0) return -1
+            orig.position(objTableOffset + i * objRowSize + 8)
+            return orig.getInt()
+        }
+        orig.position(objTableOffset + i * objRowSize + 4)
+        val off = orig.getInt()
+        return if (off < 0) -1 else off
+    }
+
     private fun stubObjects() {
         for (i in 0 until objTableEntries) {
             // May already have it, due to repossession.
             if (sc.getObject(i) != null)
                 continue
 
-            // Look up STable.
-            orig.position(objTableOffset + i * OBJECTS_TABLE_ENTRY_SIZE)
-            val st = lookupSTable(orig.getInt(), orig.getInt())
-
-            // Now go by object flags.
-            orig.position(orig.position() + 4)
-            val flags = orig.getInt()
-            val stubObj: SixModelObject?
-            if (flags == 0) {
-                // Type object.
-                stubObj = TypeObject()
-                stubObj.st = st
-            } else {
-                // Concrete object; defer to the REPR.
-                stubObj = st.REPR.deserialize_stub(tc, st, this)
-            }
+            // Look up STable, then go by the row's data offset: a type
+            // object has none.
+            val st = objRowSTable(i)
+            val stubObj: SixModelObject? =
+                if (objRowDataOffset(i) < 0)
+                    TypeObject().also { it.st = st }
+                else
+                    st.REPR.deserialize_stub(tc, st, this)
 
             // Place object in SC root set.
             stubObj!!.sc = sc
@@ -411,7 +434,7 @@ class SerializationReader(
             orig.position(closureTableOffset + i * CLOSURES_TABLE_ENTRY_SIZE)
 
             /* Resolve the reference to the static code object. */
-            val staticCode = readCodeRef()
+            val staticCode = codeRefOf(rowRef())
 
             /* Clone it and add it to this SC's code refs list. */
             val closure = staticCode.clone(tc) as CodeRef
@@ -421,7 +444,7 @@ class SerializationReader(
             /* See if there's a code object we need to attach. */
             orig.position(orig.position() + 4)
             if (orig.getInt() != 0)
-                closure.codeObject = readObjRef()
+                closure.codeObject = objRef(rowRef())
         }
     }
 
@@ -472,11 +495,11 @@ class SerializationReader(
         try {
             orig.position(stTableOffset + idx * STABLES_TABLE_ENTRY_SIZE + 8)
             orig.position(stDataOffset + orig.getInt())
-            val n = orig.getLong().toInt()
+            val n = readLong().toInt()
             var refs = 0; var longs = 0
             for (i in 0 until n) {
-                if (orig.getLong() != 0L) {
-                    val flattened = lookupSTable(orig.getInt(), orig.getInt())
+                if (readLong() != 0L) {
+                    val flattened = readSTableRef()
                     val k = flattened.REPR.inlinedKind()
                     if (k == org.raku.nqp.sixmodel.reprs.SlotKind.INT || k == org.raku.nqp.sixmodel.reprs.SlotKind.NUM) longs++ else refs++
                 }
@@ -527,12 +550,12 @@ class SerializationReader(
          * behind the assumption's back -- facts change by publishing only. */
         val methodCache: Map<String, SixModelObject?>? =
             if (Ops.isnull(methodCacheRef) == 0L) HashMap((methodCacheRef as VMHashInstance).storage) else null
-        val vTable = arrayOfNulls<SixModelObject>(orig.getLong().toInt())
+        val vTable = arrayOfNulls<SixModelObject>(readLong().toInt())
         for (j in vTable.indices)
             vTable[j] = readRef()
 
         /* Type check cache. */
-        val tcCacheSize = orig.getLong().toInt()
+        val tcCacheSize = readLong().toInt()
         var typeCheckCache: Array<SixModelObject?>? = null
         if (tcCacheSize > 0) {
             val cache = arrayOfNulls<SixModelObject>(tcCacheSize)
@@ -542,48 +565,38 @@ class SerializationReader(
         }
 
         /* Mode flags. */
-        val modeFlags = orig.getLong().toInt()
+        val modeFlags = readLong().toInt()
 
         /* Boolification spec. */
         var boolSpec: BoolificationSpec? = null
-        if (orig.getLong() != 0L) {
-            val mode = orig.getLong().toInt()
+        if (readLong() != 0L) {
+            val mode = readLong().toInt()
             boolSpec = BoolificationSpec(mode, readRef())
         }
 
         /* Container spec: built complete, then published with the rest. */
         var contSpec: ContainerSpec? = null
-        if (orig.getLong() != 0L) {
-            if (version >= 5) {
-                val ccName = readStr()
-                val cc = tc.gc.contConfigs[ccName]
-                    ?: throw RuntimeException("Unknown container config $ccName")
-                val cs = cc.newContainerSpec(tc, st)
-                cs.deserialize(tc, st, this)
-                contSpec = cs
-            } else {
-                throw RuntimeException("Unable to deserialize old container spec format")
-            }
+        if (readLong() != 0L) {
+            val ccName = readStr()
+            val cc = tc.gc.contConfigs[ccName]
+                ?: throw RuntimeException("Unknown container config $ccName")
+            val cs = cc.newContainerSpec(tc, st)
+            cs.deserialize(tc, st, this)
+            contSpec = cs
         }
 
         /* Invocation spec. */
         var invSpec: InvocationSpec? = null
-        if (version >= 5) {
-            if (orig.getLong() != 0L) {
-                val classHandle = readRef()
-                val attrName = lookupString(orig.getInt())
-                val hint = orig.getLong().toInt().toLong()
-                invSpec = InvocationSpec(classHandle, attrName, hint, readRef())
-            }
+        if (readLong() != 0L) {
+            val classHandle = readRef()
+            val attrName = readStr()
+            val hint = readLong().toInt().toLong()
+            invSpec = InvocationSpec(classHandle, attrName, hint, readRef())
         }
 
         /* HLL stuff. */
-        var hllOwner: HLLConfig? = null
-        var hllRole = 0L
-        if (version >= 6) {
-            hllOwner = tc.gc.getHLLConfigFor(readStr()!!)
-            hllRole = orig.getLong()
-        }
+        val hllOwner: HLLConfig? = tc.gc.getHLLConfigFor(readStr()!!)
+        val hllRole = readLong()
 
         /* One publish, here: the point at which every fact field used to be
          * assigned, so an object deserialized from inside the parametricity
@@ -595,27 +608,26 @@ class SerializationReader(
             boolSpec, hllOwner, hllRole, st.debugName))
 
         /* Type parametricity. */
-        if (version >= 9) {
-            val paraFlag = orig.getLong()
-            /* If it's a parametric type... */
-            if (paraFlag == 1L) {
-                val pt = ParametricType()
-                pt.parameterizer = readRef()
-                pt.lookup = ArrayList()
-                st.parametricity = pt
-            } else if (paraFlag == 2L) {
-                val pt = ParameterizedType()
-                pt.parametricType = readObjRef()
-                val BOOTArray = tc.gc.BOOTArray!!
-                val parameters = BOOTArray.st.REPR.allocate(tc, BOOTArray.st)
-                pt.parameters = parameters
-                val elems = orig.getInt()
-                for (j in 0 until elems)
-                    parameters.bind_pos_boxed(tc, j.toLong(), readRef())
-                st.parametricity = pt
-            } else if (paraFlag != 0L) {
-                throw RuntimeException("Unknown STable parametricity flag")
-            }
+        val paraFlag = readLong()
+        /* If it's a parametric type... */
+        if (paraFlag == 1L) {
+            val pt = ParametricType()
+            pt.parameterizer = readRef()
+            pt.lookup = ArrayList()
+            st.parametricity = pt
+        } else if (paraFlag == 2L) {
+            val pt = ParameterizedType()
+            pt.parametricType = readObjRef()
+            val BOOTArray = tc.gc.BOOTArray!!
+            val parameters = BOOTArray.st.REPR.allocate(tc, BOOTArray.st)
+            pt.parameters = parameters
+            /* The element count is VMArray.serialize's writeInt32. */
+            val elems = readInt32()
+            for (j in 0 until elems)
+                parameters.bind_pos_boxed(tc, j.toLong(), readRef())
+            st.parametricity = pt
+        } else if (paraFlag != 0L) {
+            throw RuntimeException("Unknown STable parametricity flag")
         }
 
         /* If the REPR has a function to deserialize representation data, call it. */
@@ -626,14 +638,15 @@ class SerializationReader(
 
     private fun deserializeObjects() {
         for (i in 0 until objTableEntries) {
-            // Can skip if it's a type object.
-            val obj = sc.getObject(i)
-            if (obj is TypeObject)
+            // Can skip if it's a type object: the row says so, by having no
+            // data offset at all.
+            val off = objRowDataOffset(i)
+            if (off < 0)
                 continue
+            val obj = sc.getObject(i)
 
             // Seek reader to object data offset.
-            orig.position(objTableOffset + i * OBJECTS_TABLE_ENTRY_SIZE + 8)
-            orig.position(objDataOffset + orig.getInt())
+            orig.position(objDataOffset + off)
 
             // Complete the object's deserialization.
             this.curObject = obj
@@ -649,7 +662,7 @@ class SerializationReader(
             orig.position(contextTableOffset + i * CONTEXTS_TABLE_ENTRY_SIZE)
 
             /* Resolve the reference to the static code object this context is for. */
-            val staticCode = readCodeRef()
+            val staticCode = codeRefOf(rowRef())
 
             /* Create a context and set it up. */
             val ctx = CallFrame()
@@ -669,7 +682,7 @@ class SerializationReader(
             orig.position(contextDataOffset + orig.getInt())
 
             /* Deserialize lexicals. */
-            val syms = orig.getLong()
+            val syms = readLong()
             for (j in 0 until syms) {
                 val sym = readStr()!!
                 var idx = sci.oTryGetLexicalIdx(sym)
@@ -678,7 +691,7 @@ class SerializationReader(
                 } else {
                     idx = sci.iTryGetLexicalIdx(sym)
                     if (idx != -1) {
-                        ctx.iLex!![idx] = orig.getLong()
+                        ctx.iLex!![idx] = readLong()
                     } else {
                         idx = sci.nTryGetLexicalIdx(sym)
                         if (idx != -1) {
@@ -726,7 +739,7 @@ class SerializationReader(
     }
 
     fun readRef(): SixModelObject? {
-        val discrim = orig.getShort()
+        val discrim = readTag()
         when (discrim) {
         REFVAR_NULL ->
             return null
@@ -737,7 +750,7 @@ class SerializationReader(
         REFVAR_VM_INT -> {
             val BOOTInt = tc.gc.BOOTInt!!
             val iResult = BOOTInt.st.REPR.allocate(tc, BOOTInt.st)
-            iResult.set_int(tc, orig.getLong())
+            iResult.set_int(tc, readLong())
             return iResult
         }
         REFVAR_VM_NUM -> {
@@ -749,13 +762,13 @@ class SerializationReader(
         REFVAR_VM_STR -> {
             val BOOTStr = tc.gc.BOOTStr!!
             val sResult = BOOTStr.st.REPR.allocate(tc, BOOTStr.st)
-            sResult.set_str(tc, lookupString(orig.getInt()))
+            sResult.set_str(tc, readStr())
             return sResult
         }
         REFVAR_VM_ARR_VAR -> {
             val BOOTArray = tc.gc.BOOTArray!!
             val resArray = BOOTArray.st.REPR.allocate(tc, BOOTArray.st)
-            val elems = orig.getInt()
+            val elems = readCount()
             for (i in 0 until elems)
                 resArray.bind_pos_boxed(tc, i.toLong(), readRef())
             if (Ops.isnull(this.curObject) == 0L) {
@@ -767,7 +780,7 @@ class SerializationReader(
         REFVAR_VM_ARR_STR -> {
             val BOOTStrArray = tc.gc.BOOTStrArray!!
             val resArray = BOOTStrArray.st.REPR.allocate(tc, BOOTStrArray.st)
-            val elems = orig.getInt()
+            val elems = readCount()
             for (i in 0 until elems) {
                 tc.nativeS = readStr()
                 resArray.bind_pos_native(tc, i.toLong())
@@ -777,7 +790,7 @@ class SerializationReader(
         REFVAR_VM_ARR_INT -> {
             val BOOTIntArray = tc.gc.BOOTIntArray!!
             val resArray = BOOTIntArray.st.REPR.allocate(tc, BOOTIntArray.st)
-            val elems = orig.getInt()
+            val elems = readCount()
             for (i in 0 until elems) {
                 tc.nativeI = readLong()
                 resArray.bind_pos_native(tc, i.toLong())
@@ -787,9 +800,9 @@ class SerializationReader(
         REFVAR_VM_HASH_STR_VAR -> {
             val BOOTHash = tc.gc.BOOTHash!!
             val resHash = BOOTHash.st.REPR.allocate(tc, BOOTHash.st)
-            val elems = orig.getInt()
+            val elems = readCount()
             for (i in 0 until elems) {
-                val key = lookupString(orig.getInt())
+                val key = readStr()
                 resHash.bind_key_boxed(tc, key, readRef())
             }
             if (Ops.isnull(this.curObject) == 0L) {
@@ -805,41 +818,63 @@ class SerializationReader(
         }
     }
 
-    fun readObjRef(): SixModelObject {
-        val objSC = locateSC(orig.getInt())
+    /* A packed reference (format 12) or the two ints of format 11, as
+     * (scIdx shl 32) or idx. */
+    private fun readPackedRef(): Long {
+        if (!v12) {
+            val scIdx = orig.getInt()
+            val idx = orig.getInt()
+            return (scIdx.toLong() shl 32) or (idx.toLong() and 0xFFFFFFFFL)
+        }
+        val p = Varint.readUnsigned(orig)
+        val idx = p ushr 1
+        val scIdx = if ((p and 1L) == 0L) 0 else Varint.readUnsignedInt(orig)
+        return (scIdx.toLong() shl 32) or idx
+    }
+
+    /* A reference in a fixed-width table row: always two raw ints. */
+    private fun rowRef(): Long {
+        val scIdx = orig.getInt()
         val idx = orig.getInt()
+        return (scIdx.toLong() shl 32) or (idx.toLong() and 0xFFFFFFFFL)
+    }
+
+    private fun objRef(r: Long): SixModelObject {
+        val objSC = locateSC((r ushr 32).toInt())
+        val idx = r.toInt()
         if (idx < 0 || idx >= objSC.objectCount())
             throw RuntimeException("Invalid SC object index $idx")
         return objSC.getObject(idx)!!
     }
 
-    fun readSTableRef(): STable {
-        return lookupSTable(orig.getInt(), orig.getInt())
-    }
-
-    fun readCodeRef(): CodeRef {
-        val codeSC = locateSC(orig.getInt())
-        val idx = orig.getInt()
+    private fun codeRefOf(r: Long): CodeRef {
+        val codeSC = locateSC((r ushr 32).toInt())
+        val idx = r.toInt()
         if (idx < 0 || idx >= codeSC.coderefCount())
             throw RuntimeException("Invalid SC code index $idx")
         return codeSC.getCodeRef(idx)!!
     }
 
-    fun readLong(): Long {
-        return orig.getLong()
-    }
+    fun readObjRef(): SixModelObject = objRef(readPackedRef())
 
-    fun readInt32(): Int {
-        return orig.getInt()
-    }
+    fun readCodeRef(): CodeRef = codeRefOf(readPackedRef())
 
-    fun readDouble(): Double {
-        return orig.getDouble()
-    }
+    fun readSTableRef(): STable { val r = readPackedRef(); return lookupSTable((r ushr 32).toInt(), r.toInt()) }
 
-    fun readStr(): String? {
-        return lookupString(orig.getInt())
-    }
+    fun readLong(): Long = if (v12) Varint.readSigned(orig) else orig.getLong()
+
+    fun readInt32(): Int = if (v12) Varint.readSigned(orig).toInt() else orig.getInt()
+
+    fun readDouble(): Double = orig.getDouble()
+
+    fun readStr(): String? = lookupString(if (v12) Varint.readUnsignedInt(orig) else orig.getInt())
+
+    /* An element count: the writer's writeCount and writeInt32 are one codec,
+     * so this is readInt32 under another name. */
+    private fun readCount(): Int = readInt32()
+
+    /* One tag byte in format 12, a short before it. */
+    private fun readTag(): Short = if (v12) orig.get().toShort() else orig.getShort()
 
     private fun lookupSTable(scIdx: Int, idx: Int): STable {
         val stSC = locateSC(scIdx)
@@ -857,8 +892,29 @@ class SerializationReader(
     }
 
     private fun lookupString(idx: Int): String? {
-        if (idx >= sh.size)
+        if (idx < 0 || idx >= sh.size)
             throw RuntimeException("Attempt to read past end of string heap (index $idx)")
-        return sh[idx]
+        if (idx == 0) return null
+        val s = sh[idx]
+        if (s != null) return s
+        /* Format 11 read the whole heap up front, so a hole there is a null
+         * string and not one still to decode. */
+        return if (v12) decodeString(idx) else null
+    }
+
+    /* Format 12: bytes offsets[idx-1] until offsets[idx] of the string data.
+     * Absolute gets, so the caller's position is untouched. String is
+     * immutable and safely published; two threads decoding the same index
+     * produce equal strings, so the plain array write is benign. */
+    private fun decodeString(idx: Int): String {
+        val start = orig.getInt(stringOffsetsPos + 4 * (idx - 1))
+        val end = orig.getInt(stringOffsetsPos + 4 * idx)
+        if (start < 0 || end < start || stringDataPos + end > orig.limit())
+            throw RuntimeException("Corruption detected (string $idx offsets $start..$end)")
+        val bytes = ByteArray(end - start)
+        orig.get(stringDataPos + start, bytes)
+        val s = String(bytes, Charsets.UTF_8)
+        sh[idx] = s
+        return s
     }
 }

@@ -22,12 +22,12 @@ class SerializationWriter(
 ) {
     companion object {
         /* The current version of the serialization format. */
-        private const val CURRENT_VERSION = 11
+        private const val CURRENT_VERSION = 12
 
         /* Various sizes (in bytes). */
         private const val HEADER_SIZE               = 4 * 18
         private const val STABLES_TABLE_ENTRY_SIZE  = 12
-        private const val OBJECTS_TABLE_ENTRY_SIZE  = 16
+        private const val OBJECTS_TABLE_ENTRY_SIZE  = 8
         private const val CLOSURES_TABLE_ENTRY_SIZE = 24
         private const val CONTEXTS_TABLE_ENTRY_SIZE = 16
         private const val REPOS_TABLE_ENTRY_SIZE    = 16
@@ -77,6 +77,11 @@ class SerializationWriter(
     )
     private var currentBuffer = 0
 
+    /* Format 12: where each heap string's bytes start, in the STRINGS
+     * buffer. Written out ahead of the bytes as the offset table, so the
+     * reader can decode string i without walking the ones before it. */
+    private val stringStarts = it.unimi.dsi.fastutil.ints.IntArrayList()
+
     private var numClosures = 0
     private var sTablesListPos = 0
     private var objectsListPos = 0
@@ -121,8 +126,8 @@ class SerializationWriter(
         stringMap.put(s, newIdx)
 
         val bytes = s.toByteArray(Charsets.UTF_8)
-        growToHold(STRINGS, 4 + bytes.size)
-        outputs[STRINGS].putInt(bytes.size)
+        stringStarts.add(outputs[STRINGS].position())
+        growToHold(STRINGS, bytes.size)
         outputs[STRINGS].put(bytes)
 
         return newIdx
@@ -172,16 +177,16 @@ class SerializationWriter(
         return intArrayOf(getSCId(stSC), indexOrDie(stSC.getSTableIndex(st), "STable"))
     }
 
-    /* Writing function for native integers. */
+    /* Writing function for native integers (zigzag varint, format 12). */
     fun writeInt(value: Long) {
-        growToHold(currentBuffer, 8)
-        outputs[currentBuffer].putLong(value)
+        growToHold(currentBuffer, Varint.MAX_BYTES)
+        Varint.writeSigned(outputs[currentBuffer], value)
     }
 
-    /* Writing function for 32-bit native integers. */
+    /* Writing function for 32-bit native integers (the same varint; REPR data counts). */
     fun writeInt32(value: Int) {
-        growToHold(currentBuffer, 4)
-        outputs[currentBuffer].putInt(value)
+        growToHold(currentBuffer, Varint.MAX_BYTES)
+        Varint.writeSigned(outputs[currentBuffer], value.toLong())
     }
 
     /* Writing function for native numbers. */
@@ -190,11 +195,25 @@ class SerializationWriter(
         outputs[currentBuffer].putDouble(value)
     }
 
-    /* Writing function for native strings. */
+    /* Writing function for native strings: the heap index as a varint. */
     fun writeStr(value: String?) {
         val heapLoc = addStringToHeap(value)
-        growToHold(currentBuffer, 4)
-        outputs[currentBuffer].putInt(heapLoc)
+        growToHold(currentBuffer, Varint.MAX_BYTES)
+        Varint.writeUnsigned(outputs[currentBuffer], heapLoc)
+    }
+
+    /* A packed reference: (idx << 1) for this SC, (idx << 1) | 1 then the
+     * dependency's SC id otherwise (format 12; four bytes for CORE.c's
+     * largest own index against ten before). */
+    private fun writePackedRef(scId: Int, idx: Int) {
+        growToHold(currentBuffer, 2 * Varint.MAX_BYTES)
+        val out = outputs[currentBuffer]
+        if (scId == 0) {
+            Varint.writeUnsigned(out, idx.toLong() shl 1)
+        } else {
+            Varint.writeUnsigned(out, (idx.toLong() shl 1) or 1L)
+            Varint.writeUnsigned(out, scId)
+        }
     }
 
     /* Writes an object reference. */
@@ -206,25 +225,34 @@ class SerializationWriter(
             this.sc.addObject(ref)
         }
 
-        /* Write SC index, then object index. */
-        growToHold(currentBuffer, 8)
         val refSC = ref.sc!!
-        outputs[currentBuffer].putInt(getSCId(refSC))
-        outputs[currentBuffer].putInt(indexOrDie(refSC.getObjectIndex(ref), "object"))
+        writePackedRef(getSCId(refSC), indexOrDie(refSC.getObjectIndex(ref), "object"))
+    }
+
+    /* One tag byte (the REFVAR_* values, 1..12). */
+    private fun writeTag(tag: Short) {
+        growToHold(currentBuffer, 1)
+        outputs[currentBuffer].put(tag.toByte())
+    }
+
+    /* An element count. Counts share one codec with writeInt32, because a
+     * container's count reaches readRef either from here (writeList and
+     * friends) or from the REPR's own serialize, which writes it with
+     * writeInt32; one reader branch reads both. */
+    private fun writeCount(n: Int) {
+        writeInt32(n)
     }
 
     fun writeList(list: List<SixModelObject?>) {
-        growToHold(currentBuffer, 6)
-        outputs[currentBuffer].putShort(REFVAR_VM_ARR_VAR)
-        outputs[currentBuffer].putInt(list.size)
+        writeTag(REFVAR_VM_ARR_VAR)
+        writeCount(list.size)
         for (item in list)
             writeRef(item)
     }
 
     fun writeHash(hash: Map<String, SixModelObject?>) {
-        growToHold(currentBuffer, 6)
-        outputs[currentBuffer].putShort(REFVAR_VM_HASH_STR_VAR)
-        outputs[currentBuffer].putInt(hash.size)
+        writeTag(REFVAR_VM_HASH_STR_VAR)
+        writeCount(hash.size)
         for (key in hash.keys) {
             writeStr(key)
             writeRef(hash[key])
@@ -232,24 +260,18 @@ class SerializationWriter(
     }
 
     fun writeIntHash(hash: Object2IntOpenHashMap<String>) {
-        growToHold(currentBuffer, 6)
-        outputs[currentBuffer].putShort(REFVAR_VM_HASH_STR_VAR)
-        outputs[currentBuffer].putInt(hash.size)
+        writeTag(REFVAR_VM_HASH_STR_VAR)
+        writeCount(hash.size)
         for (key in hash.keys) {
             writeStr(key)
-            growToHold(currentBuffer, 10)
-            outputs[currentBuffer].putShort(REFVAR_VM_INT)
-            outputs[currentBuffer].putLong(hash.getInt(key).toLong())
+            writeTag(REFVAR_VM_INT)
+            writeInt(hash.getInt(key).toLong())
         }
     }
 
     private fun writeCodeRef(ref: SixModelObject) {
         val codeSC = ref.sc!!
-        val scId = getSCId(codeSC)
-        val idx = indexOrDie(codeSC.getCodeIndex(ref), "code ref")
-        growToHold(currentBuffer, 8)
-        outputs[currentBuffer].putInt(scId)
-        outputs[currentBuffer].putInt(idx)
+        writePackedRef(getSCId(codeSC), indexOrDie(codeSC.getCodeIndex(ref), "code ref"))
     }
 
     /* NOTE: debug leftover preserved from upstream; nothing calls start(),
@@ -331,8 +353,7 @@ class SerializationWriter(
         }
 
         /* Write the discriminator. */
-        growToHold(currentBuffer, 2)
-        outputs[currentBuffer].putShort(discrim)
+        writeTag(discrim)
 
         /* Now take appropriate action. */
         when (discrim) {
@@ -354,9 +375,7 @@ class SerializationWriter(
     /* Writing function for references to STables. */
     fun writeSTableRef(st: STable) {
         val idxs = getSTableRefInfo(st)
-        growToHold(currentBuffer, 8)
-        outputs[currentBuffer].putInt(idxs[0])
-        outputs[currentBuffer].putInt(idxs[1])
+        writePackedRef(idxs[0], idxs[1])
     }
 
     /* Concatenates the various output segments into a single binary string. */
@@ -367,6 +386,7 @@ class SerializationWriter(
         /* Calculate total size. */
         outputSize += HEADER_SIZE
         outputSize += outputs[STRINGS].position()
+        outputSize += 4 * (stringStarts.size + 1)
         outputSize += outputs[DEPS].position()
         outputSize += outputs[STABLES].position()
         outputSize += outputs[STABLE_DATA].position()
@@ -463,11 +483,16 @@ class SerializationWriter(
         output.put(outputs[REPOS])
         offset += outputs[REPOS].position()
 
-        /* Put strings data in place */
+        /* Put the string offset table, then the string data, in place. */
+        if (stringStarts.size != stringMap.size)
+            throw RuntimeException("Serialization sanity check failed: string starts != string heap entries")
         output.position(64)
         output.putInt(offset)
         output.putInt(stringMap.size)
         output.position(offset)
+        for (i in 0 until stringStarts.size) output.putInt(stringStarts.getInt(i))
+        output.putInt(outputs[STRINGS].position())
+        offset += 4 * (stringStarts.size + 1)
         outputs[STRINGS].flip()
         output.put(outputs[STRINGS])
         offset += outputs[STRINGS].position()
@@ -485,14 +510,15 @@ class SerializationWriter(
         /* Get index of SC that holds the STable and its index. */
         val ref = getSTableRefInfo(obj.st)
 
-        /* Ensure there's space in the objects table; grow if not. */
+        /* Make the eight-byte objects table entry: the STable reference
+         * packed into one int, then the data offset with bit 31 set for a
+         * type object (which has no data at all). */
+        if (ref[0] > 0xFFF || ref[1] >= (1 shl 20))
+            throw ExceptionHandling.dieInternal(tc,
+                "Serialization Error: object row cannot hold STable ${ref[1]} of dependency ${ref[0]} (limits 2^20 STables, 4095 dependencies)")
         growToHold(OBJECTS, OBJECTS_TABLE_ENTRY_SIZE)
-
-        /* Make objects table entry. */
-        outputs[OBJECTS].putInt(ref[0])
-        outputs[OBJECTS].putInt(ref[1])
-        outputs[OBJECTS].putInt(outputs[OBJECT_DATA].position())
-        outputs[OBJECTS].putInt(if (obj is TypeObject) 0 else 1)
+        outputs[OBJECTS].putInt((ref[1] shl 12) or ref[0])
+        outputs[OBJECTS].putInt(outputs[OBJECT_DATA].position() or (if (obj is TypeObject) Int.MIN_VALUE else 0))
 
         /* Make sure we're going to write to the correct place. */
         currentBuffer = OBJECT_DATA
@@ -547,12 +573,11 @@ class SerializationWriter(
         writeRef(st.WHO)
 
         /* Method cache and v-table. */
-        growToHold(currentBuffer, 2)
         val methodCache = s.methodCache
         if (methodCache != null) {
             writeHash(methodCache)
         } else {
-            outputs[currentBuffer].putShort(REFVAR_NULL)
+            writeTag(REFVAR_NULL)
         }
         val vTable = s.vTable
         val vtl = vTable?.size ?: 0
@@ -663,7 +688,7 @@ class SerializationWriter(
 
         /* Add an entry to the closures table. */
         val staticSCId = getSCId(staticCodeSC)
-        val staticIdx = staticCodeSC.getCodeIndex(staticCodeRef)
+        val staticIdx = indexOrDie(staticCodeSC.getCodeIndex(staticCodeRef), "closure static code ref")
         outputs[CLOSURES].putInt(staticSCId)
         outputs[CLOSURES].putInt(staticIdx)
         outputs[CLOSURES].putInt(contextIdx)
