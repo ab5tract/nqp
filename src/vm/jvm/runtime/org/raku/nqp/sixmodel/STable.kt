@@ -11,12 +11,7 @@ class STable(
      */
     @JvmField var REPR: REPR,
 
-    /**
-     * The meta-object. Null while the KnowHOW bootstrap is creating the
-     * very first types and for freshly stubbed STables during
-     * deserialization.
-     */
-    @JvmField var HOW: SixModelObject?,
+    how: SixModelObject?,
 ) {
     companion object {
         /**
@@ -58,6 +53,52 @@ class STable(
         @JvmField val PUBLISHES = java.util.concurrent.atomic.LongAdder()
     }
 
+    /**
+     * The meta-object. Null while the KnowHOW bootstrap is creating the
+     * very first types. Under the demand reader (milestone 8, Phase C) a
+     * deserialized STable holds only its HOW's SC and index until the
+     * first read: a type reached by a type check never pulls its metaclass
+     * and method tables. Every Kotlin reader keeps `st.HOW`; the setter
+     * clears the pending pair.
+     */
+    private var howField: SixModelObject? = how
+    private var howSC: SerializationContext? = null
+    private var howIdx = -1
+    var HOW: SixModelObject?
+        get() = howField ?: resolvePendingHow()
+        set(v) { howField = v; howSC = null }
+
+    private fun resolvePendingHow(): SixModelObject? {
+        val s = howSC ?: return null
+        val v = s.getObject(howIdx)
+        howField = v
+        howSC = null
+        return v
+    }
+
+    fun setPendingHow(sc: SerializationContext, idx: Int) { howField = null; howSC = sc; howIdx = idx }
+
+    /**
+     * The stash / package. Pending like HOW: a stash's hash reaches every
+     * symbol under it, a large share of a setting's SC.
+     */
+    private var whoField: SixModelObject? = null
+    private var whoSC: SerializationContext? = null
+    private var whoIdx = -1
+    var WHO: SixModelObject?
+        get() = whoField ?: resolvePendingWho()
+        set(v) { whoField = v; whoSC = null }
+
+    private fun resolvePendingWho(): SixModelObject? {
+        val s = whoSC ?: return null
+        val v = s.getObject(whoIdx)
+        whoField = v
+        whoSC = null
+        return v
+    }
+
+    fun setPendingWho(sc: SerializationContext, idx: Int) { whoField = null; whoSC = sc; whoIdx = idx }
+
     /** REPR-specific data (a RakuObjectREPRData for P6opaque). REPR-owned; a change republishes [state]. */
     @JvmField var REPRData: Any? = null
 
@@ -73,9 +114,6 @@ class STable(
      * by every other (the state object itself is immutable).
      */
     @Volatile @JvmField var state: TypeState = TypeState.initial()
-
-    /** The stash / package. */
-    @JvmField var WHO: SixModelObject? = null
 
     /** The serialization context this STable belongs to, if any. */
     @JvmField var sc: SerializationContext? = null

@@ -22,7 +22,10 @@ object UnitLoadStats {
 
     init {
         // The positive marker: a run that relies on these lines checks for it.
-        if (ON) System.err.println("unit-load: stats on")
+        if (ON) {
+            System.err.println("unit-load: stats on")
+            Runtime.getRuntime().addShutdownHook(Thread { org.raku.nqp.sixmodel.SerializationReader.reportAll() })
+        }
     }
 
     @JvmStatic

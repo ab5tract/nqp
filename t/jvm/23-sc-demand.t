@@ -5,7 +5,7 @@
 # child's sc-demand exit lines. The child-process helper is the one of
 # t/jvm/20-op-census.t; prove must run from the nqp tree.
 
-plan(24);
+plan(31);
 
 my $n := -1;
 sub fresh-sc($tag) { $n := $n + 1; nqp::createsc('SC_DEMAND_' ~ $n ~ '_' ~ $tag) }
@@ -126,3 +126,90 @@ class Pair2 {
     is(nqp::unbox_n(nqp::atpos(@l, 1)), 2.5e0, 'a boxed num');
     is(nqp::unbox_s(nqp::atpos(@l, 2)), 'boxed', 'a boxed str');
 }
+
+# Part B (Task 7): the demand counts of a child `./nqp-j-gradle -e 'say(1)'`
+# under NQP_UNIT_LOAD_STATS=1, which prints one `sc-demand` line per reader
+# alive at exit. The child-process helper is the one of t/jvm/20-op-census.t
+# (Queue, VMDecoder, create_buf and child-stderr copied verbatim -- a test
+# file is not importable).
+
+my class Queue is repr('ConcBlockingQueue') { }
+my class VMDecoder is repr('Decoder') { }
+my sub create_buf($type) {
+    my $buf := nqp::newtype(nqp::null(), 'VMArray');
+    nqp::composetype($buf, nqp::hash('array', nqp::hash('type', $type)));
+    $buf
+}
+
+# Runs ./nqp-j-gradle -e $code as a child under %env; returns a list
+# [$status, $stderr] -- the exit status the 'done' callback reports
+# (exitcode shl 8, so 0 for a clean exit) and the decoded stderr. A child
+# that died would otherwise read as an empty census block, which is a
+# confusing way to learn the program failed.
+# (prove runs this file with cwd = the nqp tree, where ./nqp-j-gradle is.)
+sub child-stderr($code, %env) {
+    my $queue := nqp::create(Queue);
+    my $done := 0; my $out-eof := 0; my $err-eof := 0;
+    my $status := -1;
+    my @err;
+    my $config := nqp::hash(
+        'done', -> $st { $status := $st; $done := 1 },
+        'ready', -> $stdin?, $stdout?, $stderr? { },
+        'stdout_bytes', -> $seq, $data, $err { $out-eof := 1 unless nqp::isconcrete($data) },
+        'stderr_bytes', -> $seq, $data, $err {
+            if nqp::isconcrete($data) { @err[$seq] := $data } else { $err-eof := 1 }
+        },
+        'buf_type', create_buf(uint8));
+    my $task := nqp::spawnprocasync($queue, './nqp-j-gradle', nqp::list('./nqp-j-gradle', '-e', $code),
+                                    nqp::cwd(), %env, $config);
+    nqp::permit($task, 1, -1);
+    nqp::permit($task, 2, -1);
+    while !$done || !$out-eof || !$err-eof {
+        if nqp::shift($queue) -> $t {
+            if nqp::islist($t) { my $cb := nqp::shift($t); $cb(|$t) } else { $t() }
+        }
+    }
+    my $dec := nqp::create(VMDecoder);
+    nqp::decoderconfigure($dec, 'utf8', nqp::hash());
+    for @err -> $bytes { nqp::decoderaddbytes($dec, $bytes) if nqp::isconcrete($bytes) }
+    nqp::list($status, nqp::decodertakeallchars($dec))
+}
+
+# The sc-demand line with the largest object total (NQPCORE's SC in an
+# nqp run): [finished, total] for objects, or [-1, -1].
+sub demand-objects($text) {
+    my $best-total := -1; my $best := -1;
+    for nqp::split("\n", $text) -> $line {
+        if nqp::index($line, 'sc-demand ') == 0 {
+            for nqp::split(' ', $line) -> $kv {
+                if nqp::index($kv, 'objects=') == 0 {
+                    my @ft := nqp::split('/', nqp::substr($kv, 8));
+                    if +@ft[1] > $best-total { $best-total := +@ft[1]; $best := +@ft[0] }
+                }
+            }
+        }
+    }
+    nqp::list($best, $best-total)
+}
+
+my %stats := nqp::getenvhash();
+%stats<NQP_UNIT_LOAD_STATS> := '1';
+my @lazy := child-stderr('say(1)', %stats);
+is(@lazy[0], 0, 'the child under NQP_UNIT_LOAD_STATS=1 exits clean');
+ok(nqp::index(@lazy[1], 'sc-demand ') >= 0, 'sc-demand lines print at exit');
+my @lo := demand-objects(@lazy[1]);
+ok(@lo[0] > 0, 'the largest SC finished some objects on demand (' ~ @lo[0] ~ ')');
+ok(@lo[0] < @lo[1], 'and fewer than all of them (' ~ @lo[0] ~ ' of ' ~ @lo[1] ~ ')');
+
+my %eager := nqp::getenvhash();
+%eager<NQP_UNIT_LOAD_STATS> := '1';
+%eager<NQP_SC_EAGER> := '1';
+my @eager := child-stderr('say(1)', %eager);
+is(@eager[0], 0, 'the child under NQP_SC_EAGER=1 exits clean');
+my @eo := demand-objects(@eager[1]);
+ok(@eo[0] == @eo[1] && @eo[1] == @lo[1], 'under NQP_SC_EAGER=1 every object is finished (' ~ @eo[0] ~ ' of ' ~ @eo[1] ~ ')');
+
+my %verify := nqp::getenvhash();
+%verify<NQP_SC_VERIFY> := '1';
+my @verify := child-stderr('say(1)', %verify);
+is(@verify[0], 0, 'the child under NQP_SC_VERIFY=1 exits clean');
