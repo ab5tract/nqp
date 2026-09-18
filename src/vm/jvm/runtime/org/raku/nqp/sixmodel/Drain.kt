@@ -9,6 +9,8 @@ package org.raku.nqp.sixmodel
  * what keeps a concurrent reader from seeing it). STables finish the
  * moment they are demanded -- an object stub needs its STable's REPR data
  * -- and closures at their stub; objects and contexts wait on the queue.
+ * A drain that throws leaves nothing behind: its entries are unstubbed so
+ * the next demand starts over.
  */
 class Drain {
     class Entry(@JvmField val reader: SerializationReader, @JvmField val kind: Int, @JvmField val index: Int)
@@ -26,6 +28,13 @@ class Drain {
 
     fun publish() {
         for (e in finished) e.reader.publish(e)
+    }
+
+    /** The exception path: nothing reached a root slot, so drop every stub
+     *  this drain made, finished and queued alike. */
+    fun rollback() {
+        for (e in finished) e.reader.unstub(e)
+        for (e in queue) e.reader.unstub(e)
     }
 
     companion object {
