@@ -456,6 +456,10 @@ class SerializationReader(
      * the same buffer. */
 
     private fun stubAndFinishSTable(i: Int, d: Drain): STable {
+        /* Defensive: the barrier peeks before it demands, so a published slot
+         * does not reach here -- but stubbing one again would build a second
+         * identity for it and publish that over the first. */
+        sc.peekSTable(i)?.let { return it }
         var st = pendingSTable[i]
         if (st == null) {
             val saved = orig.position()
@@ -492,6 +496,7 @@ class SerializationReader(
     }
 
     private fun stubObject(i: Int, d: Drain): SixModelObject {
+        sc.peekObject(i)?.let { return it }
         pendingObj[i]?.let { return it }
         val saved = orig.position()
         val obj: SixModelObject
@@ -517,6 +522,7 @@ class SerializationReader(
     }
 
     private fun stubCode(j: Int, d: Drain): CodeRef {
+        sc.peekCodeRef(crCount + j)?.let { return it }
         pendingCode[j]?.let { return it }
         val saved = orig.position()
         try {
@@ -526,11 +532,13 @@ class SerializationReader(
             closure.sc = sc
             closure.scCodeIdx = crCount + j
             pendingCode[j] = closure
+            /* On the drain with the memo: the reads below can throw or demand,
+             * and an entry that is only in the memo would never be rolled back. */
+            d.finished.add(Drain.Entry(this, Drain.CODE, j))
             val ctxIdx = orig.getInt()
             val hasCodeObject = orig.getInt() != 0
             if (hasCodeObject) closure.codeObject = objRef(rowRef())
             if (ctxIdx > 0) closure.outer = contextAt(ctxIdx - 1, d)
-            d.finished.add(Drain.Entry(this, Drain.CODE, j))
             return closure
         } finally {
             orig.position(saved)
@@ -652,7 +660,10 @@ class SerializationReader(
     /* Drain.rollback's callback: drop a stub the drain never published. */
     fun unstub(e: Drain.Entry) {
         when (e.kind) {
-            Drain.STABLE -> { pendingSTable[e.index] = null; stableState[e.index] = ST_UNREAD }
+            /* Only what is still pending: a publish that failed partway
+             * already cleared what it stored, and resetting that STable's
+             * state would contradict the root slot. */
+            Drain.STABLE -> if (pendingSTable[e.index] != null) { pendingSTable[e.index] = null; stableState[e.index] = ST_UNREAD }
             Drain.OBJECT -> pendingObj[e.index] = null
             Drain.CODE -> pendingCode[e.index] = null
             Drain.CONTEXT -> contexts[e.index] = null
@@ -673,10 +684,16 @@ class SerializationReader(
      * bisecting a demand-order bug. */
     private fun drainAll() {
         topLevel { d ->
-            for (i in 0 until stTableEntries) stubAndFinishSTable(i, d)
-            for (i in 0 until objTableEntries) stubObject(i, d)
-            for (j in 0 until closureTableEntries) stubCode(j, d)
-            for (k in 0 until contextTableEntries) contextAt(k, d)
+            /* A published slot is skipped, exactly as the demand roads skip it:
+             * repossess() ran its own drains before us and published what they
+             * finished, and stubbing such a slot again would build a SECOND
+             * identity for it and publish that over the first (the layout of
+             * one type then holds a class handle the guest never sees again).
+             * Contexts have no root slot; contextAt's own table is the memo. */
+            for (i in 0 until stTableEntries) if (sc.peekSTable(i) == null) stubAndFinishSTable(i, d)
+            for (i in 0 until objTableEntries) if (sc.peekObject(i) == null) stubObject(i, d)
+            for (j in 0 until closureTableEntries) if (sc.peekCodeRef(crCount + j) == null) stubCode(j, d)
+            for (k in 0 until contextTableEntries) if (contexts[k] == null) contextAt(k, d)
         }
     }
 

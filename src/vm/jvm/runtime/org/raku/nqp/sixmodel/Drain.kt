@@ -21,8 +21,12 @@ class Drain {
     fun run() {
         while (true) {
             val e = queue.removeFirstOrNull() ?: return
-            e.reader.finish(e)
+            /* On the list BEFORE the finish: an entry whose finish throws is
+             * on neither list otherwise, and rollback would leave its memo
+             * holding a half-built object. publish() runs only after run()
+             * returns, so the order it sees is unaffected. */
             finished.add(e)
+            e.reader.finish(e)
         }
     }
 
