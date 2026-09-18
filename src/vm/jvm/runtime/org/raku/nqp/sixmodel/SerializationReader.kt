@@ -58,8 +58,10 @@ class SerializationReader(
 
         /** One lock for every drain in the process: a worklist crosses SCs. */
         @JvmField val LOCK = java.util.concurrent.locks.ReentrantLock()
-        /** The drain in progress on the thread holding LOCK; null outside one. */
-        @JvmStatic var current: Drain? = null
+        /** The drain in progress on the thread holding LOCK; null outside one.
+         *  Volatile because it is written by whichever thread holds the lock
+         *  and read on the way into one. */
+        @JvmStatic @Volatile var current: Drain? = null
         @JvmField val EAGER = System.getenv("NQP_SC_EAGER") != null
         @JvmField val VERIFY = System.getenv("NQP_SC_VERIFY") != null
         /** Every reader alive under the stats knob, for the exit line (Task 7). */
@@ -118,64 +120,77 @@ class SerializationReader(
     fun deserialize() {
         val stats = org.raku.nqp.runtime.unit.UnitLoadStats.ON
         val t0 = if (stats) System.nanoTime() else 0L
-        if (current != null) throw RuntimeException("deserialize called inside a demand drain")
-        // Serialized data is always little endian.
-        orig.order(ByteOrder.LITTLE_ENDIAN)
+        /* The whole load runs under the drain lock, because repossess() and
+         * drainAll() below open drains of their own and a drain owns the
+         * process-global `current` for its whole life. With the lock in hand
+         * the check below is about THIS thread: `current` is only ever set by
+         * the thread holding the lock, so a non-null drain here is our own --
+         * a deserialize reached from inside a demand, which is the bug the
+         * check is for. Nothing between here and the unlock can block on
+         * another thread. */
+        LOCK.lock()
+        try {
+            if (current != null) throw RuntimeException("deserialize called inside a demand drain")
+            // Serialized data is always little endian.
+            orig.order(ByteOrder.LITTLE_ENDIAN)
 
-        // Split the input into the various segments.
-        checkAndDisectInput()
+            // Split the input into the various segments.
+            checkAndDisectInput()
 
-        deserializeStringHeap()
+            deserializeStringHeap()
 
-        resolveDependencies()
+            resolveDependencies()
 
-        /* The static code refs, in place; the closure slots after them stay
-         * null until demanded. */
-        sc.initCodeRefList(crCount + closureTableEntries)
-        for (i in 0 until crCount) {
-            @Suppress("SENSELESS_COMPARISON")
-            if (cr[i] == null) {
-                var nulls = 0
-                val firstFew = StringBuilder()
-                for (j in cr.indices) {
-                    if (cr[j] == null) {
-                        nulls++
-                        if (nulls <= 8) {
-                            if (nulls > 1) firstFew.append(",")
-                            firstFew.append(j)
+            /* The static code refs, in place; the closure slots after them stay
+             * null until demanded. */
+            sc.initCodeRefList(crCount + closureTableEntries)
+            for (i in 0 until crCount) {
+                @Suppress("SENSELESS_COMPARISON")
+                if (cr[i] == null) {
+                    var nulls = 0
+                    val firstFew = StringBuilder()
+                    for (j in cr.indices) {
+                        if (cr[j] == null) {
+                            nulls++
+                            if (nulls <= 8) {
+                                if (nulls > 1) firstFew.append(",")
+                                firstFew.append(j)
+                            }
                         }
                     }
+                    throw RuntimeException(
+                        "Serialized code ref " + i + " of " + crCount
+                            + " has no compiled method in this compilation unit"
+                            + " (code ref table has " + cr.size + " entries, "
+                            + nulls + " of them empty, first at " + firstFew + ")")
                 }
-                throw RuntimeException(
-                    "Serialized code ref " + i + " of " + crCount
-                        + " has no compiled method in this compilation unit"
-                        + " (code ref table has " + cr.size + " entries, "
-                        + nulls + " of them empty, first at " + firstFew + ")")
+                cr[i].isStaticCodeRef = true
+                cr[i].sc = sc
+                sc.addCodeRef(cr[i])
             }
-            cr[i].isStaticCodeRef = true
-            cr[i].sc = sc
-            sc.addCodeRef(cr[i])
+            sc.extendCodeRefList(closureTableEntries)
+
+            /* Root arrays to size, every slot null: nothing is stubbed up front. */
+            sc.initSTableList(stTableEntries)
+            sc.initObjectList(objTableEntries)
+            stableState = IntArray(stTableEntries)
+            pendingSTable = arrayOfNulls(stTableEntries)
+            pendingObj = arrayOfNulls(objTableEntries)
+            pendingCode = arrayOfNulls(closureTableEntries)
+            contexts = arrayOfNulls(contextTableEntries)
+
+            /* From here the barrier is live: the repossessions below demand
+             * through it, and so does everything after us. */
+            sc.reader = this
+            if (stats) LIVE.add(this)
+            if (reposTableEntries > 0) repossess()
+            if (EAGER) drainAll()
+            if (stats)
+                org.raku.nqp.runtime.unit.UnitLoadStats.report(sc.handle, "sc-load", System.nanoTime() - t0,
+                    "stables=$stTableEntries objects=$objTableEntries coderefs=$crCount closures=$closureTableEntries contexts=$contextTableEntries")
+        } finally {
+            LOCK.unlock()
         }
-        sc.extendCodeRefList(closureTableEntries)
-
-        /* Root arrays to size, every slot null: nothing is stubbed up front. */
-        sc.initSTableList(stTableEntries)
-        sc.initObjectList(objTableEntries)
-        stableState = IntArray(stTableEntries)
-        pendingSTable = arrayOfNulls(stTableEntries)
-        pendingObj = arrayOfNulls(objTableEntries)
-        pendingCode = arrayOfNulls(closureTableEntries)
-        contexts = arrayOfNulls(contextTableEntries)
-
-        /* From here the barrier is live: the repossessions below demand
-         * through it, and so does everything after us. */
-        sc.reader = this
-        if (stats) LIVE.add(this)
-        if (reposTableEntries > 0) repossess()
-        if (EAGER) drainAll()
-        if (stats)
-            org.raku.nqp.runtime.unit.UnitLoadStats.report(sc.handle, "sc-load", System.nanoTime() - t0,
-                "stables=$stTableEntries objects=$objTableEntries coderefs=$crCount closures=$closureTableEntries contexts=$contextTableEntries")
     }
 
     /* Checks the header looks sane and all of the places it points to make sense.
@@ -377,6 +392,14 @@ class SerializationReader(
             d.run()
             d.publish()
             return r
+        } catch (e: Throwable) {
+            /* Nothing was published -- the root slots are untouched -- but the
+             * stubs are in the pending tables, where a later demand would find
+             * them half built and hand them straight to guest code (NQP's
+             * `try require` makes this a live path, not a fatal one). Drop
+             * them, so the next demand rebuilds from the wire. */
+            d.rollback()
+            throw e
         } finally {
             current = null
             drains++
@@ -624,6 +647,16 @@ class SerializationReader(
         }
         if (outerIdx > 0) ctx.outer = contextAt(outerIdx - 1, current!!)
         else ctx.resolveDeserializedOuter()
+    }
+
+    /* Drain.rollback's callback: drop a stub the drain never published. */
+    fun unstub(e: Drain.Entry) {
+        when (e.kind) {
+            Drain.STABLE -> { pendingSTable[e.index] = null; stableState[e.index] = ST_UNREAD }
+            Drain.OBJECT -> pendingObj[e.index] = null
+            Drain.CODE -> pendingCode[e.index] = null
+            Drain.CONTEXT -> contexts[e.index] = null
+        }
     }
 
     /* Drain.publish's callback: the release store into the root slot. */
