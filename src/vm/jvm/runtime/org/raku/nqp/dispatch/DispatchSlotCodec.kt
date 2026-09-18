@@ -1,7 +1,6 @@
 package org.raku.nqp.dispatch
 
 import org.raku.nqp.runtime.CallSiteDescriptor
-import org.raku.nqp.runtime.CodeRef
 import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.STable
 import org.raku.nqp.sixmodel.SerializationContext
@@ -45,17 +44,10 @@ object DispatchSlotCodec {
     private fun typeName(obj: SixModelObject): String =
         if (obj.stInitialized) obj.st.debugName ?: "?" else "?"
 
-    /* The SC's index maps answer 0 / throw for an absent key, so every
-     * index is validated by reading the root slot back. */
-    private fun objectIndex(sc: SerializationContext, obj: SixModelObject): Int {
-        val i = sc.getObjectIndex(obj)
-        return if (i >= 0 && i < sc.objectCount() && sc.getObject(i) === obj) i else -1
-    }
-    private fun codeIndex(sc: SerializationContext, obj: SixModelObject): Int {
-        if (obj !is CodeRef) return -1
-        val i = try { sc.getCodeIndex(obj) } catch (_: NullPointerException) { -1 }
-        return if (i >= 0 && i < sc.coderefCount() && sc.getCodeRef(i) === obj) i else -1
-    }
+    /* The context validates an index by reading the slot back; -1 means not
+     * in the root set. */
+    private fun objectIndex(sc: SerializationContext, obj: SixModelObject): Int = sc.getObjectIndex(obj)
+    private fun codeIndex(sc: SerializationContext, obj: SixModelObject): Int = sc.getCodeIndex(obj)
 
     private fun stamped(sc: SerializationContext, r: PRef, stamps: MutableMap<String, Int>?): PRef {
         stamps?.put(sc.handle, sc.stamp)
@@ -75,8 +67,8 @@ object DispatchSlotCodec {
     fun ref(st: STable?, stamps: MutableMap<String, Int>? = null): PRef? {
         if (st == null) return null
         val sc = st.sc ?: throw Unpersistable("STable ${st.debugName} in no SC")
-        val i = try { sc.getSTableIndex(st) } catch (_: NullPointerException) { -1 }
-        if (i >= 0 && i < sc.stableCount() && sc.getSTable(i) === st) return stamped(sc, PRef(sc.handle, i, PRef.STABLE), stamps)
+        val i = sc.getSTableIndex(st)
+        if (i >= 0) return stamped(sc, PRef(sc.handle, i, PRef.STABLE), stamps)
         throw Unpersistable("STable ${st.debugName} not in the root set of ${sc.handle}")
     }
 

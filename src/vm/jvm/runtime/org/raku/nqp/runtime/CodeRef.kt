@@ -31,6 +31,13 @@ class CodeRef : SixModelObject {
     @JvmField var isStaticCodeRef = false
 
     /**
+     * This code ref's index in [sc]'s code root set; -1 while in none. A
+     * code ref can sit in the object root set too (scIdx), so this is
+     * its own field.
+     */
+    @JvmField var scCodeIdx: Int = -1
+
+    /**
      * Is this flagged as a compiler stub?
      */
     @JvmField var isCompilerStub = false

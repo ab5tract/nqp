@@ -80,6 +80,9 @@ class STable(
     /** The serialization context this STable belongs to, if any. */
     @JvmField var sc: SerializationContext? = null
 
+    /** This STable's index in [sc]'s STable root set; -1 while in none. */
+    @JvmField var scIdx: Int = -1
+
     /** The HLL owner's debug name for the type, if it set one. */
     @JvmField var debugName: String? = null
 
