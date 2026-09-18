@@ -83,7 +83,6 @@ class P6num : REPR() {
     }
 
     override fun deserialize_repr_data(tc: ThreadContext, st: STable, reader: SerializationReader) {
-        st.REPRData = StorageSpec.number(
-            if (reader.version >= 7) reader.readLong().toShort() else 64)
+        st.REPRData = StorageSpec.number(reader.readLong().toShort())
     }
 }
