@@ -200,9 +200,9 @@ class RakuObjectREPR : REPR() {
         for (i in 0 until numAttributes) {
             val f = flattened[i]
             if (f != null) {
-                /* A flattened native's storage spec is its own REPR data,
-                 * and the STable table is not in dependency order. */
-                reader.forceSTable(f)
+                /* The readSTableRef that produced f finished it (the demand
+                 * reader, milestone 8 Phase C), so its storage spec -- which
+                 * for a flattened native is its own REPR data -- is in hand. */
                 kinds.add(kindOf(tc, f)); slotSTables.add(f); specs.add(f.REPR.get_storage_spec(tc, f))
             }
             else { kinds.add(SlotKind.REF); slotSTables.add(null); specs.add(null) }
@@ -238,17 +238,19 @@ class RakuObjectREPR : REPR() {
 
     /* ----- objects ----- */
 
-    /** The stub is the final object. Its class comes from the STable's
-     *  layout when that is known (a type from another SC, or one whose REPR
-     *  data is already read), else from a peek at the serialized attribute
-     *  header; the layout itself is installed at finish. */
+    /** The stub is the final object. The demand reader (milestone 8, Phase C)
+     *  finishes an object's STable -- REPR data and all -- before it stubs the
+     *  object, so the layout is normally in hand; the exception is a cycle,
+     *  an STable whose own HOW/WHAT/WHO or method cache names an instance of
+     *  itself, and there the class comes from a peek at the serialized
+     *  attribute header. The layout itself is installed at finish. */
     override fun deserialize_stub(tc: ThreadContext, st: STable, reader: SerializationReader): SixModelObject {
-        val rd = st.REPRData as? RakuObjectREPRData
-        val known = rd?.layout
+        val known = (st.REPRData as? RakuObjectREPRData)?.layout
         if (known != null) return known.newInstance()
         val shape = reader.peekAttributeShape(st)
-        val classId = if (shape == null) 0 else RakuObjectLayout.chooseClass(shape[0], shape[1])
-        val o: RakuObject = when (classId) {
+            ?: throw ExceptionHandling.dieInternal(tc,
+                "Cannot deserialize an instance of the uncomposed type " + st.debugName)
+        val o: RakuObject = when (RakuObjectLayout.chooseClass(shape[0], shape[1])) {
             0 -> RakuObject4(); 1 -> RakuObject8(); 2 -> RakuObject16()
             3 -> RakuObject4L(); 4 -> RakuObject8L(); else -> RakuObject16L()
         }
@@ -256,8 +258,13 @@ class RakuObjectREPR : REPR() {
         return o
     }
 
-    override fun deserialize_stub(tc: ThreadContext, st: STable): SixModelObject =
-        throw ExceptionHandling.dieInternal(tc, "RakuObject stubs need the reader")
+    /** Without the reader only the layout can answer. */
+    override fun deserialize_stub(tc: ThreadContext, st: STable): SixModelObject {
+        val rd = st.REPRData as? RakuObjectREPRData
+        val l = rd?.layout ?: throw ExceptionHandling.dieInternal(tc,
+            "Cannot deserialize an instance of the uncomposed type " + st.debugName)
+        return l.newInstance()
+    }
 
     override fun deserialize_finish(tc: ThreadContext, st: STable, reader: SerializationReader, obj: SixModelObject) {
         val rd = st.REPRData as RakuObjectREPRData

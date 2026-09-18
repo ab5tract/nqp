@@ -18,6 +18,10 @@ class SerializationContext(@JvmField var handle: String) {
      * drops a slot whose stamp disagrees. */
     @JvmField var stamp: Int = 0
 
+    /* The demand reader of a deserialized SC (milestone 8, Phase C): a null
+     * root slot asks it. Null for an SC built in this process. */
+    @JvmField var reader: SerializationReader? = null
+
     /* The three root sets. */
     private val objects = RootSet<SixModelObject>()
     private val stables = RootSet<STable>()
@@ -92,7 +96,7 @@ class SerializationContext(@JvmField var handle: String) {
         return if (i >= 0 && i < objects.size && objects.get(i) === obj) i else -1
     }
 
-    fun getObject(index: Int): SixModelObject? = objects.get(index)
+    fun getObject(index: Int): SixModelObject? = objects.get(index) ?: reader?.demandObject(index)
     fun objectCount(): Int = objects.size
     fun initObjectList(entries: Int) = objects.init(entries)
 
@@ -113,7 +117,7 @@ class SerializationContext(@JvmField var handle: String) {
         return if (i >= 0 && i < stables.size && stables.get(i) === stable) i else -1
     }
 
-    fun getSTable(index: Int): STable? = stables.get(index)
+    fun getSTable(index: Int): STable? = stables.get(index) ?: reader?.demandSTable(index)
     fun stableCount(): Int = stables.size
     fun initSTableList(entries: Int) = stables.init(entries)
 
@@ -137,8 +141,18 @@ class SerializationContext(@JvmField var handle: String) {
         return if (i >= 0 && i < codes.size && codes.get(i) === cr) i else -1
     }
 
-    fun getCodeRef(index: Int): CodeRef? = codes.get(index)
+    fun getCodeRef(index: Int): CodeRef? = codes.get(index) ?: reader?.demandCodeRef(index)
     fun coderefCount(): Int = codes.size
+
+    /* The reader's own roads: a raw slot read (no demand) and the release
+     * store that publishes a finished entry at a drain's end. */
+    fun peekObject(index: Int): SixModelObject? = objects.get(index)
+    fun peekSTable(index: Int): STable? = stables.get(index)
+    fun peekCodeRef(index: Int): CodeRef? = codes.get(index)
+    fun publishObject(index: Int, obj: SixModelObject) = objects.set(index, obj)
+    fun publishSTable(index: Int, st: STable) = stables.set(index, st)
+    fun publishCodeRef(index: Int, cr: CodeRef) = codes.set(index, cr)
+    fun extendCodeRefList(n: Int) = codes.extend(n)
 
     fun disclaimObjects() {
         for (i in 0 until objects.size) objects.get(i)?.let { it.sc = null; it.scIdx = -1 }
@@ -153,5 +167,7 @@ class SerializationContext(@JvmField var handle: String) {
     fun disclaimCodes() {
         for (i in 0 until codes.size) codes.get(i)?.let { it.sc = null; it.scCodeIdx = -1 }
         codes.clear()
+        /* A disclaimed SC drops its reader, and the mapped slice with it. */
+        reader = null
     }
 }

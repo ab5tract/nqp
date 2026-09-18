@@ -50,18 +50,38 @@ class SerializationReader(
         private const val REFVAR_STATIC_CODEREF: Short     = 11
         private const val REFVAR_CLONED_CODEREF: Short     = 12
 
-        /* How far along an STable of this SC is, for forceSTable. */
+        /* How far along an STable of this SC is; ST_READING is the cycle
+         * marker a demand from inside this STable's own REPR data meets. */
         private const val ST_UNREAD  = 0
         private const val ST_READING = 1
         private const val ST_READ    = 2
+
+        /** One lock for every drain in the process: a worklist crosses SCs. */
+        @JvmField val LOCK = java.util.concurrent.locks.ReentrantLock()
+        /** The drain in progress on the thread holding LOCK; null outside one. */
+        @JvmStatic var current: Drain? = null
+        @JvmField val EAGER = System.getenv("NQP_SC_EAGER") != null
+        @JvmField val VERIFY = System.getenv("NQP_SC_VERIFY") != null
+        /** Every reader alive under the stats knob, for the exit line (Task 7). */
+        @JvmField val LIVE = java.util.concurrent.ConcurrentLinkedQueue<SerializationReader>()
     }
 
+    /* Per-STable progress (ST_UNREAD / ST_READING / ST_READ) and the stubs
+     * not yet published, one table per kind; a root slot holds finished
+     * entries only. */
+    private lateinit var stableState: IntArray
+    private lateinit var pendingSTable: Array<STable?>
+    private lateinit var pendingObj: Array<SixModelObject?>
+    private lateinit var pendingCode: Array<CodeRef?>
     private lateinit var contexts: Array<CallFrame?>
 
-    /* Per-STable progress; the way back from an STable to its index is the
-     * STable's own scIdx, so a REPR can ask for one it depends on out of
-     * table order. */
-    private var stableState = IntArray(0)
+    /* The stats knob's counters (Task 7 prints them). */
+    @JvmField var stablesRead = 0
+    @JvmField var objectsRead = 0
+    @JvmField var closuresRead = 0
+    @JvmField var contextsRead = 0
+    @JvmField var drains = 0
+    @JvmField var demandNanos = 0L
 
     /* The version of the serialization format we're currently reading. */
     @JvmField var version = 0
@@ -98,6 +118,7 @@ class SerializationReader(
     fun deserialize() {
         val stats = org.raku.nqp.runtime.unit.UnitLoadStats.ON
         val t0 = if (stats) System.nanoTime() else 0L
+        if (current != null) throw RuntimeException("deserialize called inside a demand drain")
         // Serialized data is always little endian.
         orig.order(ByteOrder.LITTLE_ENDIAN)
 
@@ -108,8 +129,9 @@ class SerializationReader(
 
         resolveDependencies()
 
-        // Put code refs in place.
-        sc.initCodeRefList(crCount)
+        /* The static code refs, in place; the closure slots after them stay
+         * null until demanded. */
+        sc.initCodeRefList(crCount + closureTableEntries)
         for (i in 0 until crCount) {
             @Suppress("SENSELESS_COMPARISON")
             if (cr[i] == null) {
@@ -134,42 +156,26 @@ class SerializationReader(
             cr[i].sc = sc
             sc.addCodeRef(cr[i])
         }
+        sc.extendCodeRefList(closureTableEntries)
 
-        // Handle any STable repossessions, then stub STables.
+        /* Root arrays to size, every slot null: nothing is stubbed up front. */
         sc.initSTableList(stTableEntries)
-        if (reposTableEntries > 0)
-            repossess(1)
-        stubSTables()
-
-        // Handle any object repossessions, then stub objects.
         sc.initObjectList(objTableEntries)
-        if (reposTableEntries > 0)
-            repossess(0)
-        stubObjects()
+        stableState = IntArray(stTableEntries)
+        pendingSTable = arrayOfNulls(stTableEntries)
+        pendingObj = arrayOfNulls(objTableEntries)
+        pendingCode = arrayOfNulls(closureTableEntries)
+        contexts = arrayOfNulls(contextTableEntries)
 
-        // Do first step of deserializing any closures.
-        deserializeClosures()
-        val t1 = if (stats) System.nanoTime() else 0L
-
-        // Second passes over STables and objects.
-        deserializeSTables()
-        deserializeObjects()
-
-        // Finish up contexts and closures.
-        deserializeContexts()
-        attachClosureOuters(crCount)
-        attachContextOuters()
-        fixupContextOuters()
-        if (stats) {
-            // Phase 0: the part that stays eager under demand deserialization
-            // (header, heap, dependencies, code refs, repossession, stubs,
-            // closures) against the part phase 2 defers (finishing).
-            val t2 = System.nanoTime()
-            val handle = sc.handle ?: "?"
-            org.raku.nqp.runtime.unit.UnitLoadStats.report(handle, "sc-stub", t1 - t0,
-                "stables=$stTableEntries objects=$objTableEntries coderefs=$crCount")
-            org.raku.nqp.runtime.unit.UnitLoadStats.report(handle, "sc-finish", t2 - t1)
-        }
+        /* From here the barrier is live: the repossessions below demand
+         * through it, and so does everything after us. */
+        sc.reader = this
+        if (stats) LIVE.add(this)
+        if (reposTableEntries > 0) repossess()
+        if (EAGER) drainAll()
+        if (stats)
+            org.raku.nqp.runtime.unit.UnitLoadStats.report(sc.handle, "sc-load", System.nanoTime() - t0,
+                "stables=$stTableEntries objects=$objTableEntries coderefs=$crCount closures=$closureTableEntries contexts=$contextTableEntries")
     }
 
     /* Checks the header looks sane and all of the places it points to make sense.
@@ -308,167 +314,240 @@ class SerializationReader(
         }
     }
 
-    /* Repossess an object or STable. */
-    private fun repossess(chosenType: Int) {
-        for (i in 0 until reposTableEntries) {
-            /* Go to table row. */
-            orig.position(reposTableOffset + i * REPOS_TABLE_ENTRY_SIZE)
-
-            /* Do appropriate type of repossession. */
-            val repoType = orig.getInt()
-            if (repoType != chosenType)
-                continue
-            val objIdx = orig.getInt()
-            val origSCIdx = orig.getInt()
-            val origObjIdx = orig.getInt()
-            if (repoType == 0) {
-                /* Get object to repossess. */
-                val origSC = locateSC(origSCIdx)
-                val origObj = origSC.getObject(origObjIdx)!!
-
-                /* Ensure we aren't already trying to repossess the object. */
-                /* XXX TODO */
-
-                /* Put it into objects root set at the appropriate slot. */
-                sc.addObject(origObj, objIdx)
-                origObj.sc = sc
-
-                /* The object's STable may have changed as a result of the
-                 * repossession (perhaps due to mixing in to it), so put the
-                 * STable it should now have in place. */
-                origObj.st = objRowSTable(objIdx)
-            } else if (repoType == 1) {
-                /* Get STable to repossess. */
-                val origSC = locateSC(origSCIdx)
-                val origST = origSC.getSTable(origObjIdx)!!
-
-                /* Ensure we aren't already trying to repossess the STable. */
-                /* XXX TODO */
-
-                /* Put it into STables root set at the apporpriate slot. */
-                sc.setSTable(objIdx, origST)
-                origST.sc = sc
-            } else {
-                throw RuntimeException("Unknown repossession type")
+    /* A repossessed entry replaces an object or STable other SCs already
+     * hold, so it cannot wait: it is finished before deserialize() returns,
+     * as MoarVM's repossess does. STables first (an object row names its
+     * STable), then the objects in one drain. */
+    private fun repossess() {
+        for (pass in 1 downTo 0) {
+            topLevel { d ->
+                /* Two loops over the table, because the second one demands:
+                 * every repossessed slot of this pass is registered in the
+                 * pending tables first, so a demand that reaches one finds
+                 * the repossessed entry -- not a fresh stub of its own, which
+                 * would be both the wrong entry and a second one to publish. */
+                val slots = ArrayList<Int>()
+                for (i in 0 until reposTableEntries) {
+                    orig.position(reposTableOffset + i * REPOS_TABLE_ENTRY_SIZE)
+                    val repoType = orig.getInt()
+                    if (repoType != pass) continue
+                    val slot = orig.getInt()
+                    val origSC = locateSC(orig.getInt())
+                    val origIdx = orig.getInt()
+                    if (repoType == 1) {
+                        val origST = origSC.getSTable(origIdx)!!
+                        origST.sc = sc
+                        origST.scIdx = slot
+                        pendingSTable[slot] = origST
+                        stableState[slot] = ST_UNREAD
+                        d.finished.add(Drain.Entry(this, Drain.STABLE, slot))
+                    } else if (repoType == 0) {
+                        val origObj = origSC.getObject(origIdx)!!
+                        origObj.sc = sc
+                        origObj.scIdx = slot
+                        pendingObj[slot] = origObj
+                        if (objRowDataOffset(slot) < 0) d.finished.add(Drain.Entry(this, Drain.OBJECT, slot))
+                        else d.queue.add(Drain.Entry(this, Drain.OBJECT, slot))
+                    } else {
+                        throw RuntimeException("Unknown repossession type")
+                    }
+                    slots.add(slot)
+                }
+                for (slot in slots) {
+                    /* A repossessed STable is read here and not queued: an
+                     * object row names its STable. A repossessed object's
+                     * STable may have changed (a mixin), so take the row's;
+                     * the object itself waits on the drain like any other. */
+                    if (pass == 1) { if (stableState[slot] == ST_UNREAD) finishSTable(slot) }
+                    else pendingObj[slot]!!.st = objRowSTable(slot)
+                }
             }
         }
     }
 
-    private fun stubSTables() {
-        for (i in 0 until stTableEntries) {
-            // May already have it, due to repossession.
-            if (sc.getSTable(i) != null)
-                continue
+    /* One outermost demand: a drain, run to empty, then published. Inside
+     * a drain (current != null, same thread -- the lock is held for the
+     * drain's whole life) a demand only stubs and queues. */
+    private inline fun <T> topLevel(body: (Drain) -> T): T {
+        val t0 = System.nanoTime()
+        val d = Drain()
+        current = d
+        try {
+            val r = body(d)
+            d.run()
+            d.publish()
+            return r
+        } finally {
+            current = null
+            drains++
+            demandNanos += System.nanoTime() - t0
+        }
+    }
 
-            // Look up representation.
-            orig.position(stTableOffset + i * STABLES_TABLE_ENTRY_SIZE)
-            val repr = REPRRegistry.getByName(lookupString(orig.getInt())!!)
+    fun demandObject(index: Int): SixModelObject? {
+        if (index < 0 || index >= objTableEntries) throw RuntimeException("Invalid SC object index $index")
+        LOCK.lock()
+        try {
+            sc.peekObject(index)?.let { return it }
+            val d = current
+            if (d != null) return stubObject(index, d)
+            val o = topLevel { stubObject(index, it) }
+            if (VERIFY && sc.peekObject(index) !== o)
+                throw RuntimeException("sc-verify: object $index of ${sc.handle} left a top-level demand unpublished")
+            return o
+        } finally {
+            LOCK.unlock()
+        }
+    }
 
-            // Create STable stub and add it to the root STable set.
-            val st = STable(repr, null)
+    fun demandSTable(index: Int): STable? {
+        if (index < 0 || index >= stTableEntries) throw RuntimeException("Invalid STable index $index")
+        LOCK.lock()
+        try {
+            sc.peekSTable(index)?.let { return it }
+            val d = current
+            if (d != null) return stubAndFinishSTable(index, d)
+            return topLevel { stubAndFinishSTable(index, it) }
+        } finally {
+            LOCK.unlock()
+        }
+    }
+
+    fun demandCodeRef(index: Int): CodeRef? {
+        if (index < crCount) return null          /* a static ref is installed at load or absent for good */
+        val j = index - crCount
+        if (j >= closureTableEntries) throw RuntimeException("Invalid SC code index $index")
+        LOCK.lock()
+        try {
+            sc.peekCodeRef(index)?.let { return it }
+            val d = current
+            if (d != null) return stubCode(j, d)
+            return topLevel { stubCode(j, it) }
+        } finally {
+            LOCK.unlock()
+        }
+    }
+
+    /* Every road below that seeks the buffer saves and restores the
+     * position: a demand arrives from the middle of another entry's read of
+     * the same buffer. */
+
+    private fun stubAndFinishSTable(i: Int, d: Drain): STable {
+        var st = pendingSTable[i]
+        if (st == null) {
+            val saved = orig.position()
+            try {
+                orig.position(stTableOffset + i * STABLES_TABLE_ENTRY_SIZE)
+                val repr = REPRRegistry.getByName(lookupString(orig.getInt())!!)
+                st = STable(repr, null)
+            } finally {
+                orig.position(saved)
+            }
             st.sc = sc
-            sc.setSTable(i, st)
+            st.scIdx = i
+            pendingSTable[i] = st
+            d.finished.add(Drain.Entry(this, Drain.STABLE, i))
         }
-
-        stableState = IntArray(stTableEntries)
+        /* READING: a cycle through this STable's REPR data; the partly built
+         * STable is the best on offer, as before. */
+        if (stableState[i] == ST_UNREAD) finishSTable(i)
+        return st
     }
 
-    /* The STable of object row i. */
-    private fun objRowSTable(i: Int): STable {
-        orig.position(objTableOffset + i * OBJECTS_TABLE_ENTRY_SIZE)
-        val packed = orig.getInt()
-        return lookupSTable(packed and 0xFFF, packed ushr 12)
-    }
-
-    /* Object row i's data offset, or -1 for a type object. */
-    private fun objRowDataOffset(i: Int): Int {
-        orig.position(objTableOffset + i * OBJECTS_TABLE_ENTRY_SIZE + 4)
-        val off = orig.getInt()
-        return if (off < 0) -1 else off
-    }
-
-    private fun stubObjects() {
-        for (i in 0 until objTableEntries) {
-            // May already have it, due to repossession.
-            if (sc.getObject(i) != null)
-                continue
-
-            // Look up STable, then go by the row's data offset: a type
-            // object has none.
-            val st = objRowSTable(i)
-            val stubObj: SixModelObject? =
-                if (objRowDataOffset(i) < 0)
-                    TypeObject().also { it.st = st }
-                else
-                    st.REPR.deserialize_stub(tc, st, this)
-
-            // Place object in SC root set.
-            stubObj!!.sc = sc
-            sc.addObject(stubObj, i)
+    private fun finishSTable(i: Int) {
+        stableState[i] = ST_READING
+        val savedPos = orig.position()
+        val savedCur = curObject
+        curObject = null          /* an owned array read below belongs to no object */
+        try {
+            deserializeSTableInner(i)
+        } finally {
+            stableState[i] = ST_READ
+            orig.position(savedPos)
+            curObject = savedCur
         }
     }
 
-    private fun deserializeClosures() {
-        for (i in 0 until closureTableEntries) {
-            /* Seek to the closure's table row. */
-            orig.position(closureTableOffset + i * CLOSURES_TABLE_ENTRY_SIZE)
+    private fun stubObject(i: Int, d: Drain): SixModelObject {
+        pendingObj[i]?.let { return it }
+        val saved = orig.position()
+        val obj: SixModelObject
+        val concrete: Boolean
+        try {
+            val st = objRowSTable(i)          /* demands the STable: finished on return */
+            /* Finishing that STable may have demanded this very object -- its
+             * WHAT is the type object of this row -- which stubbed it and put
+             * it on the drain; that stub is the one, not a second one. */
+            pendingObj[i]?.let { return it }
+            concrete = objRowDataOffset(i) >= 0
+            obj = if (concrete) st.REPR.deserialize_stub(tc, st, this)!!
+                  else TypeObject().also { it.st = st }
+        } finally {
+            orig.position(saved)
+        }
+        obj.sc = sc
+        obj.scIdx = i
+        pendingObj[i] = obj
+        val e = Drain.Entry(this, Drain.OBJECT, i)
+        if (concrete) d.queue.add(e) else d.finished.add(e)
+        return obj
+    }
 
-            /* Resolve the reference to the static code object. */
+    private fun stubCode(j: Int, d: Drain): CodeRef {
+        pendingCode[j]?.let { return it }
+        val saved = orig.position()
+        try {
+            orig.position(closureTableOffset + j * CLOSURES_TABLE_ENTRY_SIZE)
             val staticCode = codeRefOf(rowRef())
-
-            /* Clone it and add it to this SC's code refs list. */
             val closure = staticCode.clone(tc) as CodeRef
             closure.sc = sc
-            sc.addCodeRef(closure)
-
-            /* See if there's a code object we need to attach. */
-            orig.position(orig.position() + 4)
-            if (orig.getInt() != 0)
-                closure.codeObject = objRef(rowRef())
+            closure.scCodeIdx = crCount + j
+            pendingCode[j] = closure
+            val ctxIdx = orig.getInt()
+            val hasCodeObject = orig.getInt() != 0
+            if (hasCodeObject) closure.codeObject = objRef(rowRef())
+            if (ctxIdx > 0) closure.outer = contextAt(ctxIdx - 1, d)
+            d.finished.add(Drain.Entry(this, Drain.CODE, j))
+            return closure
+        } finally {
+            orig.position(saved)
         }
     }
 
-    private fun deserializeSTables() {
-        for (i in 0 until stTableEntries)
-            deserializeSTable(i)
-    }
-
-    /* A REPR reading its own data may need another STable of this SC to be
-     * finished already - P6opaque asks each flattened attribute type for its
-     * storage spec, which for P6int is repr data that its own deserialize
-     * fills in. The table is not in dependency order, so let a REPR say which
-     * STables it needs and deserialize those first. MoarVM calls the same
-     * thing MVM_serialization_force_stable. */
-    fun forceSTable(st: STable?) {
-        if (st == null)
-            return
-        /* Not one of ours means it came from a dependency, already whole. */
-        if (st.sc !== sc) return
-        val idx = st.scIdx
-        if (idx < 0) return
-        if (stableState[idx] != ST_UNREAD)
-            return
-        /* The caller is midway through reading its own data from the shared
-         * buffer, so put the position back before returning to it. */
-        val savedPos = orig.position()
+    private fun contextAt(k: Int, d: Drain): CallFrame {
+        contexts[k]?.let { return it }
+        val saved = orig.position()
         try {
-            deserializeSTable(idx)
-        }
-        finally {
-            orig.position(savedPos)
+            orig.position(contextTableOffset + k * CONTEXTS_TABLE_ENTRY_SIZE)
+            val staticCode = codeRefOf(rowRef())
+            val ctx = CallFrame()
+            ctx.tc = tc
+            ctx.codeRef = staticCode
+            val sci = staticCode.staticInfo
+            if (sci.oLexicalNames != null) ctx.oLex = sci.oLexStatic!!.clone()
+            if (sci.iLexicalNames != null) ctx.iLex = LongArray(sci.iLexicalNames!!.size)
+            if (sci.nLexicalNames != null) ctx.nLex = DoubleArray(sci.nLexicalNames!!.size)
+            if (sci.sLexicalNames != null) ctx.sLex = arrayOfNulls(sci.sLexicalNames!!.size)
+            contexts[k] = ctx
+            d.queue.add(Drain.Entry(this, Drain.CONTEXT, k))
+            return ctx
+        } finally {
+            orig.position(saved)
         }
     }
 
-    /** For a RakuObject stub: [references, longs] counted from the STable's
-     *  serialized REPR-data header (attribute count, then per attribute a
-     *  flag and, when flattened, an STable ref whose REPR names the kind).
-     *  Reads no object reference, so it is safe during stubObjects. Null
-     *  when the STable is not this SC's (already whole) or its REPR data is
-     *  already read (the layout is the better answer). Cached per STable. */
+    /** For a RakuObject stub whose STable is mid-read (ST_READING: the
+     *  STable's own HOW/WHAT/WHO or method cache names an instance of
+     *  itself, and its REPR data comes after them, so the layout cannot be
+     *  in hand): [references, longs] counted from the serialized REPR-data
+     *  header -- attribute count, then per attribute a flag and, when
+     *  flattened, an STable ref whose REPR names the kind. Null when the
+     *  STable is not this SC's (already whole) or its REPR data is read
+     *  (the layout is the better answer). Cached per STable. */
     fun peekAttributeShape(st: STable): IntArray? {
         if (st.sc !== sc) return null
         val idx = st.scIdx
-        if (idx < 0) return null
+        if (idx < 0 || idx >= stTableEntries) return null
         if (stableState[idx] == ST_READ) return null
         shapeCache[idx]?.let { return it }
         val saved = orig.position()
@@ -495,19 +574,91 @@ class SerializationReader(
     }
     private val shapeCache = HashMap<Int, IntArray>()
 
-    private fun deserializeSTable(i: Int) {
-        /* A cycle between two STables' repr data would come back here while
-         * this one is still being read; the partly built STable is the best
-         * that can be offered, which is what leaving it in progress does. */
-        if (stableState[i] != ST_UNREAD)
-            return
-        stableState[i] = ST_READING
-        try {
-            deserializeSTableInner(i)
+    /* Drain.run's callback: finish one queued entry. */
+    fun finish(e: Drain.Entry) {
+        when (e.kind) {
+            Drain.OBJECT -> {
+                val obj = pendingObj[e.index]!!
+                orig.position(objDataOffset + objRowDataOffset(e.index))
+                curObject = obj
+                try { obj.st.REPR.deserialize_finish(tc, obj.st, this, obj) }
+                finally { curObject = null }
+            }
+            Drain.CONTEXT -> finishContext(e.index)
+            else -> throw IllegalStateException("only objects and contexts are queued")
         }
-        finally {
-            stableState[i] = ST_READ
+    }
+
+    private fun finishContext(k: Int) {
+        val ctx = contexts[k]!!
+        val sci = ctx.codeRef.staticInfo
+        orig.position(contextTableOffset + k * CONTEXTS_TABLE_ENTRY_SIZE + 8)
+        val dataOffset = orig.getInt()
+        val outerIdx = orig.getInt()
+        orig.position(contextDataOffset + dataOffset)
+
+        /* Deserialize lexicals. */
+        val syms = readLong()
+        for (j in 0 until syms) {
+            val sym = readStr()!!
+            var idx = sci.oTryGetLexicalIdx(sym)
+            if (idx != -1) {
+                ctx.oLex!![idx] = readRef()
+            } else {
+                idx = sci.iTryGetLexicalIdx(sym)
+                if (idx != -1) {
+                    ctx.iLex!![idx] = readLong()
+                } else {
+                    idx = sci.nTryGetLexicalIdx(sym)
+                    if (idx != -1) {
+                        ctx.nLex!![idx] = orig.getDouble()
+                    } else {
+                        idx = sci.sTryGetLexicalIdx(sym)
+                        if (idx != -1)
+                            ctx.sLex!![idx] = readStr()
+                        else
+                            throw RuntimeException("Failed to deserialize lexical $sym")
+                    }
+                }
+            }
         }
+        if (outerIdx > 0) ctx.outer = contextAt(outerIdx - 1, current!!)
+        else ctx.resolveDeserializedOuter()
+    }
+
+    /* Drain.publish's callback: the release store into the root slot. */
+    fun publish(e: Drain.Entry) {
+        when (e.kind) {
+            Drain.STABLE -> { sc.publishSTable(e.index, pendingSTable[e.index]!!); pendingSTable[e.index] = null; stablesRead++ }
+            Drain.OBJECT -> { sc.publishObject(e.index, pendingObj[e.index]!!); pendingObj[e.index] = null; objectsRead++ }
+            Drain.CODE -> { sc.publishCodeRef(crCount + e.index, pendingCode[e.index]!!); pendingCode[e.index] = null; closuresRead++ }
+            Drain.CONTEXT -> contextsRead++
+        }
+    }
+
+    /* NQP_SC_EAGER=1: everything at load, the pre-Phase-C order, for
+     * bisecting a demand-order bug. */
+    private fun drainAll() {
+        topLevel { d ->
+            for (i in 0 until stTableEntries) stubAndFinishSTable(i, d)
+            for (i in 0 until objTableEntries) stubObject(i, d)
+            for (j in 0 until closureTableEntries) stubCode(j, d)
+            for (k in 0 until contextTableEntries) contextAt(k, d)
+        }
+    }
+
+    /* The STable of object row i. */
+    private fun objRowSTable(i: Int): STable {
+        orig.position(objTableOffset + i * OBJECTS_TABLE_ENTRY_SIZE)
+        val packed = orig.getInt()
+        return lookupSTable(packed and 0xFFF, packed ushr 12)
+    }
+
+    /* Object row i's data offset, or -1 for a type object. */
+    private fun objRowDataOffset(i: Int): Int {
+        orig.position(objTableOffset + i * OBJECTS_TABLE_ENTRY_SIZE + 4)
+        val off = orig.getInt()
+        return if (off < 0) -1 else off
     }
 
     private fun deserializeSTableInner(i: Int) {
@@ -516,7 +667,7 @@ class SerializationReader(
         orig.position(stDataOffset + orig.getInt())
 
         // Get the STable we need to deserialize into.
-        val st = sc.getSTable(i)!!
+        val st = pendingSTable[i]!!
 
         // Read the HOW, WHAT and WHO.
         st.HOW = readObjRef()
@@ -614,108 +765,6 @@ class SerializationReader(
         st.REPR.deserialize_repr_data(tc, st, this)
         /* REPRData is outside the state, so it needs a publish of its own. */
         st.republish()
-    }
-
-    private fun deserializeObjects() {
-        for (i in 0 until objTableEntries) {
-            // Can skip if it's a type object: the row says so, by having no
-            // data offset at all.
-            val off = objRowDataOffset(i)
-            if (off < 0)
-                continue
-            val obj = sc.getObject(i)
-
-            // Seek reader to object data offset.
-            orig.position(objDataOffset + off)
-
-            // Complete the object's deserialization.
-            this.curObject = obj
-            obj!!.st.REPR.deserialize_finish(tc, obj.st, this, obj)
-            this.curObject = null
-        }
-    }
-
-    private fun deserializeContexts() {
-        contexts = arrayOfNulls(contextTableEntries)
-        for (i in 0 until contextTableEntries) {
-            /* Seek to the context's table row. */
-            orig.position(contextTableOffset + i * CONTEXTS_TABLE_ENTRY_SIZE)
-
-            /* Resolve the reference to the static code object this context is for. */
-            val staticCode = codeRefOf(rowRef())
-
-            /* Create a context and set it up. */
-            val ctx = CallFrame()
-            ctx.tc = tc
-            ctx.codeRef = staticCode
-            val sci = staticCode.staticInfo
-            if (sci.oLexicalNames != null)
-                ctx.oLex = sci.oLexStatic!!.clone()
-            if (sci.iLexicalNames != null)
-                ctx.iLex = LongArray(sci.iLexicalNames!!.size)
-            if (sci.nLexicalNames != null)
-                ctx.nLex = DoubleArray(sci.nLexicalNames!!.size)
-            if (sci.sLexicalNames != null)
-                ctx.sLex = arrayOfNulls(sci.sLexicalNames!!.size)
-
-            /* Set context data read position, and set current read buffer to the correct thing. */
-            orig.position(contextDataOffset + orig.getInt())
-
-            /* Deserialize lexicals. */
-            val syms = readLong()
-            for (j in 0 until syms) {
-                val sym = readStr()!!
-                var idx = sci.oTryGetLexicalIdx(sym)
-                if (idx != -1) {
-                    ctx.oLex!![idx] = readRef()
-                } else {
-                    idx = sci.iTryGetLexicalIdx(sym)
-                    if (idx != -1) {
-                        ctx.iLex!![idx] = readLong()
-                    } else {
-                        idx = sci.nTryGetLexicalIdx(sym)
-                        if (idx != -1) {
-                            ctx.nLex!![idx] = orig.getDouble()
-                        } else {
-                            idx = sci.sTryGetLexicalIdx(sym)
-                            if (idx != -1)
-                                ctx.sLex!![idx] = readStr()
-                            else
-                                throw RuntimeException("Failed to deserialize lexical $sym")
-                        }
-                    }
-                }
-            }
-
-            /* Put context in place. */
-            contexts[i] = ctx
-        }
-    }
-
-    private fun attachClosureOuters(closureBaseIdx: Int) {
-        for (i in 0 until closureTableEntries) {
-            orig.position(closureTableOffset + i * CLOSURES_TABLE_ENTRY_SIZE + 8)
-            val idx = orig.getInt()
-            if (idx > 0)
-                sc.getCodeRef(closureBaseIdx + i)!!.outer = contexts[idx - 1]
-        }
-    }
-
-    private fun attachContextOuters() {
-        for (i in 0 until contextTableEntries) {
-            orig.position(contextTableOffset + i * CONTEXTS_TABLE_ENTRY_SIZE + 12)
-            val idx = orig.getInt()
-            if (idx > 0)
-                contexts[i]!!.outer = contexts[idx - 1]
-        }
-    }
-
-    private fun fixupContextOuters() {
-        for (i in 0 until contextTableEntries) {
-            // Nothing was serialized as this context's outer, so go and find
-            // the frame it should be running inside.
-            contexts[i]!!.resolveDeserializedOuter()
-        }
     }
 
     fun readRef(): SixModelObject? {
