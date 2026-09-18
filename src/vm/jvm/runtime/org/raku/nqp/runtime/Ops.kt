@@ -6585,6 +6585,7 @@ object Ops {
 
         @Suppress("UNCHECKED_CAST")
         val sr = SerializationReader(tc, sc, shArray, crArray as Array<CodeRef>, crCount, binaryBlob)
+        /* The reader installs itself on the SC (sc.reader) and lives as long as it: Phase C's demand road. */
         sr.deserialize()
         return blob
     }

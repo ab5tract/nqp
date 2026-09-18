@@ -44,6 +44,13 @@ class RootSet<T : Any>(capacity: Int = 16) {
         size = n
     }
 
+    /** size grows by [n] null slots (the closure slots after the static code refs). */
+    fun extend(n: Int) {
+        ensureCapacity(size + n)
+        for (i in size until size + n) slots.lazySet(i, null)
+        size += n
+    }
+
     fun ensureCapacity(n: Int) {
         if (n <= slots.length()) return
         val grown = AtomicReferenceArray<T?>(maxOf(n, slots.length() * 2))
@@ -52,7 +59,10 @@ class RootSet<T : Any>(capacity: Int = 16) {
     }
 
     fun clear() {
-        slots = AtomicReferenceArray(16)
+        /* Size first: a reader that saw the old size against the fresh
+         * sixteen-slot array would get an ArrayIndexOutOfBounds from the
+         * array instead of this class's own bounds check. */
         size = 0
+        slots = AtomicReferenceArray(16)
     }
 }
