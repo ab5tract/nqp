@@ -57,10 +57,10 @@ class SerializationReader(
 
     private lateinit var contexts: Array<CallFrame?>
 
-    /* Per-STable progress, and the way back from an STable to its index, so a
-     * REPR can ask for one it depends on out of table order. */
+    /* Per-STable progress; the way back from an STable to its index is the
+     * STable's own scIdx, so a REPR can ask for one it depends on out of
+     * table order. */
     private var stableState = IntArray(0)
-    private var stableIndex = java.util.IdentityHashMap<STable, Int>()
 
     /* The version of the serialization format we're currently reading. */
     @JvmField var version = 0
@@ -275,8 +275,6 @@ class SerializationReader(
             if (provPos > dataLen)
                 throw RuntimeException("Corruption detected (string table starts after end of data)")
         }
-
-        stableIndex = java.util.IdentityHashMap(stTableEntries)
     }
 
     private fun deserializeStringHeap() {
@@ -376,8 +374,6 @@ class SerializationReader(
         }
 
         stableState = IntArray(stTableEntries)
-        for (i in 0 until stTableEntries)
-            stableIndex[sc.getSTable(i)!!] = i
     }
 
     private fun stubObjects() {
@@ -444,7 +440,9 @@ class SerializationReader(
         if (st == null)
             return
         /* Not one of ours means it came from a dependency, already whole. */
-        val idx = stableIndex[st] ?: return
+        if (st.sc !== sc) return
+        val idx = st.scIdx
+        if (idx < 0) return
         if (stableState[idx] != ST_UNREAD)
             return
         /* The caller is midway through reading its own data from the shared
@@ -465,7 +463,9 @@ class SerializationReader(
      *  when the STable is not this SC's (already whole) or its REPR data is
      *  already read (the layout is the better answer). Cached per STable. */
     fun peekAttributeShape(st: STable): IntArray? {
-        val idx = stableIndex[st] ?: return null
+        if (st.sc !== sc) return null
+        val idx = st.scIdx
+        if (idx < 0) return null
         if (stableState[idx] == ST_READ) return null
         shapeCache[idx]?.let { return it }
         val saved = orig.position()

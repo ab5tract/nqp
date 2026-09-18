@@ -36,6 +36,11 @@ abstract class SixModelObject : Cloneable {
      */
     @JvmField var sc: SerializationContext? = null
 
+    /** This object's index in [sc]'s object root set; -1 while in none
+     *  (MoarVM's idx_in_sc). Set by SerializationContext.addObject, reset
+     *  by disclaim; it replaces the context's object-to-index map. */
+    @JvmField var scIdx: Int = -1
+
     /**
      * Attribute access functions. The native variants load the value into
      * or store a value from the Thread Context.
