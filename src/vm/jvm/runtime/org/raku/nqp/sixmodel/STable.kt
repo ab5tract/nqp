@@ -61,43 +61,59 @@ class STable(
      * and method tables. Every Kotlin reader keeps `st.HOW`; the setter
      * clears the pending pair.
      */
-    private var howField: SixModelObject? = how
-    private var howSC: SerializationContext? = null
+    @Volatile private var howField: SixModelObject? = how
+    @Volatile private var howSC: SerializationContext? = null
     private var howIdx = -1
     var HOW: SixModelObject?
         get() = howField ?: resolvePendingHow()
+        /* Field first, then the SC: a concurrent getter that sees the pair
+         * cleared has already seen the value it was cleared for. */
         set(v) { howField = v; howSC = null }
 
+    /**
+     * Resolves the pending HOW, or re-reads the field when another thread
+     * resolved it first (a null SC means "no longer pending", never "no HOW").
+     * A resolution from INSIDE a drain gets a raw stub the drain may still
+     * roll back, and a rolled-back stub would stay here forever with its
+     * pending pair gone, so it is returned but not cached: the pair survives
+     * and the first read outside a drain caches the published object.
+     */
     private fun resolvePendingHow(): SixModelObject? {
-        val s = howSC ?: return null
+        val s = howSC ?: return howField
         val v = s.getObject(howIdx)
+        if (SerializationReader.LOCK.isHeldByCurrentThread() && SerializationReader.current != null) return v
         howField = v
         howSC = null
         return v
     }
 
-    fun setPendingHow(sc: SerializationContext, idx: Int) { howField = null; howSC = sc; howIdx = idx }
+    /* The index before the SC: the volatile write of the SC publishes it. */
+    fun setPendingHow(sc: SerializationContext, idx: Int) { howField = null; howIdx = idx; howSC = sc }
 
     /**
      * The stash / package. Pending like HOW: a stash's hash reaches every
      * symbol under it, a large share of a setting's SC.
      */
-    private var whoField: SixModelObject? = null
-    private var whoSC: SerializationContext? = null
+    @Volatile private var whoField: SixModelObject? = null
+    @Volatile private var whoSC: SerializationContext? = null
     private var whoIdx = -1
     var WHO: SixModelObject?
         get() = whoField ?: resolvePendingWho()
+        /* Field first, then the SC, as for HOW. */
         set(v) { whoField = v; whoSC = null }
 
+    /** Exactly [resolvePendingHow]'s shape, for the same two reasons. */
     private fun resolvePendingWho(): SixModelObject? {
-        val s = whoSC ?: return null
+        val s = whoSC ?: return whoField
         val v = s.getObject(whoIdx)
+        if (SerializationReader.LOCK.isHeldByCurrentThread() && SerializationReader.current != null) return v
         whoField = v
         whoSC = null
         return v
     }
 
-    fun setPendingWho(sc: SerializationContext, idx: Int) { whoField = null; whoSC = sc; whoIdx = idx }
+    /* The index before the SC: the volatile write of the SC publishes it. */
+    fun setPendingWho(sc: SerializationContext, idx: Int) { whoField = null; whoIdx = idx; whoSC = sc }
 
     /** REPR-specific data (a RakuObjectREPRData for P6opaque). REPR-owned; a change republishes [state]. */
     @JvmField var REPRData: Any? = null
