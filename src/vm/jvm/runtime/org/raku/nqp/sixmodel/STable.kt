@@ -78,6 +78,7 @@ class STable(
      * pending pair gone, so it is returned but not cached: the pair survives
      * and the first read outside a drain caches the published object.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private fun resolvePendingHow(): SixModelObject? {
         val s = howSC ?: return howField
         val v = s.getObject(howIdx)
@@ -106,6 +107,7 @@ class STable(
         set(v) { whoField = v; whoSC = null }
 
     /** Exactly [resolvePendingHow]'s shape, for the same two reasons. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private fun resolvePendingWho(): SixModelObject? {
         val s = whoSC ?: return whoField
         val v = s.getObject(whoIdx)
