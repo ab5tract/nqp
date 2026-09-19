@@ -18,7 +18,7 @@ class SerializationReader(
     private val cr: Array<CodeRef>,
     private val crCount: Int,
     private val orig: ByteBuffer,
-) {
+) : Drain.Participant {
     /** The context every stub and finish road uses: inside a drain on this
      *  thread, the drain's (the DEMANDING thread's, resolved once per
      *  top-level demand), so a demand from another thread never writes the
@@ -676,7 +676,7 @@ class SerializationReader(
     private val shapeCache = HashMap<Int, IntArray>()
 
     /* Drain.run's callback: finish one queued entry. */
-    fun finish(e: Drain.Entry) {
+    override fun finish(e: Drain.Entry) {
         when (e.kind) {
             Drain.OBJECT -> {
                 val obj = pendingObj[e.index]!!
@@ -728,7 +728,7 @@ class SerializationReader(
     }
 
     /* Drain.rollback's callback: drop a stub the drain never published. */
-    fun unstub(e: Drain.Entry) {
+    override fun unstub(e: Drain.Entry) {
         when (e.kind) {
             /* Only what is still pending: a publish that failed partway
              * already cleared what it stored, and resetting that STable's
@@ -741,7 +741,7 @@ class SerializationReader(
     }
 
     /* Drain.publish's callback: the release store into the root slot. */
-    fun publish(e: Drain.Entry) {
+    override fun publish(e: Drain.Entry) {
         when (e.kind) {
             Drain.STABLE -> { sc.publishSTable(e.index, pendingSTable[e.index]!!); pendingSTable[e.index] = null; stablesRead++ }
             Drain.OBJECT -> { sc.publishObject(e.index, pendingObj[e.index]!!); pendingObj[e.index] = null; objectsRead++ }

@@ -15,7 +15,14 @@ package org.raku.nqp.sixmodel
  * only in the unit tests, which have no reader).
  */
 class Drain(@JvmField val tc: org.raku.nqp.runtime.ThreadContext? = null) {
-    class Entry(@JvmField val reader: SerializationReader, @JvmField val kind: Int, @JvmField val index: Int)
+    /** The reader side of an entry: SerializationReader, or a test double. */
+    interface Participant {
+        fun finish(e: Entry)
+        fun publish(e: Entry)
+        fun unstub(e: Entry)
+    }
+
+    class Entry(@JvmField val reader: Participant, @JvmField val kind: Int, @JvmField val index: Int)
 
     val queue = ArrayDeque<Entry>()
     val finished = ArrayList<Entry>()
