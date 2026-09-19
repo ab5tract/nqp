@@ -464,6 +464,10 @@ class SerializationReader(
      * (the drain carries it); the loader's when this thread has none. */
     private fun demandTc(): ThreadContext = loadTc.gc.getCurrentThreadContext() ?: loadTc
 
+    /* The three demand roads are slow paths behind a null root slot: a
+     * boundary, so partial evaluation never inlines the lock and the
+     * deserializer into a guest method (NqpDispatch.HowSrc reads st.HOW). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     fun demandObject(index: Int): SixModelObject? {
         if (index < 0 || index >= objTableEntries) throw RuntimeException("Invalid SC object index $index")
         LOCK.lock()
@@ -480,6 +484,7 @@ class SerializationReader(
         }
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     fun demandSTable(index: Int): STable? {
         if (index < 0 || index >= stTableEntries) throw RuntimeException("Invalid STable index $index")
         LOCK.lock()
@@ -493,6 +498,7 @@ class SerializationReader(
         }
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     fun demandCodeRef(index: Int): CodeRef? {
         if (index < crCount) return null          /* a static ref is installed at load or absent for good */
         val j = index - crCount
