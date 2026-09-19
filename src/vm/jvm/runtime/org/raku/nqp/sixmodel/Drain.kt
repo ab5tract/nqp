@@ -10,9 +10,11 @@ package org.raku.nqp.sixmodel
  * moment they are demanded -- an object stub needs its STable's REPR data
  * -- and closures at their stub; objects and contexts wait on the queue.
  * A drain that throws leaves nothing behind: its entries are unstubbed so
- * the next demand starts over.
+ * the next demand starts over. [tc] is the context of the thread that
+ * opened the drain, which every reader's roads use for its duration (null
+ * only in the unit tests, which have no reader).
  */
-class Drain {
+class Drain(@JvmField val tc: org.raku.nqp.runtime.ThreadContext? = null) {
     class Entry(@JvmField val reader: SerializationReader, @JvmField val kind: Int, @JvmField val index: Int)
 
     val queue = ArrayDeque<Entry>()
