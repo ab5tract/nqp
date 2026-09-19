@@ -192,7 +192,10 @@ sub demand-objects($text) {
     nqp::list($best, $best-total)
 }
 
+# The children must not inherit the suite's SC knobs: each sets or drops them itself.
 my %stats := nqp::getenvhash();
+nqp::deletekey(%stats, 'NQP_SC_EAGER');
+nqp::deletekey(%stats, 'NQP_SC_VERIFY');
 %stats<NQP_UNIT_LOAD_STATS> := '1';
 my @lazy := child-stderr('say(1)', %stats);
 is(@lazy[0], 0, 'the child under NQP_UNIT_LOAD_STATS=1 exits clean');
@@ -202,6 +205,7 @@ ok(@lo[0] > 0, 'the largest SC finished some objects on demand (' ~ @lo[0] ~ ')'
 ok(@lo[0] < @lo[1], 'and fewer than all of them (' ~ @lo[0] ~ ' of ' ~ @lo[1] ~ ')');
 
 my %eager := nqp::getenvhash();
+nqp::deletekey(%eager, 'NQP_SC_VERIFY');
 %eager<NQP_UNIT_LOAD_STATS> := '1';
 %eager<NQP_SC_EAGER> := '1';
 my @eager := child-stderr('say(1)', %eager);
@@ -210,6 +214,7 @@ my @eo := demand-objects(@eager[1]);
 ok(@eo[0] == @eo[1] && @eo[1] == @lo[1], 'under NQP_SC_EAGER=1 every object is finished (' ~ @eo[0] ~ ' of ' ~ @eo[1] ~ ')');
 
 my %verify := nqp::getenvhash();
+nqp::deletekey(%verify, 'NQP_SC_EAGER');
 %verify<NQP_SC_VERIFY> := '1';
 my @verify := child-stderr('say(1)', %verify);
 is(@verify[0], 0, 'the child under NQP_SC_VERIFY=1 exits clean');
