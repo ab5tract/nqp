@@ -11,13 +11,26 @@ import org.raku.nqp.runtime.ThreadContext
 import org.raku.nqp.sixmodel.reprs.VMHashInstance
 
 class SerializationReader(
-    private val tc: ThreadContext,
+    /** The loading thread's context: deserialize() itself runs on it. */
+    private val loadTc: ThreadContext,
     private val sc: SerializationContext,
     private var sh: Array<String?>,
     private val cr: Array<CodeRef>,
     private val crCount: Int,
     private val orig: ByteBuffer,
 ) {
+    /** The context every stub and finish road uses: inside a drain on this
+     *  thread, the drain's (the DEMANDING thread's, resolved once per
+     *  top-level demand), so a demand from another thread never writes the
+     *  loader's nativeI/N/S, builds frames on the loader's context, or
+     *  raises against the loader's frame chain; otherwise the loader's.
+     *  A drain spans readers, so the context lives on the drain, not here. */
+    private val tc: ThreadContext
+        get() {
+            if (!LOCK.isHeldByCurrentThread()) return loadTc
+            return current?.tc ?: loadTc
+        }
+
     companion object {
         /* The current version of the serialization format. */
         private const val CURRENT_VERSION = 12
@@ -365,7 +378,7 @@ class SerializationReader(
      *     changed it) and queue it; the topLevel run finishes it with the
      *     new data. */
     private fun repossess() {
-        topLevel { d ->
+        topLevel(loadTc) { d ->
             val kinds = IntArray(reposTableEntries)
             val slots = IntArray(reposTableEntries)
             val origins = arrayOfNulls<Any>(reposTableEntries)
@@ -421,10 +434,11 @@ class SerializationReader(
 
     /* One outermost demand: a drain, run to empty, then published. Inside
      * a drain (current != null, same thread -- the lock is held for the
-     * drain's whole life) a demand only stubs and queues. */
-    private inline fun <T> topLevel(body: (Drain) -> T): T {
+     * drain's whole life) a demand only stubs and queues. [dtc] is the
+     * context the drain's roads use (see [tc]). */
+    private inline fun <T> topLevel(dtc: ThreadContext, body: (Drain) -> T): T {
         val t0 = System.nanoTime()
-        val d = Drain()
+        val d = Drain(dtc)
         current = d
         try {
             val r = body(d)
@@ -446,6 +460,10 @@ class SerializationReader(
         }
     }
 
+    /* The demanding thread's context for a top-level demand, resolved once
+     * (the drain carries it); the loader's when this thread has none. */
+    private fun demandTc(): ThreadContext = loadTc.gc.getCurrentThreadContext() ?: loadTc
+
     fun demandObject(index: Int): SixModelObject? {
         if (index < 0 || index >= objTableEntries) throw RuntimeException("Invalid SC object index $index")
         LOCK.lock()
@@ -453,7 +471,7 @@ class SerializationReader(
             sc.peekObject(index)?.let { return it }
             val d = current
             if (d != null) return stubObject(index, d)
-            val o = topLevel { stubObject(index, it) }
+            val o = topLevel(demandTc()) { stubObject(index, it) }
             if (VERIFY && sc.peekObject(index) !== o)
                 throw RuntimeException("sc-verify: object $index of ${sc.handle} left a top-level demand unpublished")
             return o
@@ -469,7 +487,7 @@ class SerializationReader(
             sc.peekSTable(index)?.let { return it }
             val d = current
             if (d != null) return stubAndFinishSTable(index, d)
-            return topLevel { stubAndFinishSTable(index, it) }
+            return topLevel(demandTc()) { stubAndFinishSTable(index, it) }
         } finally {
             LOCK.unlock()
         }
@@ -484,7 +502,7 @@ class SerializationReader(
             sc.peekCodeRef(index)?.let { return it }
             val d = current
             if (d != null) return stubCode(j, d)
-            return topLevel { stubCode(j, it) }
+            return topLevel(demandTc()) { stubCode(j, it) }
         } finally {
             LOCK.unlock()
         }
@@ -722,7 +740,7 @@ class SerializationReader(
     /* NQP_SC_EAGER=1: everything at load, the pre-Phase-C order, for
      * bisecting a demand-order bug. */
     private fun drainAll() {
-        topLevel { d ->
+        topLevel(loadTc) { d ->
             /* A published slot is skipped, exactly as the demand roads skip it:
              * repossess() ran its own drains before us and published what they
              * finished, and stubbing such a slot again would build a SECOND
