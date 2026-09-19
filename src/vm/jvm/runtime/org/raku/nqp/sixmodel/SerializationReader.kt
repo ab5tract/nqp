@@ -342,58 +342,80 @@ class SerializationReader(
 
     /* A repossessed entry replaces an object or STable other SCs already
      * hold, so it cannot wait: it is finished before deserialize() returns,
-     * as MoarVM's repossess does. STables first (an object row names its
-     * STable), then the objects in one drain. */
+     * as MoarVM's repossess does. ONE drain for both kinds, in four steps,
+     * because the identity of a repossessed slot is decided by registration,
+     * never by which drain publishes first: a repossessed STable's data
+     * (method cache, v-table, type-check cache, specs, REPR-data class
+     * handles) may name a repossessed OBJECT of this same SC -- a
+     * precompiled `augment` does -- and finishing that STable before the
+     * object is registered would stub a fresh copy from the row and publish
+     * it into the slot the original owns.
+     *  1. Demand every original, then run the drain: an original its own
+     *     SC's reader had not finished yet is finished now, whole and under
+     *     its ORIGINAL layout, before step 3 can swap its STable (the order
+     *     of the pre-Phase-C reader, which had every original loaded).
+     *     Nothing of this SC is registered yet, and nothing an original
+     *     reaches can name this SC (an origin is a dependency of it).
+     *  2. Register every row of both kinds: the original goes into this SC
+     *     (sc, scIdx) and into the pending tables, so any later demand of
+     *     the slot -- from a repossessed STable's data or anywhere else --
+     *     finds the original, not a row stub of its own.
+     *  3. Finish the repossessed STables (an object row names its STable).
+     *  4. Give each repossessed object its row's STable (a mixin may have
+     *     changed it) and queue it; the topLevel run finishes it with the
+     *     new data. */
     private fun repossess() {
-        for (pass in 1 downTo 0) {
-            topLevel { d ->
-                /* Two loops over the table, because the second one demands:
-                 * every repossessed slot of this pass is registered in the
-                 * pending tables first, so a demand that reaches one finds
-                 * the repossessed entry -- not a fresh stub of its own, which
-                 * would be both the wrong entry and a second one to publish. */
-                val slots = ArrayList<Int>()
-                for (i in 0 until reposTableEntries) {
-                    orig.position(reposTableOffset + i * REPOS_TABLE_ENTRY_SIZE)
-                    val repoType = orig.getInt()
-                    if (repoType != pass) continue
-                    val slot = orig.getInt()
-                    val origSC = locateSC(orig.getInt())
-                    val origIdx = orig.getInt()
-                    if (repoType == 1) {
-                        /* Already published by an earlier drain of this load:
-                         * re-registering it would hand the slot a second
-                         * identity (a fresh entry published over the live one). */
-                        if (sc.peekSTable(slot) != null) continue
-                        val origST = origSC.getSTable(origIdx)!!
-                        origST.sc = sc
-                        origST.scIdx = slot
-                        pendingSTable[slot] = origST
-                        stableState[slot] = ST_UNREAD
-                        d.finished.add(Drain.Entry(this, Drain.STABLE, slot))
-                    } else if (repoType == 0) {
-                        /* Same second-identity hazard as the STable pass. */
-                        if (sc.peekObject(slot) != null) continue
-                        val origObj = origSC.getObject(origIdx)!!
-                        origObj.sc = sc
-                        origObj.scIdx = slot
-                        pendingObj[slot] = origObj
-                        if (objRowDataOffset(slot) < 0) d.finished.add(Drain.Entry(this, Drain.OBJECT, slot))
-                        else d.queue.add(Drain.Entry(this, Drain.OBJECT, slot))
-                    } else {
-                        throw RuntimeException("Unknown repossession type")
-                    }
-                    slots.add(slot)
-                }
-                for (slot in slots) {
-                    /* A repossessed STable is read here and not queued: an
-                     * object row names its STable. A repossessed object's
-                     * STable may have changed (a mixin), so take the row's;
-                     * the object itself waits on the drain like any other. */
-                    if (pass == 1) { if (stableState[slot] == ST_UNREAD) finishSTable(slot) }
-                    else pendingObj[slot]!!.st = objRowSTable(slot)
+        topLevel { d ->
+            val kinds = IntArray(reposTableEntries)
+            val slots = IntArray(reposTableEntries)
+            val origins = arrayOfNulls<Any>(reposTableEntries)
+            for (i in 0 until reposTableEntries) {
+                orig.position(reposTableOffset + i * REPOS_TABLE_ENTRY_SIZE)
+                val repoType = orig.getInt()
+                val slot = orig.getInt()
+                val origSC = locateSC(orig.getInt())
+                val origIdx = orig.getInt()
+                kinds[i] = repoType
+                slots[i] = slot
+                /* A root slot already published would mean a second identity
+                 * for it; defensive only (nothing of this SC is published
+                 * before this drain ends), never what decides identity. */
+                origins[i] = when (repoType) {
+                    1 -> if (sc.peekSTable(slot) != null) null else origSC.getSTable(origIdx)!!
+                    0 -> if (sc.peekObject(slot) != null) null else origSC.getObject(origIdx)!!
+                    else -> throw RuntimeException("Unknown repossession type $repoType")
                 }
             }
+            /* Step 1's run: every original whole before anything is swapped. */
+            d.run()
+            for (i in 0 until reposTableEntries) {
+                val slot = slots[i]
+                when (val o = origins[i]) {
+                    null -> {}
+                    is STable -> {
+                        o.sc = sc
+                        o.scIdx = slot
+                        pendingSTable[slot] = o
+                        stableState[slot] = ST_UNREAD
+                        d.finished.add(Drain.Entry(this, Drain.STABLE, slot))
+                    }
+                    else -> {
+                        val obj = o as SixModelObject
+                        obj.sc = sc
+                        obj.scIdx = slot
+                        pendingObj[slot] = obj
+                        /* Held, not queued, until step 4: rolled back if a
+                         * step between throws, never finished early. */
+                        val e = Drain.Entry(this, Drain.OBJECT, slot)
+                        if (objRowDataOffset(slot) < 0) d.finished.add(e) else d.held.add(e)
+                    }
+                }
+            }
+            for (i in 0 until reposTableEntries)
+                if (kinds[i] == 1 && origins[i] != null && stableState[slots[i]] == ST_UNREAD) finishSTable(slots[i])
+            for (i in 0 until reposTableEntries)
+                if (kinds[i] == 0 && origins[i] != null) pendingObj[slots[i]]!!.st = objRowSTable(slots[i])
+            d.release()
         }
     }
 
