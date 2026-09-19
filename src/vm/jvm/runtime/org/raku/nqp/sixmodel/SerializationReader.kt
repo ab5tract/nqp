@@ -229,7 +229,8 @@ class SerializationReader(
             throw RuntimeException("Serialized data too short to read a version number (< 4 bytes)")
         version = orig.getInt()
         if (version < MIN_VERSION || version > CURRENT_VERSION)
-            throw RuntimeException("Unknown serialization format version $version")
+            throw RuntimeException("Serialization format version $version is not $CURRENT_VERSION: " +
+                "a stale artifact or stage0 (rebuild it; the format-12 stage0 is archived at stage0-archive/format12-*)")
 
         /* Ensure that the data is at least as long as the header is expected to be. */
         val headerSize = HEADER_SIZE
@@ -492,7 +493,10 @@ class SerializationReader(
             sc.peekSTable(index)?.let { return it }
             val d = current
             if (d != null) return stubAndFinishSTable(index, d)
-            return topLevel(demandTc()) { stubAndFinishSTable(index, it) }
+            val st = topLevel(demandTc()) { stubAndFinishSTable(index, it) }
+            if (VERIFY && sc.peekSTable(index) !== st)
+                throw RuntimeException("sc-verify: STable $index of ${sc.handle} left a top-level demand unpublished")
+            return st
         } finally {
             LOCK.unlock()
         }
@@ -508,7 +512,10 @@ class SerializationReader(
             sc.peekCodeRef(index)?.let { return it }
             val d = current
             if (d != null) return stubCode(j, d)
-            return topLevel(demandTc()) { stubCode(j, it) }
+            val cr = topLevel(demandTc()) { stubCode(j, it) }
+            if (VERIFY && sc.peekCodeRef(index) !== cr)
+                throw RuntimeException("sc-verify: code ref $index of ${sc.handle} left a top-level demand unpublished")
+            return cr
         } finally {
             LOCK.unlock()
         }
@@ -743,8 +750,11 @@ class SerializationReader(
         }
     }
 
-    /* NQP_SC_EAGER=1: everything at load, the pre-Phase-C order, for
-     * bisecting a demand-order bug. */
+    /* NQP_SC_EAGER=1: everything at load, in one drain, for bisecting a
+     * demand-order bug. Not the pre-Phase-C order: the rows are stubbed in
+     * table order (STables, objects, closures, contexts) but finished in
+     * DEMAND order -- an STable when stubbed, an object or context when
+     * the drain's queue reaches it, which a stub's own reads may reorder. */
     private fun drainAll() {
         topLevel(loadTc) { d ->
             /* A published slot is skipped, exactly as the demand roads skip it:
