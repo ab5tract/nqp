@@ -17,6 +17,15 @@ class Drain {
 
     val queue = ArrayDeque<Entry>()
     val finished = ArrayList<Entry>()
+    /** Stubbed but not yet to be finished (repossess's objects until their
+     *  STables are swapped): rolled back like the rest, never run or published
+     *  until [release] moves them onto the queue. */
+    val held = ArrayList<Entry>()
+
+    fun release() {
+        queue.addAll(held)
+        held.clear()
+    }
 
     fun run() {
         while (true) {
@@ -39,6 +48,7 @@ class Drain {
     fun rollback() {
         for (e in finished) e.reader.unstub(e)
         for (e in queue) e.reader.unstub(e)
+        for (e in held) e.reader.unstub(e)
     }
 
     companion object {
