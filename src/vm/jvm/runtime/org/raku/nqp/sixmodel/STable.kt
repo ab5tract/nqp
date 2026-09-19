@@ -87,8 +87,11 @@ class STable(
         return v
     }
 
-    /* The index before the SC: the volatile write of the SC publishes it. */
-    fun setPendingHow(sc: SerializationContext, idx: Int) { howField = null; howIdx = idx; howSC = sc }
+    /* The index, then the SC (its volatile write publishes the index), and
+     * only then the field cleared: on the repossess road this STable is
+     * already published, and a concurrent getter must see either the old
+     * HOW or the pending pair, never a null field with no pair. */
+    fun setPendingHow(sc: SerializationContext, idx: Int) { howIdx = idx; howSC = sc; howField = null }
 
     /**
      * The stash / package. Pending like HOW: a stash's hash reaches every
@@ -112,8 +115,8 @@ class STable(
         return v
     }
 
-    /* The index before the SC: the volatile write of the SC publishes it. */
-    fun setPendingWho(sc: SerializationContext, idx: Int) { whoField = null; whoIdx = idx; whoSC = sc }
+    /* Index, SC, then the field cleared, as for HOW. */
+    fun setPendingWho(sc: SerializationContext, idx: Int) { whoIdx = idx; whoSC = sc; whoField = null }
 
     /** REPR-specific data (a RakuObjectREPRData for P6opaque). REPR-owned; a change republishes [state]. */
     @JvmField var REPRData: Any? = null
